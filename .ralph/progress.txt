@@ -15,3 +15,14 @@ Rate limited. Backing off 120s.
 - Files changed: internal/core/exec/types.go, internal/core/exec/index.go, tests/exec/exec_test.go
 - Learnings: handler calls serialized under mutex to keep callers thread-safe; context.Err() checked after Wait() to surface deadline/cancel errors instead of raw kill signal
 ---
+
+--- Iteration 3 [2026-04-03 10:09:05] ---
+Commit: chore: mark US-002 passed, update progress
+Remaining stories: 1
+Signal: proceed_to_next_story
+
+## 2026-04-03 - US-003
+- Implemented doctor feature: types, detection w/ guidance, Run() entrypoint, CLI wiring
+- Files changed: internal/features/doctor/types.go, internal/features/doctor/index.go, internal/features/doctor/detect.go, cmd/doctor.go, tests/doctor/doctor_test.go
+- Learnings: Healthy = "at least one agent available" (Springfield only needs one agent to operate); guidance is per-agent-specific install instructions; status mapping reuses adapter DetectionStatus cleanly
+---

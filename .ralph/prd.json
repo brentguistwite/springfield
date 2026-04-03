@@ -46,7 +46,7 @@
         "Tests cover healthy, missing, and mixed agent environments."
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "Tests live under `tests/doctor/`. Prefer helpful local guidance over generic error output.",
       "deps": [
         "US-002"
