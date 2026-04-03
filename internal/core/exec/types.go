@@ -1,0 +1,43 @@
+package exec
+
+import (
+	"context"
+	"time"
+)
+
+// Command describes a subprocess to run.
+type Command struct {
+	Name    string
+	Args    []string
+	Dir     string
+	Env     []string
+	Timeout time.Duration // zero means no timeout
+}
+
+// EventType distinguishes stdout from stderr output.
+type EventType string
+
+const (
+	EventStdout EventType = "stdout"
+	EventStderr EventType = "stderr"
+)
+
+// Event is a single line of output from a running process.
+type Event struct {
+	Type EventType
+	Data string
+	Time time.Time
+}
+
+// EventHandler receives streaming events during execution.
+type EventHandler func(Event)
+
+// Result is the outcome of a completed (or failed) process.
+type Result struct {
+	ExitCode int
+	Events   []Event
+	Err      error
+}
+
+// CommandFunc is the signature for running commands, injectable for testing.
+type CommandFunc func(ctx context.Context, cmd Command, handler EventHandler) Result
