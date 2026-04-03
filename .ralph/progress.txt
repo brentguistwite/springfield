@@ -1,0 +1,17 @@
+
+--- Iteration 1 [2026-04-03 09:58:46] ---
+Rate limited on claude — switching to fallback codex
+## 2026-04-03 - US-001
+- Implemented shared agent adapter contract, registry resolution, and per-agent local CLI detection for Claude Code, Codex CLI, and Gemini CLI
+- Files changed: internal/core/agents/types.go, internal/core/agents/index.go, internal/core/agents/claude/adapter.go, internal/core/agents/codex/adapter.go, internal/core/agents/gemini/adapter.go, tests/agents/index_test.go
+- Learnings: kept registry construction outside per-agent packages to avoid Go import cycles; assumed `.ralph/AGENTS.md` is the effective repo-root agent instruction source because no root `AGENTS.md` exists in this worktree
+---
+
+--- Iteration 2 [2026-04-03 10:03:03] ---
+Rate limited. Backing off 120s.
+
+## 2026-04-03 - US-002
+- Implemented shared subprocess execution layer with structured streaming events, timeout, and cancellation
+- Files changed: internal/core/exec/types.go, internal/core/exec/index.go, tests/exec/exec_test.go
+- Learnings: handler calls serialized under mutex to keep callers thread-safe; context.Err() checked after Wait() to surface deadline/cancel errors instead of raw kill signal
+---
