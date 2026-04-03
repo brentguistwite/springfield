@@ -1,0 +1,7 @@
+# Springfield project configuration.
+# Copy to springfield.toml and adjust for your project.
+#
+# Runtime state is written to .springfield/ (gitignored).
+
+# [general]
+# project_name = "my-project"

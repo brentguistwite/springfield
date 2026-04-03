@@ -1,0 +1,21 @@
+# Runtime state (generated files, caches)
+.springfield/
+
+# Go build artifacts
+springfield
+*.exe
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.*
