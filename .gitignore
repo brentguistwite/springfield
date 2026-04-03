@@ -1,0 +1,5 @@
+.worktrees/
+.ralph/
+.springfield/
+.conductor/*
+!.conductor/plans/
