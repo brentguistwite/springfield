@@ -1,5 +1,29 @@
-.worktrees/
-.ralph/
+# Runtime state (generated files, caches)
 .springfield/
+
+# Repo-local orchestration state
+.ralph/
 .conductor/*
 !.conductor/plans/
+
+# Local worktrees
+.worktrees/
+
+# Go build artifacts
+springfield
+*.exe
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.*
