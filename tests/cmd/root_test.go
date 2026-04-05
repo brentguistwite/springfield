@@ -144,7 +144,7 @@ func TestSpringfieldSubcommandsAreReachable(t *testing.T) {
 	}{
 		{name: "ralph", marker: "Ralph workflows will move behind Springfield."},
 		{name: "conductor", marker: "Conductor workflows will move behind Springfield."},
-		{name: "doctor", marker: "Doctor will check local Springfield setup."},
+		{name: "doctor", marker: "Doctor checks that supported agent CLIs are installed and reachable, providing install guidance for anything missing."},
 	} {
 		output, err := runSpringfield(t, subcommand.name, "--help")
 		if err != nil {
