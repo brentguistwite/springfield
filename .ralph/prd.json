@@ -1,0 +1,56 @@
+{
+  "project": "springfield-v1-agent-runtime-doctor",
+  "branchName": "springfield/03-agent-runtime-doctor",
+  "description": "Build Springfield agent adapter boundaries, process execution/runtime primitives, and doctor/onboarding checks for Claude Code, Codex CLI, and Gemini CLI.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Implement agent adapter boundary and resolution rules",
+      "description": "Write failing tests first, then define the adapter interface in `internal/core/agents/index.go` and `types.go`, plus per-agent packages under `internal/core/agents/claude`, `codex`, and `gemini` for Claude Code, Codex CLI, and Gemini CLI.",
+      "acceptanceCriteria": [
+        "A public adapter boundary exists for supported agents.",
+        "The system can resolve the configured project default agent and a per-plan override when present.",
+        "Tests cover detection metadata and adapter selection.",
+        "Agent-specific behavior remains isolated behind adapters rather than spread through command code."
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Use `exec.LookPath` or equivalent local binary detection. Keep room for future capability flags without rewriting the public contract.",
+      "deps": []
+    },
+    {
+      "id": "US-002",
+      "title": "Implement process execution streaming timeout and cancellation",
+      "description": "Add `internal/core/exec/index.go`, `types.go`, `process.go`, `stream.go`, and `timeout.go` so Springfield features share one subprocess execution layer with structured events, timeout handling, and cancellation.",
+      "acceptanceCriteria": [
+        "A public execution module exists for subprocess runs and streamed events.",
+        "Timeout and cancellation behavior is tested and deterministic.",
+        "Streaming output is structured enough for both CLI and TUI consumers.",
+        "Tests cover success, failure, timeout, and cancellation paths."
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "Create tests under `tests/exec/`. This runtime layer is a shared foundation for Ralph, Conductor, doctor, and TUI monitoring.",
+      "deps": [
+        "US-001"
+      ]
+    },
+    {
+      "id": "US-003",
+      "title": "Implement doctor checks and onboarding guidance",
+      "description": "Use the adapter and execution layers to implement `internal/features/doctor/index.go`, `types.go`, and `detect.go`, then wire the feature through `cmd/doctor.go` for readiness checks and first-run guidance.",
+      "acceptanceCriteria": [
+        "Doctor can detect the supported local agent CLIs and report availability.",
+        "Doctor output includes concrete guidance for missing tools or partial setup.",
+        "The doctor flow is exposed through the Springfield CLI and can be reused by later TUI work.",
+        "Tests cover healthy, missing, and mixed agent environments."
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "Tests live under `tests/doctor/`. Prefer helpful local guidance over generic error output.",
+      "deps": [
+        "US-002"
+      ]
+    }
+  ]
+}
