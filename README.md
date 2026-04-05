@@ -4,15 +4,15 @@ Local-first CLI and TUI entrypoint that unifies Ralph and Ralph Conductor behind
 
 ## Status
 
-**Bootstrap phase.** The command surface is stable but subcommands are placeholders.
+**Bootstrap phase.** `springfield ralph` now persists plan state and run history locally. Other surfaces still remain placeholders.
 
 Running bare `springfield` opens a TUI shell. CLI subcommands remain accessible underneath:
 
 ```
 springfield              # TUI-first interactive shell
-springfield ralph        # Ralph workflows (placeholder)
+springfield ralph        # Ralph plan init/status/run workflows
 springfield conductor    # Conductor workflows (placeholder)
-springfield doctor       # Local setup diagnostics (placeholder)
+springfield doctor       # Local setup diagnostics
 ```
 
 ## Install
@@ -44,9 +44,9 @@ main.go                     # Entrypoint — delegates to cmd.Execute()
 cmd/                        # Cobra command wiring
   root.go                   # Root command — bare invocation launches TUI
   tui.go                    # Explicit `springfield tui` entry
-  ralph.go                  # Ralph subcommand placeholder
+  ralph.go                  # Ralph plan init/status/run commands
   conductor.go              # Conductor subcommand placeholder
-  doctor.go                 # Doctor subcommand placeholder
+  doctor.go                 # Doctor diagnostics command
 internal/features/tui/      # Bubble Tea TUI shell
   app.go                    # Startup TUI placeholder
 tests/cmd/                  # CLI smoke tests
@@ -57,6 +57,7 @@ tests/cmd/                  # CLI smoke tests
 ```bash
 go test ./...               # Run all tests
 go run .                    # Launch Springfield
+go run . ralph --help       # Inspect Ralph subcommands
 ```
 
 ## License

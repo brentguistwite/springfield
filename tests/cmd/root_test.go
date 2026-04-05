@@ -142,7 +142,7 @@ func TestSpringfieldSubcommandsAreReachable(t *testing.T) {
 		name   string
 		marker string
 	}{
-		{name: "ralph", marker: "Ralph workflows will move behind Springfield."},
+		{name: "ralph", marker: "Manage Ralph plans, story selection, and local run history."},
 		{name: "conductor", marker: "Conductor workflows will move behind Springfield."},
 		{name: "doctor", marker: "Doctor checks that supported agent CLIs are installed and reachable, providing install guidance for anything missing."},
 	} {
