@@ -36,6 +36,71 @@ func runSpringfield(t *testing.T, args ...string) (string, error) {
 	return stdout.String() + stderr.String(), err
 }
 
+func buildBinary(t *testing.T) string {
+	t.Helper()
+
+	bin := filepath.Join(t.TempDir(), "springfield")
+	cmd := exec.Command("go", "build", "-o", bin, ".")
+	cmd.Dir = repoRoot(t)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("build binary: %v\n%s", err, out)
+	}
+	return bin
+}
+
+func runBinaryIn(t *testing.T, bin, dir string, args ...string) (string, error) {
+	t.Helper()
+
+	cmd := exec.Command(bin, args...)
+	cmd.Dir = dir
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	return stdout.String() + stderr.String(), err
+}
+
+func TestInitCreatesProjectInCurrentDir(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	output, err := runBinaryIn(t, bin, dir, "init")
+	if err != nil {
+		t.Fatalf("springfield init failed: %v\n%s", err, output)
+	}
+
+	if !strings.Contains(output, "Created springfield.toml") {
+		t.Errorf("expected creation message, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Created .springfield/") {
+		t.Errorf("expected runtime dir message, got:\n%s", output)
+	}
+
+	// Re-run should show skip messages
+	output2, err := runBinaryIn(t, bin, dir, "init")
+	if err != nil {
+		t.Fatalf("re-run init failed: %v\n%s", err, output2)
+	}
+	if !strings.Contains(output2, "already exists") {
+		t.Errorf("expected skip messages on re-run, got:\n%s", output2)
+	}
+}
+
+func TestInitAppearsInHelp(t *testing.T) {
+	output, err := runSpringfield(t, "--help")
+	if err != nil {
+		t.Fatalf("help failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "init") {
+		t.Errorf("expected init in help output, got:\n%s", output)
+	}
+}
+
 func TestSpringfieldHelp(t *testing.T) {
 	output, err := runSpringfield(t, "--help")
 	if err != nil {
