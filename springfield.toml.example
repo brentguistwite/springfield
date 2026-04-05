@@ -2,6 +2,13 @@
 # Copy to springfield.toml and adjust for your project.
 #
 # Runtime state is written to .springfield/ (gitignored).
+# This file defines project-level Springfield config only.
+# It does not configure conductor schedules.
+# In 05 scope, `springfield conductor ...` also requires
+# .springfield/conductor/config.json.
 
-# [general]
-# project_name = "my-project"
+[project]
+default_agent = "claude"
+
+# [plans.release]
+# agent = "codex"
