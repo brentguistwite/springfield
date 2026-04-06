@@ -66,9 +66,17 @@ func newConductorStatusCommand() *cobra.Command {
 				return err
 			}
 			for _, name := range project.AllPlans() {
-				line := fmt.Sprintf("  %s: %s", name, project.PlanStatus(name))
-				if project.PlanStatus(name) == conductor.StatusFailed {
+				status := project.PlanStatus(name)
+				line := fmt.Sprintf("  %s: %s", name, status)
+				agent := project.PlanAgent(name)
+				if agent != "" {
+					line += fmt.Sprintf(" [%s]", agent)
+				}
+				if status == conductor.StatusFailed {
 					line += fmt.Sprintf(" (%s)", project.PlanError(name))
+					if ev := project.PlanEvidencePath(name); ev != "" {
+						line += fmt.Sprintf("\n    evidence: %s", ev)
+					}
 				}
 				if _, err := fmt.Fprintln(cmd.OutOrStdout(), line); err != nil {
 					return err
@@ -103,12 +111,9 @@ func newConductorRunCommand() *cobra.Command {
 
 			executor := buildConductorExecutor(project, dir)
 			runner := conductor.NewRunner(project, executor)
-			if err := runner.RunAll(); err != nil {
-				return err
-			}
+			runErr := runner.RunAll()
 
-			_, err = fmt.Fprintln(cmd.OutOrStdout(), "All plans completed.")
-			return err
+			return printConductorResult(cmd, project, runErr)
 		},
 	}
 	bindDirFlag(cmd, &dir)
@@ -136,12 +141,9 @@ func newConductorResumeCommand() *cobra.Command {
 
 			executor := buildConductorExecutor(project, dir)
 			runner := conductor.NewRunner(project, executor)
-			if err := runner.RunAll(); err != nil {
-				return err
-			}
+			runErr := runner.RunAll()
 
-			_, err = fmt.Fprintln(cmd.OutOrStdout(), "All plans completed.")
-			return err
+			return printConductorResult(cmd, project, runErr)
 		},
 	}
 	bindDirFlag(cmd, &dir)
@@ -168,6 +170,31 @@ func newConductorDiagnoseCommand() *cobra.Command {
 	}
 	bindDirFlag(cmd, &dir)
 	return cmd
+}
+
+func printConductorResult(cmd *cobra.Command, project *conductor.Project, runErr error) error {
+	diagnosis := conductor.Diagnose(project)
+	w := cmd.OutOrStdout()
+
+	if diagnosis.Done {
+		_, err := fmt.Fprintf(w, "Completed %d/%d plans successfully.\n", diagnosis.Completed, diagnosis.Total)
+		return err
+	}
+
+	if len(diagnosis.Failures) > 0 {
+		fmt.Fprintf(w, "Stopped: %d/%d plans completed, %d failed.\n", diagnosis.Completed, diagnosis.Total, len(diagnosis.Failures))
+		for _, f := range diagnosis.Failures {
+			fmt.Fprintf(w, "  - %s: %s\n", f.Plan, f.Error)
+			if f.EvidencePath != "" {
+				fmt.Fprintf(w, "    evidence: %s\n", f.EvidencePath)
+			}
+		}
+	}
+
+	if runErr != nil {
+		return runErr
+	}
+	return nil
 }
 
 func printConductorDryRun(cmd *cobra.Command, project *conductor.Project) error {
