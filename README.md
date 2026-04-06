@@ -4,7 +4,7 @@ Local-first CLI and TUI entrypoint that unifies Ralph and Ralph Conductor behind
 
 ## Current Surface
 
-Springfield already ships a TUI-first shell plus stable CLI entrypoints for setup, Ralph, Conductor, diagnostics, and version output. The local-first project state model and product surface are in place, while shared execution still uses a placeholder executor until the unified runtime lands.
+Springfield already ships a TUI-first shell plus stable CLI entrypoints for Ralph, Conductor, setup, and diagnostics. The current execution backend is still a placeholder executor while the shared runtime lands, but the local-first project state model and product surface are now in place.
 
 Running bare `springfield` opens a TUI shell. CLI subcommands remain accessible underneath:
 
@@ -86,27 +86,6 @@ Runtime state (generated files, caches) lives in `.springfield/` and should not 
 
 ## Release Workflow
 
-## Architecture
-
-```
-main.go                     # Entrypoint — delegates to cmd.Execute()
-cmd/                        # Cobra command wiring
-  root.go                   # Root command — bare invocation launches TUI
-  tui.go                    # Explicit `springfield tui` entry
-  ralph.go                  # Ralph plan init/status/run commands
-  conductor.go              # Conductor status/run/resume/diagnose CLI
-  doctor.go                 # Doctor diagnostics command
-internal/features/ralph/    # Ralph workspace/selection/run module
-internal/features/conductor/ # Conductor config/state/scheduling/runner module
-internal/features/tui/      # Bubble Tea TUI shell
-  app.go                    # Startup TUI placeholder
-tests/cmd/                  # CLI smoke tests
-tests/ralph/                # Ralph behavior tests
-tests/conductor/            # Conductor behavior tests
-```
-
-## Release Workflow
-
 Tagging `vX.Y.Z` runs [`.github/workflows/release.yml`](.github/workflows/release.yml). The workflow builds archives, writes `checksums.txt`, renders a Homebrew formula, and attaches all of them to the GitHub release.
 
 Maintainer release steps live in [`docs/release.md`](docs/release.md).
@@ -117,7 +96,6 @@ Maintainer release steps live in [`docs/release.md`](docs/release.md).
 go test ./...               # Run all tests
 go run .                    # Launch Springfield
 go run . ralph --help       # Inspect Ralph subcommands
-go run . conductor --help   # Inspect conductor subcommands
 go run . version            # Print the current build version
 ```
 
