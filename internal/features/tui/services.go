@@ -12,6 +12,8 @@ import (
 	"springfield/internal/core/agents/codex"
 	"springfield/internal/core/agents/gemini"
 	"springfield/internal/core/config"
+	coreexec "springfield/internal/core/exec"
+	"springfield/internal/core/runtime"
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/doctor"
 	"springfield/internal/features/ralph"
@@ -191,9 +193,15 @@ func (s runtimeServices) ConductorSummary() ConductorSummary {
 	}
 
 	diagnosis := conductor.Diagnose(project)
-	failures := make([]string, 0, len(diagnosis.Failures))
-	for _, failure := range diagnosis.Failures {
-		failures = append(failures, failure.Plan+": "+failure.Error)
+	failures := make([]ConductorPlanFailure, 0, len(diagnosis.Failures))
+	for _, f := range diagnosis.Failures {
+		failures = append(failures, ConductorPlanFailure{
+			Plan:         f.Plan,
+			Error:        f.Error,
+			Agent:        f.Agent,
+			EvidencePath: f.EvidencePath,
+			Attempts:     f.Attempts,
+		})
 	}
 
 	return ConductorSummary{
@@ -204,6 +212,97 @@ func (s runtimeServices) ConductorSummary() ConductorSummary {
 		Failures:  failures,
 		NextStep:  diagnosis.NextStep,
 	}
+}
+
+func (s runtimeServices) RunRalphNext(planName string, onEvent func(RuntimeEvent)) (RalphRunResult, error) {
+	status := s.SetupStatus()
+	if status.Error != "" {
+		return RalphRunResult{}, errors.New(status.Error)
+	}
+	if !status.ConfigPresent {
+		return RalphRunResult{}, errors.New("run Guided Setup first")
+	}
+
+	loaded, err := config.LoadFrom(status.ProjectRoot)
+	if err != nil {
+		return RalphRunResult{}, err
+	}
+
+	workspace, err := ralph.OpenRoot(status.ProjectRoot)
+	if err != nil {
+		return RalphRunResult{}, err
+	}
+
+	registry := agents.NewRegistry(
+		claude.New(s.lookPath),
+		codex.New(s.lookPath),
+		gemini.New(s.lookPath),
+	)
+	runner := runtime.NewRunner(registry)
+	executor := ralph.NewRuntimeExecutor(runner, agents.ID(loaded.Config.Project.DefaultAgent), status.ProjectRoot)
+	if onEvent != nil {
+		executor.OnEvent = func(e coreexec.Event) {
+			onEvent(RuntimeEvent{Source: string(e.Type), Data: e.Data})
+		}
+	}
+
+	record, err := workspace.RunNext(planName, executor)
+	if err != nil {
+		return RalphRunResult{}, err
+	}
+
+	return RalphRunResult{
+		PlanName: record.PlanName,
+		StoryID:  record.StoryID,
+		Status:   record.Status,
+		Error:    record.Error,
+	}, nil
+}
+
+func (s runtimeServices) RunConductorNext(onEvent func(RuntimeEvent)) (ConductorRunResult, error) {
+	status := s.SetupStatus()
+	if status.Error != "" {
+		return ConductorRunResult{}, errors.New(status.Error)
+	}
+	if !status.ConductorConfigReady {
+		return ConductorRunResult{}, errors.New("conductor config not ready")
+	}
+
+	loaded, err := config.LoadFrom(status.ProjectRoot)
+	if err != nil {
+		return ConductorRunResult{}, err
+	}
+
+	project, err := conductor.LoadProject(status.ProjectRoot)
+	if err != nil {
+		return ConductorRunResult{}, err
+	}
+
+	registry := agents.NewRegistry(
+		claude.New(s.lookPath),
+		codex.New(s.lookPath),
+		gemini.New(s.lookPath),
+	)
+	runner := runtime.NewRunner(registry)
+
+	plansDir := project.Config.PlansDir
+	if !filepath.IsAbs(plansDir) {
+		plansDir = filepath.Join(status.ProjectRoot, plansDir)
+	}
+	executor := conductor.NewRuntimeExecutor(runner, agents.ID(loaded.Config.Project.DefaultAgent), plansDir, status.ProjectRoot)
+	if onEvent != nil {
+		executor.OnEvent = func(e coreexec.Event) {
+			onEvent(RuntimeEvent{Source: string(e.Type), Data: e.Data})
+		}
+	}
+
+	conductorRunner := conductor.NewRunner(project, executor)
+	ran, done, err := conductorRunner.RunNext()
+	if err != nil {
+		return ConductorRunResult{Ran: ran, Done: done, Error: err.Error()}, err
+	}
+
+	return ConductorRunResult{Ran: ran, Done: done}, nil
 }
 
 func (s runtimeServices) DoctorSummary() doctor.Report {
