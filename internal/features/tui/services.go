@@ -12,6 +12,7 @@ import (
 	"springfield/internal/core/agents/codex"
 	"springfield/internal/core/agents/gemini"
 	"springfield/internal/core/config"
+	coreexec "springfield/internal/core/exec"
 	"springfield/internal/core/runtime"
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/doctor"
@@ -207,7 +208,7 @@ func (s runtimeServices) ConductorSummary() ConductorSummary {
 	}
 }
 
-func (s runtimeServices) RunRalphNext(planName string) (RalphRunResult, error) {
+func (s runtimeServices) RunRalphNext(planName string, onEvent func(RuntimeEvent)) (RalphRunResult, error) {
 	status := s.SetupStatus()
 	if status.Error != "" {
 		return RalphRunResult{}, errors.New(status.Error)
@@ -233,6 +234,11 @@ func (s runtimeServices) RunRalphNext(planName string) (RalphRunResult, error) {
 	)
 	runner := runtime.NewRunner(registry)
 	executor := ralph.NewRuntimeExecutor(runner, agents.ID(loaded.Config.Project.DefaultAgent), status.ProjectRoot)
+	if onEvent != nil {
+		executor.OnEvent = func(e coreexec.Event) {
+			onEvent(RuntimeEvent{Source: string(e.Type), Data: e.Data})
+		}
+	}
 
 	record, err := workspace.RunNext(planName, executor)
 	if err != nil {
@@ -247,7 +253,7 @@ func (s runtimeServices) RunRalphNext(planName string) (RalphRunResult, error) {
 	}, nil
 }
 
-func (s runtimeServices) RunConductorNext() (ConductorRunResult, error) {
+func (s runtimeServices) RunConductorNext(onEvent func(RuntimeEvent)) (ConductorRunResult, error) {
 	status := s.SetupStatus()
 	if status.Error != "" {
 		return ConductorRunResult{}, errors.New(status.Error)
@@ -278,6 +284,11 @@ func (s runtimeServices) RunConductorNext() (ConductorRunResult, error) {
 		plansDir = filepath.Join(status.ProjectRoot, plansDir)
 	}
 	executor := conductor.NewRuntimeExecutor(runner, agents.ID(loaded.Config.Project.DefaultAgent), plansDir, status.ProjectRoot)
+	if onEvent != nil {
+		executor.OnEvent = func(e coreexec.Event) {
+			onEvent(RuntimeEvent{Source: string(e.Type), Data: e.Data})
+		}
+	}
 
 	conductorRunner := conductor.NewRunner(project, executor)
 	ran, done, err := conductorRunner.RunNext()

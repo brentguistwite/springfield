@@ -99,14 +99,47 @@ type ConductorSetupResult struct {
 	Path    string
 }
 
+// MonitorState tracks the lifecycle of an active TUI run.
+type MonitorState int
+
+const (
+	MonitorIdle MonitorState = iota
+	MonitorRunning
+	MonitorSucceeded
+	MonitorFailed
+)
+
+// RuntimeEvent is a TUI-safe projection of a single runtime output event.
+type RuntimeEvent struct {
+	Source string // "stdout" or "stderr"
+	Data   string
+}
+
+// RuntimeEventMsg delivers a streaming event to the TUI during execution.
+type RuntimeEventMsg struct {
+	Event RuntimeEvent
+}
+
+// RalphRunCompleteMsg signals that an async Ralph run finished.
+type RalphRunCompleteMsg struct {
+	Result RalphRunResult
+	Err    error
+}
+
+// ConductorRunCompleteMsg signals that an async conductor run finished.
+type ConductorRunCompleteMsg struct {
+	Result ConductorRunResult
+	Err    error
+}
+
 // Services hides TUI data loading and side effects behind a small boundary.
 type Services interface {
 	SetupStatus() SetupStatus
 	InitProject() (config.InitResult, error)
 	SetupConductor() (ConductorSetupResult, error)
 	RalphSummary() RalphSummary
-	RunRalphNext(planName string) (RalphRunResult, error)
+	RunRalphNext(planName string, onEvent func(RuntimeEvent)) (RalphRunResult, error)
 	ConductorSummary() ConductorSummary
-	RunConductorNext() (ConductorRunResult, error)
+	RunConductorNext(onEvent func(RuntimeEvent)) (ConductorRunResult, error)
 	DoctorSummary() doctor.Report
 }

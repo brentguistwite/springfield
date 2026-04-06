@@ -27,9 +27,11 @@ type fakeServices struct {
 	ralphRunErr         error
 	ralphRunCalls       int
 	ralphRunPlan        string
+	ralphRunEvents      []tui.RuntimeEvent
 	conductorRunResult  tui.ConductorRunResult
 	conductorRunErr     error
 	conductorRunCalls   int
+	conductorRunEvents  []tui.RuntimeEvent
 }
 
 func (f *fakeServices) SetupStatus() tui.SetupStatus {
@@ -57,9 +59,14 @@ func (f *fakeServices) RalphSummary() tui.RalphSummary {
 	return f.ralph
 }
 
-func (f *fakeServices) RunRalphNext(planName string) (tui.RalphRunResult, error) {
+func (f *fakeServices) RunRalphNext(planName string, onEvent func(tui.RuntimeEvent)) (tui.RalphRunResult, error) {
 	f.ralphRunCalls++
 	f.ralphRunPlan = planName
+	if onEvent != nil {
+		for _, e := range f.ralphRunEvents {
+			onEvent(e)
+		}
+	}
 	return f.ralphRunResult, f.ralphRunErr
 }
 
@@ -67,8 +74,13 @@ func (f *fakeServices) ConductorSummary() tui.ConductorSummary {
 	return f.conductor
 }
 
-func (f *fakeServices) RunConductorNext() (tui.ConductorRunResult, error) {
+func (f *fakeServices) RunConductorNext(onEvent func(tui.RuntimeEvent)) (tui.ConductorRunResult, error) {
 	f.conductorRunCalls++
+	if onEvent != nil {
+		for _, e := range f.conductorRunEvents {
+			onEvent(e)
+		}
+	}
 	return f.conductorRunResult, f.conductorRunErr
 }
 
@@ -76,6 +88,7 @@ func (f *fakeServices) DoctorSummary() doctor.Report {
 	return f.report
 }
 
+// updateModel processes a message and follows up on any returned command.
 func updateModel(t *testing.T, model tui.Model, msg tea.Msg) tui.Model {
 	t.Helper()
 
@@ -94,6 +107,20 @@ func updateModel(t *testing.T, model tui.Model, msg tea.Msg) tui.Model {
 				t.Fatalf("expected tui.Model after command, got %T", next)
 			}
 		}
+	}
+
+	return updated
+}
+
+// sendMsg processes a message without following up on commands.
+// Use for async flows where the cmd would block (channel-based streaming).
+func sendMsg(t *testing.T, model tui.Model, msg tea.Msg) tui.Model {
+	t.Helper()
+
+	next, _ := model.Update(msg)
+	updated, ok := next.(tui.Model)
+	if !ok {
+		t.Fatalf("expected tui.Model, got %T", next)
 	}
 
 	return updated
@@ -196,13 +223,13 @@ func TestModelRendersConductorSummary(t *testing.T) {
 func TestSetupScreenShowsActionableConductorPrompt(t *testing.T) {
 	services := &fakeServices{
 		setup: tui.SetupStatus{
-			WorkingDir:          "/tmp/demo",
-			ProjectRoot:         "/tmp/demo",
-			ConfigPath:          "/tmp/demo/springfield.toml",
-			RuntimeDir:          "/tmp/demo/.springfield",
-			ConductorConfigPath: "/tmp/demo/.springfield/conductor/config.json",
-			ConfigPresent:       true,
-			RuntimePresent:      true,
+			WorkingDir:           "/tmp/demo",
+			ProjectRoot:          "/tmp/demo",
+			ConfigPath:           "/tmp/demo/springfield.toml",
+			RuntimeDir:           "/tmp/demo/.springfield",
+			ConductorConfigPath:  "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:        true,
+			RuntimePresent:       true,
 			ConductorConfigReady: false,
 		},
 	}
@@ -222,13 +249,13 @@ func TestSetupScreenShowsActionableConductorPrompt(t *testing.T) {
 func TestSetupScreenTriggersConductorSetup(t *testing.T) {
 	services := &fakeServices{
 		setup: tui.SetupStatus{
-			WorkingDir:          "/tmp/demo",
-			ProjectRoot:         "/tmp/demo",
-			ConfigPath:          "/tmp/demo/springfield.toml",
-			RuntimeDir:          "/tmp/demo/.springfield",
-			ConductorConfigPath: "/tmp/demo/.springfield/conductor/config.json",
-			ConfigPresent:       true,
-			RuntimePresent:      true,
+			WorkingDir:           "/tmp/demo",
+			ProjectRoot:          "/tmp/demo",
+			ConfigPath:           "/tmp/demo/springfield.toml",
+			RuntimeDir:           "/tmp/demo/.springfield",
+			ConductorConfigPath:  "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:        true,
+			RuntimePresent:       true,
 			ConductorConfigReady: false,
 		},
 		conductorSetup: tui.ConductorSetupResult{
@@ -258,13 +285,13 @@ func TestSetupScreenTriggersConductorSetup(t *testing.T) {
 func TestSetupScreenShowsConductorSetupFailure(t *testing.T) {
 	services := &fakeServices{
 		setup: tui.SetupStatus{
-			WorkingDir:          "/tmp/demo",
-			ProjectRoot:         "/tmp/demo",
-			ConfigPath:          "/tmp/demo/springfield.toml",
-			RuntimeDir:          "/tmp/demo/.springfield",
-			ConductorConfigPath: "/tmp/demo/.springfield/conductor/config.json",
-			ConfigPresent:       true,
-			RuntimePresent:      true,
+			WorkingDir:           "/tmp/demo",
+			ProjectRoot:          "/tmp/demo",
+			ConfigPath:           "/tmp/demo/springfield.toml",
+			RuntimeDir:           "/tmp/demo/.springfield",
+			ConductorConfigPath:  "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:        true,
+			RuntimePresent:       true,
 			ConductorConfigReady: false,
 		},
 		conductorSetupErr: errors.New("permission denied"),
@@ -283,13 +310,13 @@ func TestSetupScreenShowsConductorSetupFailure(t *testing.T) {
 func TestSetupScreenFullyReadyAfterConductorSetup(t *testing.T) {
 	services := &fakeServices{
 		setup: tui.SetupStatus{
-			WorkingDir:          "/tmp/demo",
-			ProjectRoot:         "/tmp/demo",
-			ConfigPath:          "/tmp/demo/springfield.toml",
-			RuntimeDir:          "/tmp/demo/.springfield",
-			ConductorConfigPath: "/tmp/demo/.springfield/conductor/config.json",
-			ConfigPresent:       true,
-			RuntimePresent:      true,
+			WorkingDir:           "/tmp/demo",
+			ProjectRoot:          "/tmp/demo",
+			ConfigPath:           "/tmp/demo/springfield.toml",
+			RuntimeDir:           "/tmp/demo/.springfield",
+			ConductorConfigPath:  "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:        true,
+			RuntimePresent:       true,
 			ConductorConfigReady: false,
 		},
 		conductorSetup: tui.ConductorSetupResult{
@@ -312,6 +339,8 @@ func TestSetupScreenFullyReadyAfterConductorSetup(t *testing.T) {
 	}
 }
 
+// --- Ralph async run and monitor tests ---
+
 func TestRalphScreenRunsNextStory(t *testing.T) {
 	services := &fakeServices{
 		ralph: tui.RalphSummary{
@@ -320,30 +349,31 @@ func TestRalphScreenRunsNextStory(t *testing.T) {
 				{Name: "refresh", StoryCount: 3, NextStoryID: "US-001", NextStoryTitle: "Setup"},
 			},
 		},
-		ralphRunResult: tui.RalphRunResult{
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Press 'r' — transitions to running state
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	view := model.View()
+	if !strings.Contains(view, "running...") {
+		t.Fatalf("expected running state after r, got:\n%s", view)
+	}
+
+	// Simulate run completion
+	model = sendMsg(t, model, tui.RalphRunCompleteMsg{
+		Result: tui.RalphRunResult{
 			PlanName: "refresh",
 			StoryID:  "US-001",
 			Status:   "passed",
 		},
-	}
+	})
 
-	model := tui.NewModel(services)
-	// Navigate to Ralph screen (Down once, Enter)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
-
-	// Press 'r' to run next story
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-
-	if services.ralphRunCalls != 1 {
-		t.Fatalf("expected 1 ralph run call, got %d", services.ralphRunCalls)
-	}
-	if services.ralphRunPlan != "refresh" {
-		t.Fatalf("expected run plan 'refresh', got %q", services.ralphRunPlan)
-	}
-
-	view := model.View()
-	for _, marker := range []string{"US-001", "passed"} {
+	view = model.View()
+	for _, marker := range []string{"US-001", "passed", "succeeded"} {
 		if !strings.Contains(view, marker) {
 			t.Fatalf("expected Ralph view to contain %q after run, got:\n%s", marker, view)
 		}
@@ -358,19 +388,185 @@ func TestRalphScreenShowsRunFailure(t *testing.T) {
 				{Name: "refresh", StoryCount: 3, NextStoryID: "US-001", NextStoryTitle: "Setup"},
 			},
 		},
-		ralphRunErr: errors.New("agent claude failed: exit code 1"),
 	}
 
 	model := tui.NewModel(services)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	// Press 'r' to start
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	// Complete with error
+	model = sendMsg(t, model, tui.RalphRunCompleteMsg{
+		Err: errors.New("agent claude failed: exit code 1"),
+	})
 
 	view := model.View()
 	if !strings.Contains(view, "agent claude failed") {
 		t.Fatalf("expected failure message in Ralph view, got:\n%s", view)
 	}
+	if !strings.Contains(view, "failed") {
+		t.Fatalf("expected failed monitor state, got:\n%s", view)
+	}
 }
+
+func TestRalphScreenShowsStreamingEvents(t *testing.T) {
+	services := &fakeServices{
+		ralph: tui.RalphSummary{
+			Ready: true,
+			Plans: []tui.RalphPlanSummary{
+				{Name: "refresh", StoryCount: 3, NextStoryID: "US-001", NextStoryTitle: "Setup"},
+			},
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Start run
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	// Stream events
+	model = sendMsg(t, model, tui.RuntimeEventMsg{Event: tui.RuntimeEvent{Source: "stdout", Data: "building package..."}})
+	model = sendMsg(t, model, tui.RuntimeEventMsg{Event: tui.RuntimeEvent{Source: "stderr", Data: "warning: unused var"}})
+
+	view := model.View()
+	for _, marker := range []string{"Events:", "[stdout] building package...", "[stderr] warning: unused var"} {
+		if !strings.Contains(view, marker) {
+			t.Fatalf("expected Ralph view to contain %q during streaming, got:\n%s", marker, view)
+		}
+	}
+
+	// Complete
+	model = sendMsg(t, model, tui.RalphRunCompleteMsg{
+		Result: tui.RalphRunResult{PlanName: "refresh", StoryID: "US-001", Status: "passed"},
+	})
+
+	view = model.View()
+	if !strings.Contains(view, "succeeded") {
+		t.Fatalf("expected succeeded after completion, got:\n%s", view)
+	}
+	// Events should persist after completion
+	if !strings.Contains(view, "[stdout] building package...") {
+		t.Fatalf("expected events to persist after completion, got:\n%s", view)
+	}
+}
+
+func TestRalphScreenMonitorIdleToRunningToSucceeded(t *testing.T) {
+	services := &fakeServices{
+		ralph: tui.RalphSummary{
+			Ready: true,
+			Plans: []tui.RalphPlanSummary{
+				{Name: "plan-a", StoryCount: 1, NextStoryID: "US-001", NextStoryTitle: "First"},
+			},
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Idle: no status line
+	view := model.View()
+	if strings.Contains(view, "Status:") {
+		t.Fatalf("expected no status line when idle, got:\n%s", view)
+	}
+
+	// Running
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	view = model.View()
+	if !strings.Contains(view, "running...") {
+		t.Fatalf("expected running status, got:\n%s", view)
+	}
+
+	// Succeeded
+	model = sendMsg(t, model, tui.RalphRunCompleteMsg{
+		Result: tui.RalphRunResult{PlanName: "plan-a", StoryID: "US-001", Status: "passed"},
+	})
+	view = model.View()
+	if !strings.Contains(view, "succeeded") {
+		t.Fatalf("expected succeeded status, got:\n%s", view)
+	}
+}
+
+func TestRalphScreenMonitorIdleToRunningToFailed(t *testing.T) {
+	services := &fakeServices{
+		ralph: tui.RalphSummary{
+			Ready: true,
+			Plans: []tui.RalphPlanSummary{
+				{Name: "plan-a", StoryCount: 1, NextStoryID: "US-001", NextStoryTitle: "First"},
+			},
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	model = sendMsg(t, model, tui.RalphRunCompleteMsg{
+		Result: tui.RalphRunResult{PlanName: "plan-a", StoryID: "US-001", Status: "failed", Error: "compile error"},
+	})
+
+	view := model.View()
+	if !strings.Contains(view, "Status: failed") {
+		t.Fatalf("expected failed status, got:\n%s", view)
+	}
+}
+
+func TestRalphScreenBlocksEscWhileRunning(t *testing.T) {
+	services := &fakeServices{
+		ralph: tui.RalphSummary{
+			Ready: true,
+			Plans: []tui.RalphPlanSummary{
+				{Name: "plan-a", StoryCount: 1, NextStoryID: "US-001", NextStoryTitle: "First"},
+			},
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Start run
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	// Try Esc while running — should stay on ralph screen
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEsc})
+	view := model.View()
+	if !strings.Contains(view, "Ralph") || !strings.Contains(view, "running...") {
+		t.Fatalf("Esc should be blocked during run, got:\n%s", view)
+	}
+}
+
+func TestRalphScreenBlocksRunWhileRunning(t *testing.T) {
+	services := &fakeServices{
+		ralph: tui.RalphSummary{
+			Ready: true,
+			Plans: []tui.RalphPlanSummary{
+				{Name: "plan-a", StoryCount: 1, NextStoryID: "US-001", NextStoryTitle: "First"},
+			},
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Start first run
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	// Try 'r' again while running — should be ignored
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	view := model.View()
+	if !strings.Contains(view, "running...") {
+		t.Fatalf("second r should be ignored during run, got:\n%s", view)
+	}
+}
+
+// --- Conductor async run and monitor tests ---
 
 func TestConductorScreenRunsNextPhase(t *testing.T) {
 	services := &fakeServices{
@@ -380,26 +576,30 @@ func TestConductorScreenRunsNextPhase(t *testing.T) {
 			Total:     3,
 			NextStep:  "Run: springfield conductor run",
 		},
-		conductorRunResult: tui.ConductorRunResult{
-			Ran:  []string{"02-conductor-runtime"},
-			Done: false,
-		},
 	}
 
 	model := tui.NewModel(services)
-	// Navigate to Conductor screen (Down twice, Enter)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
-	// Press 'r' to run next phase
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-
-	if services.conductorRunCalls != 1 {
-		t.Fatalf("expected 1 conductor run call, got %d", services.conductorRunCalls)
-	}
+	// Press 'r' to start
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 
 	view := model.View()
+	if !strings.Contains(view, "running...") {
+		t.Fatalf("expected running state, got:\n%s", view)
+	}
+
+	// Complete
+	model = sendMsg(t, model, tui.ConductorRunCompleteMsg{
+		Result: tui.ConductorRunResult{
+			Ran:  []string{"02-conductor-runtime"},
+			Done: false,
+		},
+	})
+
+	view = model.View()
 	if !strings.Contains(view, "02-conductor-runtime") {
 		t.Fatalf("expected ran plan in Conductor view, got:\n%s", view)
 	}
@@ -413,18 +613,73 @@ func TestConductorScreenShowsRunFailure(t *testing.T) {
 			Total:     3,
 			NextStep:  "Run: springfield conductor run",
 		},
-		conductorRunErr: errors.New("plan 01-ralph-runtime: compile error"),
 	}
 
 	model := tui.NewModel(services)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	model = sendMsg(t, model, tui.ConductorRunCompleteMsg{
+		Err: errors.New("plan 01-ralph-runtime: compile error"),
+	})
 
 	view := model.View()
 	if !strings.Contains(view, "compile error") {
 		t.Fatalf("expected failure message in Conductor view, got:\n%s", view)
+	}
+}
+
+func TestConductorScreenShowsStreamingEvents(t *testing.T) {
+	services := &fakeServices{
+		conductor: tui.ConductorSummary{
+			Ready:     true,
+			Completed: 0,
+			Total:     3,
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Start run
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	// Stream events
+	model = sendMsg(t, model, tui.RuntimeEventMsg{Event: tui.RuntimeEvent{Source: "stdout", Data: "executing plan 01..."}})
+	model = sendMsg(t, model, tui.RuntimeEventMsg{Event: tui.RuntimeEvent{Source: "stdout", Data: "tests passed"}})
+
+	view := model.View()
+	for _, marker := range []string{"Events:", "[stdout] executing plan 01...", "[stdout] tests passed"} {
+		if !strings.Contains(view, marker) {
+			t.Fatalf("expected Conductor view to contain %q during streaming, got:\n%s", marker, view)
+		}
+	}
+}
+
+func TestConductorScreenBlocksEscWhileRunning(t *testing.T) {
+	services := &fakeServices{
+		conductor: tui.ConductorSummary{
+			Ready:     true,
+			Completed: 0,
+			Total:     3,
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEsc})
+
+	view := model.View()
+	if !strings.Contains(view, "Conductor") || !strings.Contains(view, "running...") {
+		t.Fatalf("Esc should be blocked during run, got:\n%s", view)
 	}
 }
 

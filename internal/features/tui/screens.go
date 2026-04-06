@@ -192,6 +192,9 @@ type ralphScreen struct {
 	services   Services
 	summary    RalphSummary
 	planCursor int
+	monitor    MonitorState
+	events     []RuntimeEvent
+	eventCh    <-chan RuntimeEvent
 	lastRun    *RalphRunResult
 	lastErr    string
 }
@@ -204,35 +207,62 @@ func newRalphScreen(services Services) ralphScreen {
 }
 
 func (r ralphScreen) Update(msg tea.Msg) (ralphScreen, tea.Cmd) {
-	key, ok := msg.(tea.KeyMsg)
-	if !ok {
+	switch typed := msg.(type) {
+	case RuntimeEventMsg:
+		r.events = append(r.events, typed.Event)
+		if r.eventCh != nil {
+			return r, waitForRuntimeEvent(r.eventCh)
+		}
 		return r, nil
-	}
 
-	switch key.Type {
-	case tea.KeyEsc:
-		return r, goBack
-	case tea.KeyUp, tea.KeyShiftTab:
-		if r.planCursor > 0 {
-			r.planCursor--
-		}
-	case tea.KeyDown, tea.KeyTab:
-		if r.planCursor < len(r.summary.Plans)-1 {
-			r.planCursor++
-		}
-	}
-
-	if key.String() == "r" && len(r.summary.Plans) > 0 {
-		plan := r.summary.Plans[r.planCursor]
-		result, err := r.services.RunRalphNext(plan.Name)
-		if err != nil {
+	case RalphRunCompleteMsg:
+		r.eventCh = nil
+		if typed.Err != nil {
+			r.monitor = MonitorFailed
+			r.lastErr = typed.Err.Error()
 			r.lastRun = nil
-			r.lastErr = err.Error()
 		} else {
-			r.lastRun = &result
+			r.lastRun = &typed.Result
 			r.lastErr = ""
+			if typed.Result.Status == "passed" {
+				r.monitor = MonitorSucceeded
+			} else {
+				r.monitor = MonitorFailed
+			}
 		}
 		r.summary = r.services.RalphSummary()
+		return r, nil
+
+	case tea.KeyMsg:
+		switch typed.Type {
+		case tea.KeyEsc:
+			if r.monitor == MonitorRunning {
+				return r, nil
+			}
+			return r, goBack
+		case tea.KeyUp, tea.KeyShiftTab:
+			if r.planCursor > 0 {
+				r.planCursor--
+			}
+		case tea.KeyDown, tea.KeyTab:
+			if r.planCursor < len(r.summary.Plans)-1 {
+				r.planCursor++
+			}
+		}
+
+		if typed.String() == "r" && r.monitor != MonitorRunning && len(r.summary.Plans) > 0 {
+			plan := r.summary.Plans[r.planCursor]
+			ch := make(chan RuntimeEvent, 100)
+			r.monitor = MonitorRunning
+			r.events = nil
+			r.lastRun = nil
+			r.lastErr = ""
+			r.eventCh = ch
+			return r, tea.Batch(
+				waitForRuntimeEvent(ch),
+				runRalphAsync(r.services, plan.Name, ch),
+			)
+		}
 	}
 
 	return r, nil
@@ -271,23 +301,52 @@ func (r ralphScreen) View() string {
 		}
 	}
 
-	if r.lastRun != nil {
-		fmt.Fprintf(&builder, "\nLast run: %s / %s [%s]\n", r.lastRun.PlanName, r.lastRun.StoryID, r.lastRun.Status)
-		if r.lastRun.Error != "" {
-			fmt.Fprintf(&builder, "  error: %s\n", r.lastRun.Error)
-		}
-	}
-	if r.lastErr != "" {
-		fmt.Fprintf(&builder, "\nRun failed: %s\n", r.lastErr)
+	switch r.monitor {
+	case MonitorRunning:
+		builder.WriteString("\nStatus: running...\n")
+	case MonitorSucceeded:
+		builder.WriteString("\nStatus: succeeded\n")
+	case MonitorFailed:
+		builder.WriteString("\nStatus: failed\n")
 	}
 
-	builder.WriteString("\nr run next story, Esc back\n")
+	if len(r.events) > 0 {
+		builder.WriteString("\nEvents:\n")
+		start := 0
+		if len(r.events) > 10 {
+			start = len(r.events) - 10
+		}
+		for _, event := range r.events[start:] {
+			fmt.Fprintf(&builder, "  [%s] %s\n", event.Source, event.Data)
+		}
+	}
+
+	if r.monitor != MonitorRunning {
+		if r.lastRun != nil {
+			fmt.Fprintf(&builder, "\nLast run: %s / %s [%s]\n", r.lastRun.PlanName, r.lastRun.StoryID, r.lastRun.Status)
+			if r.lastRun.Error != "" {
+				fmt.Fprintf(&builder, "  error: %s\n", r.lastRun.Error)
+			}
+		}
+		if r.lastErr != "" {
+			fmt.Fprintf(&builder, "\nRun failed: %s\n", r.lastErr)
+		}
+	}
+
+	if r.monitor == MonitorRunning {
+		builder.WriteString("\nrunning... Esc blocked\n")
+	} else {
+		builder.WriteString("\nr run next story, Esc back\n")
+	}
 	return builder.String()
 }
 
 type conductorScreen struct {
 	services Services
 	summary  ConductorSummary
+	monitor  MonitorState
+	events   []RuntimeEvent
+	eventCh  <-chan RuntimeEvent
 	lastRun  *ConductorRunResult
 	lastErr  string
 }
@@ -300,26 +359,53 @@ func newConductorScreen(services Services) conductorScreen {
 }
 
 func (c conductorScreen) Update(msg tea.Msg) (conductorScreen, tea.Cmd) {
-	key, ok := msg.(tea.KeyMsg)
-	if !ok {
+	switch typed := msg.(type) {
+	case RuntimeEventMsg:
+		c.events = append(c.events, typed.Event)
+		if c.eventCh != nil {
+			return c, waitForRuntimeEvent(c.eventCh)
+		}
 		return c, nil
-	}
 
-	switch key.Type {
-	case tea.KeyEsc:
-		return c, goBack
-	}
-
-	if key.String() == "r" && !c.summary.Done {
-		result, err := c.services.RunConductorNext()
-		if err != nil {
+	case ConductorRunCompleteMsg:
+		c.eventCh = nil
+		if typed.Err != nil {
+			c.monitor = MonitorFailed
+			c.lastErr = typed.Err.Error()
 			c.lastRun = nil
-			c.lastErr = err.Error()
 		} else {
-			c.lastRun = &result
+			c.lastRun = &typed.Result
 			c.lastErr = ""
+			if typed.Result.Error != "" {
+				c.monitor = MonitorFailed
+			} else {
+				c.monitor = MonitorSucceeded
+			}
 		}
 		c.summary = c.services.ConductorSummary()
+		return c, nil
+
+	case tea.KeyMsg:
+		switch typed.Type {
+		case tea.KeyEsc:
+			if c.monitor == MonitorRunning {
+				return c, nil
+			}
+			return c, goBack
+		}
+
+		if typed.String() == "r" && c.monitor != MonitorRunning && !c.summary.Done {
+			ch := make(chan RuntimeEvent, 100)
+			c.monitor = MonitorRunning
+			c.events = nil
+			c.lastRun = nil
+			c.lastErr = ""
+			c.eventCh = ch
+			return c, tea.Batch(
+				waitForRuntimeEvent(ch),
+				runConductorAsync(c.services, ch),
+			)
+		}
 	}
 
 	return c, nil
@@ -338,6 +424,8 @@ func (c conductorScreen) View() string {
 	fmt.Fprintf(&builder, "Progress: %d/%d plans completed\n", c.summary.Completed, c.summary.Total)
 	if c.summary.Done {
 		builder.WriteString("Status: done\n")
+	} else if c.monitor == MonitorRunning {
+		builder.WriteString("Status: running...\n")
 	} else {
 		builder.WriteString("Status: in progress\n")
 	}
@@ -353,17 +441,34 @@ func (c conductorScreen) View() string {
 		fmt.Fprintf(&builder, "\nNext step: %s\n", c.summary.NextStep)
 	}
 
-	if c.lastRun != nil {
-		fmt.Fprintf(&builder, "\nLast run: %s\n", strings.Join(c.lastRun.Ran, ", "))
-		if c.lastRun.Done {
-			builder.WriteString("  all plans completed\n")
+	if len(c.events) > 0 {
+		builder.WriteString("\nEvents:\n")
+		start := 0
+		if len(c.events) > 10 {
+			start = len(c.events) - 10
+		}
+		for _, event := range c.events[start:] {
+			fmt.Fprintf(&builder, "  [%s] %s\n", event.Source, event.Data)
 		}
 	}
-	if c.lastErr != "" {
-		fmt.Fprintf(&builder, "\nRun failed: %s\n", c.lastErr)
+
+	if c.monitor != MonitorRunning {
+		if c.lastRun != nil {
+			fmt.Fprintf(&builder, "\nLast run: %s\n", strings.Join(c.lastRun.Ran, ", "))
+			if c.lastRun.Done {
+				builder.WriteString("  all plans completed\n")
+			}
+		}
+		if c.lastErr != "" {
+			fmt.Fprintf(&builder, "\nRun failed: %s\n", c.lastErr)
+		}
 	}
 
-	builder.WriteString("\nr run next phase, Esc back\n")
+	if c.monitor == MonitorRunning {
+		builder.WriteString("\nrunning... Esc blocked\n")
+	} else {
+		builder.WriteString("\nr run next phase, Esc back\n")
+	}
 	return builder.String()
 }
 
@@ -415,6 +520,36 @@ func readyLabel(ready bool, path string) string {
 		return "ready at " + path
 	}
 	return "missing at " + path
+}
+
+func waitForRuntimeEvent(ch <-chan RuntimeEvent) tea.Cmd {
+	return func() tea.Msg {
+		event, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return RuntimeEventMsg{Event: event}
+	}
+}
+
+func runRalphAsync(svc Services, planName string, ch chan<- RuntimeEvent) tea.Cmd {
+	return func() tea.Msg {
+		result, err := svc.RunRalphNext(planName, func(e RuntimeEvent) {
+			ch <- e
+		})
+		close(ch)
+		return RalphRunCompleteMsg{Result: result, Err: err}
+	}
+}
+
+func runConductorAsync(svc Services, ch chan<- RuntimeEvent) tea.Cmd {
+	return func() tea.Msg {
+		result, err := svc.RunConductorNext(func(e RuntimeEvent) {
+			ch <- e
+		})
+		close(ch)
+		return ConductorRunCompleteMsg{Result: result, Err: err}
+	}
 }
 
 func doctorStatusLabel(status doctor.CheckStatus) string {

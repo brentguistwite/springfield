@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"springfield/internal/core/agents"
+	"springfield/internal/core/exec"
 	"springfield/internal/core/runtime"
 )
 
@@ -16,6 +17,7 @@ type RuntimeExecutor struct {
 	agent    agents.ID
 	plansDir string
 	workDir  string
+	OnEvent  exec.EventHandler
 }
 
 // NewRuntimeExecutor creates a PlanExecutor backed by the shared runtime.
@@ -41,6 +43,7 @@ func (e *RuntimeExecutor) Execute(plan string) (ExecuteResult, error) {
 		AgentID: e.agent,
 		Prompt:  string(content),
 		WorkDir: e.workDir,
+		OnEvent: e.OnEvent,
 	})
 
 	out := ExecuteResult{

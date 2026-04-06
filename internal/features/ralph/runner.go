@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"springfield/internal/core/agents"
+	"springfield/internal/core/exec"
 	"springfield/internal/core/runtime"
 )
 
@@ -13,6 +14,7 @@ type RuntimeExecutor struct {
 	runner  runtime.Runner
 	agent   agents.ID
 	workDir string
+	OnEvent exec.EventHandler
 }
 
 // NewRuntimeExecutor creates a StoryExecutor backed by the shared runtime.
@@ -30,6 +32,7 @@ func (e RuntimeExecutor) Execute(story Story) RunResult {
 		AgentID: e.agent,
 		Prompt:  story.Description,
 		WorkDir: e.workDir,
+		OnEvent: e.OnEvent,
 	})
 
 	out := RunResult{
