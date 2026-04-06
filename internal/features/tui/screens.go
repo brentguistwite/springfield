@@ -85,9 +85,11 @@ type setupScreen struct {
 }
 
 type setupResult struct {
-	configCreated  bool
-	runtimeCreated bool
-	err            string
+	configCreated          bool
+	runtimeCreated         bool
+	conductorConfigCreated bool
+	conductorConfigReused  bool
+	err                    string
 }
 
 func newSetupScreen(services Services) setupScreen {
@@ -109,6 +111,18 @@ func (s setupScreen) Update(msg tea.Msg) (setupScreen, tea.Cmd) {
 				s.lastResult = &setupResult{
 					configCreated:  result.ConfigCreated,
 					runtimeCreated: result.RuntimeDirCreated,
+				}
+				if err != nil {
+					s.lastResult.err = err.Error()
+				}
+				s.status = s.services.SetupStatus()
+				return s, nil
+			}
+			if !s.status.ConductorConfigReady {
+				result, err := s.services.SetupConductor()
+				s.lastResult = &setupResult{
+					conductorConfigCreated: result.Created,
+					conductorConfigReused:  result.Reused,
 				}
 				if err != nil {
 					s.lastResult.err = err.Error()
@@ -150,7 +164,11 @@ func (s setupScreen) View() string {
 		builder.WriteString("\nLast action:\n")
 		switch {
 		case s.lastResult.err != "":
-			fmt.Fprintf(&builder, "  init failed: %s\n", s.lastResult.err)
+			fmt.Fprintf(&builder, "  failed: %s\n", s.lastResult.err)
+		case s.lastResult.conductorConfigCreated:
+			builder.WriteString("  conductor config created\n")
+		case s.lastResult.conductorConfigReused:
+			builder.WriteString("  conductor config already exists, reused\n")
 		default:
 			fmt.Fprintf(&builder, "  springfield.toml created: %t\n", s.lastResult.configCreated)
 			fmt.Fprintf(&builder, "  .springfield created: %t\n", s.lastResult.runtimeCreated)
@@ -161,7 +179,7 @@ func (s setupScreen) View() string {
 	if s.status.NeedsInit() {
 		builder.WriteString("Enter creates springfield.toml and .springfield in the project root.\n")
 	} else if !s.status.ConductorConfigReady {
-		builder.WriteString("Core setup is ready. Next add .springfield/conductor/config.json when you are ready for conductor runs.\n")
+		builder.WriteString("Enter generates conductor config so you can run plans without editing JSON.\n")
 	} else {
 		builder.WriteString("Core setup is ready. Ralph and Conductor surfaces can use the local project state.\n")
 	}

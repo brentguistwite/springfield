@@ -1,6 +1,7 @@
 package tui_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -12,13 +13,16 @@ import (
 )
 
 type fakeServices struct {
-	setup      tui.SetupStatus
-	initResult config.InitResult
-	initErr    error
-	ralph      tui.RalphSummary
-	conductor  tui.ConductorSummary
-	report     doctor.Report
-	initCalls  int
+	setup              tui.SetupStatus
+	initResult         config.InitResult
+	initErr            error
+	conductorSetup     tui.ConductorSetupResult
+	conductorSetupErr  error
+	conductorSetupCalls int
+	ralph              tui.RalphSummary
+	conductor          tui.ConductorSummary
+	report             doctor.Report
+	initCalls          int
 }
 
 func (f *fakeServices) SetupStatus() tui.SetupStatus {
@@ -32,6 +36,14 @@ func (f *fakeServices) InitProject() (config.InitResult, error) {
 		f.setup.RuntimePresent = true
 	}
 	return f.initResult, f.initErr
+}
+
+func (f *fakeServices) SetupConductor() (tui.ConductorSetupResult, error) {
+	f.conductorSetupCalls++
+	if f.conductorSetupErr == nil {
+		f.setup.ConductorConfigReady = true
+	}
+	return f.conductorSetup, f.conductorSetupErr
 }
 
 func (f *fakeServices) RalphSummary() tui.RalphSummary {
@@ -109,7 +121,7 @@ func TestModelSetupFlowCreatesCoreState(t *testing.T) {
 	if services.initCalls != 1 {
 		t.Fatalf("expected one init call, got %d", services.initCalls)
 	}
-	for _, marker := range []string{"springfield.toml created: true", ".springfield created: true", "Core setup is ready"} {
+	for _, marker := range []string{"springfield.toml created: true", ".springfield created: true", "Enter generates conductor config"} {
 		if !strings.Contains(view, marker) {
 			t.Fatalf("expected setup view to contain %q, got:\n%s", marker, view)
 		}
@@ -160,6 +172,125 @@ func TestModelRendersConductorSummary(t *testing.T) {
 		if !strings.Contains(view, marker) {
 			t.Fatalf("expected Conductor view to contain %q, got:\n%s", marker, view)
 		}
+	}
+}
+
+func TestSetupScreenShowsActionableConductorPrompt(t *testing.T) {
+	services := &fakeServices{
+		setup: tui.SetupStatus{
+			WorkingDir:          "/tmp/demo",
+			ProjectRoot:         "/tmp/demo",
+			ConfigPath:          "/tmp/demo/springfield.toml",
+			RuntimeDir:          "/tmp/demo/.springfield",
+			ConductorConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:       true,
+			RuntimePresent:      true,
+			ConductorConfigReady: false,
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := model.View()
+	if strings.Contains(view, "hand") || strings.Contains(view, "manually") || strings.Contains(view, "Next add") {
+		t.Fatalf("setup view should not suggest manual config editing, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Enter generates conductor config") {
+		t.Fatalf("expected actionable conductor prompt, got:\n%s", view)
+	}
+}
+
+func TestSetupScreenTriggersConductorSetup(t *testing.T) {
+	services := &fakeServices{
+		setup: tui.SetupStatus{
+			WorkingDir:          "/tmp/demo",
+			ProjectRoot:         "/tmp/demo",
+			ConfigPath:          "/tmp/demo/springfield.toml",
+			RuntimeDir:          "/tmp/demo/.springfield",
+			ConductorConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:       true,
+			RuntimePresent:      true,
+			ConductorConfigReady: false,
+		},
+		conductorSetup: tui.ConductorSetupResult{
+			Created: true,
+			Path:    "/tmp/demo/.springfield/conductor/config.json",
+		},
+	}
+
+	model := tui.NewModel(services)
+	// Navigate to setup screen
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	// Press Enter to trigger conductor setup
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if services.conductorSetupCalls != 1 {
+		t.Fatalf("expected 1 conductor setup call, got %d", services.conductorSetupCalls)
+	}
+
+	view := model.View()
+	for _, marker := range []string{"conductor config created", "Core setup is ready"} {
+		if !strings.Contains(view, marker) {
+			t.Fatalf("expected setup view to contain %q, got:\n%s", marker, view)
+		}
+	}
+}
+
+func TestSetupScreenShowsConductorSetupFailure(t *testing.T) {
+	services := &fakeServices{
+		setup: tui.SetupStatus{
+			WorkingDir:          "/tmp/demo",
+			ProjectRoot:         "/tmp/demo",
+			ConfigPath:          "/tmp/demo/springfield.toml",
+			RuntimeDir:          "/tmp/demo/.springfield",
+			ConductorConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:       true,
+			RuntimePresent:      true,
+			ConductorConfigReady: false,
+		},
+		conductorSetupErr: errors.New("permission denied"),
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := model.View()
+	if !strings.Contains(view, "permission denied") {
+		t.Fatalf("expected failure message in view, got:\n%s", view)
+	}
+}
+
+func TestSetupScreenFullyReadyAfterConductorSetup(t *testing.T) {
+	services := &fakeServices{
+		setup: tui.SetupStatus{
+			WorkingDir:          "/tmp/demo",
+			ProjectRoot:         "/tmp/demo",
+			ConfigPath:          "/tmp/demo/springfield.toml",
+			RuntimeDir:          "/tmp/demo/.springfield",
+			ConductorConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:       true,
+			RuntimePresent:      true,
+			ConductorConfigReady: false,
+		},
+		conductorSetup: tui.ConductorSetupResult{
+			Created: true,
+			Path:    "/tmp/demo/.springfield/conductor/config.json",
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := model.View()
+	if !strings.Contains(view, "Ralph and Conductor surfaces can use the local project state") {
+		t.Fatalf("expected fully ready message, got:\n%s", view)
+	}
+	// Conductor config should show ready
+	if !strings.Contains(view, "ready at") {
+		t.Fatalf("expected conductor config ready indicator, got:\n%s", view)
 	}
 }
 

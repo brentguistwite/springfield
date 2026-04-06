@@ -77,10 +77,18 @@ type ConductorSummary struct {
 	NextStep  string
 }
 
+// ConductorSetupResult describes what the TUI conductor setup action produced.
+type ConductorSetupResult struct {
+	Created bool
+	Reused  bool
+	Path    string
+}
+
 // Services hides TUI data loading and side effects behind a small boundary.
 type Services interface {
 	SetupStatus() SetupStatus
 	InitProject() (config.InitResult, error)
+	SetupConductor() (ConductorSetupResult, error)
 	RalphSummary() RalphSummary
 	ConductorSummary() ConductorSummary
 	DoctorSummary() doctor.Report
