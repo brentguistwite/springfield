@@ -4,9 +4,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 
 	"github.com/spf13/cobra"
 
+	"springfield/internal/core/agents"
+	"springfield/internal/core/agents/claude"
+	"springfield/internal/core/agents/codex"
+	"springfield/internal/core/config"
+	"springfield/internal/core/runtime"
 	"springfield/internal/features/ralph"
 )
 
@@ -124,12 +130,6 @@ func newRalphStatusCommand() *cobra.Command {
 	return cmd
 }
 
-type noopStoryExecutor struct{}
-
-func (noopStoryExecutor) Execute(ralph.Story) error {
-	return nil
-}
-
 func newRalphRunCommand() *cobra.Command {
 	var name string
 
@@ -141,12 +141,28 @@ func newRalphRunCommand() *cobra.Command {
 				return fmt.Errorf("--name is required")
 			}
 
+			rootDir := ralphRootDir(cmd)
+
+			cfg, err := config.LoadFrom(rootDir)
+			if err != nil {
+				return err
+			}
+
+			registry := agents.NewRegistry(
+				claude.New(exec.LookPath),
+				codex.New(exec.LookPath),
+			)
+			runner := runtime.NewRunner(registry)
+			agentID := agents.ID(cfg.Config.Project.DefaultAgent)
+
+			executor := ralph.NewRuntimeExecutor(runner, agentID, rootDir)
+
 			workspace, err := ralphWorkspace(cmd)
 			if err != nil {
 				return err
 			}
 
-			record, err := workspace.RunNext(name, noopStoryExecutor{})
+			record, err := workspace.RunNext(name, executor)
 			if err != nil {
 				return err
 			}
