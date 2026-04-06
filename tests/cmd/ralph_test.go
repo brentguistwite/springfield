@@ -36,6 +36,49 @@ func writeSpringfieldConfig(t *testing.T, dir string, agent string) {
 	}
 }
 
+func TestRalphInitAcceptsPRDFormat(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	writeSpringfieldConfig(t, dir, "claude")
+
+	// Write a PRD-format spec with "userStories", "passes", and "deps".
+	prdJSON := `{
+		"project": "prd-test",
+		"branchName": "prd/test",
+		"description": "PRD-format plan",
+		"userStories": [
+			{"id": "US-001", "title": "First", "passes": false, "deps": []},
+			{"id": "US-002", "title": "Second", "passes": true, "deps": ["US-001"]}
+		]
+	}`
+	specPath := filepath.Join(dir, "prd-spec.json")
+	if err := os.WriteFile(specPath, []byte(prdJSON), 0o644); err != nil {
+		t.Fatalf("write PRD spec: %v", err)
+	}
+
+	output, err := runBinaryIn(t, bin, dir, "ralph", "init", "--name", "prd", "--spec", specPath)
+	if err != nil {
+		t.Fatalf("ralph init with PRD format failed: %v\n%s", err, output)
+	}
+
+	if !strings.Contains(output, "with 2 stories") {
+		t.Fatalf("expected 2 stories from PRD userStories, got:\n%s", output)
+	}
+
+	output, err = runBinaryIn(t, bin, dir, "ralph", "status", "--name", "prd")
+	if err != nil {
+		t.Fatalf("ralph status failed: %v\n%s", err, output)
+	}
+
+	if !strings.Contains(output, "US-001  pending") {
+		t.Fatalf("expected US-001 pending (passes:false), got:\n%s", output)
+	}
+	if !strings.Contains(output, "US-002  passed") {
+		t.Fatalf("expected US-002 passed (passes:true), got:\n%s", output)
+	}
+}
+
 func TestRalphInitStatusAndRun(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
