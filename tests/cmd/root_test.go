@@ -39,8 +39,16 @@ func runSpringfield(t *testing.T, args ...string) (string, error) {
 func buildBinary(t *testing.T) string {
 	t.Helper()
 
+	return buildBinaryWithFlags(t)
+}
+
+func buildBinaryWithFlags(t *testing.T, extraArgs ...string) string {
+	t.Helper()
+
 	bin := filepath.Join(t.TempDir(), "springfield")
-	cmd := exec.Command("go", "build", "-o", bin, ".")
+	args := append([]string{"build"}, extraArgs...)
+	args = append(args, "-o", bin, ".")
+	cmd := exec.Command("go", args...)
 	cmd.Dir = repoRoot(t)
 
 	out, err := cmd.CombinedOutput()
@@ -146,9 +154,11 @@ func TestSpringfieldSubcommandsAreReachable(t *testing.T) {
 		name   string
 		marker string
 	}{
+		{name: "init", marker: "Initialize a new Springfield project in the current directory."},
 		{name: "ralph", marker: "Manage Ralph plans, story selection, and local run history."},
 		{name: "conductor", marker: "Orchestrate plan execution, check status, resume from failures, and diagnose issues."},
 		{name: "doctor", marker: "Doctor checks that supported agent CLIs are installed and reachable, providing install guidance for anything missing."},
+		{name: "version", marker: "Print the Springfield version"},
 	} {
 		output, err := runSpringfield(t, subcommand.name, "--help")
 		if err != nil {
@@ -158,5 +168,31 @@ func TestSpringfieldSubcommandsAreReachable(t *testing.T) {
 		if !strings.Contains(output, subcommand.marker) {
 			t.Fatalf("expected %s help output to contain %q, got:\n%s", subcommand.name, subcommand.marker, output)
 		}
+	}
+}
+
+func TestVersionDefaultsToDev(t *testing.T) {
+	bin := buildBinary(t)
+
+	output, err := runBinaryIn(t, bin, t.TempDir(), "version")
+	if err != nil {
+		t.Fatalf("run springfield version: %v\noutput:\n%s", err, output)
+	}
+
+	if strings.TrimSpace(output) != "springfield dev" {
+		t.Fatalf("expected default dev version, got:\n%s", output)
+	}
+}
+
+func TestVersionUsesBuildTimeOverride(t *testing.T) {
+	bin := buildBinaryWithFlags(t, "-ldflags", "-X springfield/cmd.Version=v1.2.3")
+
+	output, err := runBinaryIn(t, bin, t.TempDir(), "version")
+	if err != nil {
+		t.Fatalf("run springfield version with ldflags: %v\noutput:\n%s", err, output)
+	}
+
+	if strings.TrimSpace(output) != "springfield v1.2.3" {
+		t.Fatalf("expected ldflags version override, got:\n%s", output)
 	}
 }

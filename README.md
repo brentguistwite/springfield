@@ -2,32 +2,61 @@
 
 Local-first CLI and TUI entrypoint that unifies Ralph and Ralph Conductor behind one binary.
 
-## Status
+## Current Surface
 
-**Bootstrap phase.** The CLI/TUI shell is in place. `springfield ralph` now persists plan state and run history locally, and conductor now has a real config/state model plus status/run/resume/diagnose CLI surface. Shared execution remains a placeholder executor while the unified runtime lands.
+Springfield already ships a TUI-first shell plus stable CLI entrypoints for setup, Ralph, Conductor, diagnostics, and version output. The local-first project state model and product surface are in place, while shared execution still uses a placeholder executor until the unified runtime lands.
 
 Running bare `springfield` opens a TUI shell. CLI subcommands remain accessible underneath:
 
-```
-springfield              # TUI-first interactive shell
-springfield ralph        # Ralph plan init/status/run workflows
-springfield conductor    # Conductor workflow surface
-springfield doctor       # Local setup diagnostics
+```bash
+springfield            # TUI-first interactive shell
+springfield init       # Scaffold springfield.toml and .springfield/
+springfield ralph      # Ralph plan init/status/run workflows
+springfield conductor  # Conductor workflow surface
+springfield doctor     # Local setup diagnostics
+springfield version    # Print build version
 ```
 
 ## Install
 
-Requires Go 1.26+.
+### Build From Source
+
+Requires Go 1.26.1+.
 
 ```bash
 go install .
+springfield version
 springfield
 ```
 
-Or run directly:
+Or run directly from a checkout:
 
 ```bash
 go run .
+```
+
+### Tagged Release Binary
+
+Tagged releases publish `tar.gz` archives for:
+
+- macOS `arm64`
+- macOS `amd64`
+- Linux `arm64`
+- Linux `amd64`
+
+Install a downloaded archive by extracting the binary and moving it onto your `PATH`:
+
+```bash
+tar -xzf springfield_<version>_<os>_<arch>.tar.gz
+install -m 0755 springfield /usr/local/bin/springfield
+```
+
+### Homebrew
+
+Each tagged release also publishes a rendered Homebrew formula asset:
+
+```bash
+brew install --formula https://github.com/<owner>/<repo>/releases/download/vX.Y.Z/springfield.rb
 ```
 
 ## Configuration
@@ -55,6 +84,8 @@ Current minimal conductor config shape:
 
 Runtime state (generated files, caches) lives in `.springfield/` and should not be committed.
 
+## Release Workflow
+
 ## Architecture
 
 ```
@@ -74,6 +105,12 @@ tests/ralph/                # Ralph behavior tests
 tests/conductor/            # Conductor behavior tests
 ```
 
+## Release Workflow
+
+Tagging `vX.Y.Z` runs [`.github/workflows/release.yml`](.github/workflows/release.yml). The workflow builds archives, writes `checksums.txt`, renders a Homebrew formula, and attaches all of them to the GitHub release.
+
+Maintainer release steps live in [`docs/release.md`](docs/release.md).
+
 ## Development
 
 ```bash
@@ -81,6 +118,7 @@ go test ./...               # Run all tests
 go run .                    # Launch Springfield
 go run . ralph --help       # Inspect Ralph subcommands
 go run . conductor --help   # Inspect conductor subcommands
+go run . version            # Print the current build version
 ```
 
 ## License

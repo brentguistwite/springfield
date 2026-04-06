@@ -8,6 +8,9 @@ import (
 	"springfield/internal/features/tui"
 )
 
+// Version is injected at build time for release artifacts.
+var Version = "dev"
+
 // Execute runs the Springfield root command.
 func Execute() error {
 	return NewRootCommand().Execute()
@@ -32,6 +35,7 @@ func NewRootCommand() *cobra.Command {
 		NewRalphCommand(),
 		NewConductorCommand(),
 		NewDoctorCommand(),
+		NewVersionCommand(),
 	)
 
 	return root

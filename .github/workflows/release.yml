@@ -1,0 +1,129 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build release archive
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          archive="springfield_${version}_${GOOS}_${GOARCH}.tar.gz"
+          stage="$(mktemp -d)"
+
+          go build \
+            -trimpath \
+            -ldflags="-s -w -X springfield/cmd.Version=${TAG}" \
+            -o "${stage}/springfield" \
+            .
+
+          mkdir -p dist
+          tar -C "${stage}" -czf "dist/${archive}" springfield
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: springfield-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*.tar.gz
+
+  release:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum ./*.tar.gz > checksums.txt
+
+      - name: Render Homebrew formula
+        env:
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          darwin_amd64_sha="$(sha256sum "dist/springfield_${version}_darwin_amd64.tar.gz" | cut -d' ' -f1)"
+          darwin_arm64_sha="$(sha256sum "dist/springfield_${version}_darwin_arm64.tar.gz" | cut -d' ' -f1)"
+          linux_amd64_sha="$(sha256sum "dist/springfield_${version}_linux_amd64.tar.gz" | cut -d' ' -f1)"
+          linux_arm64_sha="$(sha256sum "dist/springfield_${version}_linux_arm64.tar.gz" | cut -d' ' -f1)"
+
+          cat > Formula/springfield.rb <<FORMULA
+          class Springfield < Formula
+            desc "Local-first CLI and TUI for the unified Ralph product surface"
+            homepage "https://github.com/${REPOSITORY}"
+            version "${version}"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/${REPOSITORY}/releases/download/${TAG}/springfield_${version}_darwin_arm64.tar.gz"
+                sha256 "${darwin_arm64_sha}"
+              else
+                url "https://github.com/${REPOSITORY}/releases/download/${TAG}/springfield_${version}_darwin_amd64.tar.gz"
+                sha256 "${darwin_amd64_sha}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/${REPOSITORY}/releases/download/${TAG}/springfield_${version}_linux_arm64.tar.gz"
+                sha256 "${linux_arm64_sha}"
+              else
+                url "https://github.com/${REPOSITORY}/releases/download/${TAG}/springfield_${version}_linux_amd64.tar.gz"
+                sha256 "${linux_amd64_sha}"
+              end
+            end
+
+            def install
+              bin.install "springfield"
+            end
+
+            test do
+              assert_match "springfield ${TAG}", shell_output("#{bin}/springfield version")
+            end
+          end
+          FORMULA
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/checksums.txt
+            Formula/springfield.rb
