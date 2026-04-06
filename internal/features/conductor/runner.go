@@ -44,14 +44,14 @@ func (r *Runner) RunNext() (ran []string, done bool, err error) {
 	for _, name := range next {
 		ran = append(ran, name)
 		if execErr := r.executor.Execute(name); execErr != nil {
-			r.Project.MarkFailed(name, execErr.Error())
+			r.Project.MarkFailed(name, execErr.Error(), "", "")
 			if runErr == nil {
 				runErr = fmt.Errorf("plan %s: %w", name, execErr)
 			}
 			continue
 		}
 
-		r.Project.MarkCompleted(name)
+		r.Project.MarkCompleted(name, "")
 	}
 
 	done = r.schedule.IsComplete(r.Project.State)

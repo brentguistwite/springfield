@@ -3,6 +3,7 @@ package conductor
 import (
 	"errors"
 	"os"
+	"time"
 
 	"springfield/internal/storage"
 )
@@ -82,6 +83,30 @@ func (p *Project) PlanError(name string) string {
 	return ""
 }
 
+// PlanAgent returns the agent used for name, if any.
+func (p *Project) PlanAgent(name string) string {
+	if plan, ok := p.State.Plans[name]; ok {
+		return plan.Agent
+	}
+	return ""
+}
+
+// PlanEvidencePath returns the evidence path for name, if any.
+func (p *Project) PlanEvidencePath(name string) string {
+	if plan, ok := p.State.Plans[name]; ok {
+		return plan.EvidencePath
+	}
+	return ""
+}
+
+// PlanAttempts returns the attempt count for name.
+func (p *Project) PlanAttempts(name string) int {
+	if plan, ok := p.State.Plans[name]; ok {
+		return plan.Attempts
+	}
+	return 0
+}
+
 func (p *Project) ensurePlan(name string) *PlanState {
 	if plan, ok := p.State.Plans[name]; ok {
 		return plan
@@ -97,20 +122,28 @@ func (p *Project) MarkRunning(name string) {
 	plan := p.ensurePlan(name)
 	plan.Status = StatusRunning
 	plan.Error = ""
+	plan.StartedAt = time.Now()
+	plan.EndedAt = time.Time{}
+	plan.Attempts++
 }
 
-// MarkCompleted records completed status for name.
-func (p *Project) MarkCompleted(name string) {
+// MarkCompleted records completed status, agent, and end time for name.
+func (p *Project) MarkCompleted(name, agent string) {
 	plan := p.ensurePlan(name)
 	plan.Status = StatusCompleted
 	plan.Error = ""
+	plan.Agent = agent
+	plan.EndedAt = time.Now()
 }
 
-// MarkFailed records failed status and reason for name.
-func (p *Project) MarkFailed(name, reason string) {
+// MarkFailed records failed status, reason, agent, evidence path, and end time for name.
+func (p *Project) MarkFailed(name, reason, agent, evidencePath string) {
 	plan := p.ensurePlan(name)
 	plan.Status = StatusFailed
 	plan.Error = reason
+	plan.Agent = agent
+	plan.EvidencePath = evidencePath
+	plan.EndedAt = time.Now()
 }
 
 // ResetState clears execution progress and starts fresh.

@@ -42,8 +42,8 @@ func TestDiagnoseFailureIncludesResumeGuidance(t *testing.T) {
 		t.Fatalf("load project: %v", err)
 	}
 
-	project.MarkCompleted("01-bootstrap")
-	project.MarkFailed("02-config", "exit code 1")
+	project.MarkCompleted("01-bootstrap", "claude")
+	project.MarkFailed("02-config", "exit code 1", "claude", "")
 
 	diagnosis := conductor.Diagnose(project)
 	if len(diagnosis.Failures) != 1 {
@@ -71,7 +71,7 @@ func TestDiagnoseCompleteProject(t *testing.T) {
 	}
 
 	for _, name := range project.AllPlans() {
-		project.MarkCompleted(name)
+		project.MarkCompleted(name, "claude")
 	}
 
 	diagnosis := conductor.Diagnose(project)
