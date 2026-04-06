@@ -144,6 +144,35 @@ func (s runtimeServices) RalphSummary() RalphSummary {
 	return summary
 }
 
+func (s runtimeServices) SetupConductor() (ConductorSetupResult, error) {
+	status := s.SetupStatus()
+	if status.Error != "" {
+		return ConductorSetupResult{}, errors.New(status.Error)
+	}
+	if !status.ConfigPresent || !status.RuntimePresent {
+		return ConductorSetupResult{}, errors.New("run Guided Setup first to initialize the project")
+	}
+
+	loaded, err := config.LoadFrom(status.ProjectRoot)
+	if err != nil {
+		return ConductorSetupResult{}, err
+	}
+
+	opts := conductor.SetupDefaults()
+	opts.Tool = loaded.Config.Project.DefaultAgent
+
+	result, err := conductor.Setup(status.ProjectRoot, opts)
+	if err != nil {
+		return ConductorSetupResult{}, err
+	}
+
+	return ConductorSetupResult{
+		Created: result.Created,
+		Reused:  result.Reused,
+		Path:    result.Path,
+	}, nil
+}
+
 func (s runtimeServices) ConductorSummary() ConductorSummary {
 	status := s.SetupStatus()
 	if status.Error != "" {
@@ -153,7 +182,7 @@ func (s runtimeServices) ConductorSummary() ConductorSummary {
 		return ConductorSummary{Reason: "Run Guided Setup first to create springfield.toml."}
 	}
 	if !status.ConductorConfigReady {
-		return ConductorSummary{Reason: "Missing .springfield/conductor/config.json. Add runtime conductor config to enable this surface."}
+		return ConductorSummary{Reason: "Conductor config not found. Run Guided Setup or `springfield conductor setup` to generate it."}
 	}
 
 	project, err := conductor.LoadProject(status.ProjectRoot)
