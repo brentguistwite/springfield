@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -11,6 +12,7 @@ import (
 	"springfield/internal/core/agents"
 	"springfield/internal/core/agents/claude"
 	"springfield/internal/core/agents/codex"
+	"springfield/internal/core/config"
 	"springfield/internal/core/runtime"
 	"springfield/internal/features/conductor"
 )
@@ -24,6 +26,7 @@ func NewConductorCommand() *cobra.Command {
 	}
 
 	root.AddCommand(
+		newConductorSetupCommand(),
 		newConductorStatusCommand(),
 		newConductorRunCommand(),
 		newConductorResumeCommand(),
@@ -46,6 +49,73 @@ func buildConductorExecutor(project *conductor.Project, dir string) *conductor.R
 	agentID := agents.ID(project.Config.Tool)
 	plansDir := filepath.Join(dir, project.Config.PlansDir)
 	return conductor.NewRuntimeExecutor(runner, agentID, plansDir, dir)
+}
+
+func newConductorSetupCommand() *cobra.Command {
+	var dir string
+	var tool string
+
+	cmd := &cobra.Command{
+		Use:   "setup",
+		Short: "Generate conductor config from guided defaults.",
+		Long:  "Create .springfield/conductor/config.json so the conductor is ready to run without manual JSON editing.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			loaded, err := config.LoadFrom(dir)
+			if err != nil {
+				return err
+			}
+
+			effectiveTool := tool
+			if effectiveTool == "" {
+				effectiveTool = loaded.Config.Project.DefaultAgent
+			}
+
+			opts := conductor.SetupDefaults()
+			opts.Tool = effectiveTool
+
+			result, err := conductor.Setup(loaded.RootDir, opts)
+			if err != nil {
+				return err
+			}
+
+			w := cmd.OutOrStdout()
+			if result.Created {
+				fmt.Fprintf(w, "Created %s\n", result.Path)
+				fmt.Fprintln(w, "")
+				fmt.Fprintf(w, "Next steps:\n")
+				fmt.Fprintf(w, "  1. Add plan files to %s\n", opts.PlansDir)
+				fmt.Fprintf(w, "  2. Run: springfield conductor run\n")
+
+				// Agent prerequisite guidance
+				fmt.Fprintln(w, "")
+				fmt.Fprintln(w, "Agent prerequisites:")
+				printAgentGuidance(w, effectiveTool)
+			} else {
+				fmt.Fprintf(w, "Conductor config already exists at %s, reusing.\n", result.Path)
+			}
+
+			return nil
+		},
+	}
+	bindDirFlag(cmd, &dir)
+	cmd.Flags().StringVar(&tool, "tool", "", "agent tool to use (default: from springfield.toml)")
+	return cmd
+}
+
+func printAgentGuidance(w io.Writer, tool string) {
+	switch tool {
+	case "claude":
+		fmt.Fprintln(w, "  Claude Code CLI must be installed and authenticated.")
+		fmt.Fprintln(w, "  Install: npm install -g @anthropic-ai/claude-code")
+		fmt.Fprintln(w, "  Auth:    claude /login")
+	case "codex":
+		fmt.Fprintln(w, "  Codex CLI must be installed and authenticated.")
+		fmt.Fprintln(w, "  Install: npm install -g @openai/codex")
+		fmt.Fprintln(w, "  Auth:    Set OPENAI_API_KEY in your environment")
+	default:
+		fmt.Fprintf(w, "  Ensure %q CLI is installed and authenticated.\n", tool)
+	}
 }
 
 func newConductorStatusCommand() *cobra.Command {

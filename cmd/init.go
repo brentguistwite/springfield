@@ -37,6 +37,9 @@ func NewInitCommand() *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), ".springfield/ already exists, skipping")
 			}
 
+			fmt.Fprintln(cmd.OutOrStdout(), "")
+			fmt.Fprintln(cmd.OutOrStdout(), "Next: run \"springfield conductor setup\" to configure conductor.")
+
 			return nil
 		},
 	}
