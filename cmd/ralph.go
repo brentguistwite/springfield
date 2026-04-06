@@ -167,8 +167,12 @@ func newRalphRunCommand() *cobra.Command {
 				return err
 			}
 
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Story %s: %s\n", record.StoryID, record.Status)
-			return err
+			w := cmd.OutOrStdout()
+			fmt.Fprintf(w, "Story %s: %s (agent: %s)\n", record.StoryID, record.Status, record.Agent)
+			if record.Status == "failed" && record.Error != "" {
+				fmt.Fprintf(w, "Error: %s\n", record.Error)
+			}
+			return nil
 		},
 	}
 

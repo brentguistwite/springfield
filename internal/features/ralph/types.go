@@ -31,13 +31,22 @@ type RunRecord struct {
 	ID        string    `json:"id"`
 	PlanName  string    `json:"planName"`
 	StoryID   string    `json:"storyId"`
+	Agent     string    `json:"agent,omitempty"`
 	Status    string    `json:"status"`
+	ExitCode  int       `json:"exitCode,omitempty"`
 	Error     string    `json:"error,omitempty"`
 	StartedAt time.Time `json:"startedAt"`
 	EndedAt   time.Time `json:"endedAt"`
 }
 
+// RunResult is the structured outcome from a StoryExecutor.
+type RunResult struct {
+	Agent    string
+	ExitCode int
+	Err      error
+}
+
 // StoryExecutor is the adapter boundary for story execution.
 type StoryExecutor interface {
-	Execute(Story) error
+	Execute(Story) RunResult
 }

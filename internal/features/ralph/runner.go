@@ -24,20 +24,26 @@ func NewRuntimeExecutor(runner runtime.Runner, agent agents.ID, workDir string) 
 	}
 }
 
-// Execute runs a story through the shared runtime and returns an error on failure.
-func (e RuntimeExecutor) Execute(story Story) error {
+// Execute runs a story through the shared runtime and returns a structured result.
+func (e RuntimeExecutor) Execute(story Story) RunResult {
 	result := e.runner.Run(context.Background(), runtime.Request{
 		AgentID: e.agent,
 		Prompt:  story.Description,
 		WorkDir: e.workDir,
 	})
 
-	if result.Status == runtime.StatusFailed {
-		if result.Err != nil {
-			return fmt.Errorf("agent %s failed: %w", e.agent, result.Err)
-		}
-		return fmt.Errorf("agent %s exited with code %d", e.agent, result.ExitCode)
+	out := RunResult{
+		Agent:    string(result.Agent),
+		ExitCode: result.ExitCode,
 	}
 
-	return nil
+	if result.Status == runtime.StatusFailed {
+		if result.Err != nil {
+			out.Err = fmt.Errorf("agent %s failed: %w", e.agent, result.Err)
+		} else {
+			out.Err = fmt.Errorf("agent %s exited with code %d", e.agent, result.ExitCode)
+		}
+	}
+
+	return out
 }

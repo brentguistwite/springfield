@@ -180,11 +180,13 @@ func (w Workspace) RunNext(planName string, executor StoryExecutor) (RunRecord, 
 		StartedAt: startedAt,
 	}
 
-	runErr := executor.Execute(story)
+	result := executor.Execute(story)
 	record.EndedAt = w.now()
-	if runErr != nil {
+	record.Agent = result.Agent
+	record.ExitCode = result.ExitCode
+	if result.Err != nil {
 		record.Status = "failed"
-		record.Error = runErr.Error()
+		record.Error = result.Err.Error()
 	} else {
 		record.Status = "passed"
 		if err := w.setStoryPassed(planName, story.ID, true); err != nil {

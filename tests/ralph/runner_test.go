@@ -47,9 +47,17 @@ func TestRuntimeExecutorPassesStoryToSharedRuntime(t *testing.T) {
 		Description: "implement bootstrap feature",
 	}
 
-	err := executor.Execute(story)
-	if err != nil {
-		t.Fatalf("expected successful execution, got: %v", err)
+	result := executor.Execute(story)
+	if result.Err != nil {
+		t.Fatalf("expected successful execution, got: %v", result.Err)
+	}
+
+	if result.Agent != "claude" {
+		t.Fatalf("expected agent claude, got %q", result.Agent)
+	}
+
+	if result.ExitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", result.ExitCode)
 	}
 }
 
@@ -65,8 +73,16 @@ func TestRuntimeExecutorReturnsErrorOnFailure(t *testing.T) {
 		Description: "implement bootstrap feature",
 	}
 
-	err := executor.Execute(story)
-	if err == nil {
+	result := executor.Execute(story)
+	if result.Err == nil {
 		t.Fatal("expected error from failed runtime execution")
+	}
+
+	if result.Agent != "claude" {
+		t.Fatalf("expected agent claude, got %q", result.Agent)
+	}
+
+	if result.ExitCode != 1 {
+		t.Fatalf("expected exit code 1, got %d", result.ExitCode)
 	}
 }

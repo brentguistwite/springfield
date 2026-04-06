@@ -84,6 +84,14 @@ func TestRalphInitStatusAndRun(t *testing.T) {
 		t.Fatalf("expected truthful failed status from real runner, got:\n%s", output)
 	}
 
+	if !strings.Contains(output, "agent: claude") {
+		t.Fatalf("expected agent name in output, got:\n%s", output)
+	}
+
+	if !strings.Contains(output, "Error:") {
+		t.Fatalf("expected error detail in output, got:\n%s", output)
+	}
+
 	// Story should remain unpassed after a failed run.
 	output, err = runBinaryIn(t, bin, dir, "ralph", "status", "--name", "refresh")
 	if err != nil {
