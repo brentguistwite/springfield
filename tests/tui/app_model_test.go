@@ -13,16 +13,23 @@ import (
 )
 
 type fakeServices struct {
-	setup              tui.SetupStatus
-	initResult         config.InitResult
-	initErr            error
-	conductorSetup     tui.ConductorSetupResult
-	conductorSetupErr  error
+	setup               tui.SetupStatus
+	initResult          config.InitResult
+	initErr             error
+	conductorSetup      tui.ConductorSetupResult
+	conductorSetupErr   error
 	conductorSetupCalls int
-	ralph              tui.RalphSummary
-	conductor          tui.ConductorSummary
-	report             doctor.Report
-	initCalls          int
+	ralph               tui.RalphSummary
+	conductor           tui.ConductorSummary
+	report              doctor.Report
+	initCalls           int
+	ralphRunResult      tui.RalphRunResult
+	ralphRunErr         error
+	ralphRunCalls       int
+	ralphRunPlan        string
+	conductorRunResult  tui.ConductorRunResult
+	conductorRunErr     error
+	conductorRunCalls   int
 }
 
 func (f *fakeServices) SetupStatus() tui.SetupStatus {
@@ -50,8 +57,19 @@ func (f *fakeServices) RalphSummary() tui.RalphSummary {
 	return f.ralph
 }
 
+func (f *fakeServices) RunRalphNext(planName string) (tui.RalphRunResult, error) {
+	f.ralphRunCalls++
+	f.ralphRunPlan = planName
+	return f.ralphRunResult, f.ralphRunErr
+}
+
 func (f *fakeServices) ConductorSummary() tui.ConductorSummary {
 	return f.conductor
+}
+
+func (f *fakeServices) RunConductorNext() (tui.ConductorRunResult, error) {
+	f.conductorRunCalls++
+	return f.conductorRunResult, f.conductorRunErr
 }
 
 func (f *fakeServices) DoctorSummary() doctor.Report {
@@ -291,6 +309,166 @@ func TestSetupScreenFullyReadyAfterConductorSetup(t *testing.T) {
 	// Conductor config should show ready
 	if !strings.Contains(view, "ready at") {
 		t.Fatalf("expected conductor config ready indicator, got:\n%s", view)
+	}
+}
+
+func TestRalphScreenRunsNextStory(t *testing.T) {
+	services := &fakeServices{
+		ralph: tui.RalphSummary{
+			Ready: true,
+			Plans: []tui.RalphPlanSummary{
+				{Name: "refresh", StoryCount: 3, NextStoryID: "US-001", NextStoryTitle: "Setup"},
+			},
+		},
+		ralphRunResult: tui.RalphRunResult{
+			PlanName: "refresh",
+			StoryID:  "US-001",
+			Status:   "passed",
+		},
+	}
+
+	model := tui.NewModel(services)
+	// Navigate to Ralph screen (Down once, Enter)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Press 'r' to run next story
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	if services.ralphRunCalls != 1 {
+		t.Fatalf("expected 1 ralph run call, got %d", services.ralphRunCalls)
+	}
+	if services.ralphRunPlan != "refresh" {
+		t.Fatalf("expected run plan 'refresh', got %q", services.ralphRunPlan)
+	}
+
+	view := model.View()
+	for _, marker := range []string{"US-001", "passed"} {
+		if !strings.Contains(view, marker) {
+			t.Fatalf("expected Ralph view to contain %q after run, got:\n%s", marker, view)
+		}
+	}
+}
+
+func TestRalphScreenShowsRunFailure(t *testing.T) {
+	services := &fakeServices{
+		ralph: tui.RalphSummary{
+			Ready: true,
+			Plans: []tui.RalphPlanSummary{
+				{Name: "refresh", StoryCount: 3, NextStoryID: "US-001", NextStoryTitle: "Setup"},
+			},
+		},
+		ralphRunErr: errors.New("agent claude failed: exit code 1"),
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	view := model.View()
+	if !strings.Contains(view, "agent claude failed") {
+		t.Fatalf("expected failure message in Ralph view, got:\n%s", view)
+	}
+}
+
+func TestConductorScreenRunsNextPhase(t *testing.T) {
+	services := &fakeServices{
+		conductor: tui.ConductorSummary{
+			Ready:     true,
+			Completed: 1,
+			Total:     3,
+			NextStep:  "Run: springfield conductor run",
+		},
+		conductorRunResult: tui.ConductorRunResult{
+			Ran:  []string{"02-conductor-runtime"},
+			Done: false,
+		},
+	}
+
+	model := tui.NewModel(services)
+	// Navigate to Conductor screen (Down twice, Enter)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Press 'r' to run next phase
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	if services.conductorRunCalls != 1 {
+		t.Fatalf("expected 1 conductor run call, got %d", services.conductorRunCalls)
+	}
+
+	view := model.View()
+	if !strings.Contains(view, "02-conductor-runtime") {
+		t.Fatalf("expected ran plan in Conductor view, got:\n%s", view)
+	}
+}
+
+func TestConductorScreenShowsRunFailure(t *testing.T) {
+	services := &fakeServices{
+		conductor: tui.ConductorSummary{
+			Ready:     true,
+			Completed: 0,
+			Total:     3,
+			NextStep:  "Run: springfield conductor run",
+		},
+		conductorRunErr: errors.New("plan 01-ralph-runtime: compile error"),
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	view := model.View()
+	if !strings.Contains(view, "compile error") {
+		t.Fatalf("expected failure message in Conductor view, got:\n%s", view)
+	}
+}
+
+func TestRalphScreenNoCliDeadEnd(t *testing.T) {
+	model := tui.NewModel(&fakeServices{
+		ralph: tui.RalphSummary{
+			Ready: true,
+			Plans: []tui.RalphPlanSummary{
+				{Name: "refresh", StoryCount: 2, NextStoryID: "US-001", NextStoryTitle: "Setup"},
+			},
+		},
+	})
+
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := model.View()
+	if strings.Contains(view, "springfield ralph --help") {
+		t.Fatalf("Ralph screen should not contain CLI dead end, got:\n%s", view)
+	}
+	if !strings.Contains(view, "r run") {
+		t.Fatalf("expected actionable hint 'r run' in Ralph view, got:\n%s", view)
+	}
+}
+
+func TestConductorScreenNoCliDeadEnd(t *testing.T) {
+	model := tui.NewModel(&fakeServices{
+		conductor: tui.ConductorSummary{
+			Ready:     true,
+			Completed: 0,
+			Total:     3,
+		},
+	})
+
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := model.View()
+	if strings.Contains(view, "springfield conductor --help") {
+		t.Fatalf("Conductor screen should not contain CLI dead end, got:\n%s", view)
+	}
+	if !strings.Contains(view, "r run") {
+		t.Fatalf("expected actionable hint 'r run' in Conductor view, got:\n%s", view)
 	}
 }
 

@@ -77,6 +77,21 @@ type ConductorSummary struct {
 	NextStep  string
 }
 
+// RalphRunResult describes the outcome of a TUI-initiated Ralph run.
+type RalphRunResult struct {
+	PlanName string
+	StoryID  string
+	Status   string
+	Error    string
+}
+
+// ConductorRunResult describes the outcome of a TUI-initiated conductor run.
+type ConductorRunResult struct {
+	Ran   []string
+	Done  bool
+	Error string
+}
+
 // ConductorSetupResult describes what the TUI conductor setup action produced.
 type ConductorSetupResult struct {
 	Created bool
@@ -90,6 +105,8 @@ type Services interface {
 	InitProject() (config.InitResult, error)
 	SetupConductor() (ConductorSetupResult, error)
 	RalphSummary() RalphSummary
+	RunRalphNext(planName string) (RalphRunResult, error)
 	ConductorSummary() ConductorSummary
+	RunConductorNext() (ConductorRunResult, error)
 	DoctorSummary() doctor.Report
 }

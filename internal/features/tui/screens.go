@@ -189,16 +189,50 @@ func (s setupScreen) View() string {
 }
 
 type ralphScreen struct {
-	summary RalphSummary
+	services   Services
+	summary    RalphSummary
+	planCursor int
+	lastRun    *RalphRunResult
+	lastErr    string
 }
 
 func newRalphScreen(services Services) ralphScreen {
-	return ralphScreen{summary: services.RalphSummary()}
+	return ralphScreen{
+		services: services,
+		summary:  services.RalphSummary(),
+	}
 }
 
 func (r ralphScreen) Update(msg tea.Msg) (ralphScreen, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok && key.Type == tea.KeyEsc {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return r, nil
+	}
+
+	switch key.Type {
+	case tea.KeyEsc:
 		return r, goBack
+	case tea.KeyUp, tea.KeyShiftTab:
+		if r.planCursor > 0 {
+			r.planCursor--
+		}
+	case tea.KeyDown, tea.KeyTab:
+		if r.planCursor < len(r.summary.Plans)-1 {
+			r.planCursor++
+		}
+	}
+
+	if key.String() == "r" && len(r.summary.Plans) > 0 {
+		plan := r.summary.Plans[r.planCursor]
+		result, err := r.services.RunRalphNext(plan.Name)
+		if err != nil {
+			r.lastRun = nil
+			r.lastErr = err.Error()
+		} else {
+			r.lastRun = &result
+			r.lastErr = ""
+		}
+		r.summary = r.services.RalphSummary()
 	}
 
 	return r, nil
@@ -219,8 +253,12 @@ func (r ralphScreen) View() string {
 		builder.WriteString("Use `springfield ralph init --name <plan> --spec <file>` to seed one.\n")
 	} else {
 		builder.WriteString("Plans:\n")
-		for _, plan := range r.summary.Plans {
-			fmt.Fprintf(&builder, "  - %s (%d stories, next %s: %s)\n", plan.Name, plan.StoryCount, plan.NextStoryID, plan.NextStoryTitle)
+		for index, plan := range r.summary.Plans {
+			cursor := "  "
+			if index == r.planCursor {
+				cursor = "> "
+			}
+			fmt.Fprintf(&builder, "%s%s (%d stories, next %s: %s)\n", cursor, plan.Name, plan.StoryCount, plan.NextStoryID, plan.NextStoryTitle)
 		}
 	}
 
@@ -233,22 +271,55 @@ func (r ralphScreen) View() string {
 		}
 	}
 
-	builder.WriteString("\nUse `springfield ralph --help` for write operations.\n")
-	builder.WriteString("Esc back\n")
+	if r.lastRun != nil {
+		fmt.Fprintf(&builder, "\nLast run: %s / %s [%s]\n", r.lastRun.PlanName, r.lastRun.StoryID, r.lastRun.Status)
+		if r.lastRun.Error != "" {
+			fmt.Fprintf(&builder, "  error: %s\n", r.lastRun.Error)
+		}
+	}
+	if r.lastErr != "" {
+		fmt.Fprintf(&builder, "\nRun failed: %s\n", r.lastErr)
+	}
+
+	builder.WriteString("\nr run next story, Esc back\n")
 	return builder.String()
 }
 
 type conductorScreen struct {
-	summary ConductorSummary
+	services Services
+	summary  ConductorSummary
+	lastRun  *ConductorRunResult
+	lastErr  string
 }
 
 func newConductorScreen(services Services) conductorScreen {
-	return conductorScreen{summary: services.ConductorSummary()}
+	return conductorScreen{
+		services: services,
+		summary:  services.ConductorSummary(),
+	}
 }
 
 func (c conductorScreen) Update(msg tea.Msg) (conductorScreen, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok && key.Type == tea.KeyEsc {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return c, nil
+	}
+
+	switch key.Type {
+	case tea.KeyEsc:
 		return c, goBack
+	}
+
+	if key.String() == "r" && !c.summary.Done {
+		result, err := c.services.RunConductorNext()
+		if err != nil {
+			c.lastRun = nil
+			c.lastErr = err.Error()
+		} else {
+			c.lastRun = &result
+			c.lastErr = ""
+		}
+		c.summary = c.services.ConductorSummary()
 	}
 
 	return c, nil
@@ -282,8 +353,17 @@ func (c conductorScreen) View() string {
 		fmt.Fprintf(&builder, "\nNext step: %s\n", c.summary.NextStep)
 	}
 
-	builder.WriteString("\nUse `springfield conductor --help` for actions.\n")
-	builder.WriteString("Esc back\n")
+	if c.lastRun != nil {
+		fmt.Fprintf(&builder, "\nLast run: %s\n", strings.Join(c.lastRun.Ran, ", "))
+		if c.lastRun.Done {
+			builder.WriteString("  all plans completed\n")
+		}
+	}
+	if c.lastErr != "" {
+		fmt.Fprintf(&builder, "\nRun failed: %s\n", c.lastErr)
+	}
+
+	builder.WriteString("\nr run next phase, Esc back\n")
 	return builder.String()
 }
 
