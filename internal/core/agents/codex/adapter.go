@@ -6,13 +6,14 @@ import (
 	"os/exec"
 
 	"springfield/internal/core/agents"
+	coreexec "springfield/internal/core/exec"
 )
 
 type adapter struct {
 	lookPath agents.LookPathFunc
 }
 
-func New(lookPath agents.LookPathFunc) agents.Adapter {
+func New(lookPath agents.LookPathFunc) agents.Commander {
 	if lookPath == nil {
 		lookPath = exec.LookPath
 	}
@@ -55,4 +56,14 @@ func (a adapter) Detect(context.Context) agents.Detection {
 	}
 
 	return result
+}
+
+func (a adapter) Command(input agents.CommandInput) coreexec.Command {
+	return coreexec.Command{
+		Name: "codex",
+		Args: []string{
+			"-q", input.Prompt,
+		},
+		Dir: input.WorkDir,
+	}
 }
