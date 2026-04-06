@@ -63,6 +63,49 @@ func (w Workspace) LoadPlan(name string) (Plan, error) {
 	return plan, nil
 }
 
+// ListPlans returns all persisted Ralph plans in stable order.
+func (w Workspace) ListPlans() ([]Plan, error) {
+	plansDir, err := w.runtime.Path("ralph", "plans")
+	if err != nil {
+		return nil, err
+	}
+
+	entries, err := os.ReadDir(plansDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+
+		return nil, fmt.Errorf("list Ralph plans: %w", err)
+	}
+
+	plans := make([]Plan, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+
+		var plan Plan
+		if err := w.runtime.ReadJSON(filepath.Join("ralph", "plans", entry.Name()), &plan); err != nil {
+			return nil, fmt.Errorf("load Ralph plan %s: %w", entry.Name(), err)
+		}
+
+		plans = append(plans, plan)
+	}
+
+	slices.SortFunc(plans, func(left, right Plan) int {
+		if left.Name < right.Name {
+			return -1
+		}
+		if left.Name > right.Name {
+			return 1
+		}
+		return 0
+	})
+
+	return plans, nil
+}
+
 // SaveRun persists one Ralph run record.
 func (w Workspace) SaveRun(record RunRecord) error {
 	return w.runtime.WriteJSON(runPath(record.ID), record)

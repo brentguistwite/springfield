@@ -3,42 +3,37 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"golang.org/x/term"
 )
 
-const placeholderView = `Springfield TUI Placeholder
-
-Local-first shell for the unified Ralph and Conductor product surface.
-
-Subcommands stay available underneath the TUI:
-  springfield ralph
-  springfield conductor
-  springfield doctor`
-
-// App owns the temporary Springfield TUI startup surface.
+// App owns the Springfield TUI shell process surface.
 type App struct {
-	stdin  *os.File
-	stdout *os.File
+	stdin    *os.File
+	stdout   *os.File
+	services Services
 }
 
-// NewApp builds the startup TUI with explicit process streams.
+// NewApp builds the Springfield TUI shell with explicit process streams.
 func NewApp(stdin, stdout *os.File) *App {
 	return &App{
-		stdin:  stdin,
-		stdout: stdout,
+		stdin:    stdin,
+		stdout:   stdout,
+		services: newRuntimeServices(os.Getwd, exec.LookPath),
 	}
 }
 
-// Run enters the interactive placeholder when attached to a terminal.
+// Run enters the interactive shell when attached to a terminal.
 func (app *App) Run() error {
+	model := NewModel(app.services)
 	if !app.isInteractive() {
-		return app.renderPlaceholder()
+		return app.render(model.View())
 	}
 
 	program := tea.NewProgram(
-		model{},
+		model,
 		tea.WithInput(app.stdin),
 		tea.WithOutput(app.stdout),
 	)
@@ -55,33 +50,11 @@ func (app *App) isInteractive() bool {
 	return term.IsTerminal(int(app.stdin.Fd())) && term.IsTerminal(int(app.stdout.Fd()))
 }
 
-func (app *App) renderPlaceholder() error {
+func (app *App) render(view string) error {
 	if app.stdout == nil {
 		return nil
 	}
 
-	_, err := fmt.Fprintln(app.stdout, placeholderView)
+	_, err := fmt.Fprintln(app.stdout, view)
 	return err
-}
-
-type model struct{}
-
-func (model) Init() tea.Cmd {
-	return nil
-}
-
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c", "enter", "q":
-			return m, tea.Quit
-		}
-	}
-
-	return m, nil
-}
-
-func (model) View() string {
-	return placeholderView + "\n\nPress enter, q, or ctrl+c to exit.\n"
 }

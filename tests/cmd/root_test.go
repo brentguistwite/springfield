@@ -122,14 +122,18 @@ func TestSpringfieldHelp(t *testing.T) {
 	}
 }
 
-func TestSpringfieldWithoutArgsShowsPlaceholder(t *testing.T) {
+func TestSpringfieldWithoutArgsShowsShellHome(t *testing.T) {
 	output, err := runSpringfield(t)
 	if err != nil {
 		t.Fatalf("run springfield: %v\noutput:\n%s", err, output)
 	}
 
-	if !strings.Contains(output, "Springfield TUI Placeholder") {
-		t.Fatalf("expected placeholder output, got:\n%s", output)
+	if !strings.Contains(output, "Local-first shell for Ralph and Conductor.") {
+		t.Fatalf("expected shell home output, got:\n%s", output)
+	}
+
+	if !strings.Contains(output, "Guided Setup") {
+		t.Fatalf("expected Guided Setup in shell home output, got:\n%s", output)
 	}
 
 	if strings.Contains(output, "Usage:") {
