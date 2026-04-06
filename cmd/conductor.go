@@ -2,9 +2,16 @@ package cmd
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
+	"os/exec"
+
+	"springfield/internal/core/agents"
+	"springfield/internal/core/agents/claude"
+	"springfield/internal/core/agents/codex"
+	"springfield/internal/core/runtime"
 	"springfield/internal/features/conductor"
 )
 
@@ -28,6 +35,17 @@ func NewConductorCommand() *cobra.Command {
 
 func bindDirFlag(cmd *cobra.Command, dir *string) {
 	cmd.Flags().StringVar(dir, "dir", ".", "project root or nested path inside the Springfield project")
+}
+
+func buildConductorExecutor(project *conductor.Project, dir string) *conductor.RuntimeExecutor {
+	registry := agents.NewRegistry(
+		claude.New(exec.LookPath),
+		codex.New(exec.LookPath),
+	)
+	runner := runtime.NewRunner(registry)
+	agentID := agents.ID(project.Config.Tool)
+	plansDir := filepath.Join(dir, project.Config.PlansDir)
+	return conductor.NewRuntimeExecutor(runner, agentID, plansDir, dir)
 }
 
 func newConductorStatusCommand() *cobra.Command {
@@ -83,7 +101,8 @@ func newConductorRunCommand() *cobra.Command {
 				return printConductorDryRun(cmd, project)
 			}
 
-			runner := conductor.NewRunner(project, &noopExecutor{})
+			executor := buildConductorExecutor(project, dir)
+			runner := conductor.NewRunner(project, executor)
 			if err := runner.RunAll(); err != nil {
 				return err
 			}
@@ -115,7 +134,8 @@ func newConductorResumeCommand() *cobra.Command {
 				return printConductorDryRun(cmd, project)
 			}
 
-			runner := conductor.NewRunner(project, &noopExecutor{})
+			executor := buildConductorExecutor(project, dir)
+			runner := conductor.NewRunner(project, executor)
 			if err := runner.RunAll(); err != nil {
 				return err
 			}
@@ -170,10 +190,4 @@ func printConductorDryRun(cmd *cobra.Command, project *conductor.Project) error 
 	completed, total := schedule.Progress(project.State)
 	_, err := fmt.Fprintf(cmd.OutOrStdout(), "Progress: %d/%d completed\n", completed, total)
 	return err
-}
-
-type noopExecutor struct{}
-
-func (e *noopExecutor) Execute(plan string) error {
-	return nil
 }
