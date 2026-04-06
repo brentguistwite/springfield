@@ -26,3 +26,50 @@ Signal: proceed_to_next_story
 - Files changed: internal/features/doctor/types.go, internal/features/doctor/index.go, internal/features/doctor/detect.go, cmd/doctor.go, tests/doctor/doctor_test.go
 - Learnings: Healthy = "at least one agent available" (Springfield only needs one agent to operate); guidance is per-agent-specific install instructions; status mapping reuses adapter DetectionStatus cleanly
 ---
+
+--- Iteration 4 [2026-04-06 - US-001 runtime slice] ---
+
+## 2026-04-06 - US-001
+- Added Commander interface + CommandInput to agents/types.go
+- Claude adapter: `claude -p <prompt> --output-format stream-json`
+- Codex adapter: `codex -q <prompt>`
+- Created internal/core/runtime/ with Runner, Request, Result, Status types
+- Runner resolves agent via registry, delegates to exec.CommandFunc, streams events
+- Tests: command construction, registry commander resolution, runtime success/failure/unsupported agent/timeout
+- Files: agents/types.go, claude/adapter.go, codex/adapter.go, runtime/types.go, runtime/runner.go, tests/agents/command_test.go, tests/runtime/runtime_test.go
+- Assumption: codex uses `-q` flag for quiet prompt mode; claude uses `-p` + `--output-format stream-json`
+---
+
+--- Iteration 1 [2026-04-06 16:13:36] ---
+Commit: feat: US-001 - build claude and codex command adapters behind shared runtime contract
+Remaining stories: 3
+Signal: proceed_to_next_story
+
+--- Iteration 2 [2026-04-06 16:14:29] ---
+HEAD: 7206bb9549da2dcba6849c748085f84fc1f1ff16 (unchanged)
+Remaining stories: 3
+Signal: proceed_to_next_story
+
+--- Iteration 3 [2026-04-06 16:15:04] ---
+HEAD: 7206bb9549da2dcba6849c748085f84fc1f1ff16 (unchanged)
+Remaining stories: 3
+Signal: proceed_to_next_story
+
+--- Iteration 4 [2026-04-06] ---
+## 2026-04-06 - US-001 (verification pass)
+- All acceptance criteria confirmed met:
+  1. Commander interface resolves runnable command specs via Registry.Resolve → agents.Commander assertion
+  2. Claude (`-p <prompt> --output-format stream-json`) and Codex (`-q <prompt>`) adapters implemented
+  3. Runtime streams structured events via exec.EventHandler callback
+  4. Tests cover command construction (tests/agents/command_test.go) and runtime success/failure/unsupported/timeout (tests/runtime/runtime_test.go)
+- All tests pass: `go test ./tests/runtime ./tests/ralph ./tests/cmd -v` — 20/20 PASS
+- Marked US-001 passes=true in prd.json
+- Remaining stories: US-002, US-003 (not in scope for this iteration)
+Signal: story_complete
+---
+
+--- Iteration 4 [2026-04-06 16:18:06] ---
+HEAD: 7206bb9549da2dcba6849c748085f84fc1f1ff16 (unchanged)
+Remaining stories: 2
+Signal: proceed_to_next_story
+Exit: no_commit_streak (3)

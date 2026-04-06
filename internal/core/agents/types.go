@@ -3,6 +3,8 @@ package agents
 import (
 	"context"
 	"errors"
+
+	"springfield/internal/core/exec"
 )
 
 type ID string
@@ -64,6 +66,18 @@ const (
 type Resolved struct {
 	Adapter Adapter
 	Source  ResolveSource
+}
+
+// CommandInput provides the parameters needed to build an agent CLI invocation.
+type CommandInput struct {
+	Prompt  string
+	WorkDir string
+}
+
+// Commander extends Adapter with the ability to produce a runnable command spec.
+type Commander interface {
+	Adapter
+	Command(input CommandInput) exec.Command
 }
 
 var ErrUnsupportedAgent = errors.New("unsupported agent")

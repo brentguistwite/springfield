@@ -11,11 +11,19 @@ import (
 )
 
 type fakeExecutor struct {
-	err error
+	result ralph.RunResult
 }
 
-func (f fakeExecutor) Execute(ralph.Story) error {
-	return f.err
+func newPassingExecutor(agent string) fakeExecutor {
+	return fakeExecutor{result: ralph.RunResult{Agent: agent, ExitCode: 0}}
+}
+
+func newFailingExecutor(agent string, exitCode int, err error) fakeExecutor {
+	return fakeExecutor{result: ralph.RunResult{Agent: agent, ExitCode: exitCode, Err: err}}
+}
+
+func (f fakeExecutor) Execute(ralph.Story) ralph.RunResult {
+	return f.result
 }
 
 func TestWorkspaceRunNextPersistsPassedRun(t *testing.T) {
@@ -36,7 +44,7 @@ func TestWorkspaceRunNextPersistsPassedRun(t *testing.T) {
 		t.Fatalf("init plan: %v", err)
 	}
 
-	record, err := workspace.RunNext("refresh", fakeExecutor{})
+	record, err := workspace.RunNext("refresh", newPassingExecutor("claude"))
 	if err != nil {
 		t.Fatalf("run next: %v", err)
 	}
@@ -47,6 +55,10 @@ func TestWorkspaceRunNextPersistsPassedRun(t *testing.T) {
 
 	if record.Status != "passed" {
 		t.Fatalf("expected passed status, got %s", record.Status)
+	}
+
+	if record.Agent != "claude" {
+		t.Fatalf("expected agent claude, got %q", record.Agent)
 	}
 
 	plan, err := workspace.LoadPlan("refresh")
@@ -71,6 +83,10 @@ func TestWorkspaceRunNextPersistsPassedRun(t *testing.T) {
 	if runs[0].ID != record.ID {
 		t.Fatalf("expected persisted run %s, got %s", record.ID, runs[0].ID)
 	}
+
+	if runs[0].Agent != "claude" {
+		t.Fatalf("expected persisted agent claude, got %q", runs[0].Agent)
+	}
 }
 
 func TestWorkspaceRunNextPersistsFailedRun(t *testing.T) {
@@ -90,13 +106,21 @@ func TestWorkspaceRunNextPersistsFailedRun(t *testing.T) {
 		t.Fatalf("init plan: %v", err)
 	}
 
-	record, err := workspace.RunNext("refresh", fakeExecutor{err: errors.New("runner failed")})
+	record, err := workspace.RunNext("refresh", newFailingExecutor("codex", 1, errors.New("runner failed")))
 	if err != nil {
 		t.Fatalf("run next: %v", err)
 	}
 
 	if record.Status != "failed" {
 		t.Fatalf("expected failed status, got %s", record.Status)
+	}
+
+	if record.Agent != "codex" {
+		t.Fatalf("expected agent codex, got %q", record.Agent)
+	}
+
+	if record.ExitCode != 1 {
+		t.Fatalf("expected exit code 1, got %d", record.ExitCode)
 	}
 
 	if record.Error != "runner failed" {
@@ -143,7 +167,7 @@ func TestWorkspaceRunNextLeavesPlanUnchangedWhenRunPersistenceFails(t *testing.T
 		t.Fatalf("write runs blocker: %v", err)
 	}
 
-	_, err = workspace.RunNext("refresh", fakeExecutor{})
+	_, err = workspace.RunNext("refresh", newPassingExecutor("claude"))
 	if err == nil {
 		t.Fatal("expected run persistence failure")
 	}
