@@ -2,9 +2,16 @@ package cmd
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
+	"os/exec"
+
+	"springfield/internal/core/agents"
+	"springfield/internal/core/agents/claude"
+	"springfield/internal/core/agents/codex"
+	"springfield/internal/core/runtime"
 	"springfield/internal/features/conductor"
 )
 
@@ -30,6 +37,17 @@ func bindDirFlag(cmd *cobra.Command, dir *string) {
 	cmd.Flags().StringVar(dir, "dir", ".", "project root or nested path inside the Springfield project")
 }
 
+func buildConductorExecutor(project *conductor.Project, dir string) *conductor.RuntimeExecutor {
+	registry := agents.NewRegistry(
+		claude.New(exec.LookPath),
+		codex.New(exec.LookPath),
+	)
+	runner := runtime.NewRunner(registry)
+	agentID := agents.ID(project.Config.Tool)
+	plansDir := filepath.Join(dir, project.Config.PlansDir)
+	return conductor.NewRuntimeExecutor(runner, agentID, plansDir, dir)
+}
+
 func newConductorStatusCommand() *cobra.Command {
 	var dir string
 
@@ -48,9 +66,17 @@ func newConductorStatusCommand() *cobra.Command {
 				return err
 			}
 			for _, name := range project.AllPlans() {
-				line := fmt.Sprintf("  %s: %s", name, project.PlanStatus(name))
-				if project.PlanStatus(name) == conductor.StatusFailed {
+				status := project.PlanStatus(name)
+				line := fmt.Sprintf("  %s: %s", name, status)
+				agent := project.PlanAgent(name)
+				if agent != "" {
+					line += fmt.Sprintf(" [%s]", agent)
+				}
+				if status == conductor.StatusFailed {
 					line += fmt.Sprintf(" (%s)", project.PlanError(name))
+					if ev := project.PlanEvidencePath(name); ev != "" {
+						line += fmt.Sprintf("\n    evidence: %s", ev)
+					}
 				}
 				if _, err := fmt.Fprintln(cmd.OutOrStdout(), line); err != nil {
 					return err
@@ -83,13 +109,11 @@ func newConductorRunCommand() *cobra.Command {
 				return printConductorDryRun(cmd, project)
 			}
 
-			runner := conductor.NewRunner(project, &noopExecutor{})
-			if err := runner.RunAll(); err != nil {
-				return err
-			}
+			executor := buildConductorExecutor(project, dir)
+			runner := conductor.NewRunner(project, executor)
+			runErr := runner.RunAll()
 
-			_, err = fmt.Fprintln(cmd.OutOrStdout(), "All plans completed.")
-			return err
+			return printConductorResult(cmd, project, runErr)
 		},
 	}
 	bindDirFlag(cmd, &dir)
@@ -115,13 +139,11 @@ func newConductorResumeCommand() *cobra.Command {
 				return printConductorDryRun(cmd, project)
 			}
 
-			runner := conductor.NewRunner(project, &noopExecutor{})
-			if err := runner.RunAll(); err != nil {
-				return err
-			}
+			executor := buildConductorExecutor(project, dir)
+			runner := conductor.NewRunner(project, executor)
+			runErr := runner.RunAll()
 
-			_, err = fmt.Fprintln(cmd.OutOrStdout(), "All plans completed.")
-			return err
+			return printConductorResult(cmd, project, runErr)
 		},
 	}
 	bindDirFlag(cmd, &dir)
@@ -150,6 +172,31 @@ func newConductorDiagnoseCommand() *cobra.Command {
 	return cmd
 }
 
+func printConductorResult(cmd *cobra.Command, project *conductor.Project, runErr error) error {
+	diagnosis := conductor.Diagnose(project)
+	w := cmd.OutOrStdout()
+
+	if diagnosis.Done {
+		_, err := fmt.Fprintf(w, "Completed %d/%d plans successfully.\n", diagnosis.Completed, diagnosis.Total)
+		return err
+	}
+
+	if len(diagnosis.Failures) > 0 {
+		fmt.Fprintf(w, "Stopped: %d/%d plans completed, %d failed.\n", diagnosis.Completed, diagnosis.Total, len(diagnosis.Failures))
+		for _, f := range diagnosis.Failures {
+			fmt.Fprintf(w, "  - %s: %s\n", f.Plan, f.Error)
+			if f.EvidencePath != "" {
+				fmt.Fprintf(w, "    evidence: %s\n", f.EvidencePath)
+			}
+		}
+	}
+
+	if runErr != nil {
+		return runErr
+	}
+	return nil
+}
+
 func printConductorDryRun(cmd *cobra.Command, project *conductor.Project) error {
 	schedule := conductor.BuildSchedule(project.Config)
 	next := schedule.NextPlans(project.State)
@@ -170,10 +217,4 @@ func printConductorDryRun(cmd *cobra.Command, project *conductor.Project) error 
 	completed, total := schedule.Progress(project.State)
 	_, err := fmt.Fprintf(cmd.OutOrStdout(), "Progress: %d/%d completed\n", completed, total)
 	return err
-}
-
-type noopExecutor struct{}
-
-func (e *noopExecutor) Execute(plan string) error {
-	return nil
 }

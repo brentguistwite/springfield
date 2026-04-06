@@ -5,10 +5,13 @@ import (
 	"strings"
 )
 
-// PlanFailure describes one failed plan plus its error.
+// PlanFailure describes one failed plan with its error and execution context.
 type PlanFailure struct {
-	Plan  string
-	Error string
+	Plan         string
+	Error        string
+	Agent        string
+	EvidencePath string
+	Attempts     int
 }
 
 // Diagnosis summarizes current conductor progress and next action.
@@ -29,8 +32,11 @@ func Diagnose(project *Project) *Diagnosis {
 	for _, name := range project.AllPlans() {
 		if project.PlanStatus(name) == StatusFailed {
 			failures = append(failures, PlanFailure{
-				Plan:  name,
-				Error: project.PlanError(name),
+				Plan:         name,
+				Error:        project.PlanError(name),
+				Agent:        project.PlanAgent(name),
+				EvidencePath: project.PlanEvidencePath(name),
+				Attempts:     project.PlanAttempts(name),
 			})
 		}
 	}
@@ -65,8 +71,17 @@ func (d *Diagnosis) Report() string {
 
 	if len(d.Failures) > 0 {
 		fmt.Fprintf(&builder, "\nFailed plans (%d):\n", len(d.Failures))
-		for _, failure := range d.Failures {
-			fmt.Fprintf(&builder, "  - %s: %s\n", failure.Plan, failure.Error)
+		for _, f := range d.Failures {
+			fmt.Fprintf(&builder, "  - %s: %s\n", f.Plan, f.Error)
+			if f.Agent != "" {
+				fmt.Fprintf(&builder, "    Agent: %s\n", f.Agent)
+			}
+			if f.EvidencePath != "" {
+				fmt.Fprintf(&builder, "    Evidence: %s\n", f.EvidencePath)
+			}
+			if f.Attempts > 1 {
+				fmt.Fprintf(&builder, "    Attempts: %d\n", f.Attempts)
+			}
 		}
 	}
 

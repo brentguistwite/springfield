@@ -10,14 +10,21 @@ import (
 type fakeExecutor struct {
 	calls  []string
 	failOn map[string]string
+	agent  string
 }
 
-func (f *fakeExecutor) Execute(plan string) error {
+func (f *fakeExecutor) Execute(plan string) (conductor.ExecuteResult, error) {
 	f.calls = append(f.calls, plan)
-	if message, ok := f.failOn[plan]; ok {
-		return errors.New(message)
+	agent := f.agent
+	if agent == "" {
+		agent = "claude"
 	}
-	return nil
+	result := conductor.ExecuteResult{Agent: agent}
+	if message, ok := f.failOn[plan]; ok {
+		result.EvidencePath = ".springfield/conductor/evidence/" + plan + ".log"
+		return result, errors.New(message)
+	}
+	return result, nil
 }
 
 func newRunner(t *testing.T, cfg *conductor.Config) (string, *conductor.Runner, *fakeExecutor) {

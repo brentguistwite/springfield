@@ -42,8 +42,8 @@ func TestDiagnoseFailureIncludesResumeGuidance(t *testing.T) {
 		t.Fatalf("load project: %v", err)
 	}
 
-	project.MarkCompleted("01-bootstrap")
-	project.MarkFailed("02-config", "exit code 1")
+	project.MarkCompleted("01-bootstrap", "claude")
+	project.MarkFailed("02-config", "exit code 1", "claude", "")
 
 	diagnosis := conductor.Diagnose(project)
 	if len(diagnosis.Failures) != 1 {
@@ -71,7 +71,7 @@ func TestDiagnoseCompleteProject(t *testing.T) {
 	}
 
 	for _, name := range project.AllPlans() {
-		project.MarkCompleted(name)
+		project.MarkCompleted(name, "claude")
 	}
 
 	diagnosis := conductor.Diagnose(project)
@@ -80,5 +80,100 @@ func TestDiagnoseCompleteProject(t *testing.T) {
 	}
 	if diagnosis.Completed != diagnosis.Total {
 		t.Fatalf("progress: got %d/%d want all complete", diagnosis.Completed, diagnosis.Total)
+	}
+}
+
+func TestDiagnoseFailureIncludesEvidenceDetails(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root)
+	writeConductorConfig(t, root, sequentialOnlyConfig())
+
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("load project: %v", err)
+	}
+
+	project.MarkCompleted("01-bootstrap", "claude")
+	project.MarkRunning("02-config")
+	project.MarkFailed("02-config", "exit code 1", "codex", "/tmp/evidence/02-config.log")
+
+	diagnosis := conductor.Diagnose(project)
+	if len(diagnosis.Failures) != 1 {
+		t.Fatalf("failures: got %d want 1", len(diagnosis.Failures))
+	}
+
+	f := diagnosis.Failures[0]
+	if f.Agent != "codex" {
+		t.Fatalf("failure agent: got %q want codex", f.Agent)
+	}
+	if f.EvidencePath != "/tmp/evidence/02-config.log" {
+		t.Fatalf("failure evidence: got %q", f.EvidencePath)
+	}
+	if f.Attempts < 1 {
+		t.Fatalf("failure attempts: got %d want >= 1", f.Attempts)
+	}
+}
+
+func TestDiagnoseReportShowsEvidencePath(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root)
+	writeConductorConfig(t, root, sequentialOnlyConfig())
+
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("load project: %v", err)
+	}
+
+	project.MarkCompleted("01-bootstrap", "claude")
+	project.MarkFailed("02-config", "exit code 1", "codex", "/tmp/evidence/02-config.log")
+
+	report := conductor.Diagnose(project).Report()
+	if !strings.Contains(report, "/tmp/evidence/02-config.log") {
+		t.Fatalf("report missing evidence path: got %q", report)
+	}
+	if !strings.Contains(report, "codex") {
+		t.Fatalf("report missing agent: got %q", report)
+	}
+}
+
+func TestDiagnosePartialSuccessShowsCompletedPlans(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root)
+	writeConductorConfig(t, root, sequentialOnlyConfig())
+
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("load project: %v", err)
+	}
+
+	project.MarkCompleted("01-bootstrap", "claude")
+	project.MarkFailed("02-config", "exit code 1", "claude", "")
+
+	diagnosis := conductor.Diagnose(project)
+	if diagnosis.Completed != 1 {
+		t.Fatalf("completed: got %d want 1", diagnosis.Completed)
+	}
+
+	report := diagnosis.Report()
+	if !strings.Contains(report, "1/3") {
+		t.Fatalf("report missing partial progress: got %q", report)
+	}
+}
+
+func TestDiagnoseReportOmitsEvidenceWhenEmpty(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root)
+	writeConductorConfig(t, root, sequentialOnlyConfig())
+
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("load project: %v", err)
+	}
+
+	project.MarkFailed("01-bootstrap", "compile error", "claude", "")
+
+	report := conductor.Diagnose(project).Report()
+	if strings.Contains(report, "Evidence:") {
+		t.Fatalf("report should not show evidence line when empty: got %q", report)
 	}
 }

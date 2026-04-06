@@ -5,9 +5,15 @@ import (
 	"fmt"
 )
 
+// ExecuteResult carries metadata from a completed plan execution.
+type ExecuteResult struct {
+	Agent        string
+	EvidencePath string
+}
+
 // PlanExecutor is the runner boundary for executing one plan.
 type PlanExecutor interface {
-	Execute(plan string) error
+	Execute(plan string) (ExecuteResult, error)
 }
 
 // Runner executes schedule phases against project state.
@@ -43,15 +49,16 @@ func (r *Runner) RunNext() (ran []string, done bool, err error) {
 	var runErr error
 	for _, name := range next {
 		ran = append(ran, name)
-		if execErr := r.executor.Execute(name); execErr != nil {
-			r.Project.MarkFailed(name, execErr.Error())
+		result, execErr := r.executor.Execute(name)
+		if execErr != nil {
+			r.Project.MarkFailed(name, execErr.Error(), result.Agent, result.EvidencePath)
 			if runErr == nil {
 				runErr = fmt.Errorf("plan %s: %w", name, execErr)
 			}
 			continue
 		}
 
-		r.Project.MarkCompleted(name)
+		r.Project.MarkCompleted(name, result.Agent)
 	}
 
 	done = r.schedule.IsComplete(r.Project.State)

@@ -1,5 +1,7 @@
 package conductor
 
+import "time"
+
 // Config represents persisted conductor configuration.
 type Config struct {
 	PlansDir        string     `json:"plans_dir"`
@@ -23,10 +25,15 @@ const (
 	StatusFailed    PlanStatus = "failed"
 )
 
-// PlanState tracks status and optional failure detail for a single plan.
+// PlanState tracks execution status, timing, evidence, and failure detail for a single plan.
 type PlanState struct {
-	Status PlanStatus `json:"status"`
-	Error  string     `json:"error,omitempty"`
+	Status       PlanStatus `json:"status"`
+	Error        string     `json:"error,omitempty"`
+	Agent        string     `json:"agent,omitempty"`
+	EvidencePath string     `json:"evidence_path,omitempty"`
+	Attempts     int        `json:"attempts"`
+	StartedAt    time.Time  `json:"started_at,omitempty"`
+	EndedAt      time.Time  `json:"ended_at,omitempty"`
 }
 
 // State represents persisted conductor plan state.
