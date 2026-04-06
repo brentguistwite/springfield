@@ -193,9 +193,15 @@ func (s runtimeServices) ConductorSummary() ConductorSummary {
 	}
 
 	diagnosis := conductor.Diagnose(project)
-	failures := make([]string, 0, len(diagnosis.Failures))
-	for _, failure := range diagnosis.Failures {
-		failures = append(failures, failure.Plan+": "+failure.Error)
+	failures := make([]ConductorPlanFailure, 0, len(diagnosis.Failures))
+	for _, f := range diagnosis.Failures {
+		failures = append(failures, ConductorPlanFailure{
+			Plan:         f.Plan,
+			Error:        f.Error,
+			Agent:        f.Agent,
+			EvidencePath: f.EvidencePath,
+			Attempts:     f.Attempts,
+		})
 	}
 
 	return ConductorSummary{

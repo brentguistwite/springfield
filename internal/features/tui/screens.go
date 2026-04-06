@@ -342,13 +342,14 @@ func (r ralphScreen) View() string {
 }
 
 type conductorScreen struct {
-	services Services
-	summary  ConductorSummary
-	monitor  MonitorState
-	events   []RuntimeEvent
-	eventCh  <-chan RuntimeEvent
-	lastRun  *ConductorRunResult
-	lastErr  string
+	services  Services
+	summary   ConductorSummary
+	monitor   MonitorState
+	events    []RuntimeEvent
+	eventCh   <-chan RuntimeEvent
+	lastRun   *ConductorRunResult
+	lastErr   string
+	diagnose  bool
 }
 
 func newConductorScreen(services Services) conductorScreen {
@@ -394,6 +395,14 @@ func (c conductorScreen) Update(msg tea.Msg) (conductorScreen, tea.Cmd) {
 			return c, goBack
 		}
 
+		switch typed.String() {
+		case "d":
+			if c.monitor != MonitorRunning {
+				c.diagnose = !c.diagnose
+			}
+			return c, nil
+		}
+
 		if typed.String() == "r" && c.monitor != MonitorRunning && !c.summary.Done {
 			ch := make(chan RuntimeEvent, 100)
 			c.monitor = MonitorRunning
@@ -421,24 +430,28 @@ func (c conductorScreen) View() string {
 		return builder.String()
 	}
 
+	if c.diagnose {
+		return c.diagnosisView()
+	}
+
 	fmt.Fprintf(&builder, "Progress: %d/%d plans completed\n", c.summary.Completed, c.summary.Total)
 	if c.summary.Done {
 		builder.WriteString("Status: done\n")
 	} else if c.monitor == MonitorRunning {
 		builder.WriteString("Status: running...\n")
+	} else if c.monitor == MonitorFailed {
+		builder.WriteString("Status: failed\n")
+	} else if c.monitor == MonitorSucceeded {
+		builder.WriteString("Status: succeeded\n")
 	} else {
 		builder.WriteString("Status: in progress\n")
 	}
 
 	if len(c.summary.Failures) > 0 {
 		builder.WriteString("\nFailures:\n")
-		for _, failure := range c.summary.Failures {
-			fmt.Fprintf(&builder, "  - %s\n", failure)
+		for _, f := range c.summary.Failures {
+			fmt.Fprintf(&builder, "  - %s: %s\n", f.Plan, f.Error)
 		}
-	}
-
-	if c.summary.NextStep != "" {
-		fmt.Fprintf(&builder, "\nNext step: %s\n", c.summary.NextStep)
 	}
 
 	if len(c.events) > 0 {
@@ -458,6 +471,9 @@ func (c conductorScreen) View() string {
 			if c.lastRun.Done {
 				builder.WriteString("  all plans completed\n")
 			}
+			if c.lastRun.Error != "" {
+				fmt.Fprintf(&builder, "  error: %s\n", c.lastRun.Error)
+			}
 		}
 		if c.lastErr != "" {
 			fmt.Fprintf(&builder, "\nRun failed: %s\n", c.lastErr)
@@ -467,8 +483,39 @@ func (c conductorScreen) View() string {
 	if c.monitor == MonitorRunning {
 		builder.WriteString("\nrunning... Esc blocked\n")
 	} else {
-		builder.WriteString("\nr run next phase, Esc back\n")
+		hints := "r run next phase"
+		if len(c.summary.Failures) > 0 {
+			hints += ", d diagnose"
+		}
+		fmt.Fprintf(&builder, "\n%s, Esc back\n", hints)
 	}
+	return builder.String()
+}
+
+func (c conductorScreen) diagnosisView() string {
+	var builder strings.Builder
+
+	builder.WriteString("Conductor — Diagnosis\n\n")
+	fmt.Fprintf(&builder, "Progress: %d/%d plans completed\n\n", c.summary.Completed, c.summary.Total)
+
+	if len(c.summary.Failures) == 0 {
+		builder.WriteString("No failures detected.\n")
+	} else {
+		for _, f := range c.summary.Failures {
+			fmt.Fprintf(&builder, "Plan: %s\n", f.Plan)
+			fmt.Fprintf(&builder, "  Error: %s\n", f.Error)
+			if f.Agent != "" {
+				fmt.Fprintf(&builder, "  Agent: %s\n", f.Agent)
+			}
+			fmt.Fprintf(&builder, "  Attempts: %d\n", f.Attempts)
+			if f.EvidencePath != "" {
+				fmt.Fprintf(&builder, "  Evidence: %s\n", f.EvidencePath)
+			}
+			builder.WriteString("\n")
+		}
+	}
+
+	builder.WriteString("d back, r run next phase, Esc back\n")
 	return builder.String()
 }
 

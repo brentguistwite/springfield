@@ -66,6 +66,15 @@ type RalphSummary struct {
 	RecentRuns []RalphRunSummary
 }
 
+// ConductorPlanFailure describes one failed conductor plan with evidence.
+type ConductorPlanFailure struct {
+	Plan         string
+	Error        string
+	Agent        string
+	EvidencePath string
+	Attempts     int
+}
+
 // ConductorSummary captures the current conductor surface state for the TUI.
 type ConductorSummary struct {
 	Ready     bool
@@ -73,7 +82,7 @@ type ConductorSummary struct {
 	Completed int
 	Total     int
 	Done      bool
-	Failures  []string
+	Failures  []ConductorPlanFailure
 	NextStep  string
 }
 

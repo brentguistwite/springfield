@@ -203,8 +203,10 @@ func TestModelRendersConductorSummary(t *testing.T) {
 			Ready:     true,
 			Completed: 1,
 			Total:     3,
-			Failures:  []string{"02-config: compile error"},
-			NextStep:  "Fix failures then run: springfield conductor resume",
+			Failures: []tui.ConductorPlanFailure{
+				{Plan: "02-config", Error: "compile error", Agent: "claude", Attempts: 1},
+			},
+			NextStep: "Fix failures then resume",
 		},
 	})
 
@@ -213,7 +215,7 @@ func TestModelRendersConductorSummary(t *testing.T) {
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := model.View()
-	for _, marker := range []string{"Conductor", "Progress: 1/3", "02-config: compile error", "resume"} {
+	for _, marker := range []string{"Conductor", "Progress: 1/3", "02-config", "compile error"} {
 		if !strings.Contains(view, marker) {
 			t.Fatalf("expected Conductor view to contain %q, got:\n%s", marker, view)
 		}
@@ -724,6 +726,173 @@ func TestConductorScreenNoCliDeadEnd(t *testing.T) {
 	}
 	if !strings.Contains(view, "r run") {
 		t.Fatalf("expected actionable hint 'r run' in Conductor view, got:\n%s", view)
+	}
+}
+
+// --- US-003: Diagnosis views and CLI dead-end removal ---
+
+func TestConductorScreenDiagnosisViewToggle(t *testing.T) {
+	services := &fakeServices{
+		conductor: tui.ConductorSummary{
+			Ready:     true,
+			Completed: 1,
+			Total:     3,
+			Failures: []tui.ConductorPlanFailure{
+				{Plan: "02-config", Error: "compile error", Agent: "claude", EvidencePath: "/tmp/.springfield/conductor/evidence/02-config", Attempts: 2},
+			},
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Press 'd' to enter diagnosis view
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+
+	view := model.View()
+	for _, marker := range []string{"Diagnosis", "02-config", "compile error", "claude", "Attempts: 2"} {
+		if !strings.Contains(view, marker) {
+			t.Fatalf("expected diagnosis view to contain %q, got:\n%s", marker, view)
+		}
+	}
+
+	// Press 'd' again to toggle back
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+
+	view = model.View()
+	if strings.Contains(view, "Diagnosis") {
+		t.Fatalf("expected to leave diagnosis view after second d, got:\n%s", view)
+	}
+}
+
+func TestConductorScreenDiagnosisShowsEvidencePath(t *testing.T) {
+	services := &fakeServices{
+		conductor: tui.ConductorSummary{
+			Ready:     true,
+			Completed: 0,
+			Total:     2,
+			Failures: []tui.ConductorPlanFailure{
+				{Plan: "01-runtime", Error: "exit code 1", Agent: "codex", EvidencePath: "/tmp/evidence/01-runtime", Attempts: 3},
+			},
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+
+	view := model.View()
+	if !strings.Contains(view, "/tmp/evidence/01-runtime") {
+		t.Fatalf("expected evidence path in diagnosis view, got:\n%s", view)
+	}
+}
+
+func TestConductorScreenDiagnosisNoFailuresMessage(t *testing.T) {
+	services := &fakeServices{
+		conductor: tui.ConductorSummary{
+			Ready:     true,
+			Completed: 2,
+			Total:     3,
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+
+	view := model.View()
+	if !strings.Contains(view, "No failures") {
+		t.Fatalf("expected 'No failures' message in empty diagnosis view, got:\n%s", view)
+	}
+}
+
+func TestConductorScreenNextStepNoCliReference(t *testing.T) {
+	services := &fakeServices{
+		conductor: tui.ConductorSummary{
+			Ready:     true,
+			Completed: 1,
+			Total:     3,
+			Failures: []tui.ConductorPlanFailure{
+				{Plan: "02-config", Error: "compile error"},
+			},
+			NextStep: "Fix failures then run: springfield conductor resume",
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := model.View()
+	// Should not show raw CLI commands in the TUI
+	if strings.Contains(view, "springfield conductor") {
+		t.Fatalf("conductor screen should not reference CLI commands, got:\n%s", view)
+	}
+}
+
+func TestConductorScreenShowsDiagnoseHint(t *testing.T) {
+	services := &fakeServices{
+		conductor: tui.ConductorSummary{
+			Ready:     true,
+			Completed: 1,
+			Total:     3,
+			Failures: []tui.ConductorPlanFailure{
+				{Plan: "02-config", Error: "compile error"},
+			},
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := model.View()
+	if !strings.Contains(view, "d diagnose") {
+		t.Fatalf("expected 'd diagnose' hint when failures exist, got:\n%s", view)
+	}
+}
+
+func TestConductorScreenAfterFailedRunShowsDiagnosis(t *testing.T) {
+	services := &fakeServices{
+		conductor: tui.ConductorSummary{
+			Ready:     true,
+			Completed: 0,
+			Total:     3,
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Start run
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	// Complete with error
+	model = sendMsg(t, model, tui.ConductorRunCompleteMsg{
+		Result: tui.ConductorRunResult{
+			Ran:   []string{"01-runtime"},
+			Error: "plan 01-runtime: agent failed",
+		},
+	})
+
+	view := model.View()
+	if !strings.Contains(view, "failed") {
+		t.Fatalf("expected failed status after error, got:\n%s", view)
+	}
+	if !strings.Contains(view, "agent failed") {
+		t.Fatalf("expected error detail after failed run, got:\n%s", view)
 	}
 }
 
