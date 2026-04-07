@@ -250,6 +250,16 @@ func (s setupScreen) View() string {
 		}
 	case setupPhaseBasicDone:
 		b.WriteString("Setup complete with defaults: claude, local storage.\n")
+		priority := s.services.AgentPriority()
+		agents := sortAgentsByPriority(s.services.DetectAgents(), priority)
+		b.WriteString("Agent priority:\n")
+		for _, agent := range agents {
+			status := "not installed"
+			if agent.Installed {
+				status = "installed"
+			}
+			fmt.Fprintf(&b, "  - %s (%s)\n", agent.ID, status)
+		}
 		b.WriteString("Run doctor to verify prerequisites? [Enter] or [Esc] to go home\n")
 	}
 

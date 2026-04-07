@@ -41,8 +41,10 @@ type advancedSetupScreen struct {
 	formEditing bool
 
 	// Completion
-	completed   bool
-	completeErr string
+	completed        bool
+	completeErr      string
+	oldPlansDir      string
+	completionAgents []AgentDetection
 }
 
 type formField struct {
@@ -70,6 +72,7 @@ func newAdvancedSetupScreen(services Services) advancedSetupScreen {
 		current := services.ConductorCurrentConfig()
 		if current != nil {
 			s.plansDir = current.PlansDir
+			s.oldPlansDir = current.PlansDir
 			if current.PlansDir == conductor.TrackedPlansDir {
 				s.storageCursor = 1
 			}
@@ -257,6 +260,7 @@ func (a advancedSetupScreen) agentPriorityIDs() []string {
 
 func (a advancedSetupScreen) finalize() advancedSetupScreen {
 	priority := a.agentPriorityIDs()
+	a.completionAgents = append([]AgentDetection(nil), a.agentList...)
 	if err := a.services.SaveAgentPriority(priority); err != nil {
 		a.completeErr = err.Error()
 		a.completed = true
@@ -379,12 +383,16 @@ func (a advancedSetupScreen) View() string {
 			} else {
 				b.WriteString("Storage: tracked\n")
 			}
-			fmt.Fprintf(&b, "Agent priority: %s\n", strings.Join(a.agentPriorityIDs(), ", "))
-			if a.status.ConductorConfigReady {
-				current := a.services.ConductorCurrentConfig()
-				if current != nil && current.PlansDir != a.plansDir {
-					fmt.Fprintf(&b, "\nNote: Existing plans remain at %s\n", current.PlansDir)
+			b.WriteString("Agent priority:\n")
+			for _, agent := range a.completionAgents {
+				status := "not installed"
+				if agent.Installed {
+					status = "installed"
 				}
+				fmt.Fprintf(&b, "  - %s (%s)\n", agent.ID, status)
+			}
+			if a.oldPlansDir != "" && a.oldPlansDir != a.plansDir {
+				fmt.Fprintf(&b, "\nNote: Existing plans remain at %s\n", a.oldPlansDir)
 			}
 			b.WriteString("\nRun doctor to verify prerequisites? [Enter] or [Esc] to go home\n")
 		}

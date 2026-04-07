@@ -1164,6 +1164,50 @@ func TestAdvancedSetupCompleteStepSavesAndOffersDoctor(t *testing.T) {
 	}
 }
 
+func TestAdvancedSetupCompleteShowsInstallStatusSummary(t *testing.T) {
+	services := &fakeServices{
+		setup: readySetupStatus(),
+		agentDetections: []tui.AgentDetection{
+			{ID: "claude", Name: "Claude Code", Installed: true},
+			{ID: "codex", Name: "Codex CLI", Installed: false},
+		},
+	}
+	model := advanceToAdvancedComplete(t, services)
+	view := model.View()
+	if !strings.Contains(view, "claude (installed)") {
+		t.Fatalf("expected installed status in summary, got:\n%s", view)
+	}
+	if !strings.Contains(view, "codex (not installed)") {
+		t.Fatalf("expected missing status in summary, got:\n%s", view)
+	}
+}
+
+func TestAdvancedSetupStorageChangeShowsExistingPlansNote(t *testing.T) {
+	services := &fakeServices{
+		setup: readySetupStatus(),
+		agentDetections: []tui.AgentDetection{{ID: "claude", Name: "Claude Code", Installed: true}},
+		conductorCurrentCfg: &tui.ConductorCurrentConfig{
+			PlansDir: ".springfield/conductor/plans",
+			WorktreeBase: ".worktrees",
+			MaxRetries: 2,
+			RalphIterations: 50,
+			RalphTimeout: 3600,
+		},
+	}
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+
+	view := model.View()
+	if !strings.Contains(view, "Existing plans remain at .springfield/conductor/plans") {
+		t.Fatalf("expected old plans dir note, got:\n%s", view)
+	}
+}
+
 func TestSetupShowsBasicAdvancedChoice(t *testing.T) {
 	services := &fakeServices{
 		setup: tui.SetupStatus{
@@ -1197,7 +1241,9 @@ func TestSetupBasicUsesDefaultsAndOffersDoctorHandoff(t *testing.T) {
 			ConfigPresent:       true,
 			RuntimePresent:      true,
 		},
-		conductorSetup: tui.ConductorSetupResult{Created: true},
+		conductorSetup:     tui.ConductorSetupResult{Created: true},
+		agentDetections:    []tui.AgentDetection{{ID: "claude", Name: "Claude Code", Installed: true}},
+		agentPriorityOrder: []string{"claude"},
 	}
 	model := tui.NewModel(services)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
@@ -1209,6 +1255,9 @@ func TestSetupBasicUsesDefaultsAndOffersDoctorHandoff(t *testing.T) {
 	}
 	if !strings.Contains(view, "doctor") && !strings.Contains(view, "Doctor") {
 		t.Fatalf("expected doctor handoff, got:\n%s", view)
+	}
+	if !strings.Contains(view, "claude (installed)") {
+		t.Fatalf("expected priority install status in basic summary, got:\n%s", view)
 	}
 }
 
@@ -1284,4 +1333,15 @@ func readyAdvancedServices() *fakeServices {
 			{ID: "codex", Name: "Codex CLI", Installed: false},
 		},
 	}
+}
+
+func advanceToAdvancedComplete(t *testing.T, services *fakeServices) tui.Model {
+	t.Helper()
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+	return model
 }
