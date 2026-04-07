@@ -193,7 +193,7 @@ func TestModelSetupFlowCreatesCoreState(t *testing.T) {
 	if services.initCalls != 1 {
 		t.Fatalf("expected one init call, got %d", services.initCalls)
 	}
-	for _, marker := range []string{"springfield.toml created: true", ".springfield created: true", "Enter generates local conductor config"} {
+	for _, marker := range []string{"springfield.toml created: true", ".springfield created: true", "Basic", "Advanced"} {
 		if !strings.Contains(view, marker) {
 			t.Fatalf("expected setup view to contain %q, got:\n%s", marker, view)
 		}
@@ -272,8 +272,8 @@ func TestSetupScreenShowsActionableConductorPrompt(t *testing.T) {
 	if strings.Contains(view, "hand") || strings.Contains(view, "manually") || strings.Contains(view, "Next add") {
 		t.Fatalf("setup view should not suggest manual config editing, got:\n%s", view)
 	}
-	if !strings.Contains(view, "Enter generates local conductor config") {
-		t.Fatalf("expected actionable conductor prompt, got:\n%s", view)
+	if !strings.Contains(view, "Basic") || !strings.Contains(view, "Advanced") {
+		t.Fatalf("expected Basic/Advanced choice prompt, got:\n%s", view)
 	}
 }
 
@@ -306,7 +306,7 @@ func TestSetupScreenTriggersConductorSetup(t *testing.T) {
 	}
 
 	view := model.View()
-	for _, marker := range []string{"conductor config created", "Core setup is ready"} {
+	for _, marker := range []string{"conductor config created", "Setup complete with defaults"} {
 		if !strings.Contains(view, marker) {
 			t.Fatalf("expected setup view to contain %q, got:\n%s", marker, view)
 		}
@@ -361,8 +361,8 @@ func TestSetupScreenFullyReadyAfterConductorSetup(t *testing.T) {
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := model.View()
-	if !strings.Contains(view, "Ralph and Conductor surfaces can use the local project state") {
-		t.Fatalf("expected fully ready message, got:\n%s", view)
+	if !strings.Contains(view, "Setup complete with defaults") {
+		t.Fatalf("expected setup complete message, got:\n%s", view)
 	}
 	// Conductor config should show ready
 	if !strings.Contains(view, "ready at") {
@@ -1134,6 +1134,80 @@ func TestAdvancedSetupCompleteStepSavesAndOffersDoctor(t *testing.T) {
 	}
 	if services.savePriorityCalls != 1 {
 		t.Fatalf("expected SaveAgentPriority called once, got %d", services.savePriorityCalls)
+	}
+}
+
+func TestSetupShowsBasicAdvancedChoice(t *testing.T) {
+	services := &fakeServices{
+		setup: tui.SetupStatus{
+			WorkingDir:          "/tmp/demo",
+			ProjectRoot:         "/tmp/demo",
+			ConfigPath:          "/tmp/demo/springfield.toml",
+			RuntimeDir:          "/tmp/demo/.springfield",
+			ConductorConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:       true,
+			RuntimePresent:      true,
+		},
+		conductorSetup: tui.ConductorSetupResult{Created: true},
+	}
+	model := tui.NewModel(services)
+	// Navigate to Guided Setup (first menu item)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	view := model.View()
+	if !strings.Contains(view, "Basic") || !strings.Contains(view, "Advanced") {
+		t.Fatalf("expected Basic/Advanced choice, got:\n%s", view)
+	}
+}
+
+func TestSetupBasicUsesDefaultsAndOffersDoctorHandoff(t *testing.T) {
+	services := &fakeServices{
+		setup: tui.SetupStatus{
+			WorkingDir:          "/tmp/demo",
+			ProjectRoot:         "/tmp/demo",
+			ConfigPath:          "/tmp/demo/springfield.toml",
+			RuntimeDir:          "/tmp/demo/.springfield",
+			ConductorConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:       true,
+			RuntimePresent:      true,
+		},
+		conductorSetup: tui.ConductorSetupResult{Created: true},
+	}
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	// Select Basic (first option)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	view := model.View()
+	if services.conductorSetupCalls != 1 {
+		t.Fatalf("expected conductor setup called, got %d", services.conductorSetupCalls)
+	}
+	if !strings.Contains(view, "doctor") && !strings.Contains(view, "Doctor") {
+		t.Fatalf("expected doctor handoff, got:\n%s", view)
+	}
+}
+
+func TestSetupAdvancedNavigatesToAdvancedScreen(t *testing.T) {
+	services := &fakeServices{
+		setup: tui.SetupStatus{
+			WorkingDir:          "/tmp/demo",
+			ProjectRoot:         "/tmp/demo",
+			ConfigPath:          "/tmp/demo/springfield.toml",
+			RuntimeDir:          "/tmp/demo/.springfield",
+			ConductorConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:       true,
+			RuntimePresent:      true,
+		},
+		agentDetections: []tui.AgentDetection{
+			{ID: "claude", Name: "Claude Code", Installed: true},
+		},
+	}
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	// Down to Advanced, Enter
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	view := model.View()
+	if !strings.Contains(view, "Advanced Setup") {
+		t.Fatalf("expected Advanced Setup screen, got:\n%s", view)
 	}
 }
 

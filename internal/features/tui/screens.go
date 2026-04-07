@@ -80,10 +80,20 @@ func (h homeScreen) View() string {
 	return builder.String()
 }
 
+type setupPhase int
+
+const (
+	setupPhaseInit setupPhase = iota
+	setupPhaseChoice
+	setupPhaseBasicDone
+)
+
 type setupScreen struct {
-	services   Services
-	status     SetupStatus
-	lastResult *setupResult
+	services     Services
+	status       SetupStatus
+	lastResult   *setupResult
+	phase        setupPhase
+	choiceCursor int // 0=Basic, 1=Advanced
 }
 
 type setupResult struct {
@@ -95,31 +105,71 @@ type setupResult struct {
 }
 
 func newSetupScreen(services Services) setupScreen {
-	return setupScreen{
+	s := setupScreen{
 		services: services,
 		status:   services.SetupStatus(),
 	}
+	if s.status.NeedsInit() {
+		s.phase = setupPhaseInit
+	} else {
+		s.phase = setupPhaseChoice
+	}
+	return s
 }
 
 func (s setupScreen) Update(msg tea.Msg) (setupScreen, tea.Cmd) {
-	switch typed := msg.(type) {
-	case tea.KeyMsg:
-		switch typed.Type {
-		case tea.KeyEsc:
-			return s, goBack
-		case tea.KeyEnter:
-			if s.status.NeedsInit() {
-				result, err := s.services.InitProject()
-				s.lastResult = &setupResult{
-					configCreated:  result.ConfigCreated,
-					runtimeCreated: result.RuntimeDirCreated,
-				}
-				if err != nil {
-					s.lastResult.err = err.Error()
-				}
-				s.status = s.services.SetupStatus()
-				return s, nil
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return s, nil
+	}
+
+	if key.Type == tea.KeyEsc {
+		return s, goBack
+	}
+
+	if key.String() == "r" {
+		s.status = s.services.SetupStatus()
+		if s.status.NeedsInit() {
+			s.phase = setupPhaseInit
+		} else if s.phase == setupPhaseInit {
+			s.phase = setupPhaseChoice
+		}
+		return s, nil
+	}
+
+	switch s.phase {
+	case setupPhaseInit:
+		if key.Type == tea.KeyEnter {
+			result, err := s.services.InitProject()
+			s.lastResult = &setupResult{
+				configCreated:  result.ConfigCreated,
+				runtimeCreated: result.RuntimeDirCreated,
 			}
+			if err != nil {
+				s.lastResult.err = err.Error()
+			}
+			s.status = s.services.SetupStatus()
+			if !s.status.NeedsInit() {
+				s.phase = setupPhaseChoice
+			}
+		}
+
+	case setupPhaseChoice:
+		switch key.Type {
+		case tea.KeyUp, tea.KeyShiftTab:
+			if s.choiceCursor > 0 {
+				s.choiceCursor--
+			}
+		case tea.KeyDown, tea.KeyTab:
+			if s.choiceCursor < 1 {
+				s.choiceCursor++
+			}
+		case tea.KeyEnter:
+			if s.choiceCursor == 1 {
+				// Advanced -> navigate to AdvancedSetup screen
+				return s, navigate(ScreenAdvancedSetup)
+			}
+			// Basic path -- setup conductor with defaults
 			if !s.status.ConductorConfigReady {
 				defaults := conductor.SetupDefaults()
 				result, err := s.services.SetupConductor(ConductorSetupInput{
@@ -137,15 +187,13 @@ func (s setupScreen) Update(msg tea.Msg) (setupScreen, tea.Cmd) {
 					s.lastResult.err = err.Error()
 				}
 				s.status = s.services.SetupStatus()
-				return s, nil
 			}
-			return s, goBack
+			s.phase = setupPhaseBasicDone
 		}
 
-		switch typed.String() {
-		case "r":
-			s.status = s.services.SetupStatus()
-			return s, nil
+	case setupPhaseBasicDone:
+		if key.Type == tea.KeyEnter {
+			return s, navigate(ScreenDoctor)
 		}
 	}
 
@@ -153,49 +201,60 @@ func (s setupScreen) Update(msg tea.Msg) (setupScreen, tea.Cmd) {
 }
 
 func (s setupScreen) View() string {
-	var builder strings.Builder
-
-	builder.WriteString("Guided Setup\n\n")
+	var b strings.Builder
+	b.WriteString("Guided Setup\n\n")
 
 	if s.status.Error != "" {
-		fmt.Fprintf(&builder, "Setup error: %s\n\n", s.status.Error)
-		builder.WriteString("Esc back\n")
-		return builder.String()
+		fmt.Fprintf(&b, "Setup error: %s\n\nEsc back\n", s.status.Error)
+		return b.String()
 	}
 
-	fmt.Fprintf(&builder, "Working dir: %s\n", s.status.WorkingDir)
-	fmt.Fprintf(&builder, "Project root: %s\n", s.status.ProjectRoot)
-	fmt.Fprintf(&builder, "Config: %s\n", readyLabel(s.status.ConfigPresent, s.status.ConfigPath))
-	fmt.Fprintf(&builder, "Runtime dir: %s\n", readyLabel(s.status.RuntimePresent, s.status.RuntimeDir))
-	fmt.Fprintf(&builder, "Conductor config: %s\n", readyLabel(s.status.ConductorConfigReady, s.status.ConductorConfigPath))
+	// Always show status
+	fmt.Fprintf(&b, "Working dir: %s\n", s.status.WorkingDir)
+	fmt.Fprintf(&b, "Project root: %s\n", s.status.ProjectRoot)
+	fmt.Fprintf(&b, "Config: %s\n", readyLabel(s.status.ConfigPresent, s.status.ConfigPath))
+	fmt.Fprintf(&b, "Runtime dir: %s\n", readyLabel(s.status.RuntimePresent, s.status.RuntimeDir))
+	fmt.Fprintf(&b, "Conductor config: %s\n", readyLabel(s.status.ConductorConfigReady, s.status.ConductorConfigPath))
 
 	if s.lastResult != nil {
-		builder.WriteString("\nLast action:\n")
+		b.WriteString("\nLast action:\n")
 		switch {
 		case s.lastResult.err != "":
-			fmt.Fprintf(&builder, "  failed: %s\n", s.lastResult.err)
+			fmt.Fprintf(&b, "  failed: %s\n", s.lastResult.err)
 		case s.lastResult.conductorConfigCreated:
-			builder.WriteString("  conductor config created\n")
+			b.WriteString("  conductor config created\n")
 		case s.lastResult.conductorConfigReused:
-			builder.WriteString("  conductor config already exists, reused\n")
+			b.WriteString("  conductor config already exists, reused\n")
 		default:
-			fmt.Fprintf(&builder, "  springfield.toml created: %t\n", s.lastResult.configCreated)
-			fmt.Fprintf(&builder, "  .springfield created: %t\n", s.lastResult.runtimeCreated)
+			fmt.Fprintf(&b, "  springfield.toml created: %t\n", s.lastResult.configCreated)
+			fmt.Fprintf(&b, "  .springfield created: %t\n", s.lastResult.runtimeCreated)
 		}
 	}
 
-	builder.WriteString("\n")
-	if s.status.NeedsInit() {
-		builder.WriteString("Enter creates springfield.toml and .springfield in the project root.\n")
-	} else if !s.status.ConductorConfigReady {
-		builder.WriteString("Enter generates local conductor config (recommended) so you can run plans without editing JSON.\n")
-		builder.WriteString("Use `springfield conductor setup` in a terminal if you want tracked plan storage.\n")
-	} else {
-		builder.WriteString("Core setup is ready. Ralph and Conductor surfaces can use the local project state.\n")
+	b.WriteString("\n")
+	switch s.phase {
+	case setupPhaseInit:
+		b.WriteString("Enter creates springfield.toml and .springfield in the project root.\n")
+	case setupPhaseChoice:
+		b.WriteString("How would you like to configure conductor?\n\n")
+		choices := []struct{ label, desc string }{
+			{"Basic", "use claude with local plan storage (recommended)"},
+			{"Advanced", "choose storage mode, agent priority, and tuning options"},
+		}
+		for i, c := range choices {
+			cursor := "  "
+			if i == s.choiceCursor {
+				cursor = "> "
+			}
+			fmt.Fprintf(&b, "%s%s — %s\n", cursor, c.label, c.desc)
+		}
+	case setupPhaseBasicDone:
+		b.WriteString("Setup complete with defaults: claude, local storage.\n")
+		b.WriteString("Run doctor to verify prerequisites? [Enter] or [Esc] to go home\n")
 	}
-	builder.WriteString("r refresh, Esc back\n")
 
-	return builder.String()
+	b.WriteString("\nr refresh, Esc back\n")
+	return b.String()
 }
 
 type ralphScreen struct {
