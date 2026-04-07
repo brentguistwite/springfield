@@ -43,35 +43,33 @@ func bindDirFlag(cmd *cobra.Command, dir *string) {
 	cmd.Flags().StringVar(dir, "dir", ".", "project root or nested path inside the Springfield project")
 }
 
-func projectPriority(dir string) ([]agents.ID, error) {
+func buildConductorExecutor(project *conductor.Project, dir string) (*conductor.RuntimeExecutor, error) {
 	loaded, err := config.LoadFrom(dir)
 	if err != nil {
 		return nil, err
 	}
-	priority := loaded.Config.EffectivePriority()
-	ids := make([]agents.ID, 0, len(priority))
-	for _, id := range priority {
-		if id == "" {
-			continue
-		}
-		ids = append(ids, agents.ID(id))
-	}
-	return ids, nil
-}
 
-func buildConductorExecutor(project *conductor.Project, dir string) (*conductor.RuntimeExecutor, error) {
 	registry := agents.NewRegistry(
 		claude.New(exec.LookPath),
 		codex.New(exec.LookPath),
 		gemini.New(exec.LookPath),
 	)
 	runner := runtime.NewRunner(registry)
-	priority, err := projectPriority(dir)
-	if err != nil {
-		return nil, err
+
+	priority := make([]agents.ID, 0, len(loaded.Config.EffectivePriority()))
+	for _, id := range loaded.Config.EffectivePriority() {
+		if id == "" {
+			continue
+		}
+		priority = append(priority, agents.ID(id))
 	}
-	plansDir := filepath.Join(dir, project.Config.PlansDir)
-	return conductor.NewRuntimeExecutor(runner, priority, plansDir, dir), nil
+
+	plansDir := project.Config.PlansDir
+	if !filepath.IsAbs(plansDir) {
+		plansDir = filepath.Join(loaded.RootDir, plansDir)
+	}
+
+	return conductor.NewRuntimeExecutor(runner, priority, plansDir, loaded.RootDir), nil
 }
 
 func newConductorSetupCommand() *cobra.Command {
@@ -83,20 +81,29 @@ func newConductorSetupCommand() *cobra.Command {
 		Short: "Generate conductor config from guided defaults.",
 		Long:  "Create .springfield/conductor/config.json so the conductor is ready to run without manual JSON editing.",
 		Args:  cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			loaded, err := config.LoadFrom(dir)
 			if err != nil {
 				return err
 			}
 
+			priority := loaded.Config.EffectivePriority()
 			effectiveTool := tool
-			if effectiveTool == "" {
-				priority := loaded.Config.EffectivePriority()
+			if effectiveTool == "" && len(priority) > 0 {
 				effectiveTool = priority[0]
+			}
+			fallbackTool := ""
+			for _, candidate := range priority {
+				if candidate == "" || candidate == effectiveTool {
+					continue
+				}
+				fallbackTool = candidate
+				break
 			}
 
 			opts := conductor.SetupDefaults()
 			opts.Tool = effectiveTool
+			opts.FallbackTool = fallbackTool
 
 			ready, err := conductor.IsReady(loaded.RootDir)
 			if err != nil {

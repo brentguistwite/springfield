@@ -212,3 +212,49 @@ func TestRalphRunFailsWithoutConfig(t *testing.T) {
 		t.Fatalf("expected missing config error, got:\n%s", output)
 	}
 }
+
+func TestRalphRunUsesEffectivePriorityHead(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	config := strings.Join([]string{
+		"[project]",
+		`default_agent = "claude"`,
+		`agent_priority = ["gemini", "claude"]`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(dir, "springfield.toml"), []byte(config), 0o644); err != nil {
+		t.Fatalf("write springfield.toml: %v", err)
+	}
+
+	specPath := writeRalphSpec(t, dir, ralph.Spec{
+		Project: "springfield",
+		Stories: []ralph.Story{
+			{ID: "US-001", Title: "Bootstrap"},
+		},
+	})
+
+	output, err := runBinaryIn(t, bin, dir, "ralph", "init", "--name", "refresh", "--spec", specPath)
+	if err != nil {
+		t.Fatalf("ralph init failed: %v\n%s", err, output)
+	}
+
+	output, err = runBinaryInWithEnv(
+		t,
+		bin,
+		dir,
+		[]string{"PATH=" + t.TempDir()},
+		"ralph", "run", "--name", "refresh",
+	)
+	if err != nil {
+		t.Fatalf("ralph run failed: %v\n%s", err, output)
+	}
+
+	if !strings.Contains(output, "agent: gemini") {
+		t.Fatalf("expected priority head gemini in output, got:\n%s", output)
+	}
+
+	if strings.Contains(output, "agent: claude") {
+		t.Fatalf("expected run to avoid default agent fallback when priority head is gemini, got:\n%s", output)
+	}
+}
