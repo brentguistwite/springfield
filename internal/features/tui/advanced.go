@@ -39,6 +39,7 @@ type advancedSetupScreen struct {
 	formFields  []formField
 	formCursor  int
 	formEditing bool
+	formErr     string
 
 	// Completion
 	completed        bool
@@ -215,6 +216,9 @@ func (a advancedSetupScreen) updateSettingsForm(key tea.KeyMsg) (advancedSetupSc
 			a.formCursor++
 		}
 	case tea.KeyEnter:
+		if a.formCursor == len(a.formFields)-1 {
+			return a.submitSettings()
+		}
 		a.formEditing = true
 	}
 
@@ -222,8 +226,7 @@ func (a advancedSetupScreen) updateSettingsForm(key tea.KeyMsg) (advancedSetupSc
 	case "e":
 		a.formEditing = true
 	case "c":
-		a.step = stepComplete
-		a = a.finalize()
+		return a.submitSettings()
 	}
 
 	return a, nil
@@ -258,26 +261,56 @@ func (a advancedSetupScreen) agentPriorityIDs() []string {
 	return ids
 }
 
-func (a advancedSetupScreen) finalize() advancedSetupScreen {
-	priority := a.agentPriorityIDs()
-	a.completionAgents = append([]AgentDetection(nil), a.agentList...)
-	if err := a.services.SaveAgentPriority(priority); err != nil {
-		a.completeErr = err.Error()
-		a.completed = true
-		return a
+func parseWholeNumber(label, raw string) (int, error) {
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a whole number", label)
 	}
+	return value, nil
+}
 
-	maxRetries, _ := strconv.Atoi(a.formFields[1].value)
-	iterations, _ := strconv.Atoi(a.formFields[2].value)
-	timeout, _ := strconv.Atoi(a.formFields[3].value)
-
-	input := ConductorSetupInput{
+func (a advancedSetupScreen) validateSettings() (ConductorSetupInput, error) {
+	maxRetries, err := parseWholeNumber("Max retries", a.formFields[1].value)
+	if err != nil {
+		return ConductorSetupInput{}, err
+	}
+	iterations, err := parseWholeNumber("Ralph iterations", a.formFields[2].value)
+	if err != nil {
+		return ConductorSetupInput{}, err
+	}
+	timeout, err := parseWholeNumber("Ralph timeout (s)", a.formFields[3].value)
+	if err != nil {
+		return ConductorSetupInput{}, err
+	}
+	return ConductorSetupInput{
 		PlansDir:        a.plansDir,
 		WorktreeBase:    a.formFields[0].value,
 		MaxRetries:      maxRetries,
 		RalphIterations: iterations,
 		RalphTimeout:    timeout,
 		UpdateGitignore: a.updateGitignore,
+	}, nil
+}
+
+func (a advancedSetupScreen) submitSettings() (advancedSetupScreen, tea.Cmd) {
+	input, err := a.validateSettings()
+	if err != nil {
+		a.formErr = err.Error()
+		return a, nil
+	}
+	a.formErr = ""
+	a.step = stepComplete
+	a = a.finalizeWithInput(input)
+	return a, nil
+}
+
+func (a advancedSetupScreen) finalizeWithInput(input ConductorSetupInput) advancedSetupScreen {
+	priority := a.agentPriorityIDs()
+	a.completionAgents = append([]AgentDetection(nil), a.agentList...)
+	if err := a.services.SaveAgentPriority(priority); err != nil {
+		a.completeErr = err.Error()
+		a.completed = true
+		return a
 	}
 
 	if a.status.ConductorConfigReady {
@@ -359,6 +392,9 @@ func (a advancedSetupScreen) View() string {
 
 	case stepSettingsForm:
 		b.WriteString("Conductor Settings\n\n")
+		if a.formErr != "" {
+			fmt.Fprintf(&b, "Error: %s\n\n", a.formErr)
+		}
 		for i, field := range a.formFields {
 			cursor := "  "
 			if i == a.formCursor {

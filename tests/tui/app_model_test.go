@@ -1208,6 +1208,88 @@ func TestAdvancedSetupStorageChangeShowsExistingPlansNote(t *testing.T) {
 	}
 }
 
+func TestAdvancedSetupCompleteCallsUpdateConductorWhenConfigExists(t *testing.T) {
+	services := &fakeServices{
+		setup: readySetupStatus(),
+		agentDetections: []tui.AgentDetection{{ID: "claude", Name: "Claude Code", Installed: true}},
+	}
+	model := advanceToAdvancedComplete(t, services)
+	_ = model
+	if services.updateConductorCalls != 1 {
+		t.Fatalf("expected UpdateConductor once, got %d", services.updateConductorCalls)
+	}
+	if services.conductorSetupCalls != 0 {
+		t.Fatalf("did not expect SetupConductor, got %d", services.conductorSetupCalls)
+	}
+}
+
+func TestAdvancedSetupCompleteCallsSetupConductorWhenConfigMissing(t *testing.T) {
+	services := &fakeServices{
+		setup: tui.SetupStatus{
+			WorkingDir:  "/tmp/demo",
+			ProjectRoot: "/tmp/demo",
+			ConfigPath:  "/tmp/demo/springfield.toml",
+			RuntimeDir:  "/tmp/demo/.springfield",
+			ConfigPresent: true,
+			RuntimePresent: true,
+		},
+		agentDetections: []tui.AgentDetection{{ID: "claude", Name: "Claude Code", Installed: true}},
+	}
+	model := advanceToAdvancedComplete(t, services)
+	_ = model
+	if services.conductorSetupCalls != 1 {
+		t.Fatalf("expected SetupConductor once, got %d", services.conductorSetupCalls)
+	}
+	if services.updateConductorCalls != 0 {
+		t.Fatalf("did not expect UpdateConductor, got %d", services.updateConductorCalls)
+	}
+}
+
+func TestAdvancedSetupLastFieldEnterSubmits(t *testing.T) {
+	services := &fakeServices{
+		setup: readySetupStatus(),
+		agentDetections: []tui.AgentDetection{{ID: "claude", Name: "Claude Code", Installed: true}},
+	}
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	view := model.View()
+	if !strings.Contains(view, "Run doctor") {
+		t.Fatalf("expected Enter on last field to submit, got:\n%s", view)
+	}
+}
+
+func TestAdvancedSetupInvalidNumericFieldShowsError(t *testing.T) {
+	services := &fakeServices{
+		setup: readySetupStatus(),
+		agentDetections: []tui.AgentDetection{{ID: "claude", Name: "Claude Code", Installed: true}},
+	}
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyBackspace})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyBackspace})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	view := model.View()
+	if !strings.Contains(view, "Max retries must be a whole number") {
+		t.Fatalf("expected validation error, got:\n%s", view)
+	}
+}
+
 func TestSetupShowsBasicAdvancedChoice(t *testing.T) {
 	services := &fakeServices{
 		setup: tui.SetupStatus{
