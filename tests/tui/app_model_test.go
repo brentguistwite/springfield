@@ -47,7 +47,7 @@ func (f *fakeServices) InitProject() (config.InitResult, error) {
 	return f.initResult, f.initErr
 }
 
-func (f *fakeServices) SetupConductor() (tui.ConductorSetupResult, error) {
+func (f *fakeServices) SetupConductor(opts tui.ConductorSetupInput) (tui.ConductorSetupResult, error) {
 	f.conductorSetupCalls++
 	if f.conductorSetupErr == nil {
 		f.setup.ConductorConfigReady = true

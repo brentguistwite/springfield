@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"springfield/internal/features/conductor"
 	"springfield/internal/features/doctor"
 )
 
@@ -119,7 +120,14 @@ func (s setupScreen) Update(msg tea.Msg) (setupScreen, tea.Cmd) {
 				return s, nil
 			}
 			if !s.status.ConductorConfigReady {
-				result, err := s.services.SetupConductor()
+				defaults := conductor.SetupDefaults()
+				result, err := s.services.SetupConductor(ConductorSetupInput{
+					PlansDir:        defaults.PlansDir,
+					WorktreeBase:    defaults.WorktreeBase,
+					MaxRetries:      defaults.MaxRetries,
+					RalphIterations: defaults.RalphIterations,
+					RalphTimeout:    defaults.RalphTimeout,
+				})
 				s.lastResult = &setupResult{
 					conductorConfigCreated: result.Created,
 					conductorConfigReused:  result.Reused,

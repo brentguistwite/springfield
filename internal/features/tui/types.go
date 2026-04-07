@@ -101,6 +101,16 @@ type ConductorRunResult struct {
 	Error string
 }
 
+// ConductorSetupInput holds user-chosen conductor setup options for the TUI.
+type ConductorSetupInput struct {
+	PlansDir        string
+	WorktreeBase    string
+	MaxRetries      int
+	RalphIterations int
+	RalphTimeout    int
+	UpdateGitignore bool
+}
+
 // ConductorSetupResult describes what the TUI conductor setup action produced.
 type ConductorSetupResult struct {
 	Created bool
@@ -145,7 +155,7 @@ type ConductorRunCompleteMsg struct {
 type Services interface {
 	SetupStatus() SetupStatus
 	InitProject() (config.InitResult, error)
-	SetupConductor() (ConductorSetupResult, error)
+	SetupConductor(opts ConductorSetupInput) (ConductorSetupResult, error)
 	RalphSummary() RalphSummary
 	RunRalphNext(planName string, onEvent func(RuntimeEvent)) (RalphRunResult, error)
 	ConductorSummary() ConductorSummary

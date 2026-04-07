@@ -146,7 +146,7 @@ func (s runtimeServices) RalphSummary() RalphSummary {
 	return summary
 }
 
-func (s runtimeServices) SetupConductor() (ConductorSetupResult, error) {
+func (s runtimeServices) SetupConductor(input ConductorSetupInput) (ConductorSetupResult, error) {
 	status := s.SetupStatus()
 	if status.Error != "" {
 		return ConductorSetupResult{}, errors.New(status.Error)
@@ -162,6 +162,12 @@ func (s runtimeServices) SetupConductor() (ConductorSetupResult, error) {
 
 	opts := conductor.SetupDefaults()
 	opts.Tool = loaded.Config.Project.DefaultAgent
+	opts.PlansDir = input.PlansDir
+	opts.WorktreeBase = input.WorktreeBase
+	opts.MaxRetries = input.MaxRetries
+	opts.RalphIterations = input.RalphIterations
+	opts.RalphTimeout = input.RalphTimeout
+	opts.UpdateGitignore = input.UpdateGitignore
 
 	result, err := conductor.Setup(status.ProjectRoot, opts)
 	if err != nil {
