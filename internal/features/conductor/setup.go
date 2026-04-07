@@ -119,6 +119,70 @@ func Setup(rootDir string, opts SetupOptions) (SetupResult, error) {
 	}, nil
 }
 
+// UpdateResult describes what happened during a config update.
+type UpdateResult struct {
+	Updated          bool
+	Path             string
+	GitignoreUpdated bool
+}
+
+// UpdateConfig overwrites an existing conductor config with new values.
+// Returns an error if no config exists yet (use Setup for first-run).
+func UpdateConfig(rootDir string, opts SetupOptions) (UpdateResult, error) {
+	rt, err := storage.FromRoot(rootDir)
+	if err != nil {
+		return UpdateResult{}, err
+	}
+
+	configFile, _ := rt.Path(configPath)
+
+	// Verify existing config exists
+	var existing Config
+	if err := rt.ReadJSON(configPath, &existing); err != nil {
+		return UpdateResult{}, errors.New("no existing conductor config to update; use Setup for first-run")
+	}
+
+	sequential := opts.Sequential
+	if sequential == nil {
+		sequential = []string{}
+	}
+	batches := opts.Batches
+	if batches == nil {
+		batches = [][]string{}
+	}
+
+	cfg := &Config{
+		PlansDir:        opts.PlansDir,
+		WorktreeBase:    opts.WorktreeBase,
+		MaxRetries:      opts.MaxRetries,
+		RalphIterations: opts.RalphIterations,
+		RalphTimeout:    opts.RalphTimeout,
+		Tool:            opts.Tool,
+		FallbackTool:    opts.FallbackTool,
+		Sequential:      sequential,
+		Batches:         batches,
+	}
+
+	if err := rt.WriteJSON(configPath, cfg); err != nil {
+		return UpdateResult{}, err
+	}
+
+	gitignoreUpdated := false
+	if opts.UpdateGitignore && cfg.PlansDir == TrackedPlansDir {
+		updated, err := ensureTrackedPlansGitignore(rootDir)
+		if err != nil {
+			return UpdateResult{}, err
+		}
+		gitignoreUpdated = updated
+	}
+
+	return UpdateResult{
+		Updated:          true,
+		Path:             configFile,
+		GitignoreUpdated: gitignoreUpdated,
+	}, nil
+}
+
 // IsReady checks if conductor config exists and is loadable.
 func IsReady(rootDir string) (bool, error) {
 	rt, err := storage.FromRoot(rootDir)
