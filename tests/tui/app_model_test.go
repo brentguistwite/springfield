@@ -130,7 +130,7 @@ func TestModelStartsOnHomeScreen(t *testing.T) {
 	model := tui.NewModel(&fakeServices{})
 	view := model.View()
 
-	for _, marker := range []string{"Springfield", "Guided Setup", "Ralph", "Conductor", "Doctor"} {
+	for _, marker := range []string{"Springfield", "Guided Setup", "Advanced Setup", "Ralph", "Conductor", "Doctor"} {
 		if !strings.Contains(view, marker) {
 			t.Fatalf("expected home view to contain %q, got:\n%s", marker, view)
 		}
@@ -187,6 +187,7 @@ func TestModelRendersRalphSummary(t *testing.T) {
 	})
 
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := model.View()
@@ -210,6 +211,7 @@ func TestModelRendersConductorSummary(t *testing.T) {
 		},
 	})
 
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
@@ -355,6 +357,7 @@ func TestRalphScreenRunsNextStory(t *testing.T) {
 
 	model := tui.NewModel(services)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
 	// Press 'r' — transitions to running state
@@ -394,6 +397,7 @@ func TestRalphScreenShowsRunFailure(t *testing.T) {
 
 	model := tui.NewModel(services)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
 	// Press 'r' to start
@@ -424,6 +428,7 @@ func TestRalphScreenShowsStreamingEvents(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
@@ -468,6 +473,7 @@ func TestRalphScreenMonitorIdleToRunningToSucceeded(t *testing.T) {
 
 	model := tui.NewModel(services)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
 	// Idle: no status line
@@ -505,6 +511,7 @@ func TestRalphScreenMonitorIdleToRunningToFailed(t *testing.T) {
 
 	model := tui.NewModel(services)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
@@ -530,6 +537,7 @@ func TestRalphScreenBlocksEscWhileRunning(t *testing.T) {
 
 	model := tui.NewModel(services)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
 	// Start run
@@ -554,6 +562,7 @@ func TestRalphScreenBlocksRunWhileRunning(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
@@ -581,6 +590,7 @@ func TestConductorScreenRunsNextPhase(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
@@ -620,6 +630,7 @@ func TestConductorScreenShowsRunFailure(t *testing.T) {
 	model := tui.NewModel(services)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
@@ -643,6 +654,7 @@ func TestConductorScreenShowsStreamingEvents(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
@@ -674,6 +686,7 @@ func TestConductorScreenBlocksEscWhileRunning(t *testing.T) {
 	model := tui.NewModel(services)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
@@ -696,6 +709,7 @@ func TestRalphScreenNoCliDeadEnd(t *testing.T) {
 	})
 
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := model.View()
@@ -716,6 +730,7 @@ func TestConductorScreenNoCliDeadEnd(t *testing.T) {
 		},
 	})
 
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
@@ -744,6 +759,7 @@ func TestConductorScreenDiagnosisViewToggle(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
@@ -782,6 +798,7 @@ func TestConductorScreenDiagnosisShowsEvidencePath(t *testing.T) {
 	model := tui.NewModel(services)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
@@ -802,6 +819,7 @@ func TestConductorScreenDiagnosisNoFailuresMessage(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
@@ -830,6 +848,7 @@ func TestConductorScreenNextStepNoCliReference(t *testing.T) {
 	model := tui.NewModel(services)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := model.View()
@@ -854,6 +873,7 @@ func TestConductorScreenShowsDiagnoseHint(t *testing.T) {
 	model := tui.NewModel(services)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := model.View()
@@ -872,6 +892,7 @@ func TestConductorScreenAfterFailedRunShowsDiagnosis(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
@@ -896,6 +917,33 @@ func TestConductorScreenAfterFailedRunShowsDiagnosis(t *testing.T) {
 	}
 }
 
+func TestHomeMenuShowsAdvancedSetup(t *testing.T) {
+	model := tui.NewModel(&fakeServices{})
+	view := model.View()
+	if !strings.Contains(view, "Advanced Setup") {
+		t.Fatalf("expected home view to contain 'Advanced Setup', got:\n%s", view)
+	}
+}
+
+func TestAdvancedSetupRedirectsWhenNoConfig(t *testing.T) {
+	services := &fakeServices{
+		setup: tui.SetupStatus{
+			WorkingDir:  "/tmp/demo",
+			ProjectRoot: "/tmp/demo",
+			ConfigPath:  "/tmp/demo/springfield.toml",
+			// ConfigPresent: false — not initialized
+		},
+	}
+	model := tui.NewModel(services)
+	// Navigate to Advanced Setup (second item in menu)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	view := model.View()
+	if !strings.Contains(view, "Guided Setup") {
+		t.Fatalf("expected redirect to Guided Setup, got:\n%s", view)
+	}
+}
+
 func TestModelRendersDoctorSummary(t *testing.T) {
 	model := tui.NewModel(&fakeServices{
 		report: doctor.Report{
@@ -907,6 +955,7 @@ func TestModelRendersDoctorSummary(t *testing.T) {
 		},
 	})
 
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})

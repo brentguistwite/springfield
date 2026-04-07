@@ -11,6 +11,7 @@ type Screen int
 const (
 	ScreenHome Screen = iota
 	ScreenSetup
+	ScreenAdvancedSetup
 	ScreenRalph
 	ScreenConductor
 	ScreenDoctor

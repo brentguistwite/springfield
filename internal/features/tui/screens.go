@@ -18,6 +18,7 @@ type menuItem struct {
 
 var homeMenu = []menuItem{
 	{label: "Guided Setup", screen: ScreenSetup},
+	{label: "Advanced Setup", screen: ScreenAdvancedSetup},
 	{label: "Ralph", screen: ScreenRalph},
 	{label: "Conductor", screen: ScreenConductor},
 	{label: "Doctor", screen: ScreenDoctor},
