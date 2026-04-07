@@ -114,9 +114,10 @@ type ConductorSetupInput struct {
 
 // ConductorSetupResult describes what the TUI conductor setup action produced.
 type ConductorSetupResult struct {
-	Created bool
-	Reused  bool
-	Path    string
+	Created          bool
+	Reused           bool
+	Path             string
+	GitignoreUpdated bool
 }
 
 // MonitorState tracks the lifecycle of an active TUI run.
@@ -174,6 +175,7 @@ type Services interface {
 	InitProject() (config.InitResult, error)
 	SetupConductor(opts ConductorSetupInput) (ConductorSetupResult, error)
 	DetectAgents() []AgentDetection
+	AgentPriority() []string
 	ConductorCurrentConfig() *ConductorCurrentConfig
 	RalphSummary() RalphSummary
 	RunRalphNext(planName string, onEvent func(RuntimeEvent)) (RalphRunResult, error)

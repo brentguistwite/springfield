@@ -179,9 +179,10 @@ func (s runtimeServices) SetupConductor(input ConductorSetupInput) (ConductorSet
 	}
 
 	return ConductorSetupResult{
-		Created: result.Created,
-		Reused:  result.Reused,
-		Path:    result.Path,
+		Created:          result.Created,
+		Reused:           result.Reused,
+		Path:             result.Path,
+		GitignoreUpdated: result.GitignoreUpdated,
 	}, nil
 }
 
@@ -335,6 +336,18 @@ func (s runtimeServices) DetectAgents() []AgentDetection {
 	return result
 }
 
+func (s runtimeServices) AgentPriority() []string {
+	status := s.SetupStatus()
+	if !status.ConfigPresent {
+		return nil
+	}
+	loaded, err := config.LoadFrom(status.ProjectRoot)
+	if err != nil {
+		return nil
+	}
+	return loaded.Config.EffectivePriority()
+}
+
 func (s runtimeServices) ConductorCurrentConfig() *ConductorCurrentConfig {
 	status := s.SetupStatus()
 	if !status.ConductorConfigReady {
@@ -393,9 +406,10 @@ func (s runtimeServices) UpdateConductor(input ConductorSetupInput) (ConductorSe
 		return ConductorSetupResult{}, err
 	}
 	return ConductorSetupResult{
-		Created: false,
-		Reused:  false,
-		Path:    result.Path,
+		Created:          false,
+		Reused:           false,
+		Path:             result.Path,
+		GitignoreUpdated: result.GitignoreUpdated,
 	}, nil
 }
 

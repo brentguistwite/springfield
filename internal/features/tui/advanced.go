@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -54,12 +55,16 @@ type formField struct {
 
 func newAdvancedSetupScreen(services Services) advancedSetupScreen {
 	status := services.SetupStatus()
+	agents := services.DetectAgents()
+	if priority := services.AgentPriority(); len(priority) > 0 {
+		agents = sortAgentsByPriority(agents, priority)
+	}
 	s := advancedSetupScreen{
 		services:   services,
 		status:     status,
 		step:       stepStorageMode,
 		plansDir:   conductor.LocalPlansDir,
-		agentList:  services.DetectAgents(),
+		agentList:  agents,
 		formFields: defaultFormFields(),
 	}
 	// On re-entry with existing config, load current storage mode
@@ -231,6 +236,27 @@ func (a advancedSetupScreen) updateSettingsForm(key tea.KeyMsg) (advancedSetupSc
 	return a, nil
 }
 
+func sortAgentsByPriority(agents []AgentDetection, priority []string) []AgentDetection {
+	rank := make(map[string]int, len(priority))
+	for i, id := range priority {
+		rank[id] = i
+	}
+	sorted := make([]AgentDetection, len(agents))
+	copy(sorted, agents)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		ri, oki := rank[sorted[i].ID]
+		rj, okj := rank[sorted[j].ID]
+		if oki && okj {
+			return ri < rj
+		}
+		if oki {
+			return true
+		}
+		return false
+	})
+	return sorted
+}
+
 func (a advancedSetupScreen) agentPriorityIDs() []string {
 	ids := make([]string, len(a.agentList))
 	for i, agent := range a.agentList {
@@ -240,10 +266,7 @@ func (a advancedSetupScreen) agentPriorityIDs() []string {
 }
 
 func (a advancedSetupScreen) finalize() advancedSetupScreen {
-	priority := make([]string, len(a.agentList))
-	for i, agent := range a.agentList {
-		priority[i] = agent.ID
-	}
+	priority := a.agentPriorityIDs()
 	if err := a.services.SaveAgentPriority(priority); err != nil {
 		a.completeErr = err.Error()
 		a.completed = true

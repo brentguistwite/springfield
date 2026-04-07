@@ -33,6 +33,7 @@ type fakeServices struct {
 	conductorRunCalls   int
 	conductorRunEvents  []tui.RuntimeEvent
 	agentDetections      []tui.AgentDetection
+	agentPriorityOrder   []string
 	conductorCurrentCfg  *tui.ConductorCurrentConfig
 	savePriorityCalls    int
 	savePriorityArg      []string
@@ -98,6 +99,10 @@ func (f *fakeServices) DoctorSummary() doctor.Report {
 
 func (f *fakeServices) DetectAgents() []tui.AgentDetection {
 	return f.agentDetections
+}
+
+func (f *fakeServices) AgentPriority() []string {
+	return f.agentPriorityOrder
 }
 
 func (f *fakeServices) ConductorCurrentConfig() *tui.ConductorCurrentConfig {
