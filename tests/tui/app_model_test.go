@@ -944,6 +944,55 @@ func TestAdvancedSetupRedirectsWhenNoConfig(t *testing.T) {
 	}
 }
 
+func TestAdvancedSetupStorageModeSelection(t *testing.T) {
+	services := &fakeServices{
+		setup: tui.SetupStatus{
+			WorkingDir:           "/tmp/demo",
+			ProjectRoot:          "/tmp/demo",
+			ConfigPath:           "/tmp/demo/springfield.toml",
+			RuntimeDir:           "/tmp/demo/.springfield",
+			ConductorConfigPath:  "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:        true,
+			RuntimePresent:       true,
+			ConductorConfigReady: true,
+		},
+	}
+	model := tui.NewModel(services)
+	// Navigate to Advanced Setup (index 1 in menu)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	view := model.View()
+	if !strings.Contains(view, "Local") || !strings.Contains(view, "Tracked") {
+		t.Fatalf("expected storage mode choices, got:\n%s", view)
+	}
+}
+
+func TestAdvancedSetupTrackedShowsGitignorePrompt(t *testing.T) {
+	services := &fakeServices{
+		setup: tui.SetupStatus{
+			WorkingDir:           "/tmp/demo",
+			ProjectRoot:          "/tmp/demo",
+			ConfigPath:           "/tmp/demo/springfield.toml",
+			RuntimeDir:           "/tmp/demo/.springfield",
+			ConductorConfigPath:  "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:        true,
+			RuntimePresent:       true,
+			ConductorConfigReady: true,
+		},
+	}
+	model := tui.NewModel(services)
+	// Navigate to Advanced Setup
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	// Select Tracked (Down + Enter)
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	view := model.View()
+	if !strings.Contains(view, ".gitignore") {
+		t.Fatalf("expected gitignore prompt after tracked selection, got:\n%s", view)
+	}
+}
+
 func TestModelRendersDoctorSummary(t *testing.T) {
 	model := tui.NewModel(&fakeServices{
 		report: doctor.Report{
