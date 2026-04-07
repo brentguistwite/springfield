@@ -1047,6 +1047,42 @@ func TestAdvancedSetupAgentPriorityReorder(t *testing.T) {
 	}
 }
 
+func TestAdvancedSetupSettingsForm(t *testing.T) {
+	services := &fakeServices{
+		setup: tui.SetupStatus{
+			WorkingDir:           "/tmp/demo",
+			ProjectRoot:          "/tmp/demo",
+			ConfigPath:           "/tmp/demo/springfield.toml",
+			RuntimeDir:           "/tmp/demo/.springfield",
+			ConductorConfigPath:  "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:        true,
+			RuntimePresent:       true,
+			ConductorConfigReady: true,
+		},
+		agentDetections: []tui.AgentDetection{
+			{ID: "claude", Name: "Claude Code", Installed: true},
+		},
+	}
+	model := tui.NewModel(services)
+	// Advanced Setup (index 1)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	// Local storage (Enter)
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	// Agent priority (Enter to confirm)
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := model.View()
+	for _, marker := range []string{"Worktree base", "Max retries", "Ralph iterations", "Ralph timeout"} {
+		if !strings.Contains(view, marker) {
+			t.Fatalf("expected settings form to contain %q, got:\n%s", marker, view)
+		}
+	}
+	if !strings.Contains(view, ".worktrees") {
+		t.Fatalf("expected default worktree base, got:\n%s", view)
+	}
+}
+
 func TestModelRendersDoctorSummary(t *testing.T) {
 	model := tui.NewModel(&fakeServices{
 		report: doctor.Report{

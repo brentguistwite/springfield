@@ -35,16 +35,27 @@ type advancedSetupScreen struct {
 	// Agent priority
 	agentList   []AgentDetection
 	agentCursor int
+
+	// Settings form
+	formFields  []formField
+	formCursor  int
+	formEditing bool
+}
+
+type formField struct {
+	label string
+	value string
 }
 
 func newAdvancedSetupScreen(services Services) advancedSetupScreen {
 	status := services.SetupStatus()
 	s := advancedSetupScreen{
-		services:  services,
-		status:    status,
-		step:      stepStorageMode,
-		plansDir:  conductor.LocalPlansDir,
-		agentList: services.DetectAgents(),
+		services:   services,
+		status:     status,
+		step:       stepStorageMode,
+		plansDir:   conductor.LocalPlansDir,
+		agentList:  services.DetectAgents(),
+		formFields: defaultFormFields(),
 	}
 	// On re-entry with existing config, load current storage mode
 	if status.ConductorConfigReady {
@@ -54,9 +65,25 @@ func newAdvancedSetupScreen(services Services) advancedSetupScreen {
 			if current.PlansDir == conductor.TrackedPlansDir {
 				s.storageCursor = 1
 			}
+			s.formFields = []formField{
+				{label: "Worktree base", value: current.WorktreeBase},
+				{label: "Max retries", value: fmt.Sprintf("%d", current.MaxRetries)},
+				{label: "Ralph iterations", value: fmt.Sprintf("%d", current.RalphIterations)},
+				{label: "Ralph timeout (s)", value: fmt.Sprintf("%d", current.RalphTimeout)},
+			}
 		}
 	}
 	return s
+}
+
+func defaultFormFields() []formField {
+	defaults := conductor.SetupDefaults()
+	return []formField{
+		{label: "Worktree base", value: defaults.WorktreeBase},
+		{label: "Max retries", value: fmt.Sprintf("%d", defaults.MaxRetries)},
+		{label: "Ralph iterations", value: fmt.Sprintf("%d", defaults.RalphIterations)},
+		{label: "Ralph timeout (s)", value: fmt.Sprintf("%d", defaults.RalphTimeout)},
+	}
 }
 
 func (a advancedSetupScreen) Update(msg tea.Msg) (advancedSetupScreen, tea.Cmd) {
@@ -80,6 +107,8 @@ func (a advancedSetupScreen) Update(msg tea.Msg) (advancedSetupScreen, tea.Cmd) 
 		return a.updateGitignoreConfirm(key)
 	case stepAgentPriority:
 		return a.updateAgentPriority(key)
+	case stepSettingsForm:
+		return a.updateSettingsForm(key)
 	}
 
 	return a, nil
@@ -156,6 +185,44 @@ func (a advancedSetupScreen) updateAgentPriority(key tea.KeyMsg) (advancedSetupS
 	return a, nil
 }
 
+func (a advancedSetupScreen) updateSettingsForm(key tea.KeyMsg) (advancedSetupScreen, tea.Cmd) {
+	if a.formEditing {
+		switch key.Type {
+		case tea.KeyEnter, tea.KeyEsc:
+			a.formEditing = false
+		case tea.KeyBackspace:
+			if len(a.formFields[a.formCursor].value) > 0 {
+				a.formFields[a.formCursor].value = a.formFields[a.formCursor].value[:len(a.formFields[a.formCursor].value)-1]
+			}
+		case tea.KeyRunes:
+			a.formFields[a.formCursor].value += string(key.Runes)
+		}
+		return a, nil
+	}
+
+	switch key.Type {
+	case tea.KeyUp, tea.KeyShiftTab:
+		if a.formCursor > 0 {
+			a.formCursor--
+		}
+	case tea.KeyDown, tea.KeyTab:
+		if a.formCursor < len(a.formFields)-1 {
+			a.formCursor++
+		}
+	case tea.KeyEnter:
+		a.formEditing = true
+	}
+
+	switch key.String() {
+	case "e":
+		a.formEditing = true
+	case "c":
+		a.step = stepComplete
+	}
+
+	return a, nil
+}
+
 func (a advancedSetupScreen) View() string {
 	var b strings.Builder
 	b.WriteString("Advanced Setup\n\n")
@@ -206,6 +273,21 @@ func (a advancedSetupScreen) View() string {
 			fmt.Fprintf(&b, "%s%d. %s (%s)\n", cursor, i+1, agent.ID, status)
 		}
 		b.WriteString("\nUp/Down select, j/k reorder, Enter confirm, Esc back\n")
+
+	case stepSettingsForm:
+		b.WriteString("Conductor Settings\n\n")
+		for i, field := range a.formFields {
+			cursor := "  "
+			if i == a.formCursor {
+				if a.formEditing {
+					cursor = "* "
+				} else {
+					cursor = "> "
+				}
+			}
+			fmt.Fprintf(&b, "%s%-20s %s\n", cursor, field.label+":", field.value)
+		}
+		b.WriteString("\nUp/Down navigate, e edit field, Enter edit, c confirm all, Esc back\n")
 
 	default:
 		b.WriteString("Setup complete.\n")
