@@ -9,6 +9,8 @@ import (
 
 // Save writes the config back to disk. When AgentPriority is set, it syncs
 // DefaultAgent to priority[0] for backwards compatibility.
+// The sync modifies a local copy; callers should reload via LoadFrom if they
+// need the in-memory Config to reflect the change.
 func Save(loaded Loaded) error {
 	if len(loaded.Config.Project.AgentPriority) > 0 {
 		loaded.Config.Project.DefaultAgent = loaded.Config.Project.AgentPriority[0]
