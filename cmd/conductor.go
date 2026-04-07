@@ -14,6 +14,7 @@ import (
 	"springfield/internal/core/agents"
 	"springfield/internal/core/agents/claude"
 	"springfield/internal/core/agents/codex"
+	"springfield/internal/core/agents/gemini"
 	"springfield/internal/core/config"
 	"springfield/internal/core/runtime"
 	"springfield/internal/features/conductor"
@@ -42,15 +43,35 @@ func bindDirFlag(cmd *cobra.Command, dir *string) {
 	cmd.Flags().StringVar(dir, "dir", ".", "project root or nested path inside the Springfield project")
 }
 
-func buildConductorExecutor(project *conductor.Project, dir string) *conductor.RuntimeExecutor {
+func projectPriority(dir string) ([]agents.ID, error) {
+	loaded, err := config.LoadFrom(dir)
+	if err != nil {
+		return nil, err
+	}
+	priority := loaded.Config.EffectivePriority()
+	ids := make([]agents.ID, 0, len(priority))
+	for _, id := range priority {
+		if id == "" {
+			continue
+		}
+		ids = append(ids, agents.ID(id))
+	}
+	return ids, nil
+}
+
+func buildConductorExecutor(project *conductor.Project, dir string) (*conductor.RuntimeExecutor, error) {
 	registry := agents.NewRegistry(
 		claude.New(exec.LookPath),
 		codex.New(exec.LookPath),
+		gemini.New(exec.LookPath),
 	)
 	runner := runtime.NewRunner(registry)
-	agentID := agents.ID(project.Config.Tool)
+	priority, err := projectPriority(dir)
+	if err != nil {
+		return nil, err
+	}
 	plansDir := filepath.Join(dir, project.Config.PlansDir)
-	return conductor.NewRuntimeExecutor(runner, agentID, plansDir, dir)
+	return conductor.NewRuntimeExecutor(runner, priority, plansDir, dir), nil
 }
 
 func newConductorSetupCommand() *cobra.Command {
@@ -70,7 +91,8 @@ func newConductorSetupCommand() *cobra.Command {
 
 			effectiveTool := tool
 			if effectiveTool == "" {
-				effectiveTool = loaded.Config.Project.DefaultAgent
+				priority := loaded.Config.EffectivePriority()
+				effectiveTool = priority[0]
 			}
 
 			opts := conductor.SetupDefaults()
@@ -244,7 +266,10 @@ func newConductorRunCommand() *cobra.Command {
 				return printConductorDryRun(cmd, project)
 			}
 
-			executor := buildConductorExecutor(project, dir)
+			executor, err := buildConductorExecutor(project, dir)
+			if err != nil {
+				return err
+			}
 			runner := conductor.NewRunner(project, executor)
 			runErr := runner.RunAll()
 
@@ -274,7 +299,10 @@ func newConductorResumeCommand() *cobra.Command {
 				return printConductorDryRun(cmd, project)
 			}
 
-			executor := buildConductorExecutor(project, dir)
+			executor, err := buildConductorExecutor(project, dir)
+			if err != nil {
+				return err
+			}
 			runner := conductor.NewRunner(project, executor)
 			runErr := runner.RunAll()
 
