@@ -15,7 +15,6 @@ type advancedStep int
 
 const (
 	stepStorageMode advancedStep = iota
-	stepGitignoreConfirm
 	stepAgentPriority
 	stepSettingsForm
 	stepComplete
@@ -30,9 +29,7 @@ type advancedSetupScreen struct {
 	storageCursor   int // 0=Local, 1=Tracked
 	plansDir        string
 	updateGitignore bool
-
-	// Gitignore confirm
-	gitignoreCursor int // 0=Yes, 1=No
+	gitignoreChoice bool
 
 	// Agent priority
 	agentList   []AgentDetection
@@ -66,6 +63,7 @@ func newAdvancedSetupScreen(services Services) advancedSetupScreen {
 		plansDir:   conductor.LocalPlansDir,
 		agentList:  agents,
 		formFields: defaultFormFields(),
+		gitignoreChoice: true,
 	}
 	// On re-entry with existing config, load current storage mode
 	if status.ConductorConfigReady {
@@ -113,8 +111,6 @@ func (a advancedSetupScreen) Update(msg tea.Msg) (advancedSetupScreen, tea.Cmd) 
 	switch a.step {
 	case stepStorageMode:
 		return a.updateStorageMode(key)
-	case stepGitignoreConfirm:
-		return a.updateGitignoreConfirm(key)
 	case stepAgentPriority:
 		return a.updateAgentPriority(key)
 	case stepSettingsForm:
@@ -140,28 +136,22 @@ func (a advancedSetupScreen) updateStorageMode(key tea.KeyMsg) (advancedSetupScr
 		if a.storageCursor == 0 {
 			a.plansDir = conductor.LocalPlansDir
 			a.updateGitignore = false
-			a.step = stepAgentPriority
 		} else {
 			a.plansDir = conductor.TrackedPlansDir
-			a.step = stepGitignoreConfirm
+			a.updateGitignore = a.gitignoreChoice
 		}
-	}
-	return a, nil
-}
-
-func (a advancedSetupScreen) updateGitignoreConfirm(key tea.KeyMsg) (advancedSetupScreen, tea.Cmd) {
-	switch key.Type {
-	case tea.KeyUp, tea.KeyShiftTab:
-		if a.gitignoreCursor > 0 {
-			a.gitignoreCursor--
-		}
-	case tea.KeyDown, tea.KeyTab:
-		if a.gitignoreCursor < 1 {
-			a.gitignoreCursor++
-		}
-	case tea.KeyEnter:
-		a.updateGitignore = (a.gitignoreCursor == 0)
 		a.step = stepAgentPriority
+	}
+
+	switch key.String() {
+	case "y":
+		if a.storageCursor == 1 {
+			a.gitignoreChoice = true
+		}
+	case "n":
+		if a.storageCursor == 1 {
+			a.gitignoreChoice = false
+		}
 	}
 	return a, nil
 }
@@ -309,6 +299,19 @@ func (a advancedSetupScreen) updateComplete(key tea.KeyMsg) (advancedSetupScreen
 	return a, nil
 }
 
+func yesNo(selected bool, yes bool) string {
+	if selected == yes {
+		if yes {
+			return "Y"
+		}
+		return "n"
+	}
+	if yes {
+		return "y"
+	}
+	return "N"
+}
+
 func (a advancedSetupScreen) View() string {
 	var b strings.Builder
 	b.WriteString("Advanced Setup\n\n")
@@ -330,18 +333,8 @@ func (a advancedSetupScreen) View() string {
 			}
 			fmt.Fprintf(&b, "%s%s — %s\n", cursor, opt.label, opt.desc)
 		}
-		b.WriteString("\nUp/Down navigate, Enter select, Esc back\n")
-
-	case stepGitignoreConfirm:
-		b.WriteString("Update .gitignore?\n\n")
-		b.WriteString("Tracked plans need .gitignore entries to avoid committing state files.\n\n")
-		gitignoreOpts := []string{"Yes, update .gitignore", "No, I'll handle it manually"}
-		for i, opt := range gitignoreOpts {
-			cursor := "  "
-			if i == a.gitignoreCursor {
-				cursor = "> "
-			}
-			fmt.Fprintf(&b, "%s%s\n", cursor, opt)
+		if a.storageCursor == 1 {
+			fmt.Fprintf(&b, "\nUpdate .gitignore? [%s/%s]\n", yesNo(a.gitignoreChoice, true), yesNo(a.gitignoreChoice, false))
 		}
 		b.WriteString("\nUp/Down navigate, Enter select, Esc back\n")
 

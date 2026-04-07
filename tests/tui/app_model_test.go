@@ -1000,28 +1000,50 @@ func TestAdvancedSetupStorageModeSelection(t *testing.T) {
 }
 
 func TestAdvancedSetupTrackedShowsGitignorePrompt(t *testing.T) {
-	services := &fakeServices{
-		setup: tui.SetupStatus{
-			WorkingDir:           "/tmp/demo",
-			ProjectRoot:          "/tmp/demo",
-			ConfigPath:           "/tmp/demo/springfield.toml",
-			RuntimeDir:           "/tmp/demo/.springfield",
-			ConductorConfigPath:  "/tmp/demo/.springfield/conductor/config.json",
-			ConfigPresent:        true,
-			RuntimePresent:       true,
-			ConductorConfigReady: true,
-		},
-	}
+	services := readyAdvancedServices()
 	model := tui.NewModel(services)
 	// Navigate to Advanced Setup
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
-	// Select Tracked (Down + Enter)
+	// Select Tracked row
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	view := model.View()
+	if !strings.Contains(view, "Agent Priority") {
+		t.Fatalf("expected tracked selection to advance, got:\n%s", view)
+	}
+}
+
+func TestAdvancedSetupTrackedKeepsGitignorePromptInline(t *testing.T) {
+	services := readyAdvancedServices()
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyDown})
+
+	view := model.View()
+	if !strings.Contains(view, "Plan Storage Mode") {
+		t.Fatalf("expected still on storage screen, got:\n%s", view)
+	}
 	if !strings.Contains(view, ".gitignore") {
-		t.Fatalf("expected gitignore prompt after tracked selection, got:\n%s", view)
+		t.Fatalf("expected inline gitignore prompt, got:\n%s", view)
+	}
+	if strings.Contains(view, "Agent Priority") {
+		t.Fatalf("should not advance yet, got:\n%s", view)
+	}
+}
+
+func TestAdvancedSetupTrackedEnterAdvancesAfterInlineChoice(t *testing.T) {
+	services := readyAdvancedServices()
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := model.View()
+	if !strings.Contains(view, "Agent Priority") {
+		t.Fatalf("expected next step after inline tracked confirm, got:\n%s", view)
 	}
 }
 
@@ -1238,5 +1260,28 @@ func TestModelRendersDoctorSummary(t *testing.T) {
 		if !strings.Contains(view, marker) {
 			t.Fatalf("expected Doctor view to contain %q, got:\n%s", marker, view)
 		}
+	}
+}
+
+func readySetupStatus() tui.SetupStatus {
+	return tui.SetupStatus{
+		WorkingDir:          "/tmp/demo",
+		ProjectRoot:         "/tmp/demo",
+		ConfigPath:          "/tmp/demo/springfield.toml",
+		RuntimeDir:          "/tmp/demo/.springfield",
+		ConductorConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+		ConfigPresent:       true,
+		RuntimePresent:      true,
+		ConductorConfigReady: true,
+	}
+}
+
+func readyAdvancedServices() *fakeServices {
+	return &fakeServices{
+		setup: readySetupStatus(),
+		agentDetections: []tui.AgentDetection{
+			{ID: "claude", Name: "Claude Code", Installed: true},
+			{ID: "codex", Name: "Codex CLI", Installed: false},
+		},
 	}
 }
