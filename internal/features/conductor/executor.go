@@ -14,17 +14,17 @@ import (
 // RuntimeExecutor implements PlanExecutor using the shared runtime boundary.
 type RuntimeExecutor struct {
 	runner   runtime.Runner
-	agent    agents.ID
+	agents   []agents.ID
 	plansDir string
 	workDir  string
 	OnEvent  exec.EventHandler
 }
 
 // NewRuntimeExecutor creates a PlanExecutor backed by the shared runtime.
-func NewRuntimeExecutor(runner runtime.Runner, agent agents.ID, plansDir, workDir string) *RuntimeExecutor {
+func NewRuntimeExecutor(runner runtime.Runner, agents []agents.ID, plansDir, workDir string) *RuntimeExecutor {
 	return &RuntimeExecutor{
 		runner:   runner,
-		agent:    agent,
+		agents:   agents,
 		plansDir: plansDir,
 		workDir:  workDir,
 	}
@@ -40,10 +40,10 @@ func (e *RuntimeExecutor) Execute(plan string) (ExecuteResult, error) {
 	}
 
 	result := e.runner.Run(context.Background(), runtime.Request{
-		AgentID: e.agent,
-		Prompt:  string(content),
-		WorkDir: e.workDir,
-		OnEvent: e.OnEvent,
+		AgentIDs: e.agents,
+		Prompt:   string(content),
+		WorkDir:  e.workDir,
+		OnEvent:  e.OnEvent,
 	})
 
 	out := ExecuteResult{

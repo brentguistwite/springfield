@@ -25,6 +25,17 @@ type runtimeServices struct {
 	lookPath func(string) (string, error)
 }
 
+func priorityAgentIDs(priority []string) []agents.ID {
+	ids := make([]agents.ID, 0, len(priority))
+	for _, id := range priority {
+		if id == "" {
+			continue
+		}
+		ids = append(ids, agents.ID(id))
+	}
+	return ids
+}
+
 func newRuntimeServices(cwd func() (string, error), lookPath func(string) (string, error)) Services {
 	if cwd == nil {
 		cwd = os.Getwd
@@ -251,7 +262,7 @@ func (s runtimeServices) RunRalphNext(planName string, onEvent func(RuntimeEvent
 	)
 	runner := runtime.NewRunner(registry)
 	priority := loaded.Config.EffectivePriority()
-	executor := ralph.NewRuntimeExecutor(runner, agents.ID(priority[0]), status.ProjectRoot)
+	executor := ralph.NewRuntimeExecutor(runner, priorityAgentIDs(priority), status.ProjectRoot)
 	if onEvent != nil {
 		executor.OnEvent = func(e coreexec.Event) {
 			onEvent(RuntimeEvent{Source: string(e.Type), Data: e.Data})
@@ -302,7 +313,7 @@ func (s runtimeServices) RunConductorNext(onEvent func(RuntimeEvent)) (Conductor
 		plansDir = filepath.Join(status.ProjectRoot, plansDir)
 	}
 	priority := loaded.Config.EffectivePriority()
-	executor := conductor.NewRuntimeExecutor(runner, agents.ID(priority[0]), plansDir, status.ProjectRoot)
+	executor := conductor.NewRuntimeExecutor(runner, priorityAgentIDs(priority), plansDir, status.ProjectRoot)
 	if onEvent != nil {
 		executor.OnEvent = func(e coreexec.Event) {
 			onEvent(RuntimeEvent{Source: string(e.Type), Data: e.Data})

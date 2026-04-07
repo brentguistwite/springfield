@@ -54,7 +54,7 @@ func TestRuntimeExecutorSuccess(t *testing.T) {
 	writePlanFile(t, plansDir, "01-bootstrap", "implement bootstrap feature")
 
 	runner := newTestRuntime("claude", fakeCommandFunc(0, nil))
-	executor := conductor.NewRuntimeExecutor(runner, "claude", plansDir, t.TempDir())
+	executor := conductor.NewRuntimeExecutor(runner, []agents.ID{"claude"}, plansDir, t.TempDir())
 
 	result, err := executor.Execute("01-bootstrap")
 	if err != nil {
@@ -70,7 +70,7 @@ func TestRuntimeExecutorFailure(t *testing.T) {
 	writePlanFile(t, plansDir, "01-bootstrap", "implement bootstrap feature")
 
 	runner := newTestRuntime("claude", fakeCommandFunc(1, nil))
-	executor := conductor.NewRuntimeExecutor(runner, "claude", plansDir, t.TempDir())
+	executor := conductor.NewRuntimeExecutor(runner, []agents.ID{"claude"}, plansDir, t.TempDir())
 
 	result, err := executor.Execute("01-bootstrap")
 	if err == nil {
@@ -84,7 +84,7 @@ func TestRuntimeExecutorFailure(t *testing.T) {
 func TestRuntimeExecutorMissingPlanFile(t *testing.T) {
 	plansDir := filepath.Join(t.TempDir(), "plans")
 	runner := newTestRuntime("claude", fakeCommandFunc(0, nil))
-	executor := conductor.NewRuntimeExecutor(runner, "claude", plansDir, t.TempDir())
+	executor := conductor.NewRuntimeExecutor(runner, []agents.ID{"claude"}, plansDir, t.TempDir())
 
 	_, err := executor.Execute("nonexistent")
 	if err == nil {
