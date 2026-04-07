@@ -3,6 +3,7 @@ package conductor_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"springfield/internal/features/conductor"
@@ -158,5 +159,37 @@ func TestSetup_ConfigPathRelativeToProject(t *testing.T) {
 	// File must actually exist
 	if _, err := os.Stat(result.Path); err != nil {
 		t.Errorf("config file does not exist at %s: %v", result.Path, err)
+	}
+}
+
+func TestSetup_WritesCanonicalEmptyArrays(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root)
+
+	opts := conductor.SetupDefaults()
+	opts.Tool = "claude"
+
+	result, err := conductor.Setup(root, opts)
+	if err != nil {
+		t.Fatalf("Setup() error: %v", err)
+	}
+
+	data, err := os.ReadFile(result.Path)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error: %v", result.Path, err)
+	}
+
+	json := string(data)
+	if strings.Contains(json, `"sequential": null`) {
+		t.Fatalf("setup wrote null sequential array: %s", json)
+	}
+	if strings.Contains(json, `"batches": null`) {
+		t.Fatalf("setup wrote null batches array: %s", json)
+	}
+	if !strings.Contains(json, `"sequential": []`) {
+		t.Fatalf("setup did not write canonical empty sequential array: %s", json)
+	}
+	if !strings.Contains(json, `"batches": []`) {
+		t.Fatalf("setup did not write canonical empty batches array: %s", json)
 	}
 }

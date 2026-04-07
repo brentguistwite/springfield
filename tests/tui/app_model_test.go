@@ -166,7 +166,7 @@ func TestModelSetupFlowCreatesCoreState(t *testing.T) {
 	if services.initCalls != 1 {
 		t.Fatalf("expected one init call, got %d", services.initCalls)
 	}
-	for _, marker := range []string{"springfield.toml created: true", ".springfield created: true", "Enter generates conductor config"} {
+	for _, marker := range []string{"springfield.toml created: true", ".springfield created: true", "Enter generates local conductor config"} {
 		if !strings.Contains(view, marker) {
 			t.Fatalf("expected setup view to contain %q, got:\n%s", marker, view)
 		}
@@ -243,7 +243,7 @@ func TestSetupScreenShowsActionableConductorPrompt(t *testing.T) {
 	if strings.Contains(view, "hand") || strings.Contains(view, "manually") || strings.Contains(view, "Next add") {
 		t.Fatalf("setup view should not suggest manual config editing, got:\n%s", view)
 	}
-	if !strings.Contains(view, "Enter generates conductor config") {
+	if !strings.Contains(view, "Enter generates local conductor config") {
 		t.Fatalf("expected actionable conductor prompt, got:\n%s", view)
 	}
 }

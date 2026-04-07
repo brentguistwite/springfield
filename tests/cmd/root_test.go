@@ -73,6 +73,22 @@ func runBinaryIn(t *testing.T, bin, dir string, args ...string) (string, error) 
 	return stdout.String() + stderr.String(), err
 }
 
+func runBinaryInWithInput(t *testing.T, bin, dir, input string, args ...string) (string, error) {
+	t.Helper()
+
+	cmd := exec.Command(bin, args...)
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(input)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	return stdout.String() + stderr.String(), err
+}
+
 func TestInitCreatesProjectInCurrentDir(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()

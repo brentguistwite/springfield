@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -60,7 +62,7 @@ func newConductorSetupCommand() *cobra.Command {
 		Short: "Generate conductor config from guided defaults.",
 		Long:  "Create .springfield/conductor/config.json so the conductor is ready to run without manual JSON editing.",
 		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
 			loaded, err := config.LoadFrom(dir)
 			if err != nil {
 				return err
@@ -74,6 +76,19 @@ func newConductorSetupCommand() *cobra.Command {
 			opts := conductor.SetupDefaults()
 			opts.Tool = effectiveTool
 
+			ready, err := conductor.IsReady(loaded.RootDir)
+			if err != nil {
+				return err
+			}
+			if !ready {
+				plansDir, updateGitignore, err := promptConductorSetup(cmd)
+				if err != nil {
+					return err
+				}
+				opts.PlansDir = plansDir
+				opts.UpdateGitignore = updateGitignore
+			}
+
 			result, err := conductor.Setup(loaded.RootDir, opts)
 			if err != nil {
 				return err
@@ -86,6 +101,17 @@ func newConductorSetupCommand() *cobra.Command {
 				fmt.Fprintf(w, "Next steps:\n")
 				fmt.Fprintf(w, "  1. Add plan files to %s\n", opts.PlansDir)
 				fmt.Fprintf(w, "  2. Run: springfield conductor run\n")
+				if opts.PlansDir == conductor.TrackedPlansDir {
+					fmt.Fprintln(w, "")
+					if result.GitignoreUpdated {
+						fmt.Fprintln(w, ".gitignore updated for tracked conductor plans.")
+					} else if opts.UpdateGitignore {
+						fmt.Fprintln(w, ".gitignore already supports tracked conductor plans.")
+					} else {
+						fmt.Fprintln(w, "Add this to .gitignore if you want tracked conductor plans with ignored runtime state:")
+						fmt.Fprintln(w, conductor.TrackedPlansGitignoreSnippet())
+					}
+				}
 
 				// Agent prerequisite guidance
 				fmt.Fprintln(w, "")
@@ -101,6 +127,45 @@ func newConductorSetupCommand() *cobra.Command {
 	bindDirFlag(cmd, &dir)
 	cmd.Flags().StringVar(&tool, "tool", "", "agent tool to use (default: from springfield.toml)")
 	return cmd
+}
+
+func promptConductorSetup(cmd *cobra.Command) (string, bool, error) {
+	reader := bufio.NewReader(cmd.InOrStdin())
+	w := cmd.OutOrStdout()
+
+	fmt.Fprintln(w, "Plan storage mode:")
+	fmt.Fprintf(w, "  %s  %s\n", "local", conductor.LocalPlansDir)
+	fmt.Fprintf(w, "  %s  %s\n", "tracked", conductor.TrackedPlansDir)
+	fmt.Fprint(w, "Choose plan storage [local/tracked] (default: local): ")
+
+	choice, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return "", false, err
+	}
+	choice = strings.ToLower(strings.TrimSpace(choice))
+
+	switch choice {
+	case "", "local", "l":
+		return conductor.LocalPlansDir, false, nil
+	case "tracked", "t":
+	default:
+		return "", false, fmt.Errorf("invalid plan storage choice %q", choice)
+	}
+
+	fmt.Fprint(w, "Update .gitignore for tracked conductor plans? [Y/n]: ")
+	answer, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return "", false, err
+	}
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	if answer == "" || answer == "y" || answer == "yes" {
+		return conductor.TrackedPlansDir, true, nil
+	}
+	if answer == "n" || answer == "no" {
+		return conductor.TrackedPlansDir, false, nil
+	}
+
+	return "", false, fmt.Errorf("invalid .gitignore choice %q", answer)
 }
 
 func printAgentGuidance(w io.Writer, tool string) {

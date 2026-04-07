@@ -4,8 +4,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"springfield/internal/storage"
+)
+
+const (
+	LocalPlansDir   = ".springfield/conductor/plans"
+	TrackedPlansDir = ".conductor/plans"
 )
 
 // SetupOptions holds guided inputs for conductor config generation.
@@ -19,23 +25,27 @@ type SetupOptions struct {
 	RalphTimeout    int
 	Sequential      []string
 	Batches         [][]string
+	UpdateGitignore bool
 }
 
 // SetupResult describes what happened during setup.
 type SetupResult struct {
-	Created bool
-	Reused  bool
-	Path    string
+	Created          bool
+	Reused           bool
+	Path             string
+	GitignoreUpdated bool
 }
 
 // SetupDefaults returns reasonable defaults for conductor config generation.
 func SetupDefaults() SetupOptions {
 	return SetupOptions{
-		PlansDir:        ".conductor/plans",
+		PlansDir:        LocalPlansDir,
 		WorktreeBase:    ".worktrees",
 		MaxRetries:      2,
 		RalphIterations: 50,
 		RalphTimeout:    3600,
+		Sequential:      []string{},
+		Batches:         [][]string{},
 	}
 }
 
@@ -66,6 +76,16 @@ func Setup(rootDir string, opts SetupOptions) (SetupResult, error) {
 	}
 
 	// Generate new config from options
+	sequential := opts.Sequential
+	if sequential == nil {
+		sequential = []string{}
+	}
+
+	batches := opts.Batches
+	if batches == nil {
+		batches = [][]string{}
+	}
+
 	cfg := &Config{
 		PlansDir:        opts.PlansDir,
 		WorktreeBase:    opts.WorktreeBase,
@@ -74,18 +94,28 @@ func Setup(rootDir string, opts SetupOptions) (SetupResult, error) {
 		RalphTimeout:    opts.RalphTimeout,
 		Tool:            opts.Tool,
 		FallbackTool:    opts.FallbackTool,
-		Sequential:      opts.Sequential,
-		Batches:         opts.Batches,
+		Sequential:      sequential,
+		Batches:         batches,
 	}
 
 	if err := rt.WriteJSON(configPath, cfg); err != nil {
 		return SetupResult{}, err
 	}
 
+	gitignoreUpdated := false
+	if opts.UpdateGitignore && cfg.PlansDir == TrackedPlansDir {
+		updated, err := ensureTrackedPlansGitignore(rootDir)
+		if err != nil {
+			return SetupResult{}, err
+		}
+		gitignoreUpdated = updated
+	}
+
 	return SetupResult{
-		Created: true,
-		Reused:  false,
-		Path:    configFile,
+		Created:          true,
+		Reused:           false,
+		Path:             configFile,
+		GitignoreUpdated: gitignoreUpdated,
 	}, nil
 }
 
@@ -102,6 +132,48 @@ func IsReady(rootDir string) (bool, error) {
 			return false, nil
 		}
 		return false, nil
+	}
+
+	return true, nil
+}
+
+func TrackedPlansGitignoreSnippet() string {
+	return ".conductor/*\n!.conductor/plans/\n"
+}
+
+func ensureTrackedPlansGitignore(rootDir string) (bool, error) {
+	path := filepath.Join(rootDir, ".gitignore")
+
+	data, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+
+	content := string(data)
+	required := []string{".conductor/*", "!.conductor/plans/"}
+	missing := make([]string, 0, len(required))
+	for _, line := range required {
+		if !strings.Contains(content, line) {
+			missing = append(missing, line)
+		}
+	}
+	if len(missing) == 0 {
+		return false, nil
+	}
+
+	var builder strings.Builder
+	trimmed := strings.TrimRight(content, "\n")
+	if trimmed != "" {
+		builder.WriteString(trimmed)
+		builder.WriteString("\n")
+	}
+	for _, line := range missing {
+		builder.WriteString(line)
+		builder.WriteString("\n")
+	}
+
+	if err := os.WriteFile(path, []byte(builder.String()), 0o644); err != nil {
+		return false, err
 	}
 
 	return true, nil

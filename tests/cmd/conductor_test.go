@@ -1,10 +1,13 @@
 package cmd_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"springfield/internal/features/conductor"
 )
 
 func TestConductorSetupAppearsInHelp(t *testing.T) {
@@ -40,6 +43,106 @@ func TestConductorSetupGeneratesConfig(t *testing.T) {
 	configPath := filepath.Join(dir, ".springfield", "conductor", "config.json")
 	if _, err := os.Stat(configPath); err != nil {
 		t.Errorf("config file not created at %s: %v", configPath, err)
+	}
+}
+
+func TestConductorSetupDefaultsToLocalPlanStorage(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	if _, err := runBinaryIn(t, bin, dir, "init"); err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+
+	output, err := runBinaryInWithInput(t, bin, dir, "\n", "conductor", "setup")
+	if err != nil {
+		t.Fatalf("conductor setup failed: %v\n%s", err, output)
+	}
+
+	configPath := filepath.Join(dir, ".springfield", "conductor", "config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+
+	var cfg conductor.Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+
+	if cfg.PlansDir != ".springfield/conductor/plans" {
+		t.Fatalf("PlansDir = %q, want local default", cfg.PlansDir)
+	}
+
+	if strings.Contains(output, ".gitignore") {
+		t.Fatalf("local default should not prompt about .gitignore, got:\n%s", output)
+	}
+}
+
+func TestConductorSetupTrackedModeOffersGitignoreUpdate(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	if _, err := runBinaryIn(t, bin, dir, "init"); err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+
+	output, err := runBinaryInWithInput(t, bin, dir, "tracked\ny\n", "conductor", "setup")
+	if err != nil {
+		t.Fatalf("conductor setup failed: %v\n%s", err, output)
+	}
+
+	configPath := filepath.Join(dir, ".springfield", "conductor", "config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+
+	var cfg conductor.Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+
+	if cfg.PlansDir != ".conductor/plans" {
+		t.Fatalf("PlansDir = %q, want tracked path", cfg.PlansDir)
+	}
+
+	gitignore, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("read .gitignore: %v", err)
+	}
+
+	content := string(gitignore)
+	for _, line := range []string{".conductor/*", "!.conductor/plans/"} {
+		if !strings.Contains(content, line) {
+			t.Fatalf(".gitignore missing %q:\n%s", line, content)
+		}
+	}
+
+	if !strings.Contains(output, ".gitignore updated") {
+		t.Fatalf("expected gitignore update message, got:\n%s", output)
+	}
+}
+
+func TestConductorSetupTrackedModeCanSkipGitignoreUpdate(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	if _, err := runBinaryIn(t, bin, dir, "init"); err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+
+	output, err := runBinaryInWithInput(t, bin, dir, "tracked\nn\n", "conductor", "setup")
+	if err != nil {
+		t.Fatalf("conductor setup failed: %v\n%s", err, output)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, ".gitignore")); err == nil {
+		t.Fatalf("did not expect .gitignore to be created when update declined")
+	}
+
+	if !strings.Contains(output, ".conductor/*") || !strings.Contains(output, "!.conductor/plans/") {
+		t.Fatalf("expected manual .gitignore snippet in output, got:\n%s", output)
 	}
 }
 

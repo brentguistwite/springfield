@@ -179,7 +179,8 @@ func (s setupScreen) View() string {
 	if s.status.NeedsInit() {
 		builder.WriteString("Enter creates springfield.toml and .springfield in the project root.\n")
 	} else if !s.status.ConductorConfigReady {
-		builder.WriteString("Enter generates conductor config so you can run plans without editing JSON.\n")
+		builder.WriteString("Enter generates local conductor config (recommended) so you can run plans without editing JSON.\n")
+		builder.WriteString("Use `springfield conductor setup` in a terminal if you want tracked plan storage.\n")
 	} else {
 		builder.WriteString("Core setup is ready. Ralph and Conductor surfaces can use the local project state.\n")
 	}
