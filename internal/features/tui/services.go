@@ -311,6 +311,42 @@ func (s runtimeServices) RunConductorNext(onEvent func(RuntimeEvent)) (Conductor
 	return ConductorRunResult{Ran: ran, Done: done}, nil
 }
 
+func (s runtimeServices) DetectAgents() []AgentDetection {
+	registry := agents.NewRegistry(
+		claude.New(s.lookPath),
+		codex.New(s.lookPath),
+		gemini.New(s.lookPath),
+	)
+	detections := registry.DetectAll(context.Background())
+	result := make([]AgentDetection, len(detections))
+	for i, d := range detections {
+		result[i] = AgentDetection{
+			ID:        string(d.ID),
+			Name:      d.Name,
+			Installed: d.Status == agents.DetectionStatusAvailable,
+		}
+	}
+	return result
+}
+
+func (s runtimeServices) ConductorCurrentConfig() *ConductorCurrentConfig {
+	status := s.SetupStatus()
+	if !status.ConductorConfigReady {
+		return nil
+	}
+	project, err := conductor.LoadProject(status.ProjectRoot)
+	if err != nil {
+		return nil
+	}
+	return &ConductorCurrentConfig{
+		PlansDir:        project.Config.PlansDir,
+		WorktreeBase:    project.Config.WorktreeBase,
+		MaxRetries:      project.Config.MaxRetries,
+		RalphIterations: project.Config.RalphIterations,
+		RalphTimeout:    project.Config.RalphTimeout,
+	}
+}
+
 func (s runtimeServices) DoctorSummary() doctor.Report {
 	registry := agents.NewRegistry(
 		claude.New(s.lookPath),

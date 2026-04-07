@@ -152,11 +152,29 @@ type ConductorRunCompleteMsg struct {
 	Err    error
 }
 
+// AgentDetection is a TUI-safe projection of agent availability.
+type AgentDetection struct {
+	ID        string
+	Name      string
+	Installed bool
+}
+
+// ConductorCurrentConfig is a TUI-safe projection of current conductor settings.
+type ConductorCurrentConfig struct {
+	PlansDir        string
+	WorktreeBase    string
+	MaxRetries      int
+	RalphIterations int
+	RalphTimeout    int
+}
+
 // Services hides TUI data loading and side effects behind a small boundary.
 type Services interface {
 	SetupStatus() SetupStatus
 	InitProject() (config.InitResult, error)
 	SetupConductor(opts ConductorSetupInput) (ConductorSetupResult, error)
+	DetectAgents() []AgentDetection
+	ConductorCurrentConfig() *ConductorCurrentConfig
 	RalphSummary() RalphSummary
 	RunRalphNext(planName string, onEvent func(RuntimeEvent)) (RalphRunResult, error)
 	ConductorSummary() ConductorSummary

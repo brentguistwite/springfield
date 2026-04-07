@@ -32,6 +32,8 @@ type fakeServices struct {
 	conductorRunErr     error
 	conductorRunCalls   int
 	conductorRunEvents  []tui.RuntimeEvent
+	agentDetections     []tui.AgentDetection
+	conductorCurrentCfg *tui.ConductorCurrentConfig
 }
 
 func (f *fakeServices) SetupStatus() tui.SetupStatus {
@@ -86,6 +88,14 @@ func (f *fakeServices) RunConductorNext(onEvent func(tui.RuntimeEvent)) (tui.Con
 
 func (f *fakeServices) DoctorSummary() doctor.Report {
 	return f.report
+}
+
+func (f *fakeServices) DetectAgents() []tui.AgentDetection {
+	return f.agentDetections
+}
+
+func (f *fakeServices) ConductorCurrentConfig() *tui.ConductorCurrentConfig {
+	return f.conductorCurrentCfg
 }
 
 // updateModel processes a message and follows up on any returned command.
@@ -990,6 +1000,50 @@ func TestAdvancedSetupTrackedShowsGitignorePrompt(t *testing.T) {
 	view := model.View()
 	if !strings.Contains(view, ".gitignore") {
 		t.Fatalf("expected gitignore prompt after tracked selection, got:\n%s", view)
+	}
+}
+
+func TestAdvancedSetupAgentPriorityReorder(t *testing.T) {
+	services := &fakeServices{
+		setup: tui.SetupStatus{
+			WorkingDir:           "/tmp/demo",
+			ProjectRoot:          "/tmp/demo",
+			ConfigPath:           "/tmp/demo/springfield.toml",
+			RuntimeDir:           "/tmp/demo/.springfield",
+			ConductorConfigPath:  "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:        true,
+			RuntimePresent:       true,
+			ConductorConfigReady: true,
+		},
+		agentDetections: []tui.AgentDetection{
+			{ID: "claude", Name: "Claude Code", Installed: true},
+			{ID: "codex", Name: "Codex CLI", Installed: false},
+			{ID: "gemini", Name: "Gemini CLI", Installed: true},
+		},
+	}
+
+	model := tui.NewModel(services)
+	// Navigate to Advanced Setup (index 1)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	// Pick Local storage (Enter on default)
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := model.View()
+	if !strings.Contains(view, "claude") || !strings.Contains(view, "codex") || !strings.Contains(view, "gemini") {
+		t.Fatalf("expected agent priority list, got:\n%s", view)
+	}
+	if !strings.Contains(view, "installed") {
+		t.Fatalf("expected install status, got:\n%s", view)
+	}
+
+	// Reorder: move claude down with j
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	view = model.View()
+	codexIdx := strings.Index(view, "codex")
+	claudeIdx := strings.Index(view, "claude")
+	if codexIdx > claudeIdx {
+		t.Fatalf("expected codex above claude after reorder, got:\n%s", view)
 	}
 }
 

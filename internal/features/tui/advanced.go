@@ -31,15 +31,32 @@ type advancedSetupScreen struct {
 
 	// Gitignore confirm
 	gitignoreCursor int // 0=Yes, 1=No
+
+	// Agent priority
+	agentList   []AgentDetection
+	agentCursor int
 }
 
 func newAdvancedSetupScreen(services Services) advancedSetupScreen {
-	return advancedSetupScreen{
-		services: services,
-		status:   services.SetupStatus(),
-		step:     stepStorageMode,
-		plansDir: conductor.LocalPlansDir,
+	status := services.SetupStatus()
+	s := advancedSetupScreen{
+		services:  services,
+		status:    status,
+		step:      stepStorageMode,
+		plansDir:  conductor.LocalPlansDir,
+		agentList: services.DetectAgents(),
 	}
+	// On re-entry with existing config, load current storage mode
+	if status.ConductorConfigReady {
+		current := services.ConductorCurrentConfig()
+		if current != nil {
+			s.plansDir = current.PlansDir
+			if current.PlansDir == conductor.TrackedPlansDir {
+				s.storageCursor = 1
+			}
+		}
+	}
+	return s
 }
 
 func (a advancedSetupScreen) Update(msg tea.Msg) (advancedSetupScreen, tea.Cmd) {
@@ -61,6 +78,8 @@ func (a advancedSetupScreen) Update(msg tea.Msg) (advancedSetupScreen, tea.Cmd) 
 		return a.updateStorageMode(key)
 	case stepGitignoreConfirm:
 		return a.updateGitignoreConfirm(key)
+	case stepAgentPriority:
+		return a.updateAgentPriority(key)
 	}
 
 	return a, nil
@@ -106,6 +125,37 @@ func (a advancedSetupScreen) updateGitignoreConfirm(key tea.KeyMsg) (advancedSet
 	return a, nil
 }
 
+func (a advancedSetupScreen) updateAgentPriority(key tea.KeyMsg) (advancedSetupScreen, tea.Cmd) {
+	switch key.Type {
+	case tea.KeyUp, tea.KeyShiftTab:
+		if a.agentCursor > 0 {
+			a.agentCursor--
+		}
+	case tea.KeyDown, tea.KeyTab:
+		if a.agentCursor < len(a.agentList)-1 {
+			a.agentCursor++
+		}
+	case tea.KeyEnter:
+		a.step = stepSettingsForm
+		return a, nil
+	}
+
+	switch key.String() {
+	case "j":
+		if a.agentCursor < len(a.agentList)-1 {
+			a.agentList[a.agentCursor], a.agentList[a.agentCursor+1] = a.agentList[a.agentCursor+1], a.agentList[a.agentCursor]
+			a.agentCursor++
+		}
+	case "k":
+		if a.agentCursor > 0 {
+			a.agentList[a.agentCursor], a.agentList[a.agentCursor-1] = a.agentList[a.agentCursor-1], a.agentList[a.agentCursor]
+			a.agentCursor--
+		}
+	}
+
+	return a, nil
+}
+
 func (a advancedSetupScreen) View() string {
 	var b strings.Builder
 	b.WriteString("Advanced Setup\n\n")
@@ -143,8 +193,19 @@ func (a advancedSetupScreen) View() string {
 		b.WriteString("\nUp/Down navigate, Enter select, Esc back\n")
 
 	case stepAgentPriority:
-		b.WriteString("Agent priority step — not yet implemented.\n")
-		b.WriteString("\nEsc back\n")
+		b.WriteString("Agent Priority (top = primary, bottom = last fallback)\n\n")
+		for i, agent := range a.agentList {
+			cursor := "  "
+			if i == a.agentCursor {
+				cursor = "> "
+			}
+			status := "installed"
+			if !agent.Installed {
+				status = "not installed"
+			}
+			fmt.Fprintf(&b, "%s%d. %s (%s)\n", cursor, i+1, agent.ID, status)
+		}
+		b.WriteString("\nUp/Down select, j/k reorder, Enter confirm, Esc back\n")
 
 	default:
 		b.WriteString("Setup complete.\n")
