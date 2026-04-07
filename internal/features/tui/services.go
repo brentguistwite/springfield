@@ -161,7 +161,11 @@ func (s runtimeServices) SetupConductor(input ConductorSetupInput) (ConductorSet
 	}
 
 	opts := conductor.SetupDefaults()
-	opts.Tool = loaded.Config.Project.DefaultAgent
+	priority := loaded.Config.EffectivePriority()
+	opts.Tool = priority[0]
+	if len(priority) > 1 {
+		opts.FallbackTool = priority[1]
+	}
 	opts.PlansDir = input.PlansDir
 	opts.WorktreeBase = input.WorktreeBase
 	opts.MaxRetries = input.MaxRetries
@@ -245,7 +249,8 @@ func (s runtimeServices) RunRalphNext(planName string, onEvent func(RuntimeEvent
 		gemini.New(s.lookPath),
 	)
 	runner := runtime.NewRunner(registry)
-	executor := ralph.NewRuntimeExecutor(runner, agents.ID(loaded.Config.Project.DefaultAgent), status.ProjectRoot)
+	priority := loaded.Config.EffectivePriority()
+	executor := ralph.NewRuntimeExecutor(runner, agents.ID(priority[0]), status.ProjectRoot)
 	if onEvent != nil {
 		executor.OnEvent = func(e coreexec.Event) {
 			onEvent(RuntimeEvent{Source: string(e.Type), Data: e.Data})
@@ -295,7 +300,8 @@ func (s runtimeServices) RunConductorNext(onEvent func(RuntimeEvent)) (Conductor
 	if !filepath.IsAbs(plansDir) {
 		plansDir = filepath.Join(status.ProjectRoot, plansDir)
 	}
-	executor := conductor.NewRuntimeExecutor(runner, agents.ID(loaded.Config.Project.DefaultAgent), plansDir, status.ProjectRoot)
+	priority := loaded.Config.EffectivePriority()
+	executor := conductor.NewRuntimeExecutor(runner, agents.ID(priority[0]), plansDir, status.ProjectRoot)
 	if onEvent != nil {
 		executor.OnEvent = func(e coreexec.Event) {
 			onEvent(RuntimeEvent{Source: string(e.Type), Data: e.Data})
@@ -370,7 +376,11 @@ func (s runtimeServices) UpdateConductor(input ConductorSetupInput) (ConductorSe
 		return ConductorSetupResult{}, err
 	}
 	opts := conductor.SetupDefaults()
-	opts.Tool = loaded.Config.Project.DefaultAgent
+	priority := loaded.Config.EffectivePriority()
+	opts.Tool = priority[0]
+	if len(priority) > 1 {
+		opts.FallbackTool = priority[1]
+	}
 	opts.PlansDir = input.PlansDir
 	opts.WorktreeBase = input.WorktreeBase
 	opts.MaxRetries = input.MaxRetries
