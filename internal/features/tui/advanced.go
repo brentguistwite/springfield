@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -40,6 +41,10 @@ type advancedSetupScreen struct {
 	formFields  []formField
 	formCursor  int
 	formEditing bool
+
+	// Completion
+	completed   bool
+	completeErr string
 }
 
 type formField struct {
@@ -109,6 +114,8 @@ func (a advancedSetupScreen) Update(msg tea.Msg) (advancedSetupScreen, tea.Cmd) 
 		return a.updateAgentPriority(key)
 	case stepSettingsForm:
 		return a.updateSettingsForm(key)
+	case stepComplete:
+		return a.updateComplete(key)
 	}
 
 	return a, nil
@@ -218,8 +225,64 @@ func (a advancedSetupScreen) updateSettingsForm(key tea.KeyMsg) (advancedSetupSc
 		a.formEditing = true
 	case "c":
 		a.step = stepComplete
+		a = a.finalize()
 	}
 
+	return a, nil
+}
+
+func (a advancedSetupScreen) agentPriorityIDs() []string {
+	ids := make([]string, len(a.agentList))
+	for i, agent := range a.agentList {
+		ids[i] = agent.ID
+	}
+	return ids
+}
+
+func (a advancedSetupScreen) finalize() advancedSetupScreen {
+	priority := make([]string, len(a.agentList))
+	for i, agent := range a.agentList {
+		priority[i] = agent.ID
+	}
+	if err := a.services.SaveAgentPriority(priority); err != nil {
+		a.completeErr = err.Error()
+		a.completed = true
+		return a
+	}
+
+	maxRetries, _ := strconv.Atoi(a.formFields[1].value)
+	iterations, _ := strconv.Atoi(a.formFields[2].value)
+	timeout, _ := strconv.Atoi(a.formFields[3].value)
+
+	input := ConductorSetupInput{
+		PlansDir:        a.plansDir,
+		WorktreeBase:    a.formFields[0].value,
+		MaxRetries:      maxRetries,
+		RalphIterations: iterations,
+		RalphTimeout:    timeout,
+		UpdateGitignore: a.updateGitignore,
+	}
+
+	if a.status.ConductorConfigReady {
+		_, err := a.services.UpdateConductor(input)
+		if err != nil {
+			a.completeErr = err.Error()
+		}
+	} else {
+		_, err := a.services.SetupConductor(input)
+		if err != nil {
+			a.completeErr = err.Error()
+		}
+	}
+
+	a.completed = true
+	return a
+}
+
+func (a advancedSetupScreen) updateComplete(key tea.KeyMsg) (advancedSetupScreen, tea.Cmd) {
+	if key.Type == tea.KeyEnter {
+		return a, navigate(ScreenDoctor)
+	}
 	return a, nil
 }
 
@@ -288,6 +351,27 @@ func (a advancedSetupScreen) View() string {
 			fmt.Fprintf(&b, "%s%-20s %s\n", cursor, field.label+":", field.value)
 		}
 		b.WriteString("\nUp/Down navigate, e edit field, Enter edit, c confirm all, Esc back\n")
+
+	case stepComplete:
+		if a.completeErr != "" {
+			fmt.Fprintf(&b, "Error: %s\n\n", a.completeErr)
+			b.WriteString("Esc back\n")
+		} else {
+			b.WriteString("Configuration saved.\n\n")
+			if a.plansDir == conductor.LocalPlansDir {
+				b.WriteString("Storage: local\n")
+			} else {
+				b.WriteString("Storage: tracked\n")
+			}
+			fmt.Fprintf(&b, "Agent priority: %s\n", strings.Join(a.agentPriorityIDs(), ", "))
+			if a.status.ConductorConfigReady {
+				current := a.services.ConductorCurrentConfig()
+				if current != nil && current.PlansDir != a.plansDir {
+					fmt.Fprintf(&b, "\nNote: Existing plans remain at %s\n", current.PlansDir)
+				}
+			}
+			b.WriteString("\nRun doctor to verify prerequisites? [Enter] or [Esc] to go home\n")
+		}
 
 	default:
 		b.WriteString("Setup complete.\n")

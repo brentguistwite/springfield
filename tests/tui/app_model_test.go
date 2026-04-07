@@ -32,8 +32,14 @@ type fakeServices struct {
 	conductorRunErr     error
 	conductorRunCalls   int
 	conductorRunEvents  []tui.RuntimeEvent
-	agentDetections     []tui.AgentDetection
-	conductorCurrentCfg *tui.ConductorCurrentConfig
+	agentDetections      []tui.AgentDetection
+	conductorCurrentCfg  *tui.ConductorCurrentConfig
+	savePriorityCalls    int
+	savePriorityArg      []string
+	savePriorityErr      error
+	updateConductorCalls int
+	updateConductorResult tui.ConductorSetupResult
+	updateConductorErr   error
 }
 
 func (f *fakeServices) SetupStatus() tui.SetupStatus {
@@ -96,6 +102,17 @@ func (f *fakeServices) DetectAgents() []tui.AgentDetection {
 
 func (f *fakeServices) ConductorCurrentConfig() *tui.ConductorCurrentConfig {
 	return f.conductorCurrentCfg
+}
+
+func (f *fakeServices) SaveAgentPriority(priority []string) error {
+	f.savePriorityCalls++
+	f.savePriorityArg = priority
+	return f.savePriorityErr
+}
+
+func (f *fakeServices) UpdateConductor(opts tui.ConductorSetupInput) (tui.ConductorSetupResult, error) {
+	f.updateConductorCalls++
+	return f.updateConductorResult, f.updateConductorErr
 }
 
 // updateModel processes a message and follows up on any returned command.
@@ -1080,6 +1097,43 @@ func TestAdvancedSetupSettingsForm(t *testing.T) {
 	}
 	if !strings.Contains(view, ".worktrees") {
 		t.Fatalf("expected default worktree base, got:\n%s", view)
+	}
+}
+
+func TestAdvancedSetupCompleteStepSavesAndOffersDoctor(t *testing.T) {
+	services := &fakeServices{
+		setup: tui.SetupStatus{
+			WorkingDir:           "/tmp/demo",
+			ProjectRoot:          "/tmp/demo",
+			ConfigPath:           "/tmp/demo/springfield.toml",
+			RuntimeDir:           "/tmp/demo/.springfield",
+			ConductorConfigPath:  "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:        true,
+			RuntimePresent:       true,
+			ConductorConfigReady: true,
+		},
+		agentDetections: []tui.AgentDetection{
+			{ID: "claude", Name: "Claude Code", Installed: true},
+		},
+	}
+	model := tui.NewModel(services)
+	// Advanced Setup (index 1)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	// Local storage
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	// Agent priority confirm
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	// Settings form — 'c' to confirm
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
+
+	view := model.View()
+	// Should show doctor handoff
+	if !strings.Contains(view, "doctor") && !strings.Contains(view, "Doctor") {
+		t.Fatalf("expected doctor handoff prompt, got:\n%s", view)
+	}
+	if services.savePriorityCalls != 1 {
+		t.Fatalf("expected SaveAgentPriority called once, got %d", services.savePriorityCalls)
 	}
 }
 

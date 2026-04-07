@@ -179,5 +179,7 @@ type Services interface {
 	RunRalphNext(planName string, onEvent func(RuntimeEvent)) (RalphRunResult, error)
 	ConductorSummary() ConductorSummary
 	RunConductorNext(onEvent func(RuntimeEvent)) (ConductorRunResult, error)
+	SaveAgentPriority(priority []string) error
+	UpdateConductor(opts ConductorSetupInput) (ConductorSetupResult, error)
 	DoctorSummary() doctor.Report
 }

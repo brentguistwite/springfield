@@ -347,6 +347,48 @@ func (s runtimeServices) ConductorCurrentConfig() *ConductorCurrentConfig {
 	}
 }
 
+func (s runtimeServices) SaveAgentPriority(priority []string) error {
+	status := s.SetupStatus()
+	if status.Error != "" {
+		return errors.New(status.Error)
+	}
+	loaded, err := config.LoadFrom(status.ProjectRoot)
+	if err != nil {
+		return err
+	}
+	loaded.Config.Project.AgentPriority = priority
+	return config.Save(loaded)
+}
+
+func (s runtimeServices) UpdateConductor(input ConductorSetupInput) (ConductorSetupResult, error) {
+	status := s.SetupStatus()
+	if status.Error != "" {
+		return ConductorSetupResult{}, errors.New(status.Error)
+	}
+	loaded, err := config.LoadFrom(status.ProjectRoot)
+	if err != nil {
+		return ConductorSetupResult{}, err
+	}
+	opts := conductor.SetupDefaults()
+	opts.Tool = loaded.Config.Project.DefaultAgent
+	opts.PlansDir = input.PlansDir
+	opts.WorktreeBase = input.WorktreeBase
+	opts.MaxRetries = input.MaxRetries
+	opts.RalphIterations = input.RalphIterations
+	opts.RalphTimeout = input.RalphTimeout
+	opts.UpdateGitignore = input.UpdateGitignore
+
+	result, err := conductor.UpdateConfig(status.ProjectRoot, opts)
+	if err != nil {
+		return ConductorSetupResult{}, err
+	}
+	return ConductorSetupResult{
+		Created: false,
+		Reused:  false,
+		Path:    result.Path,
+	}, nil
+}
+
 func (s runtimeServices) DoctorSummary() doctor.Report {
 	registry := agents.NewRegistry(
 		claude.New(s.lookPath),
