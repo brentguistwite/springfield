@@ -37,51 +37,81 @@ func NewTestRunner(registry agents.Registry, runFn exec.CommandFunc, clock func(
 // Run resolves the agent, builds a command, and executes it.
 func (r Runner) Run(ctx context.Context, req Request) Result {
 	start := r.now()
-
-	resolved, err := r.registry.Resolve(agents.ResolveInput{
-		ProjectDefault: req.AgentID,
-	})
-	if err != nil {
+	agentIDs := normalizeAgentIDs(req.AgentIDs)
+	if len(agentIDs) == 0 {
 		return Result{
-			Agent:     req.AgentID,
 			Status:    StatusFailed,
-			Err:       fmt.Errorf("resolve agent: %w", err),
+			Err:       fmt.Errorf("runtime request missing agent chain"),
 			StartedAt: start,
 			EndedAt:   r.now(),
 		}
 	}
 
-	commander, ok := resolved.Adapter.(agents.Commander)
-	if !ok {
-		return Result{
-			Agent:     req.AgentID,
-			Status:    StatusFailed,
-			Err:       fmt.Errorf("agent %q does not support command execution", req.AgentID),
+	var last Result
+	for _, agentID := range agentIDs {
+		resolved, err := r.registry.Resolve(agents.ResolveInput{ProjectDefault: agentID})
+		if err != nil {
+			return Result{
+				Agent:     agentID,
+				Status:    StatusFailed,
+				Err:       fmt.Errorf("resolve agent: %w", err),
+				StartedAt: start,
+				EndedAt:   r.now(),
+			}
+		}
+
+		commander, ok := resolved.Adapter.(agents.Commander)
+		if !ok {
+			return Result{
+				Agent:     agentID,
+				Status:    StatusFailed,
+				Err:       fmt.Errorf("agent %q does not support command execution", agentID),
+				StartedAt: start,
+				EndedAt:   r.now(),
+			}
+		}
+
+		cmd := commander.Command(agents.CommandInput{
+			Prompt:  req.Prompt,
+			WorkDir: req.WorkDir,
+		})
+		cmd.Timeout = req.Timeout
+
+		execResult := r.run(ctx, cmd, req.OnEvent)
+		status := StatusPassed
+		if execResult.ExitCode != 0 || execResult.Err != nil {
+			status = StatusFailed
+		}
+
+		last = Result{
+			Agent:     agentID,
+			Status:    status,
+			ExitCode:  execResult.ExitCode,
+			Events:    execResult.Events,
+			Err:       execResult.Err,
 			StartedAt: start,
 			EndedAt:   r.now(),
 		}
+		if status == StatusPassed {
+			return last
+		}
+		if !IsRateLimitError(execResult.Err, execResult.Events) {
+			return last
+		}
 	}
 
-	cmd := commander.Command(agents.CommandInput{
-		Prompt:  req.Prompt,
-		WorkDir: req.WorkDir,
-	})
-	cmd.Timeout = req.Timeout
+	return last
+}
 
-	execResult := r.run(ctx, cmd, req.OnEvent)
-
-	status := StatusPassed
-	if execResult.ExitCode != 0 || execResult.Err != nil {
-		status = StatusFailed
+func normalizeAgentIDs(ids []agents.ID) []agents.ID {
+	out := make([]agents.ID, 0, len(ids))
+	seen := map[agents.ID]bool{}
+	for _, id := range ids {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
 	}
-
-	return Result{
-		Agent:     req.AgentID,
-		Status:    status,
-		ExitCode:  execResult.ExitCode,
-		Events:    execResult.Events,
-		Err:       execResult.Err,
-		StartedAt: start,
-		EndedAt:   r.now(),
-	}
+	return out
 }
