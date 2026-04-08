@@ -68,10 +68,27 @@ type Resolved struct {
 	Source  ResolveSource
 }
 
+// ExecutionSettings carries adapter-specific execution configuration across the
+// runtime boundary.
+type ExecutionSettings struct {
+	Claude ClaudeExecutionSettings
+	Codex  CodexExecutionSettings
+}
+
+type ClaudeExecutionSettings struct {
+	PermissionMode string
+}
+
+type CodexExecutionSettings struct {
+	SandboxMode    string
+	ApprovalPolicy string
+}
+
 // CommandInput provides the parameters needed to build an agent CLI invocation.
 type CommandInput struct {
-	Prompt  string
-	WorkDir string
+	Prompt            string
+	WorkDir           string
+	ExecutionSettings ExecutionSettings
 }
 
 // Commander extends Adapter with the ability to produce a runnable command spec.

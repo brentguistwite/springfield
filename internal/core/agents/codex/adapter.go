@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"strings"
 
 	"springfield/internal/core/agents"
 	coreexec "springfield/internal/core/exec"
@@ -59,11 +60,18 @@ func (a adapter) Detect(context.Context) agents.Detection {
 }
 
 func (a adapter) Command(input agents.CommandInput) coreexec.Command {
+	args := []string{"exec", "--json"}
+	if sandboxMode := strings.TrimSpace(input.ExecutionSettings.Codex.SandboxMode); sandboxMode != "" {
+		args = append(args, "-s", sandboxMode)
+	}
+	if approvalPolicy := strings.TrimSpace(input.ExecutionSettings.Codex.ApprovalPolicy); approvalPolicy != "" {
+		args = append(args, "-a", approvalPolicy)
+	}
+	args = append(args, input.Prompt)
+
 	return coreexec.Command{
 		Name: "codex",
-		Args: []string{
-			"-q", input.Prompt,
-		},
-		Dir: input.WorkDir,
+		Args: args,
+		Dir:  input.WorkDir,
 	}
 }

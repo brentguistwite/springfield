@@ -238,6 +238,60 @@ func TestRunnerUsesReorderedPriority(t *testing.T) {
 	}
 }
 
+func TestRunnerPassesClaudeExecutionSettingsIntoCommand(t *testing.T) {
+	adapter := &recordingCommander{id: agents.AgentClaude}
+	registry := agents.NewRegistry(adapter)
+	clock := newFakeClock(time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC))
+
+	fakeRun := func(_ context.Context, _ exec.Command, _ exec.EventHandler) exec.Result {
+		return exec.Result{ExitCode: 0}
+	}
+
+	runner := runtime.NewTestRunner(registry, fakeRun, clock.now)
+	runner.Run(context.Background(), runtime.Request{
+		AgentIDs: []agents.ID{agents.AgentClaude},
+		Prompt:   "test",
+		WorkDir:  "/tmp/project",
+		ExecutionSettings: agents.ExecutionSettings{
+			Claude: agents.ClaudeExecutionSettings{PermissionMode: "bypassPermissions"},
+		},
+	})
+
+	if got := adapter.lastInput.ExecutionSettings.Claude.PermissionMode; got != "bypassPermissions" {
+		t.Fatalf("expected claude permission_mode bypassPermissions, got %q", got)
+	}
+}
+
+func TestRunnerPassesCodexExecutionSettingsIntoCommand(t *testing.T) {
+	adapter := &recordingCommander{id: agents.AgentCodex}
+	registry := agents.NewRegistry(adapter)
+	clock := newFakeClock(time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC))
+
+	fakeRun := func(_ context.Context, _ exec.Command, _ exec.EventHandler) exec.Result {
+		return exec.Result{ExitCode: 0}
+	}
+
+	runner := runtime.NewTestRunner(registry, fakeRun, clock.now)
+	runner.Run(context.Background(), runtime.Request{
+		AgentIDs: []agents.ID{agents.AgentCodex},
+		Prompt:   "test",
+		WorkDir:  "/tmp/project",
+		ExecutionSettings: agents.ExecutionSettings{
+			Codex: agents.CodexExecutionSettings{
+				SandboxMode:    "workspace-write",
+				ApprovalPolicy: "on-request",
+			},
+		},
+	})
+
+	if got := adapter.lastInput.ExecutionSettings.Codex.SandboxMode; got != "workspace-write" {
+		t.Fatalf("expected codex sandbox_mode workspace-write, got %q", got)
+	}
+	if got := adapter.lastInput.ExecutionSettings.Codex.ApprovalPolicy; got != "on-request" {
+		t.Fatalf("expected codex approval_policy on-request, got %q", got)
+	}
+}
+
 type fakeClock struct {
 	t time.Time
 }
@@ -250,4 +304,30 @@ func (c *fakeClock) now() time.Time {
 	current := c.t
 	c.t = c.t.Add(time.Second)
 	return current
+}
+
+type recordingCommander struct {
+	id        agents.ID
+	lastInput agents.CommandInput
+}
+
+func (c *recordingCommander) ID() agents.ID {
+	return c.id
+}
+
+func (c *recordingCommander) Metadata() agents.Metadata {
+	return agents.Metadata{
+		ID:     c.id,
+		Name:   string(c.id),
+		Binary: string(c.id),
+	}
+}
+
+func (c *recordingCommander) Detect(context.Context) agents.Detection {
+	return agents.Detection{ID: c.id, Status: agents.DetectionStatusAvailable}
+}
+
+func (c *recordingCommander) Command(input agents.CommandInput) exec.Command {
+	c.lastInput = input
+	return exec.Command{Name: string(c.id), Dir: input.WorkDir}
 }

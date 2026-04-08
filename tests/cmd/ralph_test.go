@@ -118,7 +118,13 @@ func TestRalphInitStatusAndRun(t *testing.T) {
 
 	// Real runner will fail because no agent binary is available in CI.
 	// The run should still succeed (record the failure) and report truthfully.
-	output, err = runBinaryIn(t, bin, dir, "ralph", "run", "--name", "refresh")
+	output, err = runBinaryInWithEnv(
+		t,
+		bin,
+		dir,
+		[]string{"PATH=" + t.TempDir()},
+		"ralph", "run", "--name", "refresh",
+	)
 	if err != nil {
 		t.Fatalf("ralph run failed: %v\n%s", err, output)
 	}
@@ -257,4 +263,64 @@ func TestRalphRunUsesEffectivePriorityHead(t *testing.T) {
 	if strings.Contains(output, "agent: claude") {
 		t.Fatalf("expected run to avoid default agent fallback when priority head is gemini, got:\n%s", output)
 	}
+}
+
+func TestRalphRunPassesClaudePermissionModeToSubprocess(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	configBody := strings.Join([]string{
+		"[project]",
+		`default_agent = "claude"`,
+		"",
+		"[agents.claude]",
+		`permission_mode = "bypassPermissions"`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(dir, "springfield.toml"), []byte(configBody), 0o644); err != nil {
+		t.Fatalf("write springfield.toml: %v", err)
+	}
+
+	specPath := writeRalphSpec(t, dir, ralph.Spec{
+		Project: "springfield",
+		Stories: []ralph.Story{
+			{ID: "US-001", Title: "Bootstrap", Description: "implement bootstrap"},
+		},
+	})
+
+	output, err := runBinaryIn(t, bin, dir, "ralph", "init", "--name", "refresh", "--spec", specPath)
+	if err != nil {
+		t.Fatalf("ralph init failed: %v\n%s", err, output)
+	}
+
+	fakeBinDir := filepath.Join(dir, "bin")
+	argvPath := filepath.Join(dir, "claude.argv")
+	installFakeAgentBinary(t, fakeBinDir, "claude", argvPath)
+
+	output, err = runBinaryInWithEnv(
+		t,
+		bin,
+		dir,
+		[]string{"PATH=" + fakeBinDir},
+		"ralph", "run", "--name", "refresh",
+	)
+	if err != nil {
+		t.Fatalf("ralph run failed: %v\n%s", err, output)
+	}
+
+	args := readRecordedArgs(t, argvPath)
+	for _, want := range []string{"-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions"} {
+		if !containsArg(args, want) {
+			t.Fatalf("expected recorded args to contain %q, got %v", want, args)
+		}
+	}
+}
+
+func containsArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
 }

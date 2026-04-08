@@ -262,7 +262,7 @@ func (s runtimeServices) RunRalphNext(planName string, onEvent func(RuntimeEvent
 	)
 	runner := runtime.NewRunner(registry)
 	priority := loaded.Config.EffectivePriority()
-	executor := ralph.NewRuntimeExecutor(runner, priorityAgentIDs(priority), status.ProjectRoot)
+	executor := ralph.NewRuntimeExecutor(runner, priorityAgentIDs(priority), status.ProjectRoot, loaded.Config.ExecutionSettings())
 	if onEvent != nil {
 		executor.OnEvent = func(e coreexec.Event) {
 			onEvent(RuntimeEvent{Source: string(e.Type), Data: e.Data})
@@ -313,7 +313,7 @@ func (s runtimeServices) RunConductorNext(onEvent func(RuntimeEvent)) (Conductor
 		plansDir = filepath.Join(status.ProjectRoot, plansDir)
 	}
 	priority := loaded.Config.EffectivePriority()
-	executor := conductor.NewRuntimeExecutor(runner, priorityAgentIDs(priority), plansDir, status.ProjectRoot)
+	executor := conductor.NewRuntimeExecutor(runner, priorityAgentIDs(priority), plansDir, status.ProjectRoot, loaded.Config.ExecutionSettings())
 	if onEvent != nil {
 		executor.OnEvent = func(e coreexec.Event) {
 			onEvent(RuntimeEvent{Source: string(e.Type), Data: e.Data})

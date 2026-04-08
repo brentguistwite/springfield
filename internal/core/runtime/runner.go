@@ -72,8 +72,9 @@ func (r Runner) Run(ctx context.Context, req Request) Result {
 		}
 
 		cmd := commander.Command(agents.CommandInput{
-			Prompt:  req.Prompt,
-			WorkDir: req.WorkDir,
+			Prompt:            req.Prompt,
+			WorkDir:           req.WorkDir,
+			ExecutionSettings: req.ExecutionSettings,
 		})
 		cmd.Timeout = req.Timeout
 

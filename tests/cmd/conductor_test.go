@@ -332,9 +332,15 @@ func TestConductorRunFromNestedDirUsesResolvedProjectRoot(t *testing.T) {
 		t.Fatalf("mkdir nested dir: %v", err)
 	}
 
-	output, err := runBinaryIn(t, bin, dir, "conductor", "run", "--dir", nestedDir)
+	output, err := runBinaryInWithEnv(
+		t,
+		bin,
+		dir,
+		[]string{"PATH=" + t.TempDir()},
+		"conductor", "run", "--dir", nestedDir,
+	)
 	if err == nil {
-		t.Fatalf("expected conductor run to fail because agent is unsupported, output:\n%s", output)
+		t.Fatalf("expected conductor run to fail, output:\n%s", output)
 	}
 
 	nestedPlanPath := filepath.Join(nestedDir, ".springfield", "conductor", "plans")

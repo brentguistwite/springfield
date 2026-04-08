@@ -69,7 +69,7 @@ func buildConductorExecutor(project *conductor.Project, dir string) (*conductor.
 		plansDir = filepath.Join(loaded.RootDir, plansDir)
 	}
 
-	return conductor.NewRuntimeExecutor(runner, priority, plansDir, loaded.RootDir), nil
+	return conductor.NewRuntimeExecutor(runner, priority, plansDir, loaded.RootDir, loaded.Config.ExecutionSettings()), nil
 }
 
 func newConductorSetupCommand() *cobra.Command {

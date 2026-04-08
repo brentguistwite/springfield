@@ -2,6 +2,7 @@ package cmd_test
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -124,6 +125,36 @@ func mergeEnv(base, overrides []string) []string {
 
 	merged = append(merged, overrides...)
 	return merged
+}
+
+func installFakeAgentBinary(t *testing.T, binDir, name, argvPath string) {
+	t.Helper()
+
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir fake bin dir: %v", err)
+	}
+
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\necho 'agent-output'\n", argvPath)
+	path := filepath.Join(binDir, name)
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake %s binary: %v", name, err)
+	}
+}
+
+func readRecordedArgs(t *testing.T, path string) []string {
+	t.Helper()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read recorded args: %v", err)
+	}
+
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		return nil
+	}
+
+	return strings.Split(text, "\n")
 }
 
 func TestInitCreatesProjectInCurrentDir(t *testing.T) {

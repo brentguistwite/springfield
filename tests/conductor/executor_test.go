@@ -26,8 +26,10 @@ type fakeAdapter struct {
 	id agents.ID
 }
 
-func (f *fakeAdapter) ID() agents.ID                         { return f.id }
-func (f *fakeAdapter) Metadata() agents.Metadata              { return agents.Metadata{ID: f.id, Name: string(f.id)} }
+func (f *fakeAdapter) ID() agents.ID { return f.id }
+func (f *fakeAdapter) Metadata() agents.Metadata {
+	return agents.Metadata{ID: f.id, Name: string(f.id)}
+}
 func (f *fakeAdapter) Detect(_ context.Context) agents.Detection { return agents.Detection{ID: f.id} }
 func (f *fakeAdapter) Command(input agents.CommandInput) exec.Command {
 	return exec.Command{Name: string(f.id), Args: []string{input.Prompt}, Dir: input.WorkDir}
@@ -54,7 +56,7 @@ func TestRuntimeExecutorSuccess(t *testing.T) {
 	writePlanFile(t, plansDir, "01-bootstrap", "implement bootstrap feature")
 
 	runner := newTestRuntime("claude", fakeCommandFunc(0, nil))
-	executor := conductor.NewRuntimeExecutor(runner, []agents.ID{"claude"}, plansDir, t.TempDir())
+	executor := conductor.NewRuntimeExecutor(runner, []agents.ID{"claude"}, plansDir, t.TempDir(), agents.ExecutionSettings{})
 
 	result, err := executor.Execute("01-bootstrap")
 	if err != nil {
@@ -70,7 +72,7 @@ func TestRuntimeExecutorFailure(t *testing.T) {
 	writePlanFile(t, plansDir, "01-bootstrap", "implement bootstrap feature")
 
 	runner := newTestRuntime("claude", fakeCommandFunc(1, nil))
-	executor := conductor.NewRuntimeExecutor(runner, []agents.ID{"claude"}, plansDir, t.TempDir())
+	executor := conductor.NewRuntimeExecutor(runner, []agents.ID{"claude"}, plansDir, t.TempDir(), agents.ExecutionSettings{})
 
 	result, err := executor.Execute("01-bootstrap")
 	if err == nil {
@@ -84,7 +86,7 @@ func TestRuntimeExecutorFailure(t *testing.T) {
 func TestRuntimeExecutorMissingPlanFile(t *testing.T) {
 	plansDir := filepath.Join(t.TempDir(), "plans")
 	runner := newTestRuntime("claude", fakeCommandFunc(0, nil))
-	executor := conductor.NewRuntimeExecutor(runner, []agents.ID{"claude"}, plansDir, t.TempDir())
+	executor := conductor.NewRuntimeExecutor(runner, []agents.ID{"claude"}, plansDir, t.TempDir(), agents.ExecutionSettings{})
 
 	_, err := executor.Execute("nonexistent")
 	if err == nil {
