@@ -66,6 +66,11 @@ func (d *Diagnosis) Report() string {
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "Progress: %d/%d plans completed\n", d.Completed, d.Total)
 
+	if d.Total == 0 {
+		fmt.Fprintf(&builder, "\nNext step: %s\n", d.NextStep)
+		return builder.String()
+	}
+
 	if d.Done {
 		builder.WriteString("Status: all plans completed\n")
 		return builder.String()
