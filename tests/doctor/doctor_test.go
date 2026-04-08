@@ -38,6 +38,13 @@ func TestRunReportsAllHealthyWhenAllAvailable(t *testing.T) {
 		if check.Status != doctor.StatusHealthy {
 			t.Fatalf("expected healthy status for %q, got %q", check.AgentID, check.Status)
 		}
+		// Gemini is detection-only, so it gets a capability note even when healthy.
+		if check.AgentID == agents.AgentGemini {
+			if check.Guidance == "" {
+				t.Fatal("expected detection-only guidance for gemini")
+			}
+			continue
+		}
 		if check.Guidance != "" {
 			t.Fatalf("expected no guidance for healthy agent %q, got %q", check.AgentID, check.Guidance)
 		}

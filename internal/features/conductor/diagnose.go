@@ -44,6 +44,8 @@ func Diagnose(project *Project) *Diagnosis {
 	done := schedule.IsComplete(project.State)
 	nextStep := "Run: springfield conductor run"
 	switch {
+	case total == 0:
+		nextStep = "No plans configured. Add plans to your conductor config."
 	case done:
 		nextStep = "All plans completed successfully."
 	case len(failures) > 0:

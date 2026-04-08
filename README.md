@@ -85,10 +85,12 @@ The generated config scaffolds defaults from `springfield.toml`. To customize it
   "ralph_iterations": 50,
   "ralph_timeout": 3600,
   "tool": "claude",
-  "sequential": ["01-bootstrap", "02-config"],
+  "sequential": [],
   "batches": []
 }
 ```
+
+Add plan names to `sequential` (run in order) or `batches` (run in parallel groups) to define execution order.
 
 Runtime state (generated files, caches) lives in `.springfield/` and should not be committed.
 Tracked plan storage is optional and intended for teams that want plan files in version control.

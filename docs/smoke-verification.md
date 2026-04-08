@@ -1,6 +1,6 @@
 # Smoke Verification — Springfield Runtime
 
-Verified 2026-04-06 against binary built from branch `springfield/05-real-execution-verification`.
+Verified 2026-04-07 against binary built from `main` at `48bc88c`.
 
 ## Environment
 
@@ -75,19 +75,20 @@ Correctly reports that no plans are configured yet in a fresh initialized projec
 ### `springfield conductor run --dry-run`
 
 ```
-All plans already complete.
+No plans configured. Add plans to your conductor config, then run again.
 ```
 
-Dry run truthfully reports that there is nothing to execute until plans are added.
+Dry run truthfully reports no plans are configured and guides the user to add some.
 
 ### `springfield conductor diagnose`
 
 ```
 Progress: 0/0 plans completed
-Status: all plans completed
+
+Next step: No plans configured. Add plans to your conductor config.
 ```
 
-Reports completion state when no plans configured. (Correct for empty config.)
+Reports empty state with actionable guidance when no plans configured.
 
 ### `springfield ralph init --name smoke --spec test-plan.json`
 

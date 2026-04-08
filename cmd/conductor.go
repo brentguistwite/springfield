@@ -346,6 +346,11 @@ func printConductorResult(cmd *cobra.Command, project *conductor.Project, runErr
 	diagnosis := conductor.Diagnose(project)
 	w := cmd.OutOrStdout()
 
+	if diagnosis.Total == 0 {
+		fmt.Fprintln(w, "No plans configured. Add plans to your conductor config, then run again.")
+		return nil
+	}
+
 	if diagnosis.Done {
 		_, err := fmt.Fprintf(w, "Completed %d/%d plans successfully.\n", diagnosis.Completed, diagnosis.Total)
 		return err
@@ -369,6 +374,11 @@ func printConductorResult(cmd *cobra.Command, project *conductor.Project, runErr
 
 func printConductorDryRun(cmd *cobra.Command, project *conductor.Project) error {
 	schedule := conductor.BuildSchedule(project.Config)
+	if len(project.AllPlans()) == 0 {
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), "No plans configured. Add plans to your conductor config, then run again.")
+		return err
+	}
+
 	next := schedule.NextPlans(project.State)
 	if len(next) == 0 {
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), "All plans already complete.")

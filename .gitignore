@@ -26,3 +26,6 @@ Thumbs.db
 # Environment
 .env
 .env.*
+
+# Local project config for running Springfield against this repo
+springfield.toml
