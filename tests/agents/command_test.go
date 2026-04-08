@@ -267,6 +267,28 @@ func TestCodexValidatorAcceptsCleanRun(t *testing.T) {
 	}
 }
 
+func TestCodexValidatorAcceptsOptionalMCPAuthFailureWhenWorkCompleted(t *testing.T) {
+	adapter := codex.New(exec.LookPath)
+	validator := adapter.(agents.ResultValidator)
+
+	result := coreexec.Result{
+		ExitCode: 0,
+		Events: []coreexec.Event{
+			{Type: coreexec.EventStdout, Data: `{"type":"thread.started","thread_id":"t_123"}`, Time: time.Now()},
+			{Type: coreexec.EventStdout, Data: `{"type":"turn.started"}`, Time: time.Now()},
+			{Type: coreexec.EventStderr, Data: `2026-04-08T16:34:12.577918Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer realm=\"OAuth\", error=\"invalid_token\", error_description=\"Missing or invalid access token\"" })`, Time: time.Now()},
+			{Type: coreexec.EventStdout, Data: `{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Checking the required startup skill, then I’ll answer directly."}}`, Time: time.Now()},
+			{Type: coreexec.EventStdout, Data: `{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"sed -n '1,220p' /Users/brent.guistwite/.codex/superpowers/skills/using-superpowers/SKILL.md","aggregated_output":"...","exit_code":0,"status":"completed"}}`, Time: time.Now()},
+			{Type: coreexec.EventStdout, Data: `{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"Hello."}}`, Time: time.Now()},
+			{Type: coreexec.EventStdout, Data: `{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}`, Time: time.Now()},
+		},
+	}
+
+	if err := validator.ValidateResult(result); err != nil {
+		t.Fatalf("expected optional MCP auth failure to be ignored after completed work, got: %v", err)
+	}
+}
+
 func TestCodexValidatorRejectsClarifyingQuestionWithoutWork(t *testing.T) {
 	adapter := codex.New(exec.LookPath)
 	validator := adapter.(agents.ResultValidator)

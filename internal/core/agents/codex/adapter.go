@@ -87,7 +87,7 @@ func (a adapter) ValidateResult(result coreexec.Result) error {
 	for _, e := range result.Events {
 		switch e.Type {
 		case coreexec.EventStderr:
-			if strings.Contains(e.Data, "FATAL") || strings.Contains(e.Data, "fatal:") {
+			if isFatalCodexStderr(e.Data) {
 				return fmt.Errorf("codex reported fatal error: %s", truncate(e.Data, 200))
 			}
 		case coreexec.EventStdout:
@@ -106,6 +106,17 @@ func (a adapter) ValidateResult(result coreexec.Result) error {
 	}
 
 	return nil
+}
+
+func isFatalCodexStderr(data string) bool {
+	if !strings.Contains(data, "FATAL") && !strings.Contains(data, "fatal:") {
+		return false
+	}
+	lower := strings.ToLower(data)
+	if strings.Contains(lower, "authrequired") || strings.Contains(lower, "invalid_token") {
+		return false
+	}
+	return true
 }
 
 func truncate(s string, max int) string {
@@ -144,19 +155,11 @@ func inspectCodexStdout(data string) (hasWork bool, askedClarifyingQuestion bool
 		return true, false
 	}
 
-	if item.Type == "agent_message" && looksLikeClarifyingQuestion(extractCodexItemText(event.Item)) {
+	if item.Type == "agent_message" && looksLikeClarifyingQuestion(item.Text) {
 		return false, true
 	}
 
 	return false, false
-}
-
-func extractCodexItemText(raw json.RawMessage) string {
-	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return ""
-	}
-	return strings.TrimSpace(agents.FlattenJSONText(value))
 }
 
 func looksLikeClarifyingQuestion(text string) bool {
