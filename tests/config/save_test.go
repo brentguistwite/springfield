@@ -1,6 +1,9 @@
 package config_test
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"springfield/internal/core/config"
@@ -209,5 +212,34 @@ default_agent = "claude"
 	}
 	if got := reloaded.Config.Agents.Codex.ApprovalPolicy; got != "never" {
 		t.Fatalf("codex approval_policy: want never, got %q", got)
+	}
+}
+
+func TestSaveOmitsEmptyAgentExecutionConfigBlocks(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+[project]
+default_agent = "claude"
+`)
+
+	loaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if err := config.Save(loaded); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, config.FileName))
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+
+	text := string(data)
+	for _, unwanted := range []string{"[agents]", "[agents.claude]", "[agents.codex]"} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("expected saved config to omit %q, got:\n%s", unwanted, text)
+		}
 	}
 }

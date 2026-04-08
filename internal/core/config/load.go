@@ -49,6 +49,7 @@ func loadFrom(startDir string) (Loaded, error) {
 			Reason: err.Error(),
 		}
 	}
+	normalize(&cfg)
 
 	if err := validate(cfg); err != nil {
 		return Loaded{}, &InvalidConfigError{
@@ -142,4 +143,10 @@ func validateEnum(key, value string, allowed []string) error {
 		return nil
 	}
 	return fmt.Errorf("%s must be one of %s", key, strings.Join(allowed, ", "))
+}
+
+func normalize(cfg *Config) {
+	cfg.Agents.Claude.PermissionMode = strings.TrimSpace(cfg.Agents.Claude.PermissionMode)
+	cfg.Agents.Codex.SandboxMode = strings.TrimSpace(cfg.Agents.Codex.SandboxMode)
+	cfg.Agents.Codex.ApprovalPolicy = strings.TrimSpace(cfg.Agents.Codex.ApprovalPolicy)
 }

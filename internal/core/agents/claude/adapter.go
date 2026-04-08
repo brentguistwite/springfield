@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"strings"
 
 	"springfield/internal/core/agents"
 	coreexec "springfield/internal/core/exec"
@@ -64,8 +65,8 @@ func (a adapter) Command(input agents.CommandInput) coreexec.Command {
 		"--output-format", "stream-json",
 		"--verbose",
 	}
-	if input.ExecutionSettings.Claude.PermissionMode != "" {
-		args = append(args, "--permission-mode", input.ExecutionSettings.Claude.PermissionMode)
+	if permissionMode := strings.TrimSpace(input.ExecutionSettings.Claude.PermissionMode); permissionMode != "" {
+		args = append(args, "--permission-mode", permissionMode)
 	}
 
 	return coreexec.Command{

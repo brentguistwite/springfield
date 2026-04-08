@@ -228,3 +228,33 @@ approval_policy = "invalid"
 		t.Fatalf("expected actionable codex approval_policy error, got %q", err.Error())
 	}
 }
+
+func TestLoadTrimsAgentExecutionConfigWhitespace(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+[project]
+default_agent = "claude"
+
+[agents.claude]
+permission_mode = " bypassPermissions "
+
+[agents.codex]
+sandbox_mode = " workspace-write "
+approval_policy = " on-request "
+`)
+
+	loaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if got := loaded.Config.Agents.Claude.PermissionMode; got != "bypassPermissions" {
+		t.Fatalf("expected trimmed claude permission_mode, got %q", got)
+	}
+	if got := loaded.Config.Agents.Codex.SandboxMode; got != "workspace-write" {
+		t.Fatalf("expected trimmed codex sandbox_mode, got %q", got)
+	}
+	if got := loaded.Config.Agents.Codex.ApprovalPolicy; got != "on-request" {
+		t.Fatalf("expected trimmed codex approval_policy, got %q", got)
+	}
+}
