@@ -237,6 +237,42 @@ func TestEnsureRecommendedExecutionDefaultsPreservesExistingCustomValues(t *test
 	}
 }
 
+func TestEnsureRecommendedExecutionDefaultsPreservesExplicitOffValues(t *testing.T) {
+	root := t.TempDir()
+	writeRuntimeServiceConfig(t, root, strings.Join([]string{
+		"[project]",
+		`default_agent = "claude"`,
+		"",
+		"[agents.claude]",
+		`permission_mode = ""`,
+		"",
+		"[agents.codex]",
+		`sandbox_mode = ""`,
+		`approval_policy = ""`,
+		"",
+	}, "\n"))
+
+	services := runtimeServices{
+		cwd: func() (string, error) { return root, nil },
+	}
+
+	if err := services.EnsureRecommendedExecutionDefaults(); err != nil {
+		t.Fatalf("EnsureRecommendedExecutionDefaults: %v", err)
+	}
+
+	loaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+
+	if got := loaded.Config.ExecutionModes().Claude; got != config.ExecutionModeOff {
+		t.Fatalf("claude mode: want %q, got %q", config.ExecutionModeOff, got)
+	}
+	if got := loaded.Config.ExecutionModes().Codex; got != config.ExecutionModeOff {
+		t.Fatalf("codex mode: want %q, got %q", config.ExecutionModeOff, got)
+	}
+}
+
 func TestSaveAgentExecutionModesWritesRecommendedValues(t *testing.T) {
 	root := t.TempDir()
 	writeRuntimeServiceConfig(t, root, strings.Join([]string{

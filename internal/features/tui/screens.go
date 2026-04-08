@@ -255,7 +255,7 @@ func (s setupScreen) View() string {
 		}
 	case setupPhaseBasicDone:
 		b.WriteString("Setup complete.\n")
-		b.WriteString("Storage: local\n")
+		b.WriteString(fmt.Sprintf("Storage: %s\n", basicSetupStorageLabel(s.services.ConductorCurrentConfig())))
 		priority := s.services.AgentPriority()
 		agents := sortAgentsByPriority(s.services.DetectAgents(), priority)
 		b.WriteString("Agent priority:\n")
@@ -277,6 +277,13 @@ func (s setupScreen) View() string {
 
 	b.WriteString("\nr refresh, Esc back\n")
 	return b.String()
+}
+
+func basicSetupStorageLabel(current *ConductorCurrentConfig) string {
+	if current != nil && current.PlansDir == conductor.TrackedPlansDir {
+		return "tracked"
+	}
+	return "local"
 }
 
 type ralphScreen struct {

@@ -43,12 +43,14 @@ func loadFrom(startDir string) (Loaded, error) {
 	}
 
 	var cfg Config
-	if _, err := toml.DecodeFile(configPath, &cfg); err != nil {
+	metadata, err := toml.DecodeFile(configPath, &cfg)
+	if err != nil {
 		return Loaded{}, &InvalidConfigError{
 			Path:   configPath,
 			Reason: err.Error(),
 		}
 	}
+	setPresence(&cfg, metadata)
 	normalize(&cfg)
 
 	if err := validate(cfg); err != nil {
@@ -149,4 +151,9 @@ func normalize(cfg *Config) {
 	cfg.Agents.Claude.PermissionMode = strings.TrimSpace(cfg.Agents.Claude.PermissionMode)
 	cfg.Agents.Codex.SandboxMode = strings.TrimSpace(cfg.Agents.Codex.SandboxMode)
 	cfg.Agents.Codex.ApprovalPolicy = strings.TrimSpace(cfg.Agents.Codex.ApprovalPolicy)
+}
+
+func setPresence(cfg *Config, metadata toml.MetaData) {
+	cfg.Agents.Claude.isPresent = metadata.IsDefined("agents", "claude")
+	cfg.Agents.Codex.isPresent = metadata.IsDefined("agents", "codex")
 }

@@ -44,12 +44,12 @@ func newSaveConfig(cfg Config) saveConfig {
 	}
 
 	var agentsCfg *saveAgentsConfig
-	if cfg.Agents.Claude.PermissionMode != "" {
+	if cfg.Agents.Claude.isPresent || cfg.Agents.Claude.PermissionMode != "" {
 		agentsCfg = &saveAgentsConfig{
 			Claude: &ClaudeAgentConfig{PermissionMode: cfg.Agents.Claude.PermissionMode},
 		}
 	}
-	if cfg.Agents.Codex.SandboxMode != "" || cfg.Agents.Codex.ApprovalPolicy != "" {
+	if cfg.Agents.Codex.isPresent || cfg.Agents.Codex.SandboxMode != "" || cfg.Agents.Codex.ApprovalPolicy != "" {
 		if agentsCfg == nil {
 			agentsCfg = &saveAgentsConfig{}
 		}

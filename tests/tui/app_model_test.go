@@ -1460,6 +1460,42 @@ func TestSetupBasicUsesDefaultsAndOffersDoctorHandoff(t *testing.T) {
 	}
 }
 
+func TestSetupBasicPreservesTrackedStorageSummary(t *testing.T) {
+	services := &fakeServices{
+		setup: tui.SetupStatus{
+			WorkingDir:           "/tmp/demo",
+			ProjectRoot:          "/tmp/demo",
+			ConfigPath:           "/tmp/demo/springfield.toml",
+			RuntimeDir:           "/tmp/demo/.springfield",
+			ConductorConfigPath:  "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:        true,
+			RuntimePresent:       true,
+			ConductorConfigReady: true,
+		},
+		agentDetections:    []tui.AgentDetection{{ID: "claude", Name: "Claude Code", Installed: true}},
+		agentPriorityOrder: []string{"claude"},
+		conductorCurrentCfg: &tui.ConductorCurrentConfig{
+			PlansDir:        ".conductor/plans",
+			WorktreeBase:    ".worktrees",
+			MaxRetries:      2,
+			RalphIterations: 50,
+			RalphTimeout:    3600,
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := model.View()
+	if strings.Contains(view, "Storage: local") {
+		t.Fatalf("expected basic summary to avoid wrong local storage label, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Storage: tracked") {
+		t.Fatalf("expected tracked storage summary, got:\n%s", view)
+	}
+}
+
 func TestSetupAdvancedNavigatesToAdvancedScreen(t *testing.T) {
 	services := &fakeServices{
 		setup: tui.SetupStatus{

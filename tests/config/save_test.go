@@ -281,3 +281,38 @@ approval_policy = "never"
 		t.Fatalf("codex mode: want %q, got %q", config.ExecutionModeOff, got)
 	}
 }
+
+func TestSaveRoundTripsExplicitOffExecutionConfig(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+[project]
+default_agent = "claude"
+`)
+
+	loaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	loaded.Config.ApplyExecutionMode("claude", config.ExecutionModeOff)
+	loaded.Config.ApplyExecutionMode("codex", config.ExecutionModeOff)
+	if err := config.Save(loaded); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, config.FileName))
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+
+	text := string(data)
+	for _, wanted := range []string{
+		"[agents]",
+		"[agents.claude]",
+		"[agents.codex]",
+	} {
+		if !strings.Contains(text, wanted) {
+			t.Fatalf("expected saved config to contain %q, got:\n%s", wanted, text)
+		}
+	}
+}
