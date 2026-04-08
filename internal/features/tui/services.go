@@ -359,6 +359,22 @@ func (s runtimeServices) AgentPriority() []string {
 	return loaded.Config.EffectivePriority()
 }
 
+func (s runtimeServices) AgentExecutionModes() AgentExecutionModes {
+	status := s.SetupStatus()
+	if !status.ConfigPresent {
+		return AgentExecutionModes{}
+	}
+	loaded, err := config.LoadFrom(status.ProjectRoot)
+	if err != nil {
+		return AgentExecutionModes{}
+	}
+	modes := loaded.Config.ExecutionModes()
+	return AgentExecutionModes{
+		Claude: string(modes.Claude),
+		Codex:  string(modes.Codex),
+	}
+}
+
 func (s runtimeServices) ConductorCurrentConfig() *ConductorCurrentConfig {
 	status := s.SetupStatus()
 	if !status.ConductorConfigReady {
@@ -387,6 +403,39 @@ func (s runtimeServices) SaveAgentPriority(priority []string) error {
 		return err
 	}
 	loaded.Config.Project.AgentPriority = priority
+	return config.Save(loaded)
+}
+
+func (s runtimeServices) SaveAgentExecutionModes(input SaveAgentExecutionModesInput) error {
+	status := s.SetupStatus()
+	if status.Error != "" {
+		return errors.New(status.Error)
+	}
+	loaded, err := config.LoadFrom(status.ProjectRoot)
+	if err != nil {
+		return err
+	}
+
+	loaded.Config.ApplyExecutionMode(string(agents.AgentClaude), config.ExecutionMode(input.Claude))
+	loaded.Config.ApplyExecutionMode(string(agents.AgentCodex), config.ExecutionMode(input.Codex))
+
+	return config.Save(loaded)
+}
+
+func (s runtimeServices) EnsureRecommendedExecutionDefaults() error {
+	status := s.SetupStatus()
+	if status.Error != "" {
+		return errors.New(status.Error)
+	}
+	loaded, err := config.LoadFrom(status.ProjectRoot)
+	if err != nil {
+		return err
+	}
+	if loaded.Config.HasAnyExecutionSettings() {
+		return nil
+	}
+
+	loaded.Config.ApplyRecommendedExecutionDefaults()
 	return config.Save(loaded)
 }
 

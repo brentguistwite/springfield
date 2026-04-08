@@ -7,6 +7,13 @@ import (
 
 const defaultConfigContent = `[project]
 default_agent = "claude"
+
+[agents.claude]
+permission_mode = "bypassPermissions"
+
+[agents.codex]
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
 `
 
 // InitResult reports what Init created vs skipped.

@@ -150,6 +150,7 @@ func TestConductorRunSuccessShowsTruthfulSummary(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
 	writeConductorConfig(t, root, sequentialOnlyConfig())
+	hideAgentBinariesFromPath(t)
 	plansDir := filepath.Join(root, ".conductor", "plans")
 	writePlanFile(t, plansDir, "01-bootstrap", "bootstrap plan")
 	writePlanFile(t, plansDir, "02-config", "config plan")
@@ -160,27 +161,26 @@ func TestConductorRunSuccessShowsTruthfulSummary(t *testing.T) {
 	var buffer bytes.Buffer
 	command.SetOut(&buffer)
 
-	// This will fail because no real agent binary exists, which is expected.
-	// We test the wiring, not real execution.
 	err := command.Execute()
 
-	// If it somehow succeeds (mock env), output should contain "3/3"
 	if err == nil {
-		output := buffer.String()
-		if !strings.Contains(output, "3/3") {
-			t.Fatalf("success output should show completion count: got %q", output)
-		}
-		if strings.Contains(output, "All plans completed.") {
-			t.Fatalf("should not use generic completion message: got %q", output)
-		}
+		t.Fatal("expected run to fail without agent binaries")
 	}
-	// If it fails, that's fine - no real agent binary in test env
+
+	output := buffer.String()
+	if !strings.Contains(output, "Stopped: 0/3 plans completed, 1 failed.") {
+		t.Fatalf("expected truthful failure summary, got %q", output)
+	}
+	if strings.Contains(output, "All plans completed.") {
+		t.Fatalf("should not use generic completion message: got %q", output)
+	}
 }
 
 func TestConductorRunFailureDoesNotClaimSuccess(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
 	writeConductorConfig(t, root, sequentialOnlyConfig())
+	hideAgentBinariesFromPath(t)
 	// No plan files -> executor will fail reading them
 
 	command := cmd.NewRootCommand()

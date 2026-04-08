@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"springfield/internal/core/config"
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/ralph"
 	"springfield/internal/storage"
@@ -166,4 +167,191 @@ func containsRuntimeServiceArg(args []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestEnsureRecommendedExecutionDefaultsWritesRecommendedWhenUnset(t *testing.T) {
+	root := t.TempDir()
+	writeRuntimeServiceConfig(t, root, strings.Join([]string{
+		"[project]",
+		`default_agent = "claude"`,
+		"",
+	}, "\n"))
+
+	services := runtimeServices{
+		cwd: func() (string, error) { return root, nil },
+	}
+
+	if err := services.EnsureRecommendedExecutionDefaults(); err != nil {
+		t.Fatalf("EnsureRecommendedExecutionDefaults: %v", err)
+	}
+
+	loaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+
+	if got := loaded.Config.ExecutionModes().Claude; got != config.ExecutionModeRecommended {
+		t.Fatalf("claude mode: want %q, got %q", config.ExecutionModeRecommended, got)
+	}
+	if got := loaded.Config.ExecutionModes().Codex; got != config.ExecutionModeRecommended {
+		t.Fatalf("codex mode: want %q, got %q", config.ExecutionModeRecommended, got)
+	}
+}
+
+func TestEnsureRecommendedExecutionDefaultsPreservesExistingCustomValues(t *testing.T) {
+	root := t.TempDir()
+	writeRuntimeServiceConfig(t, root, strings.Join([]string{
+		"[project]",
+		`default_agent = "claude"`,
+		"",
+		"[agents.claude]",
+		`permission_mode = "plan"`,
+		"",
+		"[agents.codex]",
+		`sandbox_mode = "workspace-write"`,
+		`approval_policy = "on-request"`,
+		"",
+	}, "\n"))
+
+	services := runtimeServices{
+		cwd: func() (string, error) { return root, nil },
+	}
+
+	if err := services.EnsureRecommendedExecutionDefaults(); err != nil {
+		t.Fatalf("EnsureRecommendedExecutionDefaults: %v", err)
+	}
+
+	loaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+
+	if got := loaded.Config.Agents.Claude.PermissionMode; got != "plan" {
+		t.Fatalf("claude permission_mode: want plan, got %q", got)
+	}
+	if got := loaded.Config.Agents.Codex.SandboxMode; got != "workspace-write" {
+		t.Fatalf("codex sandbox_mode: want workspace-write, got %q", got)
+	}
+	if got := loaded.Config.Agents.Codex.ApprovalPolicy; got != "on-request" {
+		t.Fatalf("codex approval_policy: want on-request, got %q", got)
+	}
+}
+
+func TestSaveAgentExecutionModesWritesRecommendedValues(t *testing.T) {
+	root := t.TempDir()
+	writeRuntimeServiceConfig(t, root, strings.Join([]string{
+		"[project]",
+		`default_agent = "claude"`,
+		"",
+	}, "\n"))
+
+	services := runtimeServices{
+		cwd: func() (string, error) { return root, nil },
+	}
+
+	if err := services.SaveAgentExecutionModes(SaveAgentExecutionModesInput{
+		Claude: "recommended",
+		Codex:  "recommended",
+	}); err != nil {
+		t.Fatalf("SaveAgentExecutionModes: %v", err)
+	}
+
+	loaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+
+	if got := loaded.Config.Agents.Claude.PermissionMode; got != "bypassPermissions" {
+		t.Fatalf("claude permission_mode: want bypassPermissions, got %q", got)
+	}
+	if got := loaded.Config.Agents.Codex.SandboxMode; got != "danger-full-access" {
+		t.Fatalf("codex sandbox_mode: want danger-full-access, got %q", got)
+	}
+	if got := loaded.Config.Agents.Codex.ApprovalPolicy; got != "never" {
+		t.Fatalf("codex approval_policy: want never, got %q", got)
+	}
+}
+
+func TestSaveAgentExecutionModesClearsOffValues(t *testing.T) {
+	root := t.TempDir()
+	writeRuntimeServiceConfig(t, root, strings.Join([]string{
+		"[project]",
+		`default_agent = "claude"`,
+		"",
+		"[agents.claude]",
+		`permission_mode = "bypassPermissions"`,
+		"",
+		"[agents.codex]",
+		`sandbox_mode = "danger-full-access"`,
+		`approval_policy = "never"`,
+		"",
+	}, "\n"))
+
+	services := runtimeServices{
+		cwd: func() (string, error) { return root, nil },
+	}
+
+	if err := services.SaveAgentExecutionModes(SaveAgentExecutionModesInput{
+		Claude: "off",
+		Codex:  "off",
+	}); err != nil {
+		t.Fatalf("SaveAgentExecutionModes: %v", err)
+	}
+
+	loaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+
+	if got := loaded.Config.Agents.Claude.PermissionMode; got != "" {
+		t.Fatalf("claude permission_mode: want empty, got %q", got)
+	}
+	if got := loaded.Config.Agents.Codex.SandboxMode; got != "" {
+		t.Fatalf("codex sandbox_mode: want empty, got %q", got)
+	}
+	if got := loaded.Config.Agents.Codex.ApprovalPolicy; got != "" {
+		t.Fatalf("codex approval_policy: want empty, got %q", got)
+	}
+}
+
+func TestSaveAgentExecutionModesPreservesCustomValues(t *testing.T) {
+	root := t.TempDir()
+	writeRuntimeServiceConfig(t, root, strings.Join([]string{
+		"[project]",
+		`default_agent = "claude"`,
+		"",
+		"[agents.claude]",
+		`permission_mode = "plan"`,
+		"",
+		"[agents.codex]",
+		`sandbox_mode = "workspace-write"`,
+		`approval_policy = "on-request"`,
+		"",
+	}, "\n"))
+
+	services := runtimeServices{
+		cwd: func() (string, error) { return root, nil },
+	}
+
+	if err := services.SaveAgentExecutionModes(SaveAgentExecutionModesInput{
+		Claude: "custom",
+		Codex:  "custom",
+	}); err != nil {
+		t.Fatalf("SaveAgentExecutionModes: %v", err)
+	}
+
+	loaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+
+	if got := loaded.Config.Agents.Claude.PermissionMode; got != "plan" {
+		t.Fatalf("claude permission_mode: want plan, got %q", got)
+	}
+	if got := loaded.Config.Agents.Codex.SandboxMode; got != "workspace-write" {
+		t.Fatalf("codex sandbox_mode: want workspace-write, got %q", got)
+	}
+	if got := loaded.Config.Agents.Codex.ApprovalPolicy; got != "on-request" {
+		t.Fatalf("codex approval_policy: want on-request, got %q", got)
+	}
 }

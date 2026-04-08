@@ -48,6 +48,15 @@ func TestInitCreatesConfigAndRuntimeDir(t *testing.T) {
 	if loaded.Config.Project.DefaultAgent == "" {
 		t.Error("default agent should be non-empty")
 	}
+	if got := loaded.Config.Agents.Claude.PermissionMode; got != "bypassPermissions" {
+		t.Fatalf("claude permission_mode: want bypassPermissions, got %q", got)
+	}
+	if got := loaded.Config.Agents.Codex.SandboxMode; got != "danger-full-access" {
+		t.Fatalf("codex sandbox_mode: want danger-full-access, got %q", got)
+	}
+	if got := loaded.Config.Agents.Codex.ApprovalPolicy; got != "never" {
+		t.Fatalf("codex approval_policy: want never, got %q", got)
+	}
 }
 
 func TestInitIsIdempotent(t *testing.T) {

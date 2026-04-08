@@ -243,3 +243,41 @@ default_agent = "claude"
 		}
 	}
 }
+
+func TestSavePreservesOffExecutionModesCleanly(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+[project]
+default_agent = "claude"
+
+[agents.claude]
+permission_mode = "bypassPermissions"
+
+[agents.codex]
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+`)
+
+	loaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	loaded.Config.ApplyExecutionMode("claude", config.ExecutionModeOff)
+	loaded.Config.ApplyExecutionMode("codex", config.ExecutionModeOff)
+	if err := config.Save(loaded); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	reloaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+
+	if got := reloaded.Config.ExecutionModes().Claude; got != config.ExecutionModeOff {
+		t.Fatalf("claude mode: want %q, got %q", config.ExecutionModeOff, got)
+	}
+	if got := reloaded.Config.ExecutionModes().Codex; got != config.ExecutionModeOff {
+		t.Fatalf("codex mode: want %q, got %q", config.ExecutionModeOff, got)
+	}
+}
