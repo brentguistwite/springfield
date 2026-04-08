@@ -51,7 +51,7 @@ func TestFullChainRalphRunNextPassesStoryThroughRuntime(t *testing.T) {
 		codex.New(fakeLookPath),
 	)
 	runner := runtime.NewTestRunner(registry, captureCommandFunc(&calls, 0), time.Now)
-	executor := ralph.NewRuntimeExecutor(runner, []agents.ID{agents.AgentClaude}, dir)
+	executor := ralph.NewRuntimeExecutor(runner, []agents.ID{agents.AgentClaude}, dir, agents.ExecutionSettings{})
 
 	record, err := workspace.RunNext("test", executor)
 	if err != nil {
@@ -114,7 +114,7 @@ func TestFullChainRalphRunNextRecordsFailure(t *testing.T) {
 		codex.New(fakeLookPath),
 	)
 	runner := runtime.NewTestRunner(registry, captureCommandFunc(&calls, 1), time.Now)
-	executor := ralph.NewRuntimeExecutor(runner, []agents.ID{agents.AgentClaude}, dir)
+	executor := ralph.NewRuntimeExecutor(runner, []agents.ID{agents.AgentClaude}, dir, agents.ExecutionSettings{})
 
 	record, err := workspace.RunNext("test", executor)
 	if err != nil {
@@ -166,7 +166,7 @@ func TestFullChainRalphRunNextWithCodexAgent(t *testing.T) {
 		codex.New(fakeLookPath),
 	)
 	runner := runtime.NewTestRunner(registry, captureCommandFunc(&calls, 0), time.Now)
-	executor := ralph.NewRuntimeExecutor(runner, []agents.ID{agents.AgentCodex}, dir)
+	executor := ralph.NewRuntimeExecutor(runner, []agents.ID{agents.AgentCodex}, dir, agents.ExecutionSettings{})
 
 	record, err := workspace.RunNext("test", executor)
 	if err != nil {
@@ -177,7 +177,7 @@ func TestFullChainRalphRunNextWithCodexAgent(t *testing.T) {
 		t.Fatalf("record agent: got %q want codex", record.Agent)
 	}
 
-	// Codex adapter should produce: codex -q <prompt>
+	// Codex adapter should produce: codex exec --json <prompt>
 	if len(calls) != 1 {
 		t.Fatalf("expected 1 command dispatch, got %d", len(calls))
 	}
@@ -207,7 +207,7 @@ func TestFullChainRalphRunNextHonorsDependencies(t *testing.T) {
 	var calls []exec.Command
 	registry := agents.NewRegistry(claude.New(fakeLookPath), codex.New(fakeLookPath))
 	runner := runtime.NewTestRunner(registry, captureCommandFunc(&calls, 0), time.Now)
-	executor := ralph.NewRuntimeExecutor(runner, []agents.ID{agents.AgentClaude}, dir)
+	executor := ralph.NewRuntimeExecutor(runner, []agents.ID{agents.AgentClaude}, dir, agents.ExecutionSettings{})
 
 	// First run should pick US-001
 	record1, err := workspace.RunNext("test", executor)

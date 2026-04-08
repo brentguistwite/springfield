@@ -164,7 +164,7 @@ func newRalphRunCommand() *cobra.Command {
 				agentIDs = append(agentIDs, agents.ID(id))
 			}
 
-			executor := ralph.NewRuntimeExecutor(runner, agentIDs, rootDir)
+			executor := ralph.NewRuntimeExecutor(runner, agentIDs, rootDir, cfg.Config.ExecutionSettings())
 
 			workspace, err := ralphWorkspace(cmd)
 			if err != nil {

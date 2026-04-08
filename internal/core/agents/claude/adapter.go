@@ -59,12 +59,18 @@ func (a adapter) Detect(context.Context) agents.Detection {
 }
 
 func (a adapter) Command(input agents.CommandInput) coreexec.Command {
+	args := []string{
+		"-p", input.Prompt,
+		"--output-format", "stream-json",
+		"--verbose",
+	}
+	if input.ExecutionSettings.Claude.PermissionMode != "" {
+		args = append(args, "--permission-mode", input.ExecutionSettings.Claude.PermissionMode)
+	}
+
 	return coreexec.Command{
 		Name: "claude",
-		Args: []string{
-			"-p", input.Prompt,
-			"--output-format", "stream-json",
-		},
-		Dir: input.WorkDir,
+		Args: args,
+		Dir:  input.WorkDir,
 	}
 }

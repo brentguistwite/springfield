@@ -59,11 +59,18 @@ func (a adapter) Detect(context.Context) agents.Detection {
 }
 
 func (a adapter) Command(input agents.CommandInput) coreexec.Command {
+	args := []string{"exec", "--json"}
+	if input.ExecutionSettings.Codex.SandboxMode != "" {
+		args = append(args, "-s", input.ExecutionSettings.Codex.SandboxMode)
+	}
+	if input.ExecutionSettings.Codex.ApprovalPolicy != "" {
+		args = append(args, "-a", input.ExecutionSettings.Codex.ApprovalPolicy)
+	}
+	args = append(args, input.Prompt)
+
 	return coreexec.Command{
 		Name: "codex",
-		Args: []string{
-			"-q", input.Prompt,
-		},
-		Dir: input.WorkDir,
+		Args: args,
+		Dir:  input.WorkDir,
 	}
 }

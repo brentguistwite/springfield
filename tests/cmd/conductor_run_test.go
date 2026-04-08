@@ -61,7 +61,13 @@ func TestConductorRunReportsTruthfulFailure(t *testing.T) {
 
 	// Real runner will fail because no agent binary exists in CI.
 	// The output must truthfully report the failure.
-	output, err := runBinaryIn(t, bin, dir, "conductor", "run")
+	output, err := runBinaryInWithEnv(
+		t,
+		bin,
+		dir,
+		[]string{"PATH=" + t.TempDir()},
+		"conductor", "run",
+	)
 
 	// Should return an error (non-zero exit) because execution failed
 	if err == nil {
@@ -130,7 +136,7 @@ func TestConductorStatusAfterFailedRun(t *testing.T) {
 	writePlanFileBinary(t, dir, ".conductor/plans", "02-config", "implement config")
 
 	// Run conductor (will fail at first plan due to no agent binary)
-	runBinaryIn(t, bin, dir, "conductor", "run")
+	runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + t.TempDir()}, "conductor", "run")
 
 	// Status should reflect the failed state truthfully
 	output, err := runBinaryIn(t, bin, dir, "conductor", "status")
@@ -171,7 +177,7 @@ func TestConductorDiagnoseAfterFailedRun(t *testing.T) {
 	writePlanFileBinary(t, dir, ".conductor/plans", "01-bootstrap", "implement bootstrap")
 
 	// Run conductor (will fail)
-	runBinaryIn(t, bin, dir, "conductor", "run")
+	runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + t.TempDir()}, "conductor", "run")
 
 	// Diagnose should report the failure with actionable info
 	output, err := runBinaryIn(t, bin, dir, "conductor", "diagnose")
@@ -185,5 +191,57 @@ func TestConductorDiagnoseAfterFailedRun(t *testing.T) {
 
 	if !strings.Contains(output, "resume") {
 		t.Fatalf("expected resume guidance in diagnose output, got:\n%s", output)
+	}
+}
+
+func TestConductorRunPassesCodexExecutionSettingsToSubprocess(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	configBody := strings.Join([]string{
+		"[project]",
+		`default_agent = "codex"`,
+		"",
+		"[agents.codex]",
+		`sandbox_mode = "workspace-write"`,
+		`approval_policy = "on-request"`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(dir, "springfield.toml"), []byte(configBody), 0o644); err != nil {
+		t.Fatalf("write springfield.toml: %v", err)
+	}
+
+	cfg := &conductor.Config{
+		PlansDir:        ".conductor/plans",
+		WorktreeBase:    ".worktrees",
+		MaxRetries:      1,
+		RalphIterations: 1,
+		RalphTimeout:    10,
+		Tool:            "codex",
+		Sequential:      []string{"01-bootstrap"},
+	}
+	writeConductorConfigBinary(t, dir, cfg)
+	writePlanFileBinary(t, dir, ".conductor/plans", "01-bootstrap", "implement bootstrap")
+
+	fakeBinDir := filepath.Join(dir, "bin")
+	argvPath := filepath.Join(dir, "codex.argv")
+	installFakeAgentBinary(t, fakeBinDir, "codex", argvPath)
+
+	output, err := runBinaryInWithEnv(
+		t,
+		bin,
+		dir,
+		[]string{"PATH=" + fakeBinDir},
+		"conductor", "run",
+	)
+	if err != nil {
+		t.Fatalf("conductor run failed: %v\n%s", err, output)
+	}
+
+	args := readRecordedArgs(t, argvPath)
+	for _, want := range []string{"exec", "--json", "-s", "workspace-write", "-a", "on-request"} {
+		if !containsArg(args, want) {
+			t.Fatalf("expected recorded args to contain %q, got %v", want, args)
+		}
 	}
 }

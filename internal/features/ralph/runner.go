@@ -11,28 +11,36 @@ import (
 
 // RuntimeExecutor implements StoryExecutor using the shared runtime boundary.
 type RuntimeExecutor struct {
-	runner  runtime.Runner
-	agents  []agents.ID
-	workDir string
-	OnEvent exec.EventHandler
+	runner   runtime.Runner
+	agents   []agents.ID
+	workDir  string
+	settings agents.ExecutionSettings
+	OnEvent  exec.EventHandler
 }
 
 // NewRuntimeExecutor creates a StoryExecutor backed by the shared runtime.
-func NewRuntimeExecutor(runner runtime.Runner, agents []agents.ID, workDir string) RuntimeExecutor {
+func NewRuntimeExecutor(
+	runner runtime.Runner,
+	agents []agents.ID,
+	workDir string,
+	settings agents.ExecutionSettings,
+) RuntimeExecutor {
 	return RuntimeExecutor{
-		runner:  runner,
-		agents:  agents,
-		workDir: workDir,
+		runner:   runner,
+		agents:   agents,
+		workDir:  workDir,
+		settings: settings,
 	}
 }
 
 // Execute runs a story through the shared runtime and returns a structured result.
 func (e RuntimeExecutor) Execute(story Story) RunResult {
 	result := e.runner.Run(context.Background(), runtime.Request{
-		AgentIDs: e.agents,
-		Prompt:   story.Description,
-		WorkDir:  e.workDir,
-		OnEvent:  e.OnEvent,
+		AgentIDs:          e.agents,
+		Prompt:            story.Description,
+		WorkDir:           e.workDir,
+		OnEvent:           e.OnEvent,
+		ExecutionSettings: e.settings,
 	})
 
 	out := RunResult{

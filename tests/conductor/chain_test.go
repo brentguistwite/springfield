@@ -42,7 +42,7 @@ func TestFullChainConductorRunSuccessRecordsAgent(t *testing.T) {
 
 	var calls []exec.Command
 	runner := newTestRuntime("claude", captureCommandFunc(&calls, 0))
-	executor := conductor.NewRuntimeExecutor(runner, []agents.ID{"claude"}, plansDir, root)
+	executor := conductor.NewRuntimeExecutor(runner, []agents.ID{"claude"}, plansDir, root, agents.ExecutionSettings{})
 	conductorRunner := conductor.NewRunner(project, executor)
 
 	if err := conductorRunner.RunAll(); err != nil {
@@ -91,7 +91,7 @@ func TestFullChainConductorRunFailurePersistsState(t *testing.T) {
 
 	var calls []exec.Command
 	runner := newTestRuntime("claude", captureCommandFunc(&calls, 1)) // non-zero = failure
-	executor := conductor.NewRuntimeExecutor(runner, []agents.ID{"claude"}, plansDir, root)
+	executor := conductor.NewRuntimeExecutor(runner, []agents.ID{"claude"}, plansDir, root, agents.ExecutionSettings{})
 	conductorRunner := conductor.NewRunner(project, executor)
 
 	runErr := conductorRunner.RunAll()
@@ -138,7 +138,7 @@ func TestFullChainConductorResumeSkipsCompleted(t *testing.T) {
 	var calls []exec.Command
 	runFn := captureCommandFunc(&calls, 0)
 	runner := newTestRuntime("claude", runFn)
-	executor := conductor.NewRuntimeExecutor(runner, []agents.ID{"claude"}, plansDir, root)
+	executor := conductor.NewRuntimeExecutor(runner, []agents.ID{"claude"}, plansDir, root, agents.ExecutionSettings{})
 	conductorRunner := conductor.NewRunner(project, executor)
 
 	conductorRunner.RunNext()
@@ -154,7 +154,7 @@ func TestFullChainConductorResumeSkipsCompleted(t *testing.T) {
 
 	calls = nil
 	runner2 := newTestRuntime("claude", captureCommandFunc(&calls, 0))
-	executor2 := conductor.NewRuntimeExecutor(runner2, []agents.ID{"claude"}, plansDir, root)
+	executor2 := conductor.NewRuntimeExecutor(runner2, []agents.ID{"claude"}, plansDir, root, agents.ExecutionSettings{})
 	resumeRunner := conductor.NewRunner(project2, executor2)
 
 	if err := resumeRunner.RunAll(); err != nil {

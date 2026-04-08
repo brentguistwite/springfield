@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -105,5 +106,40 @@ func validate(cfg Config) error {
 		}
 	}
 
+	if err := validateEnum(
+		"agents.claude.permission_mode",
+		cfg.Agents.Claude.PermissionMode,
+		[]string{"acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"},
+	); err != nil {
+		return err
+	}
+
+	if err := validateEnum(
+		"agents.codex.sandbox_mode",
+		cfg.Agents.Codex.SandboxMode,
+		[]string{"read-only", "workspace-write", "danger-full-access"},
+	); err != nil {
+		return err
+	}
+
+	if err := validateEnum(
+		"agents.codex.approval_policy",
+		cfg.Agents.Codex.ApprovalPolicy,
+		[]string{"untrusted", "on-request", "never"},
+	); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func validateEnum(key, value string, allowed []string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	if slices.Contains(allowed, value) {
+		return nil
+	}
+	return fmt.Errorf("%s must be one of %s", key, strings.Join(allowed, ", "))
 }

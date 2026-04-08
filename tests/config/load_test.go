@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"springfield/internal/core/agents"
 	"springfield/internal/core/config"
 )
 
@@ -107,5 +108,123 @@ default_agent = ""
 
 	if !strings.Contains(err.Error(), filepath.Join(root, config.FileName)) {
 		t.Fatalf("expected error to mention config path, got %q", err.Error())
+	}
+}
+
+func TestLoadParsesClaudeExecutionConfig(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+[project]
+default_agent = "claude"
+
+[agents.claude]
+permission_mode = "bypassPermissions"
+`)
+
+	loaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if got := loaded.Config.Agents.Claude.PermissionMode; got != "bypassPermissions" {
+		t.Fatalf("expected claude permission_mode bypassPermissions, got %q", got)
+	}
+
+	settings := loaded.Config.ExecutionSettingsForAgent(string(agents.AgentClaude))
+	if got := settings.Claude.PermissionMode; got != "bypassPermissions" {
+		t.Fatalf("expected resolved claude permission_mode bypassPermissions, got %q", got)
+	}
+}
+
+func TestLoadParsesCodexExecutionConfig(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+[project]
+default_agent = "codex"
+
+[agents.codex]
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+`)
+
+	loaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if got := loaded.Config.Agents.Codex.SandboxMode; got != "workspace-write" {
+		t.Fatalf("expected codex sandbox_mode workspace-write, got %q", got)
+	}
+
+	if got := loaded.Config.Agents.Codex.ApprovalPolicy; got != "on-request" {
+		t.Fatalf("expected codex approval_policy on-request, got %q", got)
+	}
+
+	settings := loaded.Config.ExecutionSettingsForAgent(string(agents.AgentCodex))
+	if got := settings.Codex.SandboxMode; got != "workspace-write" {
+		t.Fatalf("expected resolved codex sandbox_mode workspace-write, got %q", got)
+	}
+	if got := settings.Codex.ApprovalPolicy; got != "on-request" {
+		t.Fatalf("expected resolved codex approval_policy on-request, got %q", got)
+	}
+}
+
+func TestLoadRejectsUnknownClaudePermissionMode(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+[project]
+default_agent = "claude"
+
+[agents.claude]
+permission_mode = "invalid"
+`)
+
+	_, err := config.LoadFrom(root)
+	if err == nil {
+		t.Fatal("expected invalid config error")
+	}
+
+	if !strings.Contains(err.Error(), "agents.claude.permission_mode must be one of") {
+		t.Fatalf("expected actionable claude permission_mode error, got %q", err.Error())
+	}
+}
+
+func TestLoadRejectsUnknownCodexSandboxMode(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+[project]
+default_agent = "codex"
+
+[agents.codex]
+sandbox_mode = "invalid"
+`)
+
+	_, err := config.LoadFrom(root)
+	if err == nil {
+		t.Fatal("expected invalid config error")
+	}
+
+	if !strings.Contains(err.Error(), "agents.codex.sandbox_mode must be one of") {
+		t.Fatalf("expected actionable codex sandbox_mode error, got %q", err.Error())
+	}
+}
+
+func TestLoadRejectsUnknownCodexApprovalPolicy(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+[project]
+default_agent = "codex"
+
+[agents.codex]
+approval_policy = "invalid"
+`)
+
+	_, err := config.LoadFrom(root)
+	if err == nil {
+		t.Fatal("expected invalid config error")
+	}
+
+	if !strings.Contains(err.Error(), "agents.codex.approval_policy must be one of") {
+		t.Fatalf("expected actionable codex approval_policy error, got %q", err.Error())
 	}
 }
