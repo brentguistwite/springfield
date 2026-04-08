@@ -97,4 +97,10 @@ type Commander interface {
 	Command(input CommandInput) exec.Command
 }
 
+// ResultValidator optionally validates whether exit code 0 truly means task success.
+// Adapters that implement this are checked by the runner after a clean exit.
+type ResultValidator interface {
+	ValidateResult(result exec.Result) error
+}
+
 var ErrUnsupportedAgent = errors.New("unsupported agent")

@@ -14,10 +14,13 @@ import (
 )
 
 func fakeRunSuccess(_ context.Context, cmd exec.Command, handler exec.EventHandler) exec.Result {
-	if handler != nil {
-		handler(exec.Event{Type: exec.EventStdout, Data: "ok", Time: time.Now()})
+	events := []exec.Event{
+		{Type: exec.EventStdout, Data: "ok", Time: time.Now()},
 	}
-	return exec.Result{ExitCode: 0}
+	if handler != nil {
+		handler(events[0])
+	}
+	return exec.Result{ExitCode: 0, Events: events}
 }
 
 func fakeRunFailure(_ context.Context, _ exec.Command, _ exec.EventHandler) exec.Result {
@@ -58,6 +61,38 @@ func TestRuntimeExecutorPassesStoryToSharedRuntime(t *testing.T) {
 
 	if result.ExitCode != 0 {
 		t.Fatalf("expected exit code 0, got %d", result.ExitCode)
+	}
+
+	if result.Stdout != "ok" {
+		t.Fatalf("expected stdout %q, got %q", "ok", result.Stdout)
+	}
+}
+
+func TestRuntimeExecutorCollectsStdoutAndStderr(t *testing.T) {
+	registry := testRegistry()
+	fakeRun := func(_ context.Context, _ exec.Command, h exec.EventHandler) exec.Result {
+		events := []exec.Event{
+			{Type: exec.EventStdout, Data: "line 1", Time: time.Now()},
+			{Type: exec.EventStderr, Data: "warn", Time: time.Now()},
+			{Type: exec.EventStdout, Data: "line 2", Time: time.Now()},
+		}
+		for _, e := range events {
+			if h != nil {
+				h(e)
+			}
+		}
+		return exec.Result{ExitCode: 0, Events: events}
+	}
+
+	runner := runtime.NewTestRunner(registry, fakeRun, time.Now)
+	executor := ralph.NewRuntimeExecutor(runner, []agents.ID{agents.AgentClaude}, t.TempDir(), agents.ExecutionSettings{})
+
+	result := executor.Execute(ralph.Story{ID: "US-001", Title: "test"})
+	if result.Stdout != "line 1\nline 2" {
+		t.Fatalf("expected joined stdout, got %q", result.Stdout)
+	}
+	if result.Stderr != "warn" {
+		t.Fatalf("expected stderr %q, got %q", "warn", result.Stderr)
 	}
 }
 

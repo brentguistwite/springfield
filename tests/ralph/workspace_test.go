@@ -26,6 +26,86 @@ func (f fakeExecutor) Execute(ralph.Story) ralph.RunResult {
 	return f.result
 }
 
+func TestWorkspaceRunNextPersistsAgentOutput(t *testing.T) {
+	rootDir := t.TempDir()
+	workspace, err := ralph.OpenRoot(rootDir)
+	if err != nil {
+		t.Fatalf("open workspace: %v", err)
+	}
+
+	spec := ralph.Spec{
+		Project: "test",
+		Stories: []ralph.Story{{ID: "US-001", Title: "Do thing"}},
+	}
+	if err := workspace.InitPlan("output", spec); err != nil {
+		t.Fatalf("init plan: %v", err)
+	}
+
+	executor := fakeExecutor{result: ralph.RunResult{
+		Agent:  "claude",
+		Stdout: `{"type":"result","subtype":"success"}`,
+		Stderr: "warning: something",
+	}}
+
+	record, err := workspace.RunNext("output", executor)
+	if err != nil {
+		t.Fatalf("run next: %v", err)
+	}
+
+	if record.Stdout != `{"type":"result","subtype":"success"}` {
+		t.Fatalf("expected stdout preserved, got %q", record.Stdout)
+	}
+	if record.Stderr != "warning: something" {
+		t.Fatalf("expected stderr preserved, got %q", record.Stderr)
+	}
+
+	// Verify persisted record also has output
+	runs, err := workspace.ListRuns()
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+	if runs[0].Stdout != record.Stdout {
+		t.Fatalf("persisted stdout mismatch: %q", runs[0].Stdout)
+	}
+	if runs[0].Stderr != record.Stderr {
+		t.Fatalf("persisted stderr mismatch: %q", runs[0].Stderr)
+	}
+}
+
+func TestWorkspaceRunNextRecordsDistinctTimestamps(t *testing.T) {
+	rootDir := t.TempDir()
+	tick := 0
+	clock := func() time.Time {
+		tick++
+		return time.Date(2026, 4, 8, 0, 0, tick, 0, time.UTC)
+	}
+
+	workspace, err := ralph.OpenRootForTest(rootDir, clock)
+	if err != nil {
+		t.Fatalf("open workspace: %v", err)
+	}
+
+	spec := ralph.Spec{
+		Project: "test",
+		Stories: []ralph.Story{{ID: "US-001", Title: "Do thing"}},
+	}
+	if err := workspace.InitPlan("ts", spec); err != nil {
+		t.Fatalf("init plan: %v", err)
+	}
+
+	record, err := workspace.RunNext("ts", newPassingExecutor("claude"))
+	if err != nil {
+		t.Fatalf("run next: %v", err)
+	}
+
+	if !record.StartedAt.Before(record.EndedAt) {
+		t.Fatalf("expected StartedAt < EndedAt, got %v and %v", record.StartedAt, record.EndedAt)
+	}
+}
+
 func TestWorkspaceRunNextPersistsPassedRun(t *testing.T) {
 	rootDir := t.TempDir()
 	workspace, err := ralph.OpenRoot(rootDir)
@@ -184,6 +264,167 @@ func TestWorkspaceRunNextLeavesPlanUnchangedWhenRunPersistenceFails(t *testing.T
 
 	if story.Passed {
 		t.Fatal("expected US-001 to remain unpassed when run persistence fails")
+	}
+}
+
+func TestWorkspaceResetSpecificStory(t *testing.T) {
+	rootDir := t.TempDir()
+	workspace, err := ralph.OpenRoot(rootDir)
+	if err != nil {
+		t.Fatalf("open workspace: %v", err)
+	}
+
+	spec := ralph.Spec{
+		Project: "test",
+		Stories: []ralph.Story{
+			{ID: "US-001", Title: "First", Passed: true},
+			{ID: "US-002", Title: "Second", Passed: true},
+		},
+	}
+	if err := workspace.InitPlan("reset", spec); err != nil {
+		t.Fatalf("init plan: %v", err)
+	}
+
+	if err := workspace.ResetStories("reset", "US-001"); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	plan, err := workspace.LoadPlan("reset")
+	if err != nil {
+		t.Fatalf("load plan: %v", err)
+	}
+
+	s1, _ := plan.FindStory("US-001")
+	if s1.Passed {
+		t.Fatal("expected US-001 to be reset")
+	}
+
+	s2, _ := plan.FindStory("US-002")
+	if !s2.Passed {
+		t.Fatal("expected US-002 to remain passed")
+	}
+}
+
+func TestWorkspaceResetSpecificStoryReportsUnknownID(t *testing.T) {
+	rootDir := t.TempDir()
+	workspace, err := ralph.OpenRoot(rootDir)
+	if err != nil {
+		t.Fatalf("open workspace: %v", err)
+	}
+
+	spec := ralph.Spec{
+		Project: "test",
+		Stories: []ralph.Story{
+			{ID: "US-001", Title: "First", Passed: true},
+		},
+	}
+	if err := workspace.InitPlan("reset", spec); err != nil {
+		t.Fatalf("init plan: %v", err)
+	}
+
+	err = workspace.ResetStories("reset", "US-999")
+	if err == nil {
+		t.Fatal("expected unknown story reset to fail")
+	}
+	if err.Error() != `story "US-999" not found in Ralph plan "reset"` {
+		t.Fatalf("reset: %v", err)
+	}
+}
+
+func TestWorkspaceResetSpecificStoryReportsAlreadyPending(t *testing.T) {
+	rootDir := t.TempDir()
+	workspace, err := ralph.OpenRoot(rootDir)
+	if err != nil {
+		t.Fatalf("open workspace: %v", err)
+	}
+
+	spec := ralph.Spec{
+		Project: "test",
+		Stories: []ralph.Story{
+			{ID: "US-001", Title: "First", Passed: false},
+		},
+	}
+	if err := workspace.InitPlan("reset", spec); err != nil {
+		t.Fatalf("init plan: %v", err)
+	}
+
+	err = workspace.ResetStories("reset", "US-001")
+	if err == nil {
+		t.Fatal("expected already-pending story reset to fail")
+	}
+	if err.Error() != `story "US-001" is already pending in Ralph plan "reset"` {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestWorkspaceResetAllStories(t *testing.T) {
+	rootDir := t.TempDir()
+	workspace, err := ralph.OpenRoot(rootDir)
+	if err != nil {
+		t.Fatalf("open workspace: %v", err)
+	}
+
+	spec := ralph.Spec{
+		Project: "test",
+		Stories: []ralph.Story{
+			{ID: "US-001", Title: "First", Passed: true},
+			{ID: "US-002", Title: "Second", Passed: true},
+		},
+	}
+	if err := workspace.InitPlan("reset-all", spec); err != nil {
+		t.Fatalf("init plan: %v", err)
+	}
+
+	if err := workspace.ResetStories("reset-all"); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	plan, err := workspace.LoadPlan("reset-all")
+	if err != nil {
+		t.Fatalf("load plan: %v", err)
+	}
+
+	for _, story := range plan.Spec.Stories {
+		if story.Passed {
+			t.Fatalf("expected %s to be reset", story.ID)
+		}
+	}
+}
+
+func TestWorkspaceResetMakesStoryEligibleForRunNext(t *testing.T) {
+	rootDir := t.TempDir()
+	workspace, err := ralph.OpenRoot(rootDir)
+	if err != nil {
+		t.Fatalf("open workspace: %v", err)
+	}
+
+	spec := ralph.Spec{
+		Project: "test",
+		Stories: []ralph.Story{
+			{ID: "US-001", Title: "Only story", Passed: true},
+		},
+	}
+	if err := workspace.InitPlan("re-run", spec); err != nil {
+		t.Fatalf("init plan: %v", err)
+	}
+
+	// Before reset: no eligible stories
+	plan, _ := workspace.LoadPlan("re-run")
+	if _, ok := plan.NextEligible(); ok {
+		t.Fatal("expected no eligible story before reset")
+	}
+
+	if err := workspace.ResetStories("re-run", "US-001"); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	// After reset: US-001 is eligible again
+	record, err := workspace.RunNext("re-run", newPassingExecutor("claude"))
+	if err != nil {
+		t.Fatalf("run next after reset: %v", err)
+	}
+	if record.StoryID != "US-001" {
+		t.Fatalf("expected US-001, got %s", record.StoryID)
 	}
 }
 

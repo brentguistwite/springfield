@@ -292,6 +292,83 @@ func TestRunnerPassesCodexExecutionSettingsIntoCommand(t *testing.T) {
 	}
 }
 
+func TestRunnerCallsResultValidatorOnExitZero(t *testing.T) {
+	validating := &validatingCommander{
+		id:            agents.AgentClaude,
+		validateError: errors.New("agent asked questions instead of completing work"),
+	}
+	registry := agents.NewRegistry(validating)
+	clock := newFakeClock(time.Date(2026, 4, 8, 10, 0, 0, 0, time.UTC))
+
+	fakeRun := func(_ context.Context, _ exec.Command, _ exec.EventHandler) exec.Result {
+		return exec.Result{ExitCode: 0, Events: []exec.Event{
+			{Type: exec.EventStdout, Data: "some output"},
+		}}
+	}
+
+	runner := runtime.NewTestRunner(registry, fakeRun, clock.now)
+	result := runner.Run(context.Background(), runtime.Request{
+		AgentIDs: []agents.ID{agents.AgentClaude},
+		Prompt:   "Test story",
+		WorkDir:  "/tmp/project",
+	})
+
+	if result.Status != runtime.StatusFailed {
+		t.Fatalf("expected failed after validator rejection, got %q", result.Status)
+	}
+	if result.Err == nil || result.Err.Error() != "agent asked questions instead of completing work" {
+		t.Fatalf("expected validator error, got: %v", result.Err)
+	}
+}
+
+func TestRunnerSkipsValidatorOnNonZeroExit(t *testing.T) {
+	validating := &validatingCommander{
+		id:            agents.AgentClaude,
+		validateError: errors.New("should not be called"),
+	}
+	registry := agents.NewRegistry(validating)
+	clock := newFakeClock(time.Date(2026, 4, 8, 10, 0, 0, 0, time.UTC))
+
+	fakeRun := func(_ context.Context, _ exec.Command, _ exec.EventHandler) exec.Result {
+		return exec.Result{ExitCode: 1, Err: errors.New("process failed")}
+	}
+
+	runner := runtime.NewTestRunner(registry, fakeRun, clock.now)
+	result := runner.Run(context.Background(), runtime.Request{
+		AgentIDs: []agents.ID{agents.AgentClaude},
+		Prompt:   "test",
+		WorkDir:  "/tmp",
+	})
+
+	if result.Status != runtime.StatusFailed {
+		t.Fatalf("expected failed, got %q", result.Status)
+	}
+	if validating.validateCalled {
+		t.Fatal("validator should not be called on non-zero exit")
+	}
+}
+
+type validatingCommander struct {
+	id             agents.ID
+	validateError  error
+	validateCalled bool
+}
+
+func (c *validatingCommander) ID() agents.ID       { return c.id }
+func (c *validatingCommander) Metadata() agents.Metadata {
+	return agents.Metadata{ID: c.id, Name: string(c.id), Binary: string(c.id)}
+}
+func (c *validatingCommander) Detect(context.Context) agents.Detection {
+	return agents.Detection{ID: c.id, Status: agents.DetectionStatusAvailable}
+}
+func (c *validatingCommander) Command(input agents.CommandInput) exec.Command {
+	return exec.Command{Name: string(c.id), Dir: input.WorkDir}
+}
+func (c *validatingCommander) ValidateResult(result exec.Result) error {
+	c.validateCalled = true
+	return c.validateError
+}
+
 type fakeClock struct {
 	t time.Time
 }

@@ -84,6 +84,15 @@ func (r Runner) Run(ctx context.Context, req Request) Result {
 			status = StatusFailed
 		}
 
+		if status == StatusPassed {
+			if validator, ok := commander.(agents.ResultValidator); ok {
+				if err := validator.ValidateResult(execResult); err != nil {
+					status = StatusFailed
+					execResult.Err = err
+				}
+			}
+		}
+
 		last = Result{
 			Agent:     agentID,
 			Status:    status,

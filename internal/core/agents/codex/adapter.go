@@ -2,7 +2,9 @@ package codex
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os/exec"
 	"strings"
 
@@ -74,4 +76,112 @@ func (a adapter) Command(input agents.CommandInput) coreexec.Command {
 		Args: args,
 		Dir:  input.WorkDir,
 	}
+}
+
+// ValidateResult checks Codex stderr for fatal errors that indicate the session
+// didn't complete real work despite exit code 0.
+func (a adapter) ValidateResult(result coreexec.Result) error {
+	hasWork := false
+	askedClarifyingQuestion := false
+
+	for _, e := range result.Events {
+		switch e.Type {
+		case coreexec.EventStderr:
+			if strings.Contains(e.Data, "FATAL") || strings.Contains(e.Data, "fatal:") {
+				return fmt.Errorf("codex reported fatal error: %s", truncate(e.Data, 200))
+			}
+		case coreexec.EventStdout:
+			workSeen, questionSeen := inspectCodexStdout(e.Data)
+			if workSeen {
+				hasWork = true
+			}
+			if questionSeen {
+				askedClarifyingQuestion = true
+			}
+		}
+	}
+
+	if askedClarifyingQuestion && !hasWork {
+		return fmt.Errorf("codex asked a clarifying question without completing work")
+	}
+
+	return nil
+}
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
+}
+
+type codexStreamEvent struct {
+	Type string          `json:"type"`
+	Item json.RawMessage `json:"item"`
+}
+
+type codexStreamItem struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+func inspectCodexStdout(data string) (hasWork bool, askedClarifyingQuestion bool) {
+	var event codexStreamEvent
+	if err := json.Unmarshal([]byte(data), &event); err != nil {
+		return false, false
+	}
+
+	if event.Type != "item.completed" || len(event.Item) == 0 {
+		return false, false
+	}
+
+	var item codexStreamItem
+	if err := json.Unmarshal(event.Item, &item); err != nil {
+		return false, false
+	}
+
+	if item.Type != "" && item.Type != "agent_message" && item.Type != "reasoning" {
+		return true, false
+	}
+
+	if item.Type == "agent_message" && looksLikeClarifyingQuestion(extractCodexItemText(event.Item)) {
+		return false, true
+	}
+
+	return false, false
+}
+
+func extractCodexItemText(raw json.RawMessage) string {
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(agents.FlattenJSONText(value))
+}
+
+func looksLikeClarifyingQuestion(text string) bool {
+	trimmed := strings.TrimSpace(strings.ToLower(text))
+	if trimmed == "" || !strings.Contains(trimmed, "?") {
+		return false
+	}
+
+	for _, prefix := range []string{
+		"what ",
+		"which ",
+		"where ",
+		"when ",
+		"why ",
+		"how ",
+		"can you ",
+		"could you ",
+		"would you ",
+		"do you want ",
+		"should i ",
+	} {
+		if strings.HasPrefix(trimmed, prefix) {
+			return true
+		}
+	}
+
+	return strings.Contains(trimmed, "clarif")
 }

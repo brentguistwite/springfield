@@ -30,6 +30,7 @@ func NewRalphCommand() *cobra.Command {
 		newRalphInitCommand(),
 		newRalphStatusCommand(),
 		newRalphRunCommand(),
+		newRalphResetCommand(),
 	)
 
 	return cmd
@@ -186,6 +187,50 @@ func newRalphRunCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&name, "name", "", "Plan name")
+
+	return cmd
+}
+
+func newRalphResetCommand() *cobra.Command {
+	var (
+		name  string
+		story string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "reset",
+		Short: "Reset passed stories so they can be re-run.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if name == "" {
+				return fmt.Errorf("--name is required")
+			}
+
+			workspace, err := ralphWorkspace(cmd)
+			if err != nil {
+				return err
+			}
+
+			var storyIDs []string
+			if story != "" {
+				storyIDs = []string{story}
+			}
+
+			if err := workspace.ResetStories(name, storyIDs...); err != nil {
+				return err
+			}
+
+			w := cmd.OutOrStdout()
+			if story != "" {
+				fmt.Fprintf(w, "Reset story %s in plan %q.\n", story, name)
+			} else {
+				fmt.Fprintf(w, "Reset all stories in plan %q.\n", name)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&name, "name", "", "Plan name")
+	cmd.Flags().StringVar(&story, "story", "", "Story ID to reset (omit for all)")
 
 	return cmd
 }

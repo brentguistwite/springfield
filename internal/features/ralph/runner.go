@@ -3,6 +3,7 @@ package ralph
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"springfield/internal/core/agents"
 	"springfield/internal/core/exec"
@@ -43,9 +44,13 @@ func (e RuntimeExecutor) Execute(story Story) RunResult {
 		ExecutionSettings: e.settings,
 	})
 
+	stdout, stderr := collectOutput(result.Events)
+
 	out := RunResult{
 		Agent:    string(result.Agent),
 		ExitCode: result.ExitCode,
+		Stdout:   stdout,
+		Stderr:   stderr,
 	}
 
 	if result.Status == runtime.StatusFailed {
@@ -57,4 +62,23 @@ func (e RuntimeExecutor) Execute(story Story) RunResult {
 	}
 
 	return out
+}
+
+func collectOutput(events []exec.Event) (stdout, stderr string) {
+	var out, err strings.Builder
+	for _, e := range events {
+		switch e.Type {
+		case exec.EventStdout:
+			if out.Len() > 0 {
+				out.WriteByte('\n')
+			}
+			out.WriteString(e.Data)
+		case exec.EventStderr:
+			if err.Len() > 0 {
+				err.WriteByte('\n')
+			}
+			err.WriteString(e.Data)
+		}
+	}
+	return out.String(), err.String()
 }

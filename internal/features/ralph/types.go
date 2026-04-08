@@ -93,6 +93,8 @@ type RunRecord struct {
 	Status    string    `json:"status"`
 	ExitCode  int       `json:"exitCode,omitempty"`
 	Error     string    `json:"error,omitempty"`
+	Stdout    string    `json:"stdout,omitempty"`
+	Stderr    string    `json:"stderr,omitempty"`
 	StartedAt time.Time `json:"startedAt"`
 	EndedAt   time.Time `json:"endedAt"`
 }
@@ -102,6 +104,8 @@ type RunResult struct {
 	Agent    string
 	ExitCode int
 	Err      error
+	Stdout   string
+	Stderr   string
 }
 
 // StoryExecutor is the adapter boundary for story execution.

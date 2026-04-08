@@ -2,7 +2,9 @@ package claude
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os/exec"
 	"strings"
 
@@ -74,4 +76,54 @@ func (a adapter) Command(input agents.CommandInput) coreexec.Command {
 		Args: args,
 		Dir:  input.WorkDir,
 	}
+}
+
+// ValidateResult checks Claude's stream-json output for rejected tool calls,
+// which indicate the agent couldn't complete the task autonomously.
+func (a adapter) ValidateResult(result coreexec.Result) error {
+	for _, e := range result.Events {
+		if e.Type != coreexec.EventStdout {
+			continue
+		}
+		if isClaudeRejectedToolCall(e.Data) {
+			return fmt.Errorf("claude had rejected tool calls (agent may have asked questions instead of completing work)")
+		}
+	}
+	return nil
+}
+
+type claudeStreamEvent struct {
+	Type    string `json:"type"`
+	Message struct {
+		Content []claudeMessageContent `json:"content"`
+	} `json:"message"`
+}
+
+type claudeMessageContent struct {
+	Type    string `json:"type"`
+	IsError bool   `json:"is_error"`
+	Content any    `json:"content"`
+}
+
+func isClaudeRejectedToolCall(data string) bool {
+	var event claudeStreamEvent
+	if err := json.Unmarshal([]byte(data), &event); err != nil {
+		return false
+	}
+
+	for _, item := range event.Message.Content {
+		if item.Type != "tool_result" || !item.IsError {
+			continue
+		}
+		if isClaudeRejectionContent(item.Content) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isClaudeRejectionContent(content any) bool {
+	text := strings.ToLower(agents.FlattenJSONText(content))
+	return strings.Contains(text, "rejected") || strings.Contains(text, "denied")
 }

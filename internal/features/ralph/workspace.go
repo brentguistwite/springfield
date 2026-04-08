@@ -26,7 +26,20 @@ func OpenRoot(rootDir string) (Workspace, error) {
 
 	return Workspace{
 		runtime: runtime,
-		now:     time.Now().UTC,
+		now:     func() time.Time { return time.Now().UTC() },
+	}, nil
+}
+
+// OpenRootForTest creates a workspace with an injectable clock for testing.
+func OpenRootForTest(rootDir string, clock func() time.Time) (Workspace, error) {
+	runtime, err := storage.FromRoot(rootDir)
+	if err != nil {
+		return Workspace{}, fmt.Errorf("open Ralph workspace: %w", err)
+	}
+
+	return Workspace{
+		runtime: runtime,
+		now:     clock,
 	}, nil
 }
 
@@ -39,7 +52,7 @@ func Open(startDir string) (Workspace, error) {
 
 	return Workspace{
 		runtime: runtime,
-		now:     time.Now().UTC,
+		now:     func() time.Time { return time.Now().UTC() },
 	}, nil
 }
 
@@ -184,6 +197,8 @@ func (w Workspace) RunNext(planName string, executor StoryExecutor) (RunRecord, 
 	record.EndedAt = w.now()
 	record.Agent = result.Agent
 	record.ExitCode = result.ExitCode
+	record.Stdout = result.Stdout
+	record.Stderr = result.Stderr
 	if result.Err != nil {
 		record.Status = "failed"
 		record.Error = result.Err.Error()
@@ -204,6 +219,59 @@ func (w Workspace) RunNext(planName string, executor StoryExecutor) (RunRecord, 
 	}
 
 	return record, nil
+}
+
+// ResetStories clears the Passed flag for the given story IDs.
+// If no IDs are provided, all stories in the plan are reset.
+func (w Workspace) ResetStories(planName string, storyIDs ...string) error {
+	plan, err := w.LoadPlan(planName)
+	if err != nil {
+		return err
+	}
+
+	if len(storyIDs) == 0 {
+		changed := false
+		for i := range plan.Spec.Stories {
+			if !plan.Spec.Stories[i].Passed {
+				continue
+			}
+			plan.Spec.Stories[i].Passed = false
+			changed = true
+		}
+
+		if !changed {
+			return nil
+		}
+
+		return w.runtime.WriteJSON(planPath(planName), plan)
+	}
+
+	indexByID := make(map[string]int, len(plan.Spec.Stories))
+	for i, story := range plan.Spec.Stories {
+		indexByID[story.ID] = i
+	}
+
+	targets := make(map[string]bool, len(storyIDs))
+	for _, id := range storyIDs {
+		if targets[id] {
+			continue
+		}
+		targets[id] = true
+
+		index, ok := indexByID[id]
+		if !ok {
+			return fmt.Errorf("story %q not found in Ralph plan %q", id, planName)
+		}
+		if !plan.Spec.Stories[index].Passed {
+			return fmt.Errorf("story %q is already pending in Ralph plan %q", id, planName)
+		}
+	}
+
+	for id := range targets {
+		plan.Spec.Stories[indexByID[id]].Passed = false
+	}
+
+	return w.runtime.WriteJSON(planPath(planName), plan)
 }
 
 func planPath(name string) string {

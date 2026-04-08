@@ -11,7 +11,7 @@ Running bare `springfield` opens a TUI shell. CLI subcommands remain accessible 
 ```bash
 springfield            # TUI-first interactive shell
 springfield init       # Scaffold springfield.toml and .springfield/
-springfield ralph      # Ralph plan init/status/run workflows
+springfield ralph      # Ralph plan init/status/run/reset workflows
 springfield conductor  # Conductor workflow surface
 springfield doctor     # Local setup diagnostics
 springfield version    # Print build version

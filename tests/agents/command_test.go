@@ -3,10 +3,12 @@ package agents_test
 import (
 	"os/exec"
 	"testing"
+	"time"
 
 	"springfield/internal/core/agents"
 	"springfield/internal/core/agents/claude"
 	"springfield/internal/core/agents/codex"
+	coreexec "springfield/internal/core/exec"
 )
 
 func TestClaudeAdapterProducesRunnableCommandSpec(t *testing.T) {
@@ -168,6 +170,139 @@ func TestCodexAdapterAppendsSandboxAndApprovalWhenConfigured(t *testing.T) {
 
 	assertArgsContain(t, cmd.Args, "-s", "workspace-write")
 	assertArgsContain(t, cmd.Args, "-a", "on-request")
+}
+
+func TestClaudeValidatorRejectsRejectedToolCalls(t *testing.T) {
+	adapter := claude.New(exec.LookPath)
+	validator, ok := adapter.(agents.ResultValidator)
+	if !ok {
+		t.Fatal("claude adapter does not implement ResultValidator")
+	}
+
+	result := coreexec.Result{
+		ExitCode: 0,
+		Events: []coreexec.Event{
+			{Type: coreexec.EventStdout, Data: `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_01"}]}}`, Time: time.Now()},
+			{Type: coreexec.EventStdout, Data: `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"rejected","is_error":true,"tool_use_id":"toolu_01"}]}}`, Time: time.Now()},
+			{Type: coreexec.EventStdout, Data: `{"type":"result","subtype":"success","is_error":false}`, Time: time.Now()},
+		},
+	}
+
+	err := validator.ValidateResult(result)
+	if err == nil {
+		t.Fatal("expected validator to reject result with is_error tool calls")
+	}
+}
+
+func TestClaudeValidatorAcceptsCleanRun(t *testing.T) {
+	adapter := claude.New(exec.LookPath)
+	validator := adapter.(agents.ResultValidator)
+
+	result := coreexec.Result{
+		ExitCode: 0,
+		Events: []coreexec.Event{
+			{Type: coreexec.EventStdout, Data: `{"type":"assistant","message":{"content":[{"type":"text","text":"Done."}]}}`, Time: time.Now()},
+			{Type: coreexec.EventStdout, Data: `{"type":"result","subtype":"success","is_error":false}`, Time: time.Now()},
+		},
+	}
+
+	if err := validator.ValidateResult(result); err != nil {
+		t.Fatalf("expected clean run to pass validation, got: %v", err)
+	}
+}
+
+func TestClaudeValidatorAcceptsRecoverableToolFailure(t *testing.T) {
+	adapter := claude.New(exec.LookPath)
+	validator := adapter.(agents.ResultValidator)
+
+	result := coreexec.Result{
+		ExitCode: 0,
+		Events: []coreexec.Event{
+			{Type: coreexec.EventStdout, Data: `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_01"}]}}`, Time: time.Now()},
+			{Type: coreexec.EventStdout, Data: `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"command exited 1","is_error":true,"tool_use_id":"toolu_01"}]}}`, Time: time.Now()},
+			{Type: coreexec.EventStdout, Data: `{"type":"assistant","message":{"content":[{"type":"text","text":"I fixed the command and completed the task."}]}}`, Time: time.Now()},
+			{Type: coreexec.EventStdout, Data: `{"type":"result","subtype":"success","is_error":false}`, Time: time.Now()},
+		},
+	}
+
+	if err := validator.ValidateResult(result); err != nil {
+		t.Fatalf("expected recoverable tool failure to pass validation, got: %v", err)
+	}
+}
+
+func TestCodexValidatorRejectsFatalStderr(t *testing.T) {
+	adapter := codex.New(exec.LookPath)
+	validator, ok := adapter.(agents.ResultValidator)
+	if !ok {
+		t.Fatal("codex adapter does not implement ResultValidator")
+	}
+
+	result := coreexec.Result{
+		ExitCode: 0,
+		Events: []coreexec.Event{
+			{Type: coreexec.EventStdout, Data: `{"type":"turn.completed"}`, Time: time.Now()},
+			{Type: coreexec.EventStderr, Data: `2026-04-08T13:57:19Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed`, Time: time.Now()},
+		},
+	}
+
+	err := validator.ValidateResult(result)
+	if err == nil {
+		t.Fatal("expected validator to reject result with fatal stderr")
+	}
+}
+
+func TestCodexValidatorAcceptsCleanRun(t *testing.T) {
+	adapter := codex.New(exec.LookPath)
+	validator := adapter.(agents.ResultValidator)
+
+	result := coreexec.Result{
+		ExitCode: 0,
+		Events: []coreexec.Event{
+			{Type: coreexec.EventStdout, Data: `{"type":"turn.completed"}`, Time: time.Now()},
+		},
+	}
+
+	if err := validator.ValidateResult(result); err != nil {
+		t.Fatalf("expected clean run to pass validation, got: %v", err)
+	}
+}
+
+func TestCodexValidatorRejectsClarifyingQuestionWithoutWork(t *testing.T) {
+	adapter := codex.New(exec.LookPath)
+	validator := adapter.(agents.ResultValidator)
+
+	result := coreexec.Result{
+		ExitCode: 0,
+		Events: []coreexec.Event{
+			{Type: coreexec.EventStdout, Data: `{"type":"thread.started","thread_id":"t_123"}`, Time: time.Now()},
+			{Type: coreexec.EventStdout, Data: `{"type":"turn.started"}`, Time: time.Now()},
+			{Type: coreexec.EventStdout, Data: `{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Which file should I update first?"}}`, Time: time.Now()},
+			{Type: coreexec.EventStdout, Data: `{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}`, Time: time.Now()},
+		},
+	}
+
+	err := validator.ValidateResult(result)
+	if err == nil {
+		t.Fatal("expected validator to reject clarifying question without work")
+	}
+}
+
+func TestCodexValidatorAcceptsQuestionAfterDoingWork(t *testing.T) {
+	adapter := codex.New(exec.LookPath)
+	validator := adapter.(agents.ResultValidator)
+
+	result := coreexec.Result{
+		ExitCode: 0,
+		Events: []coreexec.Event{
+			{Type: coreexec.EventStdout, Data: `{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"go test ./...","aggregated_output":"ok","exit_code":0,"status":"completed"}}`, Time: time.Now()},
+			{Type: coreexec.EventStdout, Data: `{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"I ran the tests. Do you want me to clean up the warnings too?"}}`, Time: time.Now()},
+			{Type: coreexec.EventStdout, Data: `{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}`, Time: time.Now()},
+		},
+	}
+
+	if err := validator.ValidateResult(result); err != nil {
+		t.Fatalf("expected completed work to pass validation, got: %v", err)
+	}
 }
 
 func assertArgsDoNotContain(t *testing.T, args []string, flag string) {

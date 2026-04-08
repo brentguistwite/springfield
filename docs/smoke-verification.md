@@ -117,6 +117,14 @@ Error: agent claude failed: exit status 1
 
 Real agent invocation via Claude Code CLI. Truthful failure reporting — claude exits 1 because the temp test dir has no project context. This confirms the runtime delegates to the real agent binary, not a placeholder.
 
+### `springfield ralph reset --name smoke2 --story US-001`
+
+```
+story "US-001" is already pending in Ralph plan "smoke2"
+```
+
+Truthful no-op handling. Reset now errors when the requested story is already pending instead of claiming success without changing plan state.
+
 ## Blockers
 
 - **TUI launch**: `springfield` (bare) opens the TUI shell. Interactive Bubble Tea views cannot be verified in a non-interactive smoke harness. TUI rendering is covered by automated tests in `tests/tui/`.

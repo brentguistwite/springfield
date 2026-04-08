@@ -152,13 +152,89 @@ func TestRalphInitStatusAndRun(t *testing.T) {
 	}
 }
 
+func TestRalphResetClearsPassedStory(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	writeSpringfieldConfig(t, dir, "claude")
+
+	specPath := writeRalphSpec(t, dir, ralph.Spec{
+		Project: "test",
+		Stories: []ralph.Story{
+			{ID: "US-001", Title: "First", Passed: true},
+			{ID: "US-002", Title: "Second", Passed: true},
+		},
+	})
+
+	output, err := runBinaryIn(t, bin, dir, "ralph", "init", "--name", "r", "--spec", specPath)
+	if err != nil {
+		t.Fatalf("ralph init failed: %v\n%s", err, output)
+	}
+
+	// Reset single story
+	output, err = runBinaryIn(t, bin, dir, "ralph", "reset", "--name", "r", "--story", "US-001")
+	if err != nil {
+		t.Fatalf("ralph reset failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "Reset story US-001") {
+		t.Fatalf("expected reset confirmation, got:\n%s", output)
+	}
+
+	output, err = runBinaryIn(t, bin, dir, "ralph", "status", "--name", "r")
+	if err != nil {
+		t.Fatalf("ralph status failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "US-001  pending") {
+		t.Fatalf("expected US-001 reset to pending, got:\n%s", output)
+	}
+	if !strings.Contains(output, "US-002  passed") {
+		t.Fatalf("expected US-002 still passed, got:\n%s", output)
+	}
+
+	// Reset all
+	output, err = runBinaryIn(t, bin, dir, "ralph", "reset", "--name", "r")
+	if err != nil {
+		t.Fatalf("ralph reset all failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "Reset all stories") {
+		t.Fatalf("expected reset all confirmation, got:\n%s", output)
+	}
+}
+
+func TestRalphResetFailsForAlreadyPendingStory(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	writeSpringfieldConfig(t, dir, "claude")
+
+	specPath := writeRalphSpec(t, dir, ralph.Spec{
+		Project: "test",
+		Stories: []ralph.Story{
+			{ID: "US-001", Title: "First"},
+		},
+	})
+
+	output, err := runBinaryIn(t, bin, dir, "ralph", "init", "--name", "r", "--spec", specPath)
+	if err != nil {
+		t.Fatalf("ralph init failed: %v\n%s", err, output)
+	}
+
+	output, err = runBinaryIn(t, bin, dir, "ralph", "reset", "--name", "r", "--story", "US-001")
+	if err == nil {
+		t.Fatalf("expected ralph reset to fail for pending story, output:\n%s", output)
+	}
+	if !strings.Contains(output, `story "US-001" is already pending`) {
+		t.Fatalf("expected pending-story error, got:\n%s", output)
+	}
+}
+
 func TestRalphHelpShowsRealSubcommands(t *testing.T) {
 	output, err := runSpringfield(t, "ralph", "--help")
 	if err != nil {
 		t.Fatalf("springfield ralph --help failed: %v\n%s", err, output)
 	}
 
-	for _, marker := range []string{"init", "status", "run", "Manage Ralph plans"} {
+	for _, marker := range []string{"init", "status", "run", "reset", "Manage Ralph plans"} {
 		if !strings.Contains(output, marker) {
 			t.Fatalf("expected Ralph help to mention %q, got:\n%s", marker, output)
 		}
