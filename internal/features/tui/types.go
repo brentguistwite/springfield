@@ -11,6 +11,7 @@ type Screen int
 const (
 	ScreenHome Screen = iota
 	ScreenSetup
+	ScreenAdvancedSetup
 	ScreenRalph
 	ScreenConductor
 	ScreenDoctor
@@ -101,11 +102,22 @@ type ConductorRunResult struct {
 	Error string
 }
 
+// ConductorSetupInput holds user-chosen conductor setup options for the TUI.
+type ConductorSetupInput struct {
+	PlansDir        string
+	WorktreeBase    string
+	MaxRetries      int
+	RalphIterations int
+	RalphTimeout    int
+	UpdateGitignore bool
+}
+
 // ConductorSetupResult describes what the TUI conductor setup action produced.
 type ConductorSetupResult struct {
-	Created bool
-	Reused  bool
-	Path    string
+	Created          bool
+	Reused           bool
+	Path             string
+	GitignoreUpdated bool
 }
 
 // MonitorState tracks the lifecycle of an active TUI run.
@@ -141,14 +153,35 @@ type ConductorRunCompleteMsg struct {
 	Err    error
 }
 
+// AgentDetection is a TUI-safe projection of agent availability.
+type AgentDetection struct {
+	ID        string
+	Name      string
+	Installed bool
+}
+
+// ConductorCurrentConfig is a TUI-safe projection of current conductor settings.
+type ConductorCurrentConfig struct {
+	PlansDir        string
+	WorktreeBase    string
+	MaxRetries      int
+	RalphIterations int
+	RalphTimeout    int
+}
+
 // Services hides TUI data loading and side effects behind a small boundary.
 type Services interface {
 	SetupStatus() SetupStatus
 	InitProject() (config.InitResult, error)
-	SetupConductor() (ConductorSetupResult, error)
+	SetupConductor(opts ConductorSetupInput) (ConductorSetupResult, error)
+	DetectAgents() []AgentDetection
+	AgentPriority() []string
+	ConductorCurrentConfig() *ConductorCurrentConfig
 	RalphSummary() RalphSummary
 	RunRalphNext(planName string, onEvent func(RuntimeEvent)) (RalphRunResult, error)
 	ConductorSummary() ConductorSummary
 	RunConductorNext(onEvent func(RuntimeEvent)) (ConductorRunResult, error)
+	SaveAgentPriority(priority []string) error
+	UpdateConductor(opts ConductorSetupInput) (ConductorSetupResult, error)
 	DoctorSummary() doctor.Report
 }

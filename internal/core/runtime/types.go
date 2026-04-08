@@ -9,11 +9,11 @@ import (
 
 // Request describes what the runtime should execute.
 type Request struct {
-	AgentID agents.ID
-	Prompt  string
-	WorkDir string
-	Timeout time.Duration
-	OnEvent exec.EventHandler
+	AgentIDs []agents.ID
+	Prompt   string
+	WorkDir  string
+	Timeout  time.Duration
+	OnEvent  exec.EventHandler
 }
 
 // Status is the outcome of a runtime execution.

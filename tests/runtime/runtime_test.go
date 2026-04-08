@@ -39,10 +39,10 @@ func TestRunnerSuccessStreamsEventsAndReturnsPassedResult(t *testing.T) {
 
 	runner := runtime.NewTestRunner(registry, fakeRun, clock.now)
 	result := runner.Run(context.Background(), runtime.Request{
-		AgentID: agents.AgentClaude,
-		Prompt:  "implement feature",
-		WorkDir: "/tmp/project",
-		OnEvent: handler,
+		AgentIDs: []agents.ID{agents.AgentClaude},
+		Prompt:   "implement feature",
+		WorkDir:  "/tmp/project",
+		OnEvent:  handler,
 	})
 
 	if result.Status != runtime.StatusPassed {
@@ -75,9 +75,9 @@ func TestRunnerFailureOnNonZeroExitReturnsFailedResult(t *testing.T) {
 
 	runner := runtime.NewTestRunner(registry, fakeRun, clock.now)
 	result := runner.Run(context.Background(), runtime.Request{
-		AgentID: agents.AgentCodex,
-		Prompt:  "fix bug",
-		WorkDir: "/tmp/project",
+		AgentIDs: []agents.ID{agents.AgentCodex},
+		Prompt:   "fix bug",
+		WorkDir:  "/tmp/project",
 	})
 
 	if result.Status != runtime.StatusFailed {
@@ -102,9 +102,9 @@ func TestRunnerRejectsUnsupportedAgent(t *testing.T) {
 
 	runner := runtime.NewTestRunner(registry, fakeRun, clock.now)
 	result := runner.Run(context.Background(), runtime.Request{
-		AgentID: agents.ID("unknown"),
-		Prompt:  "test",
-		WorkDir: "/tmp",
+		AgentIDs: []agents.ID{agents.ID("unknown")},
+		Prompt:   "test",
+		WorkDir:  "/tmp",
 	})
 
 	if result.Status != runtime.StatusFailed {
@@ -127,14 +127,114 @@ func TestRunnerSetsTimeoutOnCommand(t *testing.T) {
 
 	runner := runtime.NewTestRunner(registry, fakeRun, clock.now)
 	runner.Run(context.Background(), runtime.Request{
-		AgentID: agents.AgentClaude,
-		Prompt:  "test",
-		WorkDir: "/tmp",
-		Timeout: 5 * time.Minute,
+		AgentIDs: []agents.ID{agents.AgentClaude},
+		Prompt:   "test",
+		WorkDir:  "/tmp",
+		Timeout:  5 * time.Minute,
 	})
 
 	if gotTimeout != 5*time.Minute {
 		t.Fatalf("expected timeout 5m, got %v", gotTimeout)
+	}
+}
+
+func TestRunnerFallsBackToNextAgentOnRateLimit(t *testing.T) {
+	registry := agents.NewRegistry(
+		claude.New(osexec.LookPath),
+		codex.New(osexec.LookPath),
+	)
+	clock := newFakeClock(time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC))
+
+	var calls []string
+	fakeRun := func(_ context.Context, cmd exec.Command, _ exec.EventHandler) exec.Result {
+		calls = append(calls, cmd.Name)
+		if cmd.Name == "claude" {
+			return exec.Result{
+				ExitCode: 1,
+				Err:      errors.New("rate limit exceeded"),
+				Events:   []exec.Event{{Type: exec.EventStderr, Data: "429 Too Many Requests"}},
+			}
+		}
+		return exec.Result{ExitCode: 0}
+	}
+
+	runner := runtime.NewTestRunner(registry, fakeRun, clock.now)
+	result := runner.Run(context.Background(), runtime.Request{
+		AgentIDs: []agents.ID{agents.AgentClaude, agents.AgentCodex},
+		Prompt:   "test",
+		WorkDir:  "/tmp/project",
+	})
+
+	if result.Status != runtime.StatusPassed {
+		t.Fatalf("expected passed, got %q (err: %v)", result.Status, result.Err)
+	}
+	if result.Agent != agents.AgentCodex {
+		t.Fatalf("expected codex to succeed, got %q", result.Agent)
+	}
+	if len(calls) != 2 || calls[0] != "claude" || calls[1] != "codex" {
+		t.Fatalf("expected fallback order [claude codex], got %v", calls)
+	}
+}
+
+func TestRunnerDoesNotFallbackOnGenericFailure(t *testing.T) {
+	registry := agents.NewRegistry(
+		claude.New(osexec.LookPath),
+		codex.New(osexec.LookPath),
+	)
+	clock := newFakeClock(time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC))
+
+	var calls []string
+	fakeRun := func(_ context.Context, cmd exec.Command, _ exec.EventHandler) exec.Result {
+		calls = append(calls, cmd.Name)
+		return exec.Result{ExitCode: 1, Err: errors.New("syntax error")}
+	}
+
+	runner := runtime.NewTestRunner(registry, fakeRun, clock.now)
+	result := runner.Run(context.Background(), runtime.Request{
+		AgentIDs: []agents.ID{agents.AgentClaude, agents.AgentCodex},
+		Prompt:   "test",
+		WorkDir:  "/tmp/project",
+	})
+
+	if result.Status != runtime.StatusFailed {
+		t.Fatalf("expected failed, got %q", result.Status)
+	}
+	if result.Agent != agents.AgentClaude {
+		t.Fatalf("expected first agent to be reported, got %q", result.Agent)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected no fallback after generic failure, got %v", calls)
+	}
+}
+
+func TestRunnerUsesReorderedPriority(t *testing.T) {
+	registry := agents.NewRegistry(
+		claude.New(osexec.LookPath),
+		codex.New(osexec.LookPath),
+	)
+	clock := newFakeClock(time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC))
+
+	var calls []string
+	fakeRun := func(_ context.Context, cmd exec.Command, _ exec.EventHandler) exec.Result {
+		calls = append(calls, cmd.Name)
+		if cmd.Name == "codex" {
+			return exec.Result{ExitCode: 1, Err: errors.New("rate limit exceeded")}
+		}
+		return exec.Result{ExitCode: 0}
+	}
+
+	runner := runtime.NewTestRunner(registry, fakeRun, clock.now)
+	result := runner.Run(context.Background(), runtime.Request{
+		AgentIDs: []agents.ID{agents.AgentCodex, agents.AgentClaude},
+		Prompt:   "test",
+		WorkDir:  "/tmp/project",
+	})
+
+	if result.Agent != agents.AgentClaude {
+		t.Fatalf("expected fallback to claude, got %q", result.Agent)
+	}
+	if len(calls) != 2 || calls[0] != "codex" || calls[1] != "claude" {
+		t.Fatalf("expected reordered calls [codex claude], got %v", calls)
 	}
 }
 

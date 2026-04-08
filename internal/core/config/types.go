@@ -18,7 +18,17 @@ func (c Config) AgentForPlan(planID string) string {
 
 // ProjectConfig stores project-wide defaults.
 type ProjectConfig struct {
-	DefaultAgent string `toml:"default_agent"`
+	DefaultAgent  string   `toml:"default_agent"`
+	AgentPriority []string `toml:"agent_priority,omitempty"`
+}
+
+// EffectivePriority returns the agent priority list, falling back to
+// [DefaultAgent] when no explicit priority is configured.
+func (c Config) EffectivePriority() []string {
+	if len(c.Project.AgentPriority) > 0 {
+		return c.Project.AgentPriority
+	}
+	return []string{c.Project.DefaultAgent}
 }
 
 // PlanConfig stores per-plan overrides.

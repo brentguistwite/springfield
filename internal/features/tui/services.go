@@ -25,6 +25,17 @@ type runtimeServices struct {
 	lookPath func(string) (string, error)
 }
 
+func priorityAgentIDs(priority []string) []agents.ID {
+	ids := make([]agents.ID, 0, len(priority))
+	for _, id := range priority {
+		if id == "" {
+			continue
+		}
+		ids = append(ids, agents.ID(id))
+	}
+	return ids
+}
+
 func newRuntimeServices(cwd func() (string, error), lookPath func(string) (string, error)) Services {
 	if cwd == nil {
 		cwd = os.Getwd
@@ -146,7 +157,7 @@ func (s runtimeServices) RalphSummary() RalphSummary {
 	return summary
 }
 
-func (s runtimeServices) SetupConductor() (ConductorSetupResult, error) {
+func (s runtimeServices) SetupConductor(input ConductorSetupInput) (ConductorSetupResult, error) {
 	status := s.SetupStatus()
 	if status.Error != "" {
 		return ConductorSetupResult{}, errors.New(status.Error)
@@ -161,7 +172,17 @@ func (s runtimeServices) SetupConductor() (ConductorSetupResult, error) {
 	}
 
 	opts := conductor.SetupDefaults()
-	opts.Tool = loaded.Config.Project.DefaultAgent
+	priority := loaded.Config.EffectivePriority()
+	opts.Tool = priority[0]
+	if len(priority) > 1 {
+		opts.FallbackTool = priority[1]
+	}
+	opts.PlansDir = input.PlansDir
+	opts.WorktreeBase = input.WorktreeBase
+	opts.MaxRetries = input.MaxRetries
+	opts.RalphIterations = input.RalphIterations
+	opts.RalphTimeout = input.RalphTimeout
+	opts.UpdateGitignore = input.UpdateGitignore
 
 	result, err := conductor.Setup(status.ProjectRoot, opts)
 	if err != nil {
@@ -169,9 +190,10 @@ func (s runtimeServices) SetupConductor() (ConductorSetupResult, error) {
 	}
 
 	return ConductorSetupResult{
-		Created: result.Created,
-		Reused:  result.Reused,
-		Path:    result.Path,
+		Created:          result.Created,
+		Reused:           result.Reused,
+		Path:             result.Path,
+		GitignoreUpdated: result.GitignoreUpdated,
 	}, nil
 }
 
@@ -239,7 +261,8 @@ func (s runtimeServices) RunRalphNext(planName string, onEvent func(RuntimeEvent
 		gemini.New(s.lookPath),
 	)
 	runner := runtime.NewRunner(registry)
-	executor := ralph.NewRuntimeExecutor(runner, agents.ID(loaded.Config.Project.DefaultAgent), status.ProjectRoot)
+	priority := loaded.Config.EffectivePriority()
+	executor := ralph.NewRuntimeExecutor(runner, priorityAgentIDs(priority), status.ProjectRoot)
 	if onEvent != nil {
 		executor.OnEvent = func(e coreexec.Event) {
 			onEvent(RuntimeEvent{Source: string(e.Type), Data: e.Data})
@@ -289,7 +312,8 @@ func (s runtimeServices) RunConductorNext(onEvent func(RuntimeEvent)) (Conductor
 	if !filepath.IsAbs(plansDir) {
 		plansDir = filepath.Join(status.ProjectRoot, plansDir)
 	}
-	executor := conductor.NewRuntimeExecutor(runner, agents.ID(loaded.Config.Project.DefaultAgent), plansDir, status.ProjectRoot)
+	priority := loaded.Config.EffectivePriority()
+	executor := conductor.NewRuntimeExecutor(runner, priorityAgentIDs(priority), plansDir, status.ProjectRoot)
 	if onEvent != nil {
 		executor.OnEvent = func(e coreexec.Event) {
 			onEvent(RuntimeEvent{Source: string(e.Type), Data: e.Data})
@@ -303,6 +327,101 @@ func (s runtimeServices) RunConductorNext(onEvent func(RuntimeEvent)) (Conductor
 	}
 
 	return ConductorRunResult{Ran: ran, Done: done}, nil
+}
+
+func (s runtimeServices) DetectAgents() []AgentDetection {
+	registry := agents.NewRegistry(
+		claude.New(s.lookPath),
+		codex.New(s.lookPath),
+		gemini.New(s.lookPath),
+	)
+	detections := registry.DetectAll(context.Background())
+	result := make([]AgentDetection, len(detections))
+	for i, d := range detections {
+		result[i] = AgentDetection{
+			ID:        string(d.ID),
+			Name:      d.Name,
+			Installed: d.Status == agents.DetectionStatusAvailable,
+		}
+	}
+	return result
+}
+
+func (s runtimeServices) AgentPriority() []string {
+	status := s.SetupStatus()
+	if !status.ConfigPresent {
+		return nil
+	}
+	loaded, err := config.LoadFrom(status.ProjectRoot)
+	if err != nil {
+		return nil
+	}
+	return loaded.Config.EffectivePriority()
+}
+
+func (s runtimeServices) ConductorCurrentConfig() *ConductorCurrentConfig {
+	status := s.SetupStatus()
+	if !status.ConductorConfigReady {
+		return nil
+	}
+	project, err := conductor.LoadProject(status.ProjectRoot)
+	if err != nil {
+		return nil
+	}
+	return &ConductorCurrentConfig{
+		PlansDir:        project.Config.PlansDir,
+		WorktreeBase:    project.Config.WorktreeBase,
+		MaxRetries:      project.Config.MaxRetries,
+		RalphIterations: project.Config.RalphIterations,
+		RalphTimeout:    project.Config.RalphTimeout,
+	}
+}
+
+func (s runtimeServices) SaveAgentPriority(priority []string) error {
+	status := s.SetupStatus()
+	if status.Error != "" {
+		return errors.New(status.Error)
+	}
+	loaded, err := config.LoadFrom(status.ProjectRoot)
+	if err != nil {
+		return err
+	}
+	loaded.Config.Project.AgentPriority = priority
+	return config.Save(loaded)
+}
+
+func (s runtimeServices) UpdateConductor(input ConductorSetupInput) (ConductorSetupResult, error) {
+	status := s.SetupStatus()
+	if status.Error != "" {
+		return ConductorSetupResult{}, errors.New(status.Error)
+	}
+	loaded, err := config.LoadFrom(status.ProjectRoot)
+	if err != nil {
+		return ConductorSetupResult{}, err
+	}
+	opts := conductor.SetupDefaults()
+	priority := loaded.Config.EffectivePriority()
+	opts.Tool = priority[0]
+	if len(priority) > 1 {
+		opts.FallbackTool = priority[1]
+	}
+	opts.PlansDir = input.PlansDir
+	opts.WorktreeBase = input.WorktreeBase
+	opts.MaxRetries = input.MaxRetries
+	opts.RalphIterations = input.RalphIterations
+	opts.RalphTimeout = input.RalphTimeout
+	opts.UpdateGitignore = input.UpdateGitignore
+
+	result, err := conductor.UpdateConfig(status.ProjectRoot, opts)
+	if err != nil {
+		return ConductorSetupResult{}, err
+	}
+	return ConductorSetupResult{
+		Created:          false,
+		Reused:           false,
+		Path:             result.Path,
+		GitignoreUpdated: result.GitignoreUpdated,
+	}, nil
 }
 
 func (s runtimeServices) DoctorSummary() doctor.Report {

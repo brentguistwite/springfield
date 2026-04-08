@@ -2,6 +2,7 @@ package cmd_test
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -87,6 +88,42 @@ func runBinaryInWithInput(t *testing.T, bin, dir, input string, args ...string) 
 
 	err := cmd.Run()
 	return stdout.String() + stderr.String(), err
+}
+
+func runBinaryInWithEnv(t *testing.T, bin, dir string, env []string, args ...string) (string, error) {
+	t.Helper()
+
+	cmd := exec.Command(bin, args...)
+	cmd.Dir = dir
+	cmd.Env = mergeEnv(os.Environ(), env)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	return stdout.String() + stderr.String(), err
+}
+
+func mergeEnv(base, overrides []string) []string {
+	merged := make([]string, 0, len(base)+len(overrides))
+	skip := make(map[string]bool, len(overrides))
+	for _, entry := range overrides {
+		if idx := strings.IndexByte(entry, '='); idx > 0 {
+			skip[entry[:idx]] = true
+		}
+	}
+
+	for _, entry := range base {
+		if idx := strings.IndexByte(entry, '='); idx > 0 && skip[entry[:idx]] {
+			continue
+		}
+		merged = append(merged, entry)
+	}
+
+	merged = append(merged, overrides...)
+	return merged
 }
 
 func TestInitCreatesProjectInCurrentDir(t *testing.T) {

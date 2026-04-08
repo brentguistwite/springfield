@@ -11,6 +11,7 @@ import (
 	"springfield/internal/core/agents"
 	"springfield/internal/core/agents/claude"
 	"springfield/internal/core/agents/codex"
+	"springfield/internal/core/agents/gemini"
 	"springfield/internal/core/config"
 	"springfield/internal/core/runtime"
 	"springfield/internal/features/ralph"
@@ -151,11 +152,19 @@ func newRalphRunCommand() *cobra.Command {
 			registry := agents.NewRegistry(
 				claude.New(exec.LookPath),
 				codex.New(exec.LookPath),
+				gemini.New(exec.LookPath),
 			)
 			runner := runtime.NewRunner(registry)
-			agentID := agents.ID(cfg.Config.Project.DefaultAgent)
+			priority := cfg.Config.EffectivePriority()
+			agentIDs := make([]agents.ID, 0, len(priority))
+			for _, id := range priority {
+				if id == "" {
+					continue
+				}
+				agentIDs = append(agentIDs, agents.ID(id))
+			}
 
-			executor := ralph.NewRuntimeExecutor(runner, agentID, rootDir)
+			executor := ralph.NewRuntimeExecutor(runner, agentIDs, rootDir)
 
 			workspace, err := ralphWorkspace(cmd)
 			if err != nil {

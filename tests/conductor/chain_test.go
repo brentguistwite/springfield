@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"springfield/internal/core/agents"
 	"springfield/internal/core/exec"
 	"springfield/internal/features/conductor"
 )
@@ -41,7 +42,7 @@ func TestFullChainConductorRunSuccessRecordsAgent(t *testing.T) {
 
 	var calls []exec.Command
 	runner := newTestRuntime("claude", captureCommandFunc(&calls, 0))
-	executor := conductor.NewRuntimeExecutor(runner, "claude", plansDir, root)
+	executor := conductor.NewRuntimeExecutor(runner, []agents.ID{"claude"}, plansDir, root)
 	conductorRunner := conductor.NewRunner(project, executor)
 
 	if err := conductorRunner.RunAll(); err != nil {
@@ -90,7 +91,7 @@ func TestFullChainConductorRunFailurePersistsState(t *testing.T) {
 
 	var calls []exec.Command
 	runner := newTestRuntime("claude", captureCommandFunc(&calls, 1)) // non-zero = failure
-	executor := conductor.NewRuntimeExecutor(runner, "claude", plansDir, root)
+	executor := conductor.NewRuntimeExecutor(runner, []agents.ID{"claude"}, plansDir, root)
 	conductorRunner := conductor.NewRunner(project, executor)
 
 	runErr := conductorRunner.RunAll()
@@ -137,7 +138,7 @@ func TestFullChainConductorResumeSkipsCompleted(t *testing.T) {
 	var calls []exec.Command
 	runFn := captureCommandFunc(&calls, 0)
 	runner := newTestRuntime("claude", runFn)
-	executor := conductor.NewRuntimeExecutor(runner, "claude", plansDir, root)
+	executor := conductor.NewRuntimeExecutor(runner, []agents.ID{"claude"}, plansDir, root)
 	conductorRunner := conductor.NewRunner(project, executor)
 
 	conductorRunner.RunNext()
@@ -153,7 +154,7 @@ func TestFullChainConductorResumeSkipsCompleted(t *testing.T) {
 
 	calls = nil
 	runner2 := newTestRuntime("claude", captureCommandFunc(&calls, 0))
-	executor2 := conductor.NewRuntimeExecutor(runner2, "claude", plansDir, root)
+	executor2 := conductor.NewRuntimeExecutor(runner2, []agents.ID{"claude"}, plansDir, root)
 	resumeRunner := conductor.NewRunner(project2, executor2)
 
 	if err := resumeRunner.RunAll(); err != nil {
@@ -165,4 +166,3 @@ func TestFullChainConductorResumeSkipsCompleted(t *testing.T) {
 		t.Fatalf("expected 2 calls on resume, got %d", len(calls))
 	}
 }
-

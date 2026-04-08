@@ -162,6 +162,87 @@ func TestSetup_ConfigPathRelativeToProject(t *testing.T) {
 	}
 }
 
+func TestUpdateConfig_OverwritesExisting(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root)
+
+	// First: setup with defaults
+	defaults := conductor.SetupDefaults()
+	defaults.Tool = "claude"
+	_, err := conductor.Setup(root, defaults)
+	if err != nil {
+		t.Fatalf("Setup() error: %v", err)
+	}
+
+	// Then: update with new values
+	updateOpts := conductor.SetupOptions{
+		Tool:            "codex",
+		PlansDir:        conductor.TrackedPlansDir,
+		MaxRetries:      5,
+		RalphIterations: 100,
+		RalphTimeout:    7200,
+		WorktreeBase:    ".custom-worktrees",
+		UpdateGitignore: true,
+	}
+
+	result, err := conductor.UpdateConfig(root, updateOpts)
+	if err != nil {
+		t.Fatalf("UpdateConfig() error: %v", err)
+	}
+
+	if !result.Updated {
+		t.Error("expected Updated=true")
+	}
+	if result.Path == "" {
+		t.Error("expected non-empty Path")
+	}
+	if !result.GitignoreUpdated {
+		t.Error("expected GitignoreUpdated=true for TrackedPlansDir with UpdateGitignore")
+	}
+
+	// Verify updated config by loading it
+	rt, _ := storage.FromRoot(root)
+	var cfg conductor.Config
+	if err := rt.ReadJSON("conductor/config.json", &cfg); err != nil {
+		t.Fatalf("reading updated config: %v", err)
+	}
+
+	if cfg.Tool != "codex" {
+		t.Errorf("Tool = %q, want %q", cfg.Tool, "codex")
+	}
+	if cfg.PlansDir != conductor.TrackedPlansDir {
+		t.Errorf("PlansDir = %q, want %q", cfg.PlansDir, conductor.TrackedPlansDir)
+	}
+	if cfg.MaxRetries != 5 {
+		t.Errorf("MaxRetries = %d, want 5", cfg.MaxRetries)
+	}
+	if cfg.RalphIterations != 100 {
+		t.Errorf("RalphIterations = %d, want 100", cfg.RalphIterations)
+	}
+	if cfg.RalphTimeout != 7200 {
+		t.Errorf("RalphTimeout = %d, want 7200", cfg.RalphTimeout)
+	}
+	if cfg.WorktreeBase != ".custom-worktrees" {
+		t.Errorf("WorktreeBase = %q, want %q", cfg.WorktreeBase, ".custom-worktrees")
+	}
+}
+
+func TestUpdateConfig_FailsWhenNoExistingConfig(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root)
+
+	opts := conductor.SetupDefaults()
+	opts.Tool = "claude"
+
+	_, err := conductor.UpdateConfig(root, opts)
+	if err == nil {
+		t.Fatal("expected error when no existing config")
+	}
+	if !strings.Contains(err.Error(), "no existing conductor config") {
+		t.Errorf("error = %q, want message about no existing config", err.Error())
+	}
+}
+
 func TestSetup_WritesCanonicalEmptyArrays(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)

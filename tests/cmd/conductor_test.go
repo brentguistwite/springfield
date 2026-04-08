@@ -225,6 +225,56 @@ func TestConductorSetupWithToolFlag(t *testing.T) {
 	}
 }
 
+func TestConductorSetupUsesEffectivePriorityHead(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	if _, err := runBinaryIn(t, bin, dir, "init"); err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+
+	config := strings.Join([]string{
+		"[project]",
+		`default_agent = "claude"`,
+		`agent_priority = ["gemini", "codex", "claude"]`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(dir, "springfield.toml"), []byte(config), 0o644); err != nil {
+		t.Fatalf("write springfield.toml: %v", err)
+	}
+
+	output, err := runBinaryIn(t, bin, dir, "conductor", "setup")
+	if err != nil {
+		t.Fatalf("conductor setup failed: %v\n%s", err, output)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, ".springfield", "conductor", "config.json"))
+	if err != nil {
+		t.Fatalf("read conductor config: %v", err)
+	}
+
+	var cfg conductor.Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("unmarshal conductor config: %v", err)
+	}
+
+	if cfg.Tool != "gemini" {
+		t.Fatalf("tool = %q, want gemini", cfg.Tool)
+	}
+
+	if cfg.FallbackTool != "codex" {
+		t.Fatalf("fallback_tool = %q, want codex", cfg.FallbackTool)
+	}
+
+	if !strings.Contains(output, `"gemini" CLI`) {
+		t.Fatalf("expected Gemini guidance in output, got:\n%s", output)
+	}
+
+	if strings.Contains(output, "Claude Code CLI") {
+		t.Fatalf("expected setup output to prefer Gemini guidance, got:\n%s", output)
+	}
+}
+
 func TestInitHintsAtConductorSetup(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
@@ -258,5 +308,41 @@ func TestConductorSetupShowsNextSteps(t *testing.T) {
 
 	if !strings.Contains(output, "springfield conductor run") {
 		t.Errorf("expected conductor run hint, got:\n%s", output)
+	}
+}
+
+func TestConductorRunFromNestedDirUsesResolvedProjectRoot(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	if _, err := runBinaryIn(t, bin, dir, "init"); err != nil {
+		t.Fatalf("init failed: %v", err)
+	}
+
+	cfg := &conductor.Config{
+		PlansDir:   ".springfield/conductor/plans",
+		Tool:       "bogus",
+		Sequential: []string{"01-bootstrap"},
+	}
+	writeConductorConfigBinary(t, dir, cfg)
+	writePlanFileBinary(t, dir, ".springfield/conductor/plans", "01-bootstrap", "implement bootstrap")
+
+	nestedDir := filepath.Join(dir, "subdir")
+	if err := os.MkdirAll(nestedDir, 0o755); err != nil {
+		t.Fatalf("mkdir nested dir: %v", err)
+	}
+
+	output, err := runBinaryIn(t, bin, dir, "conductor", "run", "--dir", nestedDir)
+	if err == nil {
+		t.Fatalf("expected conductor run to fail because agent is unsupported, output:\n%s", output)
+	}
+
+	nestedPlanPath := filepath.Join(nestedDir, ".springfield", "conductor", "plans")
+	if strings.Contains(output, nestedPlanPath) {
+		t.Fatalf("expected plan lookup to avoid nested path %q, got:\n%s", nestedPlanPath, output)
+	}
+
+	if !strings.Contains(output, "01-bootstrap") {
+		t.Fatalf("expected output to mention attempted plan, got:\n%s", output)
 	}
 }

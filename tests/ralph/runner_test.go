@@ -39,7 +39,7 @@ func TestRuntimeExecutorPassesStoryToSharedRuntime(t *testing.T) {
 	registry := testRegistry()
 	runner := runtime.NewTestRunner(registry, fakeRunSuccess, time.Now)
 
-	executor := ralph.NewRuntimeExecutor(runner, agents.AgentClaude, t.TempDir())
+	executor := ralph.NewRuntimeExecutor(runner, []agents.ID{agents.AgentClaude}, t.TempDir())
 
 	story := ralph.Story{
 		ID:          "US-001",
@@ -65,7 +65,7 @@ func TestRuntimeExecutorReturnsErrorOnFailure(t *testing.T) {
 	registry := testRegistry()
 	runner := runtime.NewTestRunner(registry, fakeRunFailure, time.Now)
 
-	executor := ralph.NewRuntimeExecutor(runner, agents.AgentClaude, t.TempDir())
+	executor := ralph.NewRuntimeExecutor(runner, []agents.ID{agents.AgentClaude}, t.TempDir())
 
 	story := ralph.Story{
 		ID:          "US-001",
