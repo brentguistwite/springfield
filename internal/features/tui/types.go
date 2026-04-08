@@ -160,6 +160,16 @@ type AgentDetection struct {
 	Installed bool
 }
 
+type AgentExecutionModes struct {
+	Claude string
+	Codex  string
+}
+
+type SaveAgentExecutionModesInput struct {
+	Claude string
+	Codex  string
+}
+
 // ConductorCurrentConfig is a TUI-safe projection of current conductor settings.
 type ConductorCurrentConfig struct {
 	PlansDir        string
@@ -176,12 +186,15 @@ type Services interface {
 	SetupConductor(opts ConductorSetupInput) (ConductorSetupResult, error)
 	DetectAgents() []AgentDetection
 	AgentPriority() []string
+	AgentExecutionModes() AgentExecutionModes
 	ConductorCurrentConfig() *ConductorCurrentConfig
 	RalphSummary() RalphSummary
 	RunRalphNext(planName string, onEvent func(RuntimeEvent)) (RalphRunResult, error)
 	ConductorSummary() ConductorSummary
 	RunConductorNext(onEvent func(RuntimeEvent)) (ConductorRunResult, error)
 	SaveAgentPriority(priority []string) error
+	SaveAgentExecutionModes(input SaveAgentExecutionModesInput) error
+	EnsureRecommendedExecutionDefaults() error
 	UpdateConductor(opts ConductorSetupInput) (ConductorSetupResult, error)
 	DoctorSummary() doctor.Report
 }

@@ -258,3 +258,55 @@ approval_policy = " on-request "
 		t.Fatalf("expected trimmed codex approval_policy, got %q", got)
 	}
 }
+
+func TestExecutionModesRecommended(t *testing.T) {
+	cfg := config.Config{
+		Agents: config.AgentsConfig{
+			Claude: config.ClaudeAgentConfig{PermissionMode: "bypassPermissions"},
+			Codex: config.CodexAgentConfig{
+				SandboxMode:    "danger-full-access",
+				ApprovalPolicy: "never",
+			},
+		},
+	}
+
+	got := cfg.ExecutionModes()
+	if got.Claude != config.ExecutionModeRecommended {
+		t.Fatalf("claude mode: want %q, got %q", config.ExecutionModeRecommended, got.Claude)
+	}
+	if got.Codex != config.ExecutionModeRecommended {
+		t.Fatalf("codex mode: want %q, got %q", config.ExecutionModeRecommended, got.Codex)
+	}
+}
+
+func TestExecutionModesOff(t *testing.T) {
+	cfg := config.Config{}
+
+	got := cfg.ExecutionModes()
+	if got.Claude != config.ExecutionModeOff {
+		t.Fatalf("claude mode: want %q, got %q", config.ExecutionModeOff, got.Claude)
+	}
+	if got.Codex != config.ExecutionModeOff {
+		t.Fatalf("codex mode: want %q, got %q", config.ExecutionModeOff, got.Codex)
+	}
+}
+
+func TestExecutionModesCustom(t *testing.T) {
+	cfg := config.Config{
+		Agents: config.AgentsConfig{
+			Claude: config.ClaudeAgentConfig{PermissionMode: "plan"},
+			Codex: config.CodexAgentConfig{
+				SandboxMode:    "danger-full-access",
+				ApprovalPolicy: "on-request",
+			},
+		},
+	}
+
+	got := cfg.ExecutionModes()
+	if got.Claude != config.ExecutionModeCustom {
+		t.Fatalf("claude mode: want %q, got %q", config.ExecutionModeCustom, got.Claude)
+	}
+	if got.Codex != config.ExecutionModeCustom {
+		t.Fatalf("codex mode: want %q, got %q", config.ExecutionModeCustom, got.Codex)
+	}
+}

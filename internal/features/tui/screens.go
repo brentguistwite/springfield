@@ -169,6 +169,11 @@ func (s setupScreen) Update(msg tea.Msg) (setupScreen, tea.Cmd) {
 				// Advanced -> navigate to AdvancedSetup screen
 				return s, navigate(ScreenAdvancedSetup)
 			}
+			if err := s.services.EnsureRecommendedExecutionDefaults(); err != nil {
+				s.lastResult = &setupResult{err: err.Error()}
+				s.phase = setupPhaseBasicDone
+				return s, nil
+			}
 			// Basic path -- setup conductor with defaults
 			if !s.status.ConductorConfigReady {
 				defaults := conductor.SetupDefaults()
@@ -238,8 +243,8 @@ func (s setupScreen) View() string {
 	case setupPhaseChoice:
 		b.WriteString("How would you like to configure conductor?\n\n")
 		choices := []struct{ label, desc string }{
-			{"Basic", "use claude with local plan storage (recommended)"},
-			{"Advanced", "choose storage mode, agent priority, and tuning options"},
+			{"Basic", "use local storage and Springfield-recommended agent permissions (recommended)"},
+			{"Advanced", "choose storage mode, agent priority, permissions, and tuning options"},
 		}
 		for i, c := range choices {
 			cursor := "  "
@@ -249,7 +254,8 @@ func (s setupScreen) View() string {
 			fmt.Fprintf(&b, "%s%s — %s\n", cursor, c.label, c.desc)
 		}
 	case setupPhaseBasicDone:
-		b.WriteString("Setup complete with defaults: claude, local storage.\n")
+		b.WriteString("Setup complete.\n")
+		b.WriteString(fmt.Sprintf("Storage: %s\n", basicSetupStorageLabel(s.services.ConductorCurrentConfig())))
 		priority := s.services.AgentPriority()
 		agents := sortAgentsByPriority(s.services.DetectAgents(), priority)
 		b.WriteString("Agent priority:\n")
@@ -260,11 +266,24 @@ func (s setupScreen) View() string {
 			}
 			fmt.Fprintf(&b, "  - %s (%s)\n", agent.ID, status)
 		}
+		modes := s.services.AgentExecutionModes()
+		if modes.Claude == "recommended" && modes.Codex == "recommended" {
+			b.WriteString("Recommended agent permissions are enabled for Claude and Codex. Springfield is designed to use these settings so Ralph and Conductor can run as intended.\n")
+		} else {
+			b.WriteString("Springfield is designed to use recommended agent permissions for Claude and Codex so Ralph and Conductor can run as intended.\n")
+		}
 		b.WriteString("Run doctor to verify prerequisites? [Enter] or [Esc] to go home\n")
 	}
 
 	b.WriteString("\nr refresh, Esc back\n")
 	return b.String()
+}
+
+func basicSetupStorageLabel(current *ConductorCurrentConfig) string {
+	if current != nil && current.PlansDir == conductor.TrackedPlansDir {
+		return "tracked"
+	}
+	return "local"
 }
 
 type ralphScreen struct {
@@ -421,14 +440,14 @@ func (r ralphScreen) View() string {
 }
 
 type conductorScreen struct {
-	services  Services
-	summary   ConductorSummary
-	monitor   MonitorState
-	events    []RuntimeEvent
-	eventCh   <-chan RuntimeEvent
-	lastRun   *ConductorRunResult
-	lastErr   string
-	diagnose  bool
+	services Services
+	summary  ConductorSummary
+	monitor  MonitorState
+	events   []RuntimeEvent
+	eventCh  <-chan RuntimeEvent
+	lastRun  *ConductorRunResult
+	lastErr  string
+	diagnose bool
 }
 
 func newConductorScreen(services Services) conductorScreen {

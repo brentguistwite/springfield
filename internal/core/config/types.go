@@ -2,6 +2,19 @@ package config
 
 import "springfield/internal/core/agents"
 
+type ExecutionMode string
+
+const (
+	ExecutionModeRecommended ExecutionMode = "recommended"
+	ExecutionModeOff         ExecutionMode = "off"
+	ExecutionModeCustom      ExecutionMode = "custom"
+)
+
+type AgentExecutionModes struct {
+	Claude ExecutionMode
+	Codex  ExecutionMode
+}
+
 // Config is the shared project configuration loaded from springfield.toml.
 type Config struct {
 	Project ProjectConfig         `toml:"project"`
@@ -65,6 +78,87 @@ func (c Config) ExecutionSettings() agents.ExecutionSettings {
 	}
 }
 
+func RecommendedExecutionSettings() agents.ExecutionSettings {
+	return agents.ExecutionSettings{
+		Claude: agents.ClaudeExecutionSettings{
+			PermissionMode: "bypassPermissions",
+		},
+		Codex: agents.CodexExecutionSettings{
+			SandboxMode:    "danger-full-access",
+			ApprovalPolicy: "never",
+		},
+	}
+}
+
+func (c Config) ExecutionModes() AgentExecutionModes {
+	return AgentExecutionModes{
+		Claude: executionModeForClaude(c.Agents.Claude),
+		Codex:  executionModeForCodex(c.Agents.Codex),
+	}
+}
+
+func (c Config) HasAnyExecutionSettings() bool {
+	return c.Agents.Claude.isPresent ||
+		c.Agents.Codex.isPresent ||
+		c.Agents.Claude.PermissionMode != "" ||
+		c.Agents.Codex.SandboxMode != "" ||
+		c.Agents.Codex.ApprovalPolicy != ""
+}
+
+func (c *Config) ApplyRecommendedExecutionDefaults() {
+	recommended := RecommendedExecutionSettings()
+	c.Agents.Claude.PermissionMode = recommended.Claude.PermissionMode
+	c.Agents.Codex.SandboxMode = recommended.Codex.SandboxMode
+	c.Agents.Codex.ApprovalPolicy = recommended.Codex.ApprovalPolicy
+}
+
+func (c *Config) ApplyExecutionMode(agentID string, mode ExecutionMode) {
+	switch agentID {
+	case string(agents.AgentClaude):
+		switch mode {
+		case ExecutionModeRecommended:
+			c.Agents.Claude.isPresent = true
+			c.Agents.Claude.PermissionMode = RecommendedExecutionSettings().Claude.PermissionMode
+		case ExecutionModeOff:
+			c.Agents.Claude.isPresent = true
+			c.Agents.Claude.PermissionMode = ""
+		}
+	case string(agents.AgentCodex):
+		switch mode {
+		case ExecutionModeRecommended:
+			c.Agents.Codex.isPresent = true
+			recommended := RecommendedExecutionSettings().Codex
+			c.Agents.Codex.SandboxMode = recommended.SandboxMode
+			c.Agents.Codex.ApprovalPolicy = recommended.ApprovalPolicy
+		case ExecutionModeOff:
+			c.Agents.Codex.isPresent = true
+			c.Agents.Codex.SandboxMode = ""
+			c.Agents.Codex.ApprovalPolicy = ""
+		}
+	}
+}
+
+func executionModeForClaude(cfg ClaudeAgentConfig) ExecutionMode {
+	switch cfg.PermissionMode {
+	case "bypassPermissions":
+		return ExecutionModeRecommended
+	case "":
+		return ExecutionModeOff
+	default:
+		return ExecutionModeCustom
+	}
+}
+
+func executionModeForCodex(cfg CodexAgentConfig) ExecutionMode {
+	if cfg.SandboxMode == "danger-full-access" && cfg.ApprovalPolicy == "never" {
+		return ExecutionModeRecommended
+	}
+	if cfg.SandboxMode == "" && cfg.ApprovalPolicy == "" {
+		return ExecutionModeOff
+	}
+	return ExecutionModeCustom
+}
+
 // PlanConfig stores per-plan overrides.
 type PlanConfig struct {
 	Agent string `toml:"agent"`
@@ -79,12 +173,14 @@ type AgentsConfig struct {
 // ClaudeAgentConfig stores supported Claude execution settings.
 type ClaudeAgentConfig struct {
 	PermissionMode string `toml:"permission_mode,omitempty"`
+	isPresent      bool   `toml:"-"`
 }
 
 // CodexAgentConfig stores supported Codex execution settings.
 type CodexAgentConfig struct {
 	SandboxMode    string `toml:"sandbox_mode,omitempty"`
 	ApprovalPolicy string `toml:"approval_policy,omitempty"`
+	isPresent      bool   `toml:"-"`
 }
 
 // Loaded is the stable public result of a config load.

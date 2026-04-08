@@ -80,3 +80,9 @@ func mixedConfig() *conductor.Config {
 		Sequential:      []string{"seq-1", "seq-2"},
 	}
 }
+
+func hideAgentBinariesFromPath(t *testing.T) {
+	t.Helper()
+
+	t.Setenv("PATH", t.TempDir())
+}

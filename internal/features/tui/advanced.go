@@ -16,6 +16,7 @@ type advancedStep int
 const (
 	stepStorageMode advancedStep = iota
 	stepAgentPriority
+	stepAgentPermissions
 	stepSettingsForm
 	stepComplete
 )
@@ -34,6 +35,11 @@ type advancedSetupScreen struct {
 	// Agent priority
 	agentList   []AgentDetection
 	agentCursor int
+
+	// Agent permissions
+	executionCursor int
+	claudeMode      string
+	codexMode       string
 
 	// Settings form
 	formFields  []formField
@@ -60,14 +66,17 @@ func newAdvancedSetupScreen(services Services) advancedSetupScreen {
 		agents = sortAgentsByPriority(agents, priority)
 	}
 	s := advancedSetupScreen{
-		services:   services,
-		status:     status,
-		step:       stepStorageMode,
-		plansDir:   conductor.LocalPlansDir,
-		agentList:  agents,
-		formFields: defaultFormFields(),
+		services:        services,
+		status:          status,
+		step:            stepStorageMode,
+		plansDir:        conductor.LocalPlansDir,
+		agentList:       agents,
+		formFields:      defaultFormFields(),
 		gitignoreChoice: true,
 	}
+	modes := services.AgentExecutionModes()
+	s.claudeMode = normalizeExecutionMode(modes.Claude)
+	s.codexMode = normalizeExecutionMode(modes.Codex)
 	// On re-entry with existing config, load current storage mode
 	if status.ConductorConfigReady {
 		current := services.ConductorCurrentConfig()
@@ -117,6 +126,8 @@ func (a advancedSetupScreen) Update(msg tea.Msg) (advancedSetupScreen, tea.Cmd) 
 		return a.updateStorageMode(key)
 	case stepAgentPriority:
 		return a.updateAgentPriority(key)
+	case stepAgentPermissions:
+		return a.updateAgentPermissions(key)
 	case stepSettingsForm:
 		return a.updateSettingsForm(key)
 	case stepComplete:
@@ -171,7 +182,7 @@ func (a advancedSetupScreen) updateAgentPriority(key tea.KeyMsg) (advancedSetupS
 			a.agentCursor++
 		}
 	case tea.KeyEnter:
-		a.step = stepSettingsForm
+		a.step = stepAgentPermissions
 		return a, nil
 	}
 
@@ -186,6 +197,33 @@ func (a advancedSetupScreen) updateAgentPriority(key tea.KeyMsg) (advancedSetupS
 			a.agentList[a.agentCursor], a.agentList[a.agentCursor-1] = a.agentList[a.agentCursor-1], a.agentList[a.agentCursor]
 			a.agentCursor--
 		}
+	}
+
+	return a, nil
+}
+
+func (a advancedSetupScreen) updateAgentPermissions(key tea.KeyMsg) (advancedSetupScreen, tea.Cmd) {
+	switch key.Type {
+	case tea.KeyUp, tea.KeyShiftTab:
+		if a.executionCursor > 0 {
+			a.executionCursor--
+		}
+	case tea.KeyDown, tea.KeyTab:
+		if a.executionCursor < 1 {
+			a.executionCursor++
+		}
+	case tea.KeyLeft:
+		a = a.cycleExecutionMode()
+	case tea.KeyRight:
+		a = a.cycleExecutionMode()
+	case tea.KeyEnter:
+		a.step = stepSettingsForm
+		return a, nil
+	}
+
+	switch key.String() {
+	case "h", "l", "j", "k":
+		a = a.cycleExecutionMode()
 	}
 
 	return a, nil
@@ -230,6 +268,46 @@ func (a advancedSetupScreen) updateSettingsForm(key tea.KeyMsg) (advancedSetupSc
 	}
 
 	return a, nil
+}
+
+func normalizeExecutionMode(mode string) string {
+	switch mode {
+	case "recommended", "off", "custom":
+		return mode
+	default:
+		return "off"
+	}
+}
+
+func executionModeLabel(mode string) string {
+	switch normalizeExecutionMode(mode) {
+	case "recommended":
+		return "Recommended"
+	case "custom":
+		return "Custom"
+	default:
+		return "Off"
+	}
+}
+
+func nextExecutionMode(mode string) string {
+	switch normalizeExecutionMode(mode) {
+	case "custom":
+		return "recommended"
+	case "recommended":
+		return "off"
+	default:
+		return "recommended"
+	}
+}
+
+func (a advancedSetupScreen) cycleExecutionMode() advancedSetupScreen {
+	if a.executionCursor == 0 {
+		a.claudeMode = nextExecutionMode(a.claudeMode)
+		return a
+	}
+	a.codexMode = nextExecutionMode(a.codexMode)
+	return a
 }
 
 func sortAgentsByPriority(agents []AgentDetection, priority []string) []AgentDetection {
@@ -312,6 +390,14 @@ func (a advancedSetupScreen) finalizeWithInput(input ConductorSetupInput) advanc
 		a.completed = true
 		return a
 	}
+	if err := a.services.SaveAgentExecutionModes(SaveAgentExecutionModesInput{
+		Claude: a.claudeMode,
+		Codex:  a.codexMode,
+	}); err != nil {
+		a.completeErr = err.Error()
+		a.completed = true
+		return a
+	}
 
 	if a.status.ConductorConfigReady {
 		_, err := a.services.UpdateConductor(input)
@@ -389,6 +475,25 @@ func (a advancedSetupScreen) View() string {
 			fmt.Fprintf(&b, "%s%d. %s (%s)\n", cursor, i+1, agent.ID, status)
 		}
 		b.WriteString("\nUp/Down select, j/k reorder, Enter confirm, Esc back\n")
+
+	case stepAgentPermissions:
+		b.WriteString("Agent Permissions\n\n")
+		b.WriteString("Springfield is not designed to work with recommended agent permissions turned off. If you disable them, you must ensure each agent has all required permissions enabled or runs may pause for approval or fail at permission boundaries.\n\n")
+		rows := []struct {
+			label string
+			value string
+		}{
+			{label: "Claude permissions", value: executionModeLabel(a.claudeMode)},
+			{label: "Codex permissions", value: executionModeLabel(a.codexMode)},
+		}
+		for i, row := range rows {
+			cursor := "  "
+			if i == a.executionCursor {
+				cursor = "> "
+			}
+			fmt.Fprintf(&b, "%s%-20s %s\n", cursor, row.label+":", row.value)
+		}
+		b.WriteString("\nUp/Down select row, Left/Right or h/l cycle, Enter continue, Esc back\n")
 
 	case stepSettingsForm:
 		b.WriteString("Conductor Settings\n\n")

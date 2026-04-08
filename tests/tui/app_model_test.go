@@ -13,34 +13,40 @@ import (
 )
 
 type fakeServices struct {
-	setup               tui.SetupStatus
-	initResult          config.InitResult
-	initErr             error
-	conductorSetup      tui.ConductorSetupResult
-	conductorSetupErr   error
-	conductorSetupCalls int
-	ralph               tui.RalphSummary
-	conductor           tui.ConductorSummary
-	report              doctor.Report
-	initCalls           int
-	ralphRunResult      tui.RalphRunResult
-	ralphRunErr         error
-	ralphRunCalls       int
-	ralphRunPlan        string
-	ralphRunEvents      []tui.RuntimeEvent
-	conductorRunResult  tui.ConductorRunResult
-	conductorRunErr     error
-	conductorRunCalls   int
-	conductorRunEvents  []tui.RuntimeEvent
-	agentDetections      []tui.AgentDetection
-	agentPriorityOrder   []string
-	conductorCurrentCfg  *tui.ConductorCurrentConfig
-	savePriorityCalls    int
-	savePriorityArg      []string
-	savePriorityErr      error
-	updateConductorCalls int
-	updateConductorResult tui.ConductorSetupResult
-	updateConductorErr   error
+	setup                        tui.SetupStatus
+	initResult                   config.InitResult
+	initErr                      error
+	conductorSetup               tui.ConductorSetupResult
+	conductorSetupErr            error
+	conductorSetupCalls          int
+	ralph                        tui.RalphSummary
+	conductor                    tui.ConductorSummary
+	report                       doctor.Report
+	initCalls                    int
+	ralphRunResult               tui.RalphRunResult
+	ralphRunErr                  error
+	ralphRunCalls                int
+	ralphRunPlan                 string
+	ralphRunEvents               []tui.RuntimeEvent
+	conductorRunResult           tui.ConductorRunResult
+	conductorRunErr              error
+	conductorRunCalls            int
+	conductorRunEvents           []tui.RuntimeEvent
+	agentDetections              []tui.AgentDetection
+	agentPriorityOrder           []string
+	agentExecutionModes          tui.AgentExecutionModes
+	ensureExecutionDefaultsErr   error
+	ensureExecutionDefaultsCalls int
+	conductorCurrentCfg          *tui.ConductorCurrentConfig
+	savePriorityCalls            int
+	savePriorityArg              []string
+	savePriorityErr              error
+	saveExecutionModesCalls      int
+	saveExecutionModesArg        tui.SaveAgentExecutionModesInput
+	saveExecutionModesErr        error
+	updateConductorCalls         int
+	updateConductorResult        tui.ConductorSetupResult
+	updateConductorErr           error
 }
 
 func (f *fakeServices) SetupStatus() tui.SetupStatus {
@@ -105,6 +111,16 @@ func (f *fakeServices) AgentPriority() []string {
 	return f.agentPriorityOrder
 }
 
+func (f *fakeServices) AgentExecutionModes() tui.AgentExecutionModes {
+	if f.agentExecutionModes.Claude == "" && f.agentExecutionModes.Codex == "" {
+		return tui.AgentExecutionModes{
+			Claude: "recommended",
+			Codex:  "recommended",
+		}
+	}
+	return f.agentExecutionModes
+}
+
 func (f *fakeServices) ConductorCurrentConfig() *tui.ConductorCurrentConfig {
 	return f.conductorCurrentCfg
 }
@@ -113,6 +129,26 @@ func (f *fakeServices) SaveAgentPriority(priority []string) error {
 	f.savePriorityCalls++
 	f.savePriorityArg = priority
 	return f.savePriorityErr
+}
+
+func (f *fakeServices) SaveAgentExecutionModes(input tui.SaveAgentExecutionModesInput) error {
+	f.saveExecutionModesCalls++
+	f.saveExecutionModesArg = input
+	return f.saveExecutionModesErr
+}
+
+func (f *fakeServices) EnsureRecommendedExecutionDefaults() error {
+	f.ensureExecutionDefaultsCalls++
+	if f.ensureExecutionDefaultsErr != nil {
+		return f.ensureExecutionDefaultsErr
+	}
+	if f.agentExecutionModes.Claude == "" && f.agentExecutionModes.Codex == "" {
+		f.agentExecutionModes = tui.AgentExecutionModes{
+			Claude: "recommended",
+			Codex:  "recommended",
+		}
+	}
+	return nil
 }
 
 func (f *fakeServices) UpdateConductor(opts tui.ConductorSetupInput) (tui.ConductorSetupResult, error) {
@@ -311,7 +347,7 @@ func TestSetupScreenTriggersConductorSetup(t *testing.T) {
 	}
 
 	view := model.View()
-	for _, marker := range []string{"conductor config created", "Setup complete with defaults"} {
+	for _, marker := range []string{"conductor config created", "Setup complete.", "Recommended agent permissions are enabled for Claude and Codex"} {
 		if !strings.Contains(view, marker) {
 			t.Fatalf("expected setup view to contain %q, got:\n%s", marker, view)
 		}
@@ -366,7 +402,7 @@ func TestSetupScreenFullyReadyAfterConductorSetup(t *testing.T) {
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := model.View()
-	if !strings.Contains(view, "Setup complete with defaults") {
+	if !strings.Contains(view, "Setup complete.") {
 		t.Fatalf("expected setup complete message, got:\n%s", view)
 	}
 	// Conductor config should show ready
@@ -1091,6 +1127,64 @@ func TestAdvancedSetupAgentPriorityReorder(t *testing.T) {
 	}
 }
 
+func TestAdvancedSetupShowsAgentPermissionsStep(t *testing.T) {
+	services := readyAdvancedServices()
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := model.View()
+	for _, marker := range []string{
+		"Agent Permissions",
+		"Springfield is not designed to work with recommended agent permissions turned off",
+		"Claude permissions",
+		"Codex permissions",
+		"Recommended",
+	} {
+		if !strings.Contains(view, marker) {
+			t.Fatalf("expected permissions step to contain %q, got:\n%s", marker, view)
+		}
+	}
+}
+
+func TestAdvancedSetupPermissionsShowCustomAndCycle(t *testing.T) {
+	services := &fakeServices{
+		setup: readySetupStatus(),
+		agentDetections: []tui.AgentDetection{
+			{ID: "claude", Name: "Claude Code", Installed: true},
+			{ID: "codex", Name: "Codex CLI", Installed: true},
+		},
+		agentExecutionModes: tui.AgentExecutionModes{
+			Claude: "custom",
+			Codex:  "off",
+		},
+	}
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := model.View()
+	if !strings.Contains(view, "Custom") {
+		t.Fatalf("expected custom mode visible, got:\n%s", view)
+	}
+
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRight})
+	view = model.View()
+	if !strings.Contains(view, "Claude permissions:  Recommended") {
+		t.Fatalf("expected first cycle to land on Recommended, got:\n%s", view)
+	}
+
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRight})
+	view = model.View()
+	if !strings.Contains(view, "Claude permissions:  Off") {
+		t.Fatalf("expected second cycle to land on Off, got:\n%s", view)
+	}
+}
+
 func TestAdvancedSetupSettingsForm(t *testing.T) {
 	services := &fakeServices{
 		setup: tui.SetupStatus{
@@ -1114,6 +1208,8 @@ func TestAdvancedSetupSettingsForm(t *testing.T) {
 	// Local storage (Enter)
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	// Agent priority (Enter to confirm)
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	// Agent permissions (Enter to confirm)
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := model.View()
@@ -1151,6 +1247,8 @@ func TestAdvancedSetupCompleteStepSavesAndOffersDoctor(t *testing.T) {
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	// Agent priority confirm
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	// Agent permissions confirm
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	// Settings form — 'c' to confirm
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 
@@ -1161,6 +1259,9 @@ func TestAdvancedSetupCompleteStepSavesAndOffersDoctor(t *testing.T) {
 	}
 	if services.savePriorityCalls != 1 {
 		t.Fatalf("expected SaveAgentPriority called once, got %d", services.savePriorityCalls)
+	}
+	if services.saveExecutionModesCalls != 1 {
+		t.Fatalf("expected SaveAgentExecutionModes called once, got %d", services.saveExecutionModesCalls)
 	}
 }
 
@@ -1184,20 +1285,21 @@ func TestAdvancedSetupCompleteShowsInstallStatusSummary(t *testing.T) {
 
 func TestAdvancedSetupStorageChangeShowsExistingPlansNote(t *testing.T) {
 	services := &fakeServices{
-		setup: readySetupStatus(),
+		setup:           readySetupStatus(),
 		agentDetections: []tui.AgentDetection{{ID: "claude", Name: "Claude Code", Installed: true}},
 		conductorCurrentCfg: &tui.ConductorCurrentConfig{
-			PlansDir: ".springfield/conductor/plans",
-			WorktreeBase: ".worktrees",
-			MaxRetries: 2,
+			PlansDir:        ".springfield/conductor/plans",
+			WorktreeBase:    ".worktrees",
+			MaxRetries:      2,
 			RalphIterations: 50,
-			RalphTimeout: 3600,
+			RalphTimeout:    3600,
 		},
 	}
 	model := tui.NewModel(services)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
@@ -1210,7 +1312,7 @@ func TestAdvancedSetupStorageChangeShowsExistingPlansNote(t *testing.T) {
 
 func TestAdvancedSetupCompleteCallsUpdateConductorWhenConfigExists(t *testing.T) {
 	services := &fakeServices{
-		setup: readySetupStatus(),
+		setup:           readySetupStatus(),
 		agentDetections: []tui.AgentDetection{{ID: "claude", Name: "Claude Code", Installed: true}},
 	}
 	model := advanceToAdvancedComplete(t, services)
@@ -1226,11 +1328,11 @@ func TestAdvancedSetupCompleteCallsUpdateConductorWhenConfigExists(t *testing.T)
 func TestAdvancedSetupCompleteCallsSetupConductorWhenConfigMissing(t *testing.T) {
 	services := &fakeServices{
 		setup: tui.SetupStatus{
-			WorkingDir:  "/tmp/demo",
-			ProjectRoot: "/tmp/demo",
-			ConfigPath:  "/tmp/demo/springfield.toml",
-			RuntimeDir:  "/tmp/demo/.springfield",
-			ConfigPresent: true,
+			WorkingDir:     "/tmp/demo",
+			ProjectRoot:    "/tmp/demo",
+			ConfigPath:     "/tmp/demo/springfield.toml",
+			RuntimeDir:     "/tmp/demo/.springfield",
+			ConfigPresent:  true,
 			RuntimePresent: true,
 		},
 		agentDetections: []tui.AgentDetection{{ID: "claude", Name: "Claude Code", Installed: true}},
@@ -1247,12 +1349,13 @@ func TestAdvancedSetupCompleteCallsSetupConductorWhenConfigMissing(t *testing.T)
 
 func TestAdvancedSetupLastFieldEnterSubmits(t *testing.T) {
 	services := &fakeServices{
-		setup: readySetupStatus(),
+		setup:           readySetupStatus(),
 		agentDetections: []tui.AgentDetection{{ID: "claude", Name: "Claude Code", Installed: true}},
 	}
 	model := tui.NewModel(services)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyDown})
@@ -1267,12 +1370,13 @@ func TestAdvancedSetupLastFieldEnterSubmits(t *testing.T) {
 
 func TestAdvancedSetupInvalidNumericFieldShowsError(t *testing.T) {
 	services := &fakeServices{
-		setup: readySetupStatus(),
+		setup:           readySetupStatus(),
 		agentDetections: []tui.AgentDetection{{ID: "claude", Name: "Claude Code", Installed: true}},
 	}
 	model := tui.NewModel(services)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyDown})
@@ -1307,8 +1411,15 @@ func TestSetupShowsBasicAdvancedChoice(t *testing.T) {
 	// Navigate to Guided Setup (first menu item)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	view := model.View()
-	if !strings.Contains(view, "Basic") || !strings.Contains(view, "Advanced") {
-		t.Fatalf("expected Basic/Advanced choice, got:\n%s", view)
+	for _, marker := range []string{
+		"Basic",
+		"Advanced",
+		"Springfield-recommended agent permissions",
+		"choose storage mode, agent priority, permissions, and tuning options",
+	} {
+		if !strings.Contains(view, marker) {
+			t.Fatalf("expected setup choice to contain %q, got:\n%s", marker, view)
+		}
 	}
 }
 
@@ -1335,11 +1446,53 @@ func TestSetupBasicUsesDefaultsAndOffersDoctorHandoff(t *testing.T) {
 	if services.conductorSetupCalls != 1 {
 		t.Fatalf("expected conductor setup called, got %d", services.conductorSetupCalls)
 	}
+	if services.ensureExecutionDefaultsCalls != 1 {
+		t.Fatalf("expected EnsureRecommendedExecutionDefaults called once, got %d", services.ensureExecutionDefaultsCalls)
+	}
 	if !strings.Contains(view, "doctor") && !strings.Contains(view, "Doctor") {
 		t.Fatalf("expected doctor handoff, got:\n%s", view)
 	}
 	if !strings.Contains(view, "claude (installed)") {
 		t.Fatalf("expected priority install status in basic summary, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Recommended agent permissions are enabled for Claude and Codex") {
+		t.Fatalf("expected recommended permissions note, got:\n%s", view)
+	}
+}
+
+func TestSetupBasicPreservesTrackedStorageSummary(t *testing.T) {
+	services := &fakeServices{
+		setup: tui.SetupStatus{
+			WorkingDir:           "/tmp/demo",
+			ProjectRoot:          "/tmp/demo",
+			ConfigPath:           "/tmp/demo/springfield.toml",
+			RuntimeDir:           "/tmp/demo/.springfield",
+			ConductorConfigPath:  "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:        true,
+			RuntimePresent:       true,
+			ConductorConfigReady: true,
+		},
+		agentDetections:    []tui.AgentDetection{{ID: "claude", Name: "Claude Code", Installed: true}},
+		agentPriorityOrder: []string{"claude"},
+		conductorCurrentCfg: &tui.ConductorCurrentConfig{
+			PlansDir:        ".conductor/plans",
+			WorktreeBase:    ".worktrees",
+			MaxRetries:      2,
+			RalphIterations: 50,
+			RalphTimeout:    3600,
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := model.View()
+	if strings.Contains(view, "Storage: local") {
+		t.Fatalf("expected basic summary to avoid wrong local storage label, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Storage: tracked") {
+		t.Fatalf("expected tracked storage summary, got:\n%s", view)
 	}
 }
 
@@ -1396,13 +1549,13 @@ func TestModelRendersDoctorSummary(t *testing.T) {
 
 func readySetupStatus() tui.SetupStatus {
 	return tui.SetupStatus{
-		WorkingDir:          "/tmp/demo",
-		ProjectRoot:         "/tmp/demo",
-		ConfigPath:          "/tmp/demo/springfield.toml",
-		RuntimeDir:          "/tmp/demo/.springfield",
-		ConductorConfigPath: "/tmp/demo/.springfield/conductor/config.json",
-		ConfigPresent:       true,
-		RuntimePresent:      true,
+		WorkingDir:           "/tmp/demo",
+		ProjectRoot:          "/tmp/demo",
+		ConfigPath:           "/tmp/demo/springfield.toml",
+		RuntimeDir:           "/tmp/demo/.springfield",
+		ConductorConfigPath:  "/tmp/demo/.springfield/conductor/config.json",
+		ConfigPresent:        true,
+		RuntimePresent:       true,
 		ConductorConfigReady: true,
 	}
 }
@@ -1414,6 +1567,10 @@ func readyAdvancedServices() *fakeServices {
 			{ID: "claude", Name: "Claude Code", Installed: true},
 			{ID: "codex", Name: "Codex CLI", Installed: false},
 		},
+		agentExecutionModes: tui.AgentExecutionModes{
+			Claude: "recommended",
+			Codex:  "recommended",
+		},
 	}
 }
 
@@ -1422,6 +1579,7 @@ func advanceToAdvancedComplete(t *testing.T, services *fakeServices) tui.Model {
 	model := tui.NewModel(services)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
