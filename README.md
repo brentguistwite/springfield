@@ -116,7 +116,7 @@ Add plan names to `sequential` (run in order) or `batches` (run in parallel grou
 Execution flags are not stored in this JSON; `springfield.toml` is the source of truth for agent execution modes.
 
 Runtime state (generated files, caches) lives in `.springfield/` and should not be committed.
-Tracked plan storage is optional and intended for teams that want plan files in version control. Hidden legacy debug commands still exist for migration and debugging, but Springfield is the only intended user-facing workflow.
+Tracked plan storage is optional and intended for teams that want plan files in version control. Hidden legacy engine commands remain available only under `springfield internal-debug ...` for migration/debug work; Springfield is the only intended user-facing workflow.
 
 ## Optional Direct Skills
 

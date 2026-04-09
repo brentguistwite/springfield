@@ -215,6 +215,9 @@ func TestSpringfieldHelp(t *testing.T) {
 	if strings.Contains(output, "springfield conductor") {
 		t.Fatalf("help should not advertise legacy conductor surface, got:\n%s", output)
 	}
+	if strings.Contains(output, "internal-debug") {
+		t.Fatalf("help should not advertise hidden debug surface, got:\n%s", output)
+	}
 	if !strings.Contains(output, "Springfield is the local-first CLI and TUI entrypoint") {
 		t.Fatalf("expected Springfield-first help text, got:\n%s", output)
 	}
@@ -295,6 +298,19 @@ func TestSpringfieldSubcommandsAreReachable(t *testing.T) {
 
 		if !strings.Contains(output, subcommand.marker) {
 			t.Fatalf("expected %s help output to contain %q, got:\n%s", subcommand.name, subcommand.marker, output)
+		}
+	}
+}
+
+func TestHiddenDebugSeamIsReachableWithoutPollutingRootHelp(t *testing.T) {
+	output, err := runSpringfield(t, "internal-debug", "--help")
+	if err != nil {
+		t.Fatalf("run springfield internal-debug --help: %v\noutput:\n%s", err, output)
+	}
+
+	for _, marker := range []string{"ralph", "conductor", "Internal migration and debug commands"} {
+		if !strings.Contains(output, marker) {
+			t.Fatalf("expected hidden debug help to contain %q, got:\n%s", marker, output)
 		}
 	}
 }

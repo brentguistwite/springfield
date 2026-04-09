@@ -1,16 +1,16 @@
 package playbooks
 
-// Kind identifies the internal engine playbook Springfield should render.
-type Kind string
+// Purpose identifies the Springfield-owned playbook contract callers request.
+type Purpose string
 
 const (
-	KindRalph     Kind = "ralph"
-	KindConductor Kind = "conductor"
+	PurposePlan    Purpose = "plan"
+	PurposeExplain Purpose = "explain"
 )
 
 // Input is the Springfield-owned prompt build contract.
 type Input struct {
-	Kind        Kind
+	Purpose     Purpose
 	ProjectRoot string
 	TaskBody    string
 }

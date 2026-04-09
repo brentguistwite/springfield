@@ -23,9 +23,9 @@ import (
 // NewConductorCommand exposes the conductor command surface.
 func NewConductorCommand() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "conductor",
-		Short: "Run Springfield conductor workflows.",
-		Long:  "Orchestrate plan execution, check status, resume from failures, and diagnose issues.",
+		Use:    "conductor",
+		Short:  "Run Springfield conductor workflows.",
+		Long:   "Orchestrate plan execution, check status, resume from failures, and diagnose issues.",
 		Hidden: true,
 	}
 
@@ -130,7 +130,7 @@ func newConductorSetupCommand() *cobra.Command {
 				fmt.Fprintln(w, "")
 				fmt.Fprintf(w, "Next steps:\n")
 				fmt.Fprintf(w, "  1. Add plan files to %s\n", opts.PlansDir)
-				fmt.Fprintf(w, "  2. Run: springfield conductor run\n")
+				fmt.Fprintf(w, "  2. Run: springfield internal-debug conductor run\n")
 				if opts.PlansDir == conductor.TrackedPlansDir {
 					fmt.Fprintln(w, "")
 					if result.GitignoreUpdated {

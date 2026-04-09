@@ -83,8 +83,8 @@ func newAdvancedSetupScreen(services Services) advancedSetupScreen {
 	s.claudeMode = normalizeExecutionMode(modes.Claude)
 	s.codexMode = normalizeExecutionMode(modes.Codex)
 	// On re-entry with existing config, load current storage mode
-	if status.ConductorConfigReady {
-		current := services.ConductorCurrentConfig()
+	if status.ExecutionReady {
+		current := services.CurrentExecutionConfig()
 		if current != nil {
 			s.plansDir = current.PlansDir
 			s.oldPlansDir = current.PlansDir
@@ -94,8 +94,8 @@ func newAdvancedSetupScreen(services Services) advancedSetupScreen {
 			s.formFields = []formField{
 				{label: "Worktree base", value: current.WorktreeBase},
 				{label: "Max retries", value: fmt.Sprintf("%d", current.MaxRetries)},
-				{label: singleWorkstreamIterationsLabel, value: fmt.Sprintf("%d", current.RalphIterations)},
-				{label: singleWorkstreamTimeoutLabel, value: fmt.Sprintf("%d", current.RalphTimeout)},
+				{label: singleWorkstreamIterationsLabel, value: fmt.Sprintf("%d", current.SingleWorkstreamIterations)},
+				{label: singleWorkstreamTimeoutLabel, value: fmt.Sprintf("%d", current.SingleWorkstreamTimeout)},
 			}
 		}
 	}
@@ -360,26 +360,26 @@ func parseWholeNumber(label, raw string) (int, error) {
 	return value, nil
 }
 
-func (a advancedSetupScreen) validateSettings() (ConductorSetupInput, error) {
+func (a advancedSetupScreen) validateSettings() (ExecutionConfigInput, error) {
 	maxRetries, err := parseWholeNumber("Max retries", a.formFields[1].value)
 	if err != nil {
-		return ConductorSetupInput{}, err
+		return ExecutionConfigInput{}, err
 	}
 	iterations, err := parseWholeNumber(singleWorkstreamIterationsLabel, a.formFields[2].value)
 	if err != nil {
-		return ConductorSetupInput{}, err
+		return ExecutionConfigInput{}, err
 	}
 	timeout, err := parseWholeNumber(singleWorkstreamTimeoutLabel, a.formFields[3].value)
 	if err != nil {
-		return ConductorSetupInput{}, err
+		return ExecutionConfigInput{}, err
 	}
-	return ConductorSetupInput{
-		PlansDir:        a.plansDir,
-		WorktreeBase:    a.formFields[0].value,
-		MaxRetries:      maxRetries,
-		RalphIterations: iterations,
-		RalphTimeout:    timeout,
-		UpdateGitignore: a.updateGitignore,
+	return ExecutionConfigInput{
+		PlansDir:                   a.plansDir,
+		WorktreeBase:               a.formFields[0].value,
+		MaxRetries:                 maxRetries,
+		SingleWorkstreamIterations: iterations,
+		SingleWorkstreamTimeout:    timeout,
+		UpdateGitignore:            a.updateGitignore,
 	}, nil
 }
 
@@ -395,7 +395,7 @@ func (a advancedSetupScreen) submitSettings() (advancedSetupScreen, tea.Cmd) {
 	return a, nil
 }
 
-func (a advancedSetupScreen) finalizeWithInput(input ConductorSetupInput) advancedSetupScreen {
+func (a advancedSetupScreen) finalizeWithInput(input ExecutionConfigInput) advancedSetupScreen {
 	priority := a.agentPriorityIDs()
 	a.completionAgents = append([]AgentDetection(nil), a.agentList...)
 	if err := a.services.SaveAgentPriority(priority); err != nil {
@@ -412,13 +412,13 @@ func (a advancedSetupScreen) finalizeWithInput(input ConductorSetupInput) advanc
 		return a
 	}
 
-	if a.status.ConductorConfigReady {
-		_, err := a.services.UpdateConductor(input)
+	if a.status.ExecutionReady {
+		_, err := a.services.UpdateExecutionConfig(input)
 		if err != nil {
 			a.completeErr = err.Error()
 		}
 	} else {
-		_, err := a.services.SetupConductor(input)
+		_, err := a.services.ConfigureExecution(input)
 		if err != nil {
 			a.completeErr = err.Error()
 		}

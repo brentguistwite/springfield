@@ -10,6 +10,10 @@ import (
 	"springfield/internal/features/conductor"
 )
 
+func conductorRunArgs(args ...string) []string {
+	return append([]string{"internal-debug", "conductor"}, args...)
+}
+
 func writeConductorConfigBinary(t *testing.T, root string, cfg *conductor.Config) {
 	t.Helper()
 
@@ -66,7 +70,7 @@ func TestConductorRunReportsTruthfulFailure(t *testing.T) {
 		bin,
 		dir,
 		[]string{"PATH=" + t.TempDir()},
-		"conductor", "run",
+		conductorRunArgs("run")...,
 	)
 
 	// Should return an error (non-zero exit) because execution failed
@@ -102,7 +106,7 @@ func TestConductorRunDryRunShowsPlans(t *testing.T) {
 	}
 	writeConductorConfigBinary(t, dir, cfg)
 
-	output, err := runBinaryIn(t, bin, dir, "conductor", "run", "--dry-run")
+	output, err := runBinaryIn(t, bin, dir, conductorRunArgs("run", "--dry-run")...)
 	if err != nil {
 		t.Fatalf("conductor run --dry-run failed: %v\n%s", err, output)
 	}
@@ -136,10 +140,10 @@ func TestConductorStatusAfterFailedRun(t *testing.T) {
 	writePlanFileBinary(t, dir, ".conductor/plans", "02-config", "implement config")
 
 	// Run conductor (will fail at first plan due to no agent binary)
-	runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + t.TempDir()}, "conductor", "run")
+	runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + t.TempDir()}, conductorRunArgs("run")...)
 
 	// Status should reflect the failed state truthfully
-	output, err := runBinaryIn(t, bin, dir, "conductor", "status")
+	output, err := runBinaryIn(t, bin, dir, conductorRunArgs("status")...)
 	if err != nil {
 		t.Fatalf("conductor status failed: %v\n%s", err, output)
 	}
@@ -177,10 +181,10 @@ func TestConductorDiagnoseAfterFailedRun(t *testing.T) {
 	writePlanFileBinary(t, dir, ".conductor/plans", "01-bootstrap", "implement bootstrap")
 
 	// Run conductor (will fail)
-	runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + t.TempDir()}, "conductor", "run")
+	runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + t.TempDir()}, conductorRunArgs("run")...)
 
 	// Diagnose should report the failure with actionable info
-	output, err := runBinaryIn(t, bin, dir, "conductor", "diagnose")
+	output, err := runBinaryIn(t, bin, dir, conductorRunArgs("diagnose")...)
 	if err != nil {
 		t.Fatalf("conductor diagnose failed: %v\n%s", err, output)
 	}
@@ -232,7 +236,7 @@ func TestConductorRunPassesCodexExecutionSettingsToSubprocess(t *testing.T) {
 		bin,
 		dir,
 		[]string{"PATH=" + fakeBinDir},
-		"conductor", "run",
+		conductorRunArgs("run")...,
 	)
 	if err != nil {
 		t.Fatalf("conductor run failed: %v\n%s", err, output)

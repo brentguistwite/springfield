@@ -45,7 +45,7 @@ func (s *Session) Next(userInput string) (Response, error) {
 	}
 
 	output, err := playbooks.Build(playbooks.Input{
-		Kind:        playbooks.KindConductor,
+		Purpose:     playbooks.PurposePlan,
 		ProjectRoot: s.ProjectRoot,
 		TaskBody:    planningTask(s.request, s.turns),
 	})

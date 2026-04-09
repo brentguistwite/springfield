@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"springfield/internal/features/planner"
-	"springfield/internal/features/playbooks"
 )
 
 type fakeRunner struct {
@@ -187,7 +186,7 @@ func TestSessionNextBuildsPlanningPromptAndParsesResponse(t *testing.T) {
 	if !strings.Contains(runner.prompt, "Add Wave B planning surface") {
 		t.Fatalf("prompt should include user input, got:\n%s", runner.prompt)
 	}
-	if !strings.Contains(runner.prompt, string(playbooks.KindConductor)) && !strings.Contains(runner.prompt, "Conductor") {
+	if !strings.Contains(runner.prompt, "Built-in Conductor playbook.") {
 		t.Fatalf("prompt should include built playbook content, got:\n%s", runner.prompt)
 	}
 	if !strings.Contains(runner.prompt, "JSON") {

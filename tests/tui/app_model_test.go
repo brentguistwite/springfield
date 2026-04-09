@@ -17,9 +17,9 @@ type fakeServices struct {
 	setup                        tui.SetupStatus
 	initResult                   config.InitResult
 	initErr                      error
-	conductorSetup               tui.ConductorSetupResult
-	conductorSetupErr            error
-	conductorSetupCalls          int
+	executionConfigResult        tui.ExecutionConfigResult
+	executionConfigErr           error
+	executionConfigCalls         int
 	springfieldStatus            tui.SpringfieldStatus
 	springfieldDiagnosis         tui.SpringfieldDiagnosis
 	springfieldRunResult         tui.SpringfieldRunResult
@@ -30,34 +30,23 @@ type fakeServices struct {
 	springfieldResumeErr         error
 	springfieldResumeCalls       int
 	springfieldResumeEvents      []tui.RuntimeEvent
-	ralph                        tui.RalphSummary
-	conductor                    tui.ConductorSummary
 	report                       doctor.Report
 	initCalls                    int
-	ralphRunResult               tui.RalphRunResult
-	ralphRunErr                  error
-	ralphRunCalls                int
-	ralphRunPlan                 string
-	ralphRunEvents               []tui.RuntimeEvent
-	conductorRunResult           tui.ConductorRunResult
-	conductorRunErr              error
-	conductorRunCalls            int
-	conductorRunEvents           []tui.RuntimeEvent
 	agentDetections              []tui.AgentDetection
 	agentPriorityOrder           []string
 	agentExecutionModes          tui.AgentExecutionModes
 	ensureExecutionDefaultsErr   error
 	ensureExecutionDefaultsCalls int
-	conductorCurrentCfg          *tui.ConductorCurrentConfig
+	executionConfig              *tui.ExecutionConfig
 	savePriorityCalls            int
 	savePriorityArg              []string
 	savePriorityErr              error
 	saveExecutionModesCalls      int
 	saveExecutionModesArg        tui.SaveAgentExecutionModesInput
 	saveExecutionModesErr        error
-	updateConductorCalls         int
-	updateConductorResult        tui.ConductorSetupResult
-	updateConductorErr           error
+	updateExecutionConfigCalls   int
+	updateExecutionConfigResult  tui.ExecutionConfigResult
+	updateExecutionConfigErr     error
 	planResults                  []tui.PlanWorkResult
 	planErr                      error
 	planCalls                    int
@@ -83,12 +72,12 @@ func (f *fakeServices) InitProject() (config.InitResult, error) {
 	return f.initResult, f.initErr
 }
 
-func (f *fakeServices) SetupConductor(opts tui.ConductorSetupInput) (tui.ConductorSetupResult, error) {
-	f.conductorSetupCalls++
-	if f.conductorSetupErr == nil {
-		f.setup.ConductorConfigReady = true
+func (f *fakeServices) ConfigureExecution(opts tui.ExecutionConfigInput) (tui.ExecutionConfigResult, error) {
+	f.executionConfigCalls++
+	if f.executionConfigErr == nil {
+		f.setup.ExecutionReady = true
 	}
-	return f.conductorSetup, f.conductorSetupErr
+	return f.executionConfigResult, f.executionConfigErr
 }
 
 func (f *fakeServices) SpringfieldStatus() tui.SpringfieldStatus {
@@ -119,35 +108,6 @@ func (f *fakeServices) ResumeSpringfieldWork(onEvent func(tui.RuntimeEvent)) (tu
 	return f.springfieldResumeResult, f.springfieldResumeErr
 }
 
-func (f *fakeServices) RalphSummary() tui.RalphSummary {
-	return f.ralph
-}
-
-func (f *fakeServices) RunRalphNext(planName string, onEvent func(tui.RuntimeEvent)) (tui.RalphRunResult, error) {
-	f.ralphRunCalls++
-	f.ralphRunPlan = planName
-	if onEvent != nil {
-		for _, e := range f.ralphRunEvents {
-			onEvent(e)
-		}
-	}
-	return f.ralphRunResult, f.ralphRunErr
-}
-
-func (f *fakeServices) ConductorSummary() tui.ConductorSummary {
-	return f.conductor
-}
-
-func (f *fakeServices) RunConductorNext(onEvent func(tui.RuntimeEvent)) (tui.ConductorRunResult, error) {
-	f.conductorRunCalls++
-	if onEvent != nil {
-		for _, e := range f.conductorRunEvents {
-			onEvent(e)
-		}
-	}
-	return f.conductorRunResult, f.conductorRunErr
-}
-
 func (f *fakeServices) DoctorSummary() doctor.Report {
 	return f.report
 }
@@ -170,8 +130,8 @@ func (f *fakeServices) AgentExecutionModes() tui.AgentExecutionModes {
 	return f.agentExecutionModes
 }
 
-func (f *fakeServices) ConductorCurrentConfig() *tui.ConductorCurrentConfig {
-	return f.conductorCurrentCfg
+func (f *fakeServices) CurrentExecutionConfig() *tui.ExecutionConfig {
+	return f.executionConfig
 }
 
 func (f *fakeServices) SaveAgentPriority(priority []string) error {
@@ -200,9 +160,9 @@ func (f *fakeServices) EnsureRecommendedExecutionDefaults() error {
 	return nil
 }
 
-func (f *fakeServices) UpdateConductor(opts tui.ConductorSetupInput) (tui.ConductorSetupResult, error) {
-	f.updateConductorCalls++
-	return f.updateConductorResult, f.updateConductorErr
+func (f *fakeServices) UpdateExecutionConfig(opts tui.ExecutionConfigInput) (tui.ExecutionConfigResult, error) {
+	f.updateExecutionConfigCalls++
+	return f.updateExecutionConfigResult, f.updateExecutionConfigErr
 }
 
 func (f *fakeServices) PlanWork(request string) (tui.PlanWorkResult, error) {
@@ -656,7 +616,7 @@ func TestModelSetupFlowCreatesCoreState(t *testing.T) {
 			ProjectRoot:         "/tmp/demo",
 			ConfigPath:          "/tmp/demo/springfield.toml",
 			RuntimeDir:          "/tmp/demo/.springfield",
-			ConductorConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
 		},
 		initResult: config.InitResult{
 			ConfigCreated:     true,
@@ -685,63 +645,17 @@ func TestModelSetupFlowCreatesCoreState(t *testing.T) {
 	}
 }
 
-func TestModelRendersRalphSummary(t *testing.T) {
-	model := tui.NewModel(&fakeServices{
-		ralph: tui.RalphSummary{
-			Ready: true,
-			Plans: []tui.RalphPlanSummary{
-				{Name: "refresh", StoryCount: 2, NextStoryID: "US-002", NextStoryTitle: "Refresh prompt"},
-			},
-			RecentRuns: []tui.RalphRunSummary{
-				{PlanName: "refresh", StoryID: "US-001", Status: "passed"},
-			},
-		},
-	})
-
-	model = navigateToScreen(t, model, tui.ScreenRalph)
-
-	view := model.View()
-	for _, marker := range []string{"Ralph", "refresh", "US-002", "US-001", "passed"} {
-		if !strings.Contains(view, marker) {
-			t.Fatalf("expected Ralph view to contain %q, got:\n%s", marker, view)
-		}
-	}
-}
-
-func TestModelRendersConductorSummary(t *testing.T) {
-	model := tui.NewModel(&fakeServices{
-		conductor: tui.ConductorSummary{
-			Ready:     true,
-			Completed: 1,
-			Total:     3,
-			Failures: []tui.ConductorPlanFailure{
-				{Plan: "02-config", Error: "compile error", Agent: "claude", Attempts: 1},
-			},
-			NextStep: "Fix failures then resume",
-		},
-	})
-
-	model = navigateToScreen(t, model, tui.ScreenConductor)
-
-	view := model.View()
-	for _, marker := range []string{"Conductor", "Progress: 1/3", "02-config", "compile error"} {
-		if !strings.Contains(view, marker) {
-			t.Fatalf("expected Conductor view to contain %q, got:\n%s", marker, view)
-		}
-	}
-}
-
 func TestSetupScreenShowsActionableConductorPrompt(t *testing.T) {
 	services := &fakeServices{
 		setup: tui.SetupStatus{
-			WorkingDir:           "/tmp/demo",
-			ProjectRoot:          "/tmp/demo",
-			ConfigPath:           "/tmp/demo/springfield.toml",
-			RuntimeDir:           "/tmp/demo/.springfield",
-			ConductorConfigPath:  "/tmp/demo/.springfield/conductor/config.json",
-			ConfigPresent:        true,
-			RuntimePresent:       true,
-			ConductorConfigReady: false,
+			WorkingDir:          "/tmp/demo",
+			ProjectRoot:         "/tmp/demo",
+			ConfigPath:          "/tmp/demo/springfield.toml",
+			RuntimeDir:          "/tmp/demo/.springfield",
+			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:       true,
+			RuntimePresent:      true,
+			ExecutionReady:      false,
 		},
 	}
 
@@ -757,19 +671,19 @@ func TestSetupScreenShowsActionableConductorPrompt(t *testing.T) {
 	}
 }
 
-func TestSetupScreenTriggersConductorSetup(t *testing.T) {
+func TestSetupScreenConfiguresExecution(t *testing.T) {
 	services := &fakeServices{
 		setup: tui.SetupStatus{
-			WorkingDir:           "/tmp/demo",
-			ProjectRoot:          "/tmp/demo",
-			ConfigPath:           "/tmp/demo/springfield.toml",
-			RuntimeDir:           "/tmp/demo/.springfield",
-			ConductorConfigPath:  "/tmp/demo/.springfield/conductor/config.json",
-			ConfigPresent:        true,
-			RuntimePresent:       true,
-			ConductorConfigReady: false,
+			WorkingDir:          "/tmp/demo",
+			ProjectRoot:         "/tmp/demo",
+			ConfigPath:          "/tmp/demo/springfield.toml",
+			RuntimeDir:          "/tmp/demo/.springfield",
+			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:       true,
+			RuntimePresent:      true,
+			ExecutionReady:      false,
 		},
-		conductorSetup: tui.ConductorSetupResult{
+		executionConfigResult: tui.ExecutionConfigResult{
 			Created: true,
 			Path:    "/tmp/demo/.springfield/conductor/config.json",
 		},
@@ -781,8 +695,8 @@ func TestSetupScreenTriggersConductorSetup(t *testing.T) {
 	// Press Enter to trigger conductor setup
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
-	if services.conductorSetupCalls != 1 {
-		t.Fatalf("expected 1 conductor setup call, got %d", services.conductorSetupCalls)
+	if services.executionConfigCalls != 1 {
+		t.Fatalf("expected 1 execution config call, got %d", services.executionConfigCalls)
 	}
 
 	view := model.View()
@@ -798,19 +712,19 @@ func TestSetupScreenTriggersConductorSetup(t *testing.T) {
 	}
 }
 
-func TestSetupScreenShowsConductorSetupFailure(t *testing.T) {
+func TestSetupScreenShowsExecutionConfigFailure(t *testing.T) {
 	services := &fakeServices{
 		setup: tui.SetupStatus{
-			WorkingDir:           "/tmp/demo",
-			ProjectRoot:          "/tmp/demo",
-			ConfigPath:           "/tmp/demo/springfield.toml",
-			RuntimeDir:           "/tmp/demo/.springfield",
-			ConductorConfigPath:  "/tmp/demo/.springfield/conductor/config.json",
-			ConfigPresent:        true,
-			RuntimePresent:       true,
-			ConductorConfigReady: false,
+			WorkingDir:          "/tmp/demo",
+			ProjectRoot:         "/tmp/demo",
+			ConfigPath:          "/tmp/demo/springfield.toml",
+			RuntimeDir:          "/tmp/demo/.springfield",
+			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:       true,
+			RuntimePresent:      true,
+			ExecutionReady:      false,
 		},
-		conductorSetupErr: errors.New("permission denied"),
+		executionConfigErr: errors.New("permission denied"),
 	}
 
 	model := tui.NewModel(services)
@@ -823,19 +737,19 @@ func TestSetupScreenShowsConductorSetupFailure(t *testing.T) {
 	}
 }
 
-func TestSetupScreenFullyReadyAfterConductorSetup(t *testing.T) {
+func TestSetupScreenFullyReadyAfterExecutionConfig(t *testing.T) {
 	services := &fakeServices{
 		setup: tui.SetupStatus{
-			WorkingDir:           "/tmp/demo",
-			ProjectRoot:          "/tmp/demo",
-			ConfigPath:           "/tmp/demo/springfield.toml",
-			RuntimeDir:           "/tmp/demo/.springfield",
-			ConductorConfigPath:  "/tmp/demo/.springfield/conductor/config.json",
-			ConfigPresent:        true,
-			RuntimePresent:       true,
-			ConductorConfigReady: false,
+			WorkingDir:          "/tmp/demo",
+			ProjectRoot:         "/tmp/demo",
+			ConfigPath:          "/tmp/demo/springfield.toml",
+			RuntimeDir:          "/tmp/demo/.springfield",
+			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:       true,
+			RuntimePresent:      true,
+			ExecutionReady:      false,
 		},
-		conductorSetup: tui.ConductorSetupResult{
+		executionConfigResult: tui.ExecutionConfigResult{
 			Created: true,
 			Path:    "/tmp/demo/.springfield/conductor/config.json",
 		},
@@ -849,534 +763,9 @@ func TestSetupScreenFullyReadyAfterConductorSetup(t *testing.T) {
 	if !strings.Contains(view, "Setup complete.") {
 		t.Fatalf("expected setup complete message, got:\n%s", view)
 	}
-	// Conductor config should show ready
+	// Execution config should show ready
 	if !strings.Contains(view, "ready at") {
 		t.Fatalf("expected conductor config ready indicator, got:\n%s", view)
-	}
-}
-
-// --- Ralph async run and monitor tests ---
-
-func TestRalphScreenRunsNextStory(t *testing.T) {
-	services := &fakeServices{
-		ralph: tui.RalphSummary{
-			Ready: true,
-			Plans: []tui.RalphPlanSummary{
-				{Name: "refresh", StoryCount: 3, NextStoryID: "US-001", NextStoryTitle: "Setup"},
-			},
-		},
-	}
-
-	model := tui.NewModel(services)
-	model = navigateToScreen(t, model, tui.ScreenRalph)
-
-	// Press 'r' — transitions to running state
-	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-
-	view := model.View()
-	if !strings.Contains(view, "running...") {
-		t.Fatalf("expected running state after r, got:\n%s", view)
-	}
-
-	// Simulate run completion
-	model = sendMsg(t, model, tui.RalphRunCompleteMsg{
-		Result: tui.RalphRunResult{
-			PlanName: "refresh",
-			StoryID:  "US-001",
-			Status:   "passed",
-		},
-	})
-
-	view = model.View()
-	for _, marker := range []string{"US-001", "passed", "succeeded"} {
-		if !strings.Contains(view, marker) {
-			t.Fatalf("expected Ralph view to contain %q after run, got:\n%s", marker, view)
-		}
-	}
-}
-
-func TestRalphScreenShowsRunFailure(t *testing.T) {
-	services := &fakeServices{
-		ralph: tui.RalphSummary{
-			Ready: true,
-			Plans: []tui.RalphPlanSummary{
-				{Name: "refresh", StoryCount: 3, NextStoryID: "US-001", NextStoryTitle: "Setup"},
-			},
-		},
-	}
-
-	model := tui.NewModel(services)
-	model = navigateToScreen(t, model, tui.ScreenRalph)
-
-	// Press 'r' to start
-	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-
-	// Complete with error
-	model = sendMsg(t, model, tui.RalphRunCompleteMsg{
-		Err: errors.New("agent claude failed: exit code 1"),
-	})
-
-	view := model.View()
-	if !strings.Contains(view, "agent claude failed") {
-		t.Fatalf("expected failure message in Ralph view, got:\n%s", view)
-	}
-	if !strings.Contains(view, "failed") {
-		t.Fatalf("expected failed monitor state, got:\n%s", view)
-	}
-}
-
-func TestRalphScreenShowsStreamingEvents(t *testing.T) {
-	services := &fakeServices{
-		ralph: tui.RalphSummary{
-			Ready: true,
-			Plans: []tui.RalphPlanSummary{
-				{Name: "refresh", StoryCount: 3, NextStoryID: "US-001", NextStoryTitle: "Setup"},
-			},
-		},
-	}
-
-	model := tui.NewModel(services)
-	model = navigateToScreen(t, model, tui.ScreenRalph)
-
-	// Start run
-	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-
-	// Stream events
-	model = sendMsg(t, model, tui.RuntimeEventMsg{Event: tui.RuntimeEvent{Source: "stdout", Data: "building package..."}})
-	model = sendMsg(t, model, tui.RuntimeEventMsg{Event: tui.RuntimeEvent{Source: "stderr", Data: "warning: unused var"}})
-
-	view := model.View()
-	for _, marker := range []string{"Events:", "[stdout] building package...", "[stderr] warning: unused var"} {
-		if !strings.Contains(view, marker) {
-			t.Fatalf("expected Ralph view to contain %q during streaming, got:\n%s", marker, view)
-		}
-	}
-
-	// Complete
-	model = sendMsg(t, model, tui.RalphRunCompleteMsg{
-		Result: tui.RalphRunResult{PlanName: "refresh", StoryID: "US-001", Status: "passed"},
-	})
-
-	view = model.View()
-	if !strings.Contains(view, "succeeded") {
-		t.Fatalf("expected succeeded after completion, got:\n%s", view)
-	}
-	// Events should persist after completion
-	if !strings.Contains(view, "[stdout] building package...") {
-		t.Fatalf("expected events to persist after completion, got:\n%s", view)
-	}
-}
-
-func TestRalphScreenMonitorIdleToRunningToSucceeded(t *testing.T) {
-	services := &fakeServices{
-		ralph: tui.RalphSummary{
-			Ready: true,
-			Plans: []tui.RalphPlanSummary{
-				{Name: "plan-a", StoryCount: 1, NextStoryID: "US-001", NextStoryTitle: "First"},
-			},
-		},
-	}
-
-	model := tui.NewModel(services)
-	model = navigateToScreen(t, model, tui.ScreenRalph)
-
-	// Idle: no status line
-	view := model.View()
-	if strings.Contains(view, "Status:") {
-		t.Fatalf("expected no status line when idle, got:\n%s", view)
-	}
-
-	// Running
-	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	view = model.View()
-	if !strings.Contains(view, "running...") {
-		t.Fatalf("expected running status, got:\n%s", view)
-	}
-
-	// Succeeded
-	model = sendMsg(t, model, tui.RalphRunCompleteMsg{
-		Result: tui.RalphRunResult{PlanName: "plan-a", StoryID: "US-001", Status: "passed"},
-	})
-	view = model.View()
-	if !strings.Contains(view, "succeeded") {
-		t.Fatalf("expected succeeded status, got:\n%s", view)
-	}
-}
-
-func TestRalphScreenMonitorIdleToRunningToFailed(t *testing.T) {
-	services := &fakeServices{
-		ralph: tui.RalphSummary{
-			Ready: true,
-			Plans: []tui.RalphPlanSummary{
-				{Name: "plan-a", StoryCount: 1, NextStoryID: "US-001", NextStoryTitle: "First"},
-			},
-		},
-	}
-
-	model := tui.NewModel(services)
-	model = navigateToScreen(t, model, tui.ScreenRalph)
-
-	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	model = sendMsg(t, model, tui.RalphRunCompleteMsg{
-		Result: tui.RalphRunResult{PlanName: "plan-a", StoryID: "US-001", Status: "failed", Error: "compile error"},
-	})
-
-	view := model.View()
-	if !strings.Contains(view, "Status: failed") {
-		t.Fatalf("expected failed status, got:\n%s", view)
-	}
-}
-
-func TestRalphScreenBlocksEscWhileRunning(t *testing.T) {
-	services := &fakeServices{
-		ralph: tui.RalphSummary{
-			Ready: true,
-			Plans: []tui.RalphPlanSummary{
-				{Name: "plan-a", StoryCount: 1, NextStoryID: "US-001", NextStoryTitle: "First"},
-			},
-		},
-	}
-
-	model := tui.NewModel(services)
-	model = navigateToScreen(t, model, tui.ScreenRalph)
-
-	// Start run
-	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-
-	// Try Esc while running — should stay on ralph screen
-	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEsc})
-	view := model.View()
-	if !strings.Contains(view, "Ralph") || !strings.Contains(view, "running...") {
-		t.Fatalf("Esc should be blocked during run, got:\n%s", view)
-	}
-}
-
-func TestRalphScreenBlocksRunWhileRunning(t *testing.T) {
-	services := &fakeServices{
-		ralph: tui.RalphSummary{
-			Ready: true,
-			Plans: []tui.RalphPlanSummary{
-				{Name: "plan-a", StoryCount: 1, NextStoryID: "US-001", NextStoryTitle: "First"},
-			},
-		},
-	}
-
-	model := tui.NewModel(services)
-	model = navigateToScreen(t, model, tui.ScreenRalph)
-
-	// Start first run
-	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-
-	// Try 'r' again while running — should be ignored
-	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	view := model.View()
-	if !strings.Contains(view, "running...") {
-		t.Fatalf("second r should be ignored during run, got:\n%s", view)
-	}
-}
-
-// --- Conductor async run and monitor tests ---
-
-func TestConductorScreenRunsNextPhase(t *testing.T) {
-	services := &fakeServices{
-		conductor: tui.ConductorSummary{
-			Ready:     true,
-			Completed: 1,
-			Total:     3,
-			NextStep:  "Run: springfield conductor run",
-		},
-	}
-
-	model := tui.NewModel(services)
-	model = navigateToScreen(t, model, tui.ScreenConductor)
-
-	// Press 'r' to start
-	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-
-	view := model.View()
-	if !strings.Contains(view, "running...") {
-		t.Fatalf("expected running state, got:\n%s", view)
-	}
-
-	// Complete
-	model = sendMsg(t, model, tui.ConductorRunCompleteMsg{
-		Result: tui.ConductorRunResult{
-			Ran:  []string{"02-conductor-runtime"},
-			Done: false,
-		},
-	})
-
-	view = model.View()
-	if !strings.Contains(view, "02-conductor-runtime") {
-		t.Fatalf("expected ran plan in Conductor view, got:\n%s", view)
-	}
-}
-
-func TestConductorScreenShowsRunFailure(t *testing.T) {
-	services := &fakeServices{
-		conductor: tui.ConductorSummary{
-			Ready:     true,
-			Completed: 0,
-			Total:     3,
-			NextStep:  "Run: springfield conductor run",
-		},
-	}
-
-	model := tui.NewModel(services)
-	model = navigateToScreen(t, model, tui.ScreenConductor)
-
-	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	model = sendMsg(t, model, tui.ConductorRunCompleteMsg{
-		Err: errors.New("plan 01-ralph-runtime: compile error"),
-	})
-
-	view := model.View()
-	if !strings.Contains(view, "compile error") {
-		t.Fatalf("expected failure message in Conductor view, got:\n%s", view)
-	}
-}
-
-func TestConductorScreenShowsStreamingEvents(t *testing.T) {
-	services := &fakeServices{
-		conductor: tui.ConductorSummary{
-			Ready:     true,
-			Completed: 0,
-			Total:     3,
-		},
-	}
-
-	model := tui.NewModel(services)
-	model = navigateToScreen(t, model, tui.ScreenConductor)
-
-	// Start run
-	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-
-	// Stream events
-	model = sendMsg(t, model, tui.RuntimeEventMsg{Event: tui.RuntimeEvent{Source: "stdout", Data: "executing plan 01..."}})
-	model = sendMsg(t, model, tui.RuntimeEventMsg{Event: tui.RuntimeEvent{Source: "stdout", Data: "tests passed"}})
-
-	view := model.View()
-	for _, marker := range []string{"Events:", "[stdout] executing plan 01...", "[stdout] tests passed"} {
-		if !strings.Contains(view, marker) {
-			t.Fatalf("expected Conductor view to contain %q during streaming, got:\n%s", marker, view)
-		}
-	}
-}
-
-func TestConductorScreenBlocksEscWhileRunning(t *testing.T) {
-	services := &fakeServices{
-		conductor: tui.ConductorSummary{
-			Ready:     true,
-			Completed: 0,
-			Total:     3,
-		},
-	}
-
-	model := tui.NewModel(services)
-	model = navigateToScreen(t, model, tui.ScreenConductor)
-
-	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEsc})
-
-	view := model.View()
-	if !strings.Contains(view, "Conductor") || !strings.Contains(view, "running...") {
-		t.Fatalf("Esc should be blocked during run, got:\n%s", view)
-	}
-}
-
-func TestRalphScreenNoCliDeadEnd(t *testing.T) {
-	model := tui.NewModel(&fakeServices{
-		ralph: tui.RalphSummary{
-			Ready: true,
-			Plans: []tui.RalphPlanSummary{
-				{Name: "refresh", StoryCount: 2, NextStoryID: "US-001", NextStoryTitle: "Setup"},
-			},
-		},
-	})
-
-	model = navigateToScreen(t, model, tui.ScreenRalph)
-
-	view := model.View()
-	if strings.Contains(view, "springfield ralph --help") {
-		t.Fatalf("Ralph screen should not contain CLI dead end, got:\n%s", view)
-	}
-	if !strings.Contains(view, "r run") {
-		t.Fatalf("expected actionable hint 'r run' in Ralph view, got:\n%s", view)
-	}
-}
-
-func TestConductorScreenNoCliDeadEnd(t *testing.T) {
-	model := tui.NewModel(&fakeServices{
-		conductor: tui.ConductorSummary{
-			Ready:     true,
-			Completed: 0,
-			Total:     3,
-		},
-	})
-
-	model = navigateToScreen(t, model, tui.ScreenConductor)
-
-	view := model.View()
-	if strings.Contains(view, "springfield conductor --help") {
-		t.Fatalf("Conductor screen should not contain CLI dead end, got:\n%s", view)
-	}
-	if !strings.Contains(view, "r run") {
-		t.Fatalf("expected actionable hint 'r run' in Conductor view, got:\n%s", view)
-	}
-}
-
-// --- US-003: Diagnosis views and CLI dead-end removal ---
-
-func TestConductorScreenDiagnosisViewToggle(t *testing.T) {
-	services := &fakeServices{
-		conductor: tui.ConductorSummary{
-			Ready:     true,
-			Completed: 1,
-			Total:     3,
-			Failures: []tui.ConductorPlanFailure{
-				{Plan: "02-config", Error: "compile error", Agent: "claude", EvidencePath: "/tmp/.springfield/conductor/evidence/02-config", Attempts: 2},
-			},
-		},
-	}
-
-	model := tui.NewModel(services)
-	model = navigateToScreen(t, model, tui.ScreenConductor)
-
-	// Press 'd' to enter diagnosis view
-	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-
-	view := model.View()
-	for _, marker := range []string{"Diagnosis", "02-config", "compile error", "claude", "Attempts: 2"} {
-		if !strings.Contains(view, marker) {
-			t.Fatalf("expected diagnosis view to contain %q, got:\n%s", marker, view)
-		}
-	}
-
-	// Press 'd' again to toggle back
-	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-
-	view = model.View()
-	if strings.Contains(view, "Diagnosis") {
-		t.Fatalf("expected to leave diagnosis view after second d, got:\n%s", view)
-	}
-}
-
-func TestConductorScreenDiagnosisShowsEvidencePath(t *testing.T) {
-	services := &fakeServices{
-		conductor: tui.ConductorSummary{
-			Ready:     true,
-			Completed: 0,
-			Total:     2,
-			Failures: []tui.ConductorPlanFailure{
-				{Plan: "01-runtime", Error: "exit code 1", Agent: "codex", EvidencePath: "/tmp/evidence/01-runtime", Attempts: 3},
-			},
-		},
-	}
-
-	model := tui.NewModel(services)
-	model = navigateToScreen(t, model, tui.ScreenConductor)
-
-	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-
-	view := model.View()
-	if !strings.Contains(view, "/tmp/evidence/01-runtime") {
-		t.Fatalf("expected evidence path in diagnosis view, got:\n%s", view)
-	}
-}
-
-func TestConductorScreenDiagnosisNoFailuresMessage(t *testing.T) {
-	services := &fakeServices{
-		conductor: tui.ConductorSummary{
-			Ready:     true,
-			Completed: 2,
-			Total:     3,
-		},
-	}
-
-	model := tui.NewModel(services)
-	model = navigateToScreen(t, model, tui.ScreenConductor)
-
-	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
-
-	view := model.View()
-	if !strings.Contains(view, "No failures") {
-		t.Fatalf("expected 'No failures' message in empty diagnosis view, got:\n%s", view)
-	}
-}
-
-func TestConductorScreenNextStepNoCliReference(t *testing.T) {
-	services := &fakeServices{
-		conductor: tui.ConductorSummary{
-			Ready:     true,
-			Completed: 1,
-			Total:     3,
-			Failures: []tui.ConductorPlanFailure{
-				{Plan: "02-config", Error: "compile error"},
-			},
-			NextStep: "Fix failures then run: springfield conductor resume",
-		},
-	}
-
-	model := tui.NewModel(services)
-	model = navigateToScreen(t, model, tui.ScreenConductor)
-
-	view := model.View()
-	// Should not show raw CLI commands in the TUI
-	if strings.Contains(view, "springfield conductor") {
-		t.Fatalf("conductor screen should not reference CLI commands, got:\n%s", view)
-	}
-}
-
-func TestConductorScreenShowsDiagnoseHint(t *testing.T) {
-	services := &fakeServices{
-		conductor: tui.ConductorSummary{
-			Ready:     true,
-			Completed: 1,
-			Total:     3,
-			Failures: []tui.ConductorPlanFailure{
-				{Plan: "02-config", Error: "compile error"},
-			},
-		},
-	}
-
-	model := tui.NewModel(services)
-	model = navigateToScreen(t, model, tui.ScreenConductor)
-
-	view := model.View()
-	if !strings.Contains(view, "d diagnose") {
-		t.Fatalf("expected 'd diagnose' hint when failures exist, got:\n%s", view)
-	}
-}
-
-func TestConductorScreenAfterFailedRunShowsDiagnosis(t *testing.T) {
-	services := &fakeServices{
-		conductor: tui.ConductorSummary{
-			Ready:     true,
-			Completed: 0,
-			Total:     3,
-		},
-	}
-
-	model := tui.NewModel(services)
-	model = navigateToScreen(t, model, tui.ScreenConductor)
-
-	// Start run
-	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
-
-	// Complete with error
-	model = sendMsg(t, model, tui.ConductorRunCompleteMsg{
-		Result: tui.ConductorRunResult{
-			Ran:   []string{"01-runtime"},
-			Error: "plan 01-runtime: agent failed",
-		},
-	})
-
-	view := model.View()
-	if !strings.Contains(view, "failed") {
-		t.Fatalf("expected failed status after error, got:\n%s", view)
-	}
-	if !strings.Contains(view, "agent failed") {
-		t.Fatalf("expected error detail after failed run, got:\n%s", view)
 	}
 }
 
@@ -1409,14 +798,14 @@ func TestAdvancedSetupRedirectsWhenNoConfig(t *testing.T) {
 func TestAdvancedSetupStorageModeSelection(t *testing.T) {
 	services := &fakeServices{
 		setup: tui.SetupStatus{
-			WorkingDir:           "/tmp/demo",
-			ProjectRoot:          "/tmp/demo",
-			ConfigPath:           "/tmp/demo/springfield.toml",
-			RuntimeDir:           "/tmp/demo/.springfield",
-			ConductorConfigPath:  "/tmp/demo/.springfield/conductor/config.json",
-			ConfigPresent:        true,
-			RuntimePresent:       true,
-			ConductorConfigReady: true,
+			WorkingDir:          "/tmp/demo",
+			ProjectRoot:         "/tmp/demo",
+			ConfigPath:          "/tmp/demo/springfield.toml",
+			RuntimeDir:          "/tmp/demo/.springfield",
+			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:       true,
+			RuntimePresent:      true,
+			ExecutionReady:      true,
 		},
 	}
 	model := tui.NewModel(services)
@@ -1476,14 +865,14 @@ func TestAdvancedSetupTrackedEnterAdvancesAfterInlineChoice(t *testing.T) {
 func TestAdvancedSetupAgentPriorityReorder(t *testing.T) {
 	services := &fakeServices{
 		setup: tui.SetupStatus{
-			WorkingDir:           "/tmp/demo",
-			ProjectRoot:          "/tmp/demo",
-			ConfigPath:           "/tmp/demo/springfield.toml",
-			RuntimeDir:           "/tmp/demo/.springfield",
-			ConductorConfigPath:  "/tmp/demo/.springfield/conductor/config.json",
-			ConfigPresent:        true,
-			RuntimePresent:       true,
-			ConductorConfigReady: true,
+			WorkingDir:          "/tmp/demo",
+			ProjectRoot:         "/tmp/demo",
+			ConfigPath:          "/tmp/demo/springfield.toml",
+			RuntimeDir:          "/tmp/demo/.springfield",
+			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:       true,
+			RuntimePresent:      true,
+			ExecutionReady:      true,
 		},
 		agentDetections: []tui.AgentDetection{
 			{ID: "claude", Name: "Claude Code", Installed: true},
@@ -1608,14 +997,14 @@ func TestAdvancedSetupPermissionsCopyWrapsToWindowWidth(t *testing.T) {
 func TestAdvancedSetupSettingsForm(t *testing.T) {
 	services := &fakeServices{
 		setup: tui.SetupStatus{
-			WorkingDir:           "/tmp/demo",
-			ProjectRoot:          "/tmp/demo",
-			ConfigPath:           "/tmp/demo/springfield.toml",
-			RuntimeDir:           "/tmp/demo/.springfield",
-			ConductorConfigPath:  "/tmp/demo/.springfield/conductor/config.json",
-			ConfigPresent:        true,
-			RuntimePresent:       true,
-			ConductorConfigReady: true,
+			WorkingDir:          "/tmp/demo",
+			ProjectRoot:         "/tmp/demo",
+			ConfigPath:          "/tmp/demo/springfield.toml",
+			RuntimeDir:          "/tmp/demo/.springfield",
+			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:       true,
+			RuntimePresent:      true,
+			ExecutionReady:      true,
 		},
 		agentDetections: []tui.AgentDetection{
 			{ID: "claude", Name: "Claude Code", Installed: true},
@@ -1650,14 +1039,14 @@ func TestAdvancedSetupSettingsForm(t *testing.T) {
 func TestAdvancedSetupCompleteStepSavesAndOffersDoctor(t *testing.T) {
 	services := &fakeServices{
 		setup: tui.SetupStatus{
-			WorkingDir:           "/tmp/demo",
-			ProjectRoot:          "/tmp/demo",
-			ConfigPath:           "/tmp/demo/springfield.toml",
-			RuntimeDir:           "/tmp/demo/.springfield",
-			ConductorConfigPath:  "/tmp/demo/.springfield/conductor/config.json",
-			ConfigPresent:        true,
-			RuntimePresent:       true,
-			ConductorConfigReady: true,
+			WorkingDir:          "/tmp/demo",
+			ProjectRoot:         "/tmp/demo",
+			ConfigPath:          "/tmp/demo/springfield.toml",
+			RuntimeDir:          "/tmp/demo/.springfield",
+			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:       true,
+			RuntimePresent:      true,
+			ExecutionReady:      true,
 		},
 		agentDetections: []tui.AgentDetection{
 			{ID: "claude", Name: "Claude Code", Installed: true},
@@ -1710,12 +1099,12 @@ func TestAdvancedSetupStorageChangeShowsExistingPlansNote(t *testing.T) {
 	services := &fakeServices{
 		setup:           readySetupStatus(),
 		agentDetections: []tui.AgentDetection{{ID: "claude", Name: "Claude Code", Installed: true}},
-		conductorCurrentCfg: &tui.ConductorCurrentConfig{
-			PlansDir:        ".springfield/conductor/plans",
-			WorktreeBase:    ".worktrees",
-			MaxRetries:      2,
-			RalphIterations: 50,
-			RalphTimeout:    3600,
+		executionConfig: &tui.ExecutionConfig{
+			PlansDir:                   ".springfield/conductor/plans",
+			WorktreeBase:               ".worktrees",
+			MaxRetries:                 2,
+			SingleWorkstreamIterations: 50,
+			SingleWorkstreamTimeout:    3600,
 		},
 	}
 	model := tui.NewModel(services)
@@ -1732,22 +1121,22 @@ func TestAdvancedSetupStorageChangeShowsExistingPlansNote(t *testing.T) {
 	}
 }
 
-func TestAdvancedSetupCompleteCallsUpdateConductorWhenConfigExists(t *testing.T) {
+func TestAdvancedSetupCompleteCallsUpdateExecutionConfigWhenConfigExists(t *testing.T) {
 	services := &fakeServices{
 		setup:           readySetupStatus(),
 		agentDetections: []tui.AgentDetection{{ID: "claude", Name: "Claude Code", Installed: true}},
 	}
 	model := advanceToAdvancedComplete(t, services)
 	_ = model
-	if services.updateConductorCalls != 1 {
-		t.Fatalf("expected UpdateConductor once, got %d", services.updateConductorCalls)
+	if services.updateExecutionConfigCalls != 1 {
+		t.Fatalf("expected UpdateExecutionConfig once, got %d", services.updateExecutionConfigCalls)
 	}
-	if services.conductorSetupCalls != 0 {
-		t.Fatalf("did not expect SetupConductor, got %d", services.conductorSetupCalls)
+	if services.executionConfigCalls != 0 {
+		t.Fatalf("did not expect ConfigureExecution, got %d", services.executionConfigCalls)
 	}
 }
 
-func TestAdvancedSetupCompleteCallsSetupConductorWhenConfigMissing(t *testing.T) {
+func TestAdvancedSetupCompleteCallsConfigureExecutionWhenConfigMissing(t *testing.T) {
 	services := &fakeServices{
 		setup: tui.SetupStatus{
 			WorkingDir:     "/tmp/demo",
@@ -1761,11 +1150,11 @@ func TestAdvancedSetupCompleteCallsSetupConductorWhenConfigMissing(t *testing.T)
 	}
 	model := advanceToAdvancedComplete(t, services)
 	_ = model
-	if services.conductorSetupCalls != 1 {
-		t.Fatalf("expected SetupConductor once, got %d", services.conductorSetupCalls)
+	if services.executionConfigCalls != 1 {
+		t.Fatalf("expected ConfigureExecution once, got %d", services.executionConfigCalls)
 	}
-	if services.updateConductorCalls != 0 {
-		t.Fatalf("did not expect UpdateConductor, got %d", services.updateConductorCalls)
+	if services.updateExecutionConfigCalls != 0 {
+		t.Fatalf("did not expect UpdateExecutionConfig, got %d", services.updateExecutionConfigCalls)
 	}
 }
 
@@ -1821,11 +1210,11 @@ func TestSetupShowsBasicAdvancedChoice(t *testing.T) {
 			ProjectRoot:         "/tmp/demo",
 			ConfigPath:          "/tmp/demo/springfield.toml",
 			RuntimeDir:          "/tmp/demo/.springfield",
-			ConductorConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
 			ConfigPresent:       true,
 			RuntimePresent:      true,
 		},
-		conductorSetup: tui.ConductorSetupResult{Created: true},
+		executionConfigResult: tui.ExecutionConfigResult{Created: true},
 	}
 	model := tui.NewModel(services)
 	// Navigate to Guided Setup (first menu item)
@@ -1850,21 +1239,21 @@ func TestSetupBasicUsesDefaultsAndOffersDoctorHandoff(t *testing.T) {
 			ProjectRoot:         "/tmp/demo",
 			ConfigPath:          "/tmp/demo/springfield.toml",
 			RuntimeDir:          "/tmp/demo/.springfield",
-			ConductorConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
 			ConfigPresent:       true,
 			RuntimePresent:      true,
 		},
-		conductorSetup:     tui.ConductorSetupResult{Created: true},
-		agentDetections:    []tui.AgentDetection{{ID: "claude", Name: "Claude Code", Installed: true}},
-		agentPriorityOrder: []string{"claude"},
+		executionConfigResult: tui.ExecutionConfigResult{Created: true},
+		agentDetections:       []tui.AgentDetection{{ID: "claude", Name: "Claude Code", Installed: true}},
+		agentPriorityOrder:    []string{"claude"},
 	}
 	model := tui.NewModel(services)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	// Select Basic (first option)
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	view := model.View()
-	if services.conductorSetupCalls != 1 {
-		t.Fatalf("expected conductor setup called, got %d", services.conductorSetupCalls)
+	if services.executionConfigCalls != 1 {
+		t.Fatalf("expected execution config called, got %d", services.executionConfigCalls)
 	}
 	if services.ensureExecutionDefaultsCalls != 1 {
 		t.Fatalf("expected EnsureRecommendedExecutionDefaults called once, got %d", services.ensureExecutionDefaultsCalls)
@@ -1883,23 +1272,23 @@ func TestSetupBasicUsesDefaultsAndOffersDoctorHandoff(t *testing.T) {
 func TestSetupBasicPreservesTrackedStorageSummary(t *testing.T) {
 	services := &fakeServices{
 		setup: tui.SetupStatus{
-			WorkingDir:           "/tmp/demo",
-			ProjectRoot:          "/tmp/demo",
-			ConfigPath:           "/tmp/demo/springfield.toml",
-			RuntimeDir:           "/tmp/demo/.springfield",
-			ConductorConfigPath:  "/tmp/demo/.springfield/conductor/config.json",
-			ConfigPresent:        true,
-			RuntimePresent:       true,
-			ConductorConfigReady: true,
+			WorkingDir:          "/tmp/demo",
+			ProjectRoot:         "/tmp/demo",
+			ConfigPath:          "/tmp/demo/springfield.toml",
+			RuntimeDir:          "/tmp/demo/.springfield",
+			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ConfigPresent:       true,
+			RuntimePresent:      true,
+			ExecutionReady:      true,
 		},
 		agentDetections:    []tui.AgentDetection{{ID: "claude", Name: "Claude Code", Installed: true}},
 		agentPriorityOrder: []string{"claude"},
-		conductorCurrentCfg: &tui.ConductorCurrentConfig{
-			PlansDir:        ".conductor/plans",
-			WorktreeBase:    ".worktrees",
-			MaxRetries:      2,
-			RalphIterations: 50,
-			RalphTimeout:    3600,
+		executionConfig: &tui.ExecutionConfig{
+			PlansDir:                   ".conductor/plans",
+			WorktreeBase:               ".worktrees",
+			MaxRetries:                 2,
+			SingleWorkstreamIterations: 50,
+			SingleWorkstreamTimeout:    3600,
 		},
 	}
 
@@ -1923,7 +1312,7 @@ func TestSetupAdvancedNavigatesToAdvancedScreen(t *testing.T) {
 			ProjectRoot:         "/tmp/demo",
 			ConfigPath:          "/tmp/demo/springfield.toml",
 			RuntimeDir:          "/tmp/demo/.springfield",
-			ConductorConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
 			ConfigPresent:       true,
 			RuntimePresent:      true,
 		},
@@ -1965,14 +1354,14 @@ func TestModelRendersDoctorSummary(t *testing.T) {
 
 func readySetupStatus() tui.SetupStatus {
 	return tui.SetupStatus{
-		WorkingDir:           "/tmp/demo",
-		ProjectRoot:          "/tmp/demo",
-		ConfigPath:           "/tmp/demo/springfield.toml",
-		RuntimeDir:           "/tmp/demo/.springfield",
-		ConductorConfigPath:  "/tmp/demo/.springfield/conductor/config.json",
-		ConfigPresent:        true,
-		RuntimePresent:       true,
-		ConductorConfigReady: true,
+		WorkingDir:          "/tmp/demo",
+		ProjectRoot:         "/tmp/demo",
+		ConfigPath:          "/tmp/demo/springfield.toml",
+		RuntimeDir:          "/tmp/demo/.springfield",
+		ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+		ConfigPresent:       true,
+		RuntimePresent:      true,
+		ExecutionReady:      true,
 	}
 }
 

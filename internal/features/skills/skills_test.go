@@ -41,7 +41,7 @@ func TestRenderUsesSharedPlaybookPrompt(t *testing.T) {
 	}
 
 	out, err := playbooks.Build(playbooks.Input{
-		Kind:        def.Kind,
+		Purpose:     def.Purpose,
 		ProjectRoot: root,
 		TaskBody:    def.TaskBody,
 	})
@@ -81,5 +81,16 @@ func TestInstallWritesSelectedSkillDirectory(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "Springfield") {
 		t.Fatalf("expected installed plan wrapper to mention Springfield, got:\n%s", string(data))
+	}
+}
+
+func TestCatalogUsesSpringfieldOwnedPurposes(t *testing.T) {
+	catalog := Catalog()
+
+	if got, want := catalog[0].Purpose, playbooks.PurposePlan; got != want {
+		t.Fatalf("catalog[0] purpose = %q, want %q", got, want)
+	}
+	if got, want := catalog[1].Purpose, playbooks.PurposeExplain; got != want {
+		t.Fatalf("catalog[1] purpose = %q, want %q", got, want)
 	}
 }

@@ -15,7 +15,7 @@ func Render(projectRoot, name string) (Rendered, error) {
 	}
 
 	output, err := playbooks.Build(playbooks.Input{
-		Kind:        skill.Kind,
+		Purpose:     skill.Purpose,
 		ProjectRoot: projectRoot,
 		TaskBody:    skill.TaskBody,
 	})

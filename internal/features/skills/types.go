@@ -11,7 +11,7 @@ import (
 type Skill struct {
 	Name        string
 	Summary     string
-	Kind        playbooks.Kind
+	Purpose     playbooks.Purpose
 	TaskBody    string
 	Header      string
 	Description string
@@ -34,7 +34,7 @@ var catalog = []Skill{
 	{
 		Name:        "plan",
 		Summary:     "Optional Springfield planning wrapper for power users.",
-		Kind:        playbooks.KindConductor,
+		Purpose:     playbooks.PurposePlan,
 		Header:      "Springfield Direct Skill: plan",
 		Description: "Optional Springfield direct skill wrapper. Springfield remains the primary product surface.",
 		TaskBody: strings.TrimSpace(`
@@ -48,7 +48,7 @@ Stay aligned with the shared Springfield playbook and the current project's guid
 	{
 		Name:        "explain",
 		Summary:     "Optional Springfield explanation wrapper for power users.",
-		Kind:        playbooks.KindConductor,
+		Purpose:     playbooks.PurposeExplain,
 		Header:      "Springfield Direct Skill: explain",
 		Description: "Optional Springfield direct skill wrapper. Springfield remains the primary product surface.",
 		TaskBody: strings.TrimSpace(`

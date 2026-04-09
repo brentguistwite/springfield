@@ -4,17 +4,15 @@ import tea "github.com/charmbracelet/bubbletea"
 
 // Model is the top-level Bubble Tea model for the Springfield TUI shell.
 type Model struct {
-	services  Services
-	screen    Screen
-	width     int
-	home      homeScreen
-	setup     setupScreen
-	newWork   newWorkScreen
-	status    springfieldStatusScreen
-	advanced  advancedSetupScreen
-	ralph     ralphScreen
-	conductor conductorScreen
-	doctor    doctorScreen
+	services Services
+	screen   Screen
+	width    int
+	home     homeScreen
+	setup    setupScreen
+	newWork  newWorkScreen
+	status   springfieldStatusScreen
+	advanced advancedSetupScreen
+	doctor   doctorScreen
 }
 
 // NewModel builds a shell model around the provided service boundary.
@@ -58,10 +56,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.setup = newSetupScreen(m.services)
 				return m, nil
 			}
-		case ScreenRalph:
-			m.ralph = newRalphScreen(m.services)
-		case ScreenConductor:
-			m.conductor = newConductorScreen(m.services)
 		case ScreenDoctor:
 			m.doctor = newDoctorScreen(m.services)
 		}
@@ -85,10 +79,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status, cmd = m.status.Update(msg)
 	case ScreenAdvancedSetup:
 		m.advanced, cmd = m.advanced.Update(msg)
-	case ScreenRalph:
-		m.ralph, cmd = m.ralph.Update(msg)
-	case ScreenConductor:
-		m.conductor, cmd = m.conductor.Update(msg)
 	case ScreenDoctor:
 		m.doctor, cmd = m.doctor.Update(msg)
 	}
@@ -106,10 +96,6 @@ func (m Model) View() string {
 		return m.status.View()
 	case ScreenAdvancedSetup:
 		return m.advanced.View(m.width)
-	case ScreenRalph:
-		return m.ralph.View()
-	case ScreenConductor:
-		return m.conductor.View()
 	case ScreenDoctor:
 		return m.doctor.View()
 	default:

@@ -11,7 +11,7 @@ var builtinFS embed.FS
 
 // Build resolves a Springfield playbook prompt from built-ins, project context, and task text.
 func Build(input Input) (Output, error) {
-	builtinSource, builtinBody, err := loadBuiltin(input.Kind)
+	builtinSource, builtinBody, err := loadBuiltin(input.Purpose)
 	if err != nil {
 		return Output{}, err
 	}
@@ -34,12 +34,10 @@ func Build(input Input) (Output, error) {
 	}, nil
 }
 
-func loadBuiltin(kind Kind) (string, string, error) {
-	source := "builtin/" + string(kind) + ".md"
-	switch kind {
-	case KindRalph, KindConductor:
-	default:
-		return "", "", fmt.Errorf("unsupported playbook kind %q", kind)
+func loadBuiltin(purpose Purpose) (string, string, error) {
+	source, err := builtinSourceForPurpose(purpose)
+	if err != nil {
+		return "", "", err
 	}
 
 	data, err := builtinFS.ReadFile(source)
@@ -48,6 +46,15 @@ func loadBuiltin(kind Kind) (string, string, error) {
 	}
 
 	return source, string(data), nil
+}
+
+func builtinSourceForPurpose(purpose Purpose) (string, error) {
+	switch purpose {
+	case PurposePlan, PurposeExplain:
+		return "builtin/conductor.md", nil
+	default:
+		return "", fmt.Errorf("unsupported playbook purpose %q", purpose)
+	}
 }
 
 func renderPrompt(builtinSource, builtinBody, projectSource, projectBody, taskBody string) string {

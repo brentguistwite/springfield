@@ -15,8 +15,6 @@ const (
 	ScreenNewWork
 	ScreenStatus
 	ScreenAdvancedSetup
-	ScreenRalph
-	ScreenConductor
 	ScreenDoctor
 )
 
@@ -30,15 +28,15 @@ type BackMsg struct{}
 
 // SetupStatus summarizes local project readiness for the guided setup shell.
 type SetupStatus struct {
-	WorkingDir           string
-	ProjectRoot          string
-	ConfigPath           string
-	RuntimeDir           string
-	ConductorConfigPath  string
-	ConfigPresent        bool
-	RuntimePresent       bool
-	ConductorConfigReady bool
-	Error                string
+	WorkingDir          string
+	ProjectRoot         string
+	ConfigPath          string
+	RuntimeDir          string
+	ExecutionConfigPath string
+	ConfigPresent       bool
+	RuntimePresent      bool
+	ExecutionReady      bool
+	Error               string
 }
 
 // NeedsInit reports whether core Springfield bootstrap files are still missing.
@@ -46,77 +44,18 @@ func (s SetupStatus) NeedsInit() bool {
 	return !s.ConfigPresent || !s.RuntimePresent
 }
 
-// RalphPlanSummary is the TUI-safe projection of one Ralph plan.
-type RalphPlanSummary struct {
-	Name           string
-	Project        string
-	StoryCount     int
-	NextStoryID    string
-	NextStoryTitle string
+// ExecutionConfigInput holds user-chosen execution setup options for the TUI.
+type ExecutionConfigInput struct {
+	PlansDir                   string
+	WorktreeBase               string
+	MaxRetries                 int
+	SingleWorkstreamIterations int
+	SingleWorkstreamTimeout    int
+	UpdateGitignore            bool
 }
 
-// RalphRunSummary is the TUI-safe projection of one Ralph run.
-type RalphRunSummary struct {
-	PlanName string
-	StoryID  string
-	Status   string
-}
-
-// RalphSummary captures the current Ralph surface state for the TUI.
-type RalphSummary struct {
-	Ready      bool
-	Reason     string
-	Plans      []RalphPlanSummary
-	RecentRuns []RalphRunSummary
-}
-
-// ConductorPlanFailure describes one failed conductor plan with evidence.
-type ConductorPlanFailure struct {
-	Plan         string
-	Error        string
-	Agent        string
-	EvidencePath string
-	Attempts     int
-}
-
-// ConductorSummary captures the current conductor surface state for the TUI.
-type ConductorSummary struct {
-	Ready     bool
-	Reason    string
-	Completed int
-	Total     int
-	Done      bool
-	Failures  []ConductorPlanFailure
-	NextStep  string
-}
-
-// RalphRunResult describes the outcome of a TUI-initiated Ralph run.
-type RalphRunResult struct {
-	PlanName string
-	StoryID  string
-	Status   string
-	Error    string
-}
-
-// ConductorRunResult describes the outcome of a TUI-initiated conductor run.
-type ConductorRunResult struct {
-	Ran   []string
-	Done  bool
-	Error string
-}
-
-// ConductorSetupInput holds user-chosen conductor setup options for the TUI.
-type ConductorSetupInput struct {
-	PlansDir        string
-	WorktreeBase    string
-	MaxRetries      int
-	RalphIterations int
-	RalphTimeout    int
-	UpdateGitignore bool
-}
-
-// ConductorSetupResult describes what the TUI conductor setup action produced.
-type ConductorSetupResult struct {
+// ExecutionConfigResult describes what the TUI execution setup action produced.
+type ExecutionConfigResult struct {
 	Created          bool
 	Reused           bool
 	Path             string
@@ -142,18 +81,6 @@ type RuntimeEvent struct {
 // RuntimeEventMsg delivers a streaming event to the TUI during execution.
 type RuntimeEventMsg struct {
 	Event RuntimeEvent
-}
-
-// RalphRunCompleteMsg signals that an async Ralph run finished.
-type RalphRunCompleteMsg struct {
-	Result RalphRunResult
-	Err    error
-}
-
-// ConductorRunCompleteMsg signals that an async conductor run finished.
-type ConductorRunCompleteMsg struct {
-	Result ConductorRunResult
-	Err    error
 }
 
 // SpringfieldWorkstreamStatus is the TUI-safe projection of one Springfield workstream.
@@ -248,36 +175,32 @@ type PlanWorkResult struct {
 	Draft    *PlannedWorkDraft
 }
 
-// ConductorCurrentConfig is a TUI-safe projection of current conductor settings.
-type ConductorCurrentConfig struct {
-	PlansDir        string
-	WorktreeBase    string
-	MaxRetries      int
-	RalphIterations int
-	RalphTimeout    int
+// ExecutionConfig is a TUI-safe projection of current execution settings.
+type ExecutionConfig struct {
+	PlansDir                   string
+	WorktreeBase               string
+	MaxRetries                 int
+	SingleWorkstreamIterations int
+	SingleWorkstreamTimeout    int
 }
 
 // Services hides TUI data loading and side effects behind a small boundary.
 type Services interface {
 	SetupStatus() SetupStatus
 	InitProject() (config.InitResult, error)
-	SetupConductor(opts ConductorSetupInput) (ConductorSetupResult, error)
+	ConfigureExecution(opts ExecutionConfigInput) (ExecutionConfigResult, error)
 	DetectAgents() []AgentDetection
 	AgentPriority() []string
 	AgentExecutionModes() AgentExecutionModes
-	ConductorCurrentConfig() *ConductorCurrentConfig
+	CurrentExecutionConfig() *ExecutionConfig
 	SpringfieldStatus() SpringfieldStatus
 	SpringfieldDiagnosis() SpringfieldDiagnosis
 	RunSpringfieldWork(onEvent func(RuntimeEvent)) (SpringfieldRunResult, error)
 	ResumeSpringfieldWork(onEvent func(RuntimeEvent)) (SpringfieldRunResult, error)
-	RalphSummary() RalphSummary
-	RunRalphNext(planName string, onEvent func(RuntimeEvent)) (RalphRunResult, error)
-	ConductorSummary() ConductorSummary
-	RunConductorNext(onEvent func(RuntimeEvent)) (ConductorRunResult, error)
 	SaveAgentPriority(priority []string) error
 	SaveAgentExecutionModes(input SaveAgentExecutionModesInput) error
 	EnsureRecommendedExecutionDefaults() error
-	UpdateConductor(opts ConductorSetupInput) (ConductorSetupResult, error)
+	UpdateExecutionConfig(opts ExecutionConfigInput) (ExecutionConfigResult, error)
 	DoctorSummary() doctor.Report
 	PlanWork(input string) (PlanWorkResult, error)
 	RegeneratePlannedWork() (PlanWorkResult, error)

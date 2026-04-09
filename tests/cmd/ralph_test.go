@@ -36,6 +36,10 @@ func writeSpringfieldConfig(t *testing.T, dir string, agent string) {
 	}
 }
 
+func ralphDebugArgs(args ...string) []string {
+	return append([]string{"internal-debug", "ralph"}, args...)
+}
+
 func TestRalphInitAcceptsPRDFormat(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
@@ -57,7 +61,7 @@ func TestRalphInitAcceptsPRDFormat(t *testing.T) {
 		t.Fatalf("write PRD spec: %v", err)
 	}
 
-	output, err := runBinaryIn(t, bin, dir, "ralph", "init", "--name", "prd", "--spec", specPath)
+	output, err := runBinaryIn(t, bin, dir, ralphDebugArgs("init", "--name", "prd", "--spec", specPath)...)
 	if err != nil {
 		t.Fatalf("ralph init with PRD format failed: %v\n%s", err, output)
 	}
@@ -66,7 +70,7 @@ func TestRalphInitAcceptsPRDFormat(t *testing.T) {
 		t.Fatalf("expected 2 stories from PRD userStories, got:\n%s", output)
 	}
 
-	output, err = runBinaryIn(t, bin, dir, "ralph", "status", "--name", "prd")
+	output, err = runBinaryIn(t, bin, dir, ralphDebugArgs("status", "--name", "prd")...)
 	if err != nil {
 		t.Fatalf("ralph status failed: %v\n%s", err, output)
 	}
@@ -94,7 +98,7 @@ func TestRalphInitStatusAndRun(t *testing.T) {
 		},
 	})
 
-	output, err := runBinaryIn(t, bin, dir, "ralph", "init", "--name", "refresh", "--spec", specPath)
+	output, err := runBinaryIn(t, bin, dir, ralphDebugArgs("init", "--name", "refresh", "--spec", specPath)...)
 	if err != nil {
 		t.Fatalf("ralph init failed: %v\n%s", err, output)
 	}
@@ -103,7 +107,7 @@ func TestRalphInitStatusAndRun(t *testing.T) {
 		t.Fatalf("expected init output, got:\n%s", output)
 	}
 
-	output, err = runBinaryIn(t, bin, dir, "ralph", "status", "--name", "refresh")
+	output, err = runBinaryIn(t, bin, dir, ralphDebugArgs("status", "--name", "refresh")...)
 	if err != nil {
 		t.Fatalf("ralph status failed: %v\n%s", err, output)
 	}
@@ -123,7 +127,7 @@ func TestRalphInitStatusAndRun(t *testing.T) {
 		bin,
 		dir,
 		[]string{"PATH=" + t.TempDir()},
-		"ralph", "run", "--name", "refresh",
+		ralphDebugArgs("run", "--name", "refresh")...,
 	)
 	if err != nil {
 		t.Fatalf("ralph run failed: %v\n%s", err, output)
@@ -142,7 +146,7 @@ func TestRalphInitStatusAndRun(t *testing.T) {
 	}
 
 	// Story should remain unpassed after a failed run.
-	output, err = runBinaryIn(t, bin, dir, "ralph", "status", "--name", "refresh")
+	output, err = runBinaryIn(t, bin, dir, ralphDebugArgs("status", "--name", "refresh")...)
 	if err != nil {
 		t.Fatalf("ralph status after run failed: %v\n%s", err, output)
 	}
@@ -166,13 +170,13 @@ func TestRalphResetClearsPassedStory(t *testing.T) {
 		},
 	})
 
-	output, err := runBinaryIn(t, bin, dir, "ralph", "init", "--name", "r", "--spec", specPath)
+	output, err := runBinaryIn(t, bin, dir, ralphDebugArgs("init", "--name", "r", "--spec", specPath)...)
 	if err != nil {
 		t.Fatalf("ralph init failed: %v\n%s", err, output)
 	}
 
 	// Reset single story
-	output, err = runBinaryIn(t, bin, dir, "ralph", "reset", "--name", "r", "--story", "US-001")
+	output, err = runBinaryIn(t, bin, dir, ralphDebugArgs("reset", "--name", "r", "--story", "US-001")...)
 	if err != nil {
 		t.Fatalf("ralph reset failed: %v\n%s", err, output)
 	}
@@ -180,7 +184,7 @@ func TestRalphResetClearsPassedStory(t *testing.T) {
 		t.Fatalf("expected reset confirmation, got:\n%s", output)
 	}
 
-	output, err = runBinaryIn(t, bin, dir, "ralph", "status", "--name", "r")
+	output, err = runBinaryIn(t, bin, dir, ralphDebugArgs("status", "--name", "r")...)
 	if err != nil {
 		t.Fatalf("ralph status failed: %v\n%s", err, output)
 	}
@@ -192,7 +196,7 @@ func TestRalphResetClearsPassedStory(t *testing.T) {
 	}
 
 	// Reset all
-	output, err = runBinaryIn(t, bin, dir, "ralph", "reset", "--name", "r")
+	output, err = runBinaryIn(t, bin, dir, ralphDebugArgs("reset", "--name", "r")...)
 	if err != nil {
 		t.Fatalf("ralph reset all failed: %v\n%s", err, output)
 	}
@@ -214,12 +218,12 @@ func TestRalphResetFailsForAlreadyPendingStory(t *testing.T) {
 		},
 	})
 
-	output, err := runBinaryIn(t, bin, dir, "ralph", "init", "--name", "r", "--spec", specPath)
+	output, err := runBinaryIn(t, bin, dir, ralphDebugArgs("init", "--name", "r", "--spec", specPath)...)
 	if err != nil {
 		t.Fatalf("ralph init failed: %v\n%s", err, output)
 	}
 
-	output, err = runBinaryIn(t, bin, dir, "ralph", "reset", "--name", "r", "--story", "US-001")
+	output, err = runBinaryIn(t, bin, dir, ralphDebugArgs("reset", "--name", "r", "--story", "US-001")...)
 	if err == nil {
 		t.Fatalf("expected ralph reset to fail for pending story, output:\n%s", output)
 	}
@@ -229,9 +233,9 @@ func TestRalphResetFailsForAlreadyPendingStory(t *testing.T) {
 }
 
 func TestRalphHelpShowsRealSubcommands(t *testing.T) {
-	output, err := runSpringfield(t, "ralph", "--help")
+	output, err := runSpringfield(t, "internal-debug", "ralph", "--help")
 	if err != nil {
-		t.Fatalf("springfield ralph --help failed: %v\n%s", err, output)
+		t.Fatalf("springfield internal-debug ralph --help failed: %v\n%s", err, output)
 	}
 
 	for _, marker := range []string{"init", "status", "run", "reset", "Manage Ralph plans"} {
@@ -254,12 +258,12 @@ func TestRalphRunFailsWhenNoEligibleStoriesRemain(t *testing.T) {
 		},
 	})
 
-	output, err := runBinaryIn(t, bin, dir, "ralph", "init", "--name", "refresh", "--spec", specPath)
+	output, err := runBinaryIn(t, bin, dir, ralphDebugArgs("init", "--name", "refresh", "--spec", specPath)...)
 	if err != nil {
 		t.Fatalf("ralph init failed: %v\n%s", err, output)
 	}
 
-	output, err = runBinaryIn(t, bin, dir, "ralph", "run", "--name", "refresh")
+	output, err = runBinaryIn(t, bin, dir, ralphDebugArgs("run", "--name", "refresh")...)
 	if err == nil {
 		t.Fatalf("expected Ralph run to fail when no stories remain, output:\n%s", output)
 	}
@@ -280,12 +284,12 @@ func TestRalphRunFailsWithoutConfig(t *testing.T) {
 		},
 	})
 
-	output, err := runBinaryIn(t, bin, dir, "ralph", "init", "--name", "refresh", "--spec", specPath)
+	output, err := runBinaryIn(t, bin, dir, ralphDebugArgs("init", "--name", "refresh", "--spec", specPath)...)
 	if err != nil {
 		t.Fatalf("ralph init failed: %v\n%s", err, output)
 	}
 
-	output, err = runBinaryIn(t, bin, dir, "ralph", "run", "--name", "refresh")
+	output, err = runBinaryIn(t, bin, dir, ralphDebugArgs("run", "--name", "refresh")...)
 	if err == nil {
 		t.Fatalf("expected ralph run to fail without springfield.toml, output:\n%s", output)
 	}
@@ -316,7 +320,7 @@ func TestRalphRunUsesEffectivePriorityHead(t *testing.T) {
 		},
 	})
 
-	output, err := runBinaryIn(t, bin, dir, "ralph", "init", "--name", "refresh", "--spec", specPath)
+	output, err := runBinaryIn(t, bin, dir, ralphDebugArgs("init", "--name", "refresh", "--spec", specPath)...)
 	if err != nil {
 		t.Fatalf("ralph init failed: %v\n%s", err, output)
 	}
@@ -326,7 +330,7 @@ func TestRalphRunUsesEffectivePriorityHead(t *testing.T) {
 		bin,
 		dir,
 		[]string{"PATH=" + t.TempDir()},
-		"ralph", "run", "--name", "refresh",
+		ralphDebugArgs("run", "--name", "refresh")...,
 	)
 	if err != nil {
 		t.Fatalf("ralph run failed: %v\n%s", err, output)
@@ -364,7 +368,7 @@ func TestRalphRunPassesClaudePermissionModeToSubprocess(t *testing.T) {
 		},
 	})
 
-	output, err := runBinaryIn(t, bin, dir, "ralph", "init", "--name", "refresh", "--spec", specPath)
+	output, err := runBinaryIn(t, bin, dir, ralphDebugArgs("init", "--name", "refresh", "--spec", specPath)...)
 	if err != nil {
 		t.Fatalf("ralph init failed: %v\n%s", err, output)
 	}
@@ -378,7 +382,7 @@ func TestRalphRunPassesClaudePermissionModeToSubprocess(t *testing.T) {
 		bin,
 		dir,
 		[]string{"PATH=" + fakeBinDir},
-		"ralph", "run", "--name", "refresh",
+		ralphDebugArgs("run", "--name", "refresh")...,
 	)
 	if err != nil {
 		t.Fatalf("ralph run failed: %v\n%s", err, output)

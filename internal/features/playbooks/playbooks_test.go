@@ -7,39 +7,39 @@ import (
 	"testing"
 )
 
-func TestBuiltinRalphPlaybookLoads(t *testing.T) {
+func TestPlanPurposeLoadsSharedBuiltin(t *testing.T) {
 	out, err := Build(Input{
-		Kind:        KindRalph,
+		Purpose:     PurposePlan,
 		ProjectRoot: t.TempDir(),
 		TaskBody:    "Ship the change.",
 	})
 	if err != nil {
-		t.Fatalf("build ralph playbook: %v", err)
-	}
-
-	if out.BuiltinSource != "builtin/ralph.md" {
-		t.Fatalf("builtin source = %q", out.BuiltinSource)
-	}
-	if !strings.Contains(out.Prompt, "Built-in Ralph playbook.") {
-		t.Fatalf("expected Ralph builtin content, got:\n%s", out.Prompt)
-	}
-}
-
-func TestBuiltinConductorPlaybookLoads(t *testing.T) {
-	out, err := Build(Input{
-		Kind:        KindConductor,
-		ProjectRoot: t.TempDir(),
-		TaskBody:    "Run the workstreams.",
-	})
-	if err != nil {
-		t.Fatalf("build conductor playbook: %v", err)
+		t.Fatalf("build plan playbook: %v", err)
 	}
 
 	if out.BuiltinSource != "builtin/conductor.md" {
 		t.Fatalf("builtin source = %q", out.BuiltinSource)
 	}
 	if !strings.Contains(out.Prompt, "Built-in Conductor playbook.") {
-		t.Fatalf("expected Conductor builtin content, got:\n%s", out.Prompt)
+		t.Fatalf("expected shared builtin content, got:\n%s", out.Prompt)
+	}
+}
+
+func TestExplainPurposeLoadsSharedBuiltin(t *testing.T) {
+	out, err := Build(Input{
+		Purpose:     PurposeExplain,
+		ProjectRoot: t.TempDir(),
+		TaskBody:    "Run the workstreams.",
+	})
+	if err != nil {
+		t.Fatalf("build explain playbook: %v", err)
+	}
+
+	if out.BuiltinSource != "builtin/conductor.md" {
+		t.Fatalf("builtin source = %q", out.BuiltinSource)
+	}
+	if !strings.Contains(out.Prompt, "Built-in Conductor playbook.") {
+		t.Fatalf("expected shared builtin content, got:\n%s", out.Prompt)
 	}
 }
 
@@ -49,7 +49,7 @@ func TestProjectContextPrefersAgents(t *testing.T) {
 	writeContextFile(t, root, "CLAUDE.md", "claude context")
 
 	out, err := Build(Input{
-		Kind:        KindRalph,
+		Purpose:     PurposePlan,
 		ProjectRoot: root,
 		TaskBody:    "Ship the change.",
 	})
@@ -73,7 +73,7 @@ func TestProjectContextFallsBackToClaude(t *testing.T) {
 	writeContextFile(t, root, "CLAUDE.md", "claude context")
 
 	out, err := Build(Input{
-		Kind:        KindRalph,
+		Purpose:     PurposePlan,
 		ProjectRoot: root,
 		TaskBody:    "Ship the change.",
 	})
@@ -94,7 +94,7 @@ func TestRenderIncludesSectionsInOrder(t *testing.T) {
 	writeContextFile(t, root, "AGENTS.md", "project guidance")
 
 	out, err := Build(Input{
-		Kind:        KindConductor,
+		Purpose:     PurposeExplain,
 		ProjectRoot: root,
 		TaskBody:    "task body",
 	})

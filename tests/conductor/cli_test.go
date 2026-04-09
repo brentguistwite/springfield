@@ -10,11 +10,15 @@ import (
 	"springfield/internal/features/conductor"
 )
 
+func conductorCLIArgs(args ...string) []string {
+	return append([]string{"internal-debug", "conductor"}, args...)
+}
+
 func TestConductorStatusErrorsWithoutProjectConfig(t *testing.T) {
 	root := t.TempDir()
 
 	command := cmd.NewRootCommand()
-	command.SetArgs([]string{"conductor", "status", "--dir", root})
+	command.SetArgs(conductorCLIArgs("status", "--dir", root))
 	var buffer bytes.Buffer
 	command.SetOut(&buffer)
 	command.SetErr(&buffer)
@@ -30,7 +34,7 @@ func TestConductorStatusReportsProgress(t *testing.T) {
 	writeConductorConfig(t, root, sequentialOnlyConfig())
 
 	command := cmd.NewRootCommand()
-	command.SetArgs([]string{"conductor", "status", "--dir", root})
+	command.SetArgs(conductorCLIArgs("status", "--dir", root))
 	var buffer bytes.Buffer
 	command.SetOut(&buffer)
 
@@ -55,7 +59,7 @@ func TestConductorStatusShowsAgentAndEvidence(t *testing.T) {
 	})
 
 	command := cmd.NewRootCommand()
-	command.SetArgs([]string{"conductor", "status", "--dir", root})
+	command.SetArgs(conductorCLIArgs("status", "--dir", root))
 	var buffer bytes.Buffer
 	command.SetOut(&buffer)
 
@@ -87,7 +91,7 @@ func TestConductorDiagnoseReportsFailure(t *testing.T) {
 	})
 
 	command := cmd.NewRootCommand()
-	command.SetArgs([]string{"conductor", "diagnose", "--dir", root})
+	command.SetArgs(conductorCLIArgs("diagnose", "--dir", root))
 	var buffer bytes.Buffer
 	command.SetOut(&buffer)
 
@@ -107,7 +111,7 @@ func TestConductorRunDryRunShowsNextPhase(t *testing.T) {
 	writeConductorConfig(t, root, sequentialOnlyConfig())
 
 	command := cmd.NewRootCommand()
-	command.SetArgs([]string{"conductor", "run", "--dir", root, "--dry-run"})
+	command.SetArgs(conductorCLIArgs("run", "--dir", root, "--dry-run"))
 	var buffer bytes.Buffer
 	command.SetOut(&buffer)
 
@@ -132,7 +136,7 @@ func TestConductorResumeDryRunShowsRemainingWork(t *testing.T) {
 	})
 
 	command := cmd.NewRootCommand()
-	command.SetArgs([]string{"conductor", "resume", "--dir", root, "--dry-run"})
+	command.SetArgs(conductorCLIArgs("resume", "--dir", root, "--dry-run"))
 	var buffer bytes.Buffer
 	command.SetOut(&buffer)
 
@@ -157,7 +161,7 @@ func TestConductorRunSuccessShowsTruthfulSummary(t *testing.T) {
 	writePlanFile(t, plansDir, "03-runtime", "runtime plan")
 
 	command := cmd.NewRootCommand()
-	command.SetArgs([]string{"conductor", "run", "--dir", root})
+	command.SetArgs(conductorCLIArgs("run", "--dir", root))
 	var buffer bytes.Buffer
 	command.SetOut(&buffer)
 
@@ -184,7 +188,7 @@ func TestConductorRunFailureDoesNotClaimSuccess(t *testing.T) {
 	// No plan files -> executor will fail reading them
 
 	command := cmd.NewRootCommand()
-	command.SetArgs([]string{"conductor", "run", "--dir", root})
+	command.SetArgs(conductorCLIArgs("run", "--dir", root))
 	var buffer bytes.Buffer
 	command.SetOut(&buffer)
 	command.SetErr(&buffer)

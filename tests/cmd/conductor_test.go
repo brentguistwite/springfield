@@ -10,8 +10,12 @@ import (
 	"springfield/internal/features/conductor"
 )
 
+func conductorDebugArgs(args ...string) []string {
+	return append([]string{"internal-debug", "conductor"}, args...)
+}
+
 func TestConductorSetupAppearsInHelp(t *testing.T) {
-	output, err := runSpringfield(t, "conductor", "--help")
+	output, err := runSpringfield(t, "internal-debug", "conductor", "--help")
 	if err != nil {
 		t.Fatalf("conductor --help failed: %v\n%s", err, output)
 	}
@@ -30,7 +34,7 @@ func TestConductorSetupGeneratesConfig(t *testing.T) {
 		t.Fatalf("init failed: %v", err)
 	}
 
-	output, err := runBinaryIn(t, bin, dir, "conductor", "setup")
+	output, err := runBinaryIn(t, bin, dir, conductorDebugArgs("setup")...)
 	if err != nil {
 		t.Fatalf("conductor setup failed: %v\n%s", err, output)
 	}
@@ -54,7 +58,7 @@ func TestConductorSetupDefaultsToLocalPlanStorage(t *testing.T) {
 		t.Fatalf("init failed: %v", err)
 	}
 
-	output, err := runBinaryInWithInput(t, bin, dir, "\n", "conductor", "setup")
+	output, err := runBinaryInWithInput(t, bin, dir, "\n", conductorDebugArgs("setup")...)
 	if err != nil {
 		t.Fatalf("conductor setup failed: %v\n%s", err, output)
 	}
@@ -87,7 +91,7 @@ func TestConductorSetupTrackedModeOffersGitignoreUpdate(t *testing.T) {
 		t.Fatalf("init failed: %v", err)
 	}
 
-	output, err := runBinaryInWithInput(t, bin, dir, "tracked\ny\n", "conductor", "setup")
+	output, err := runBinaryInWithInput(t, bin, dir, "tracked\ny\n", conductorDebugArgs("setup")...)
 	if err != nil {
 		t.Fatalf("conductor setup failed: %v\n%s", err, output)
 	}
@@ -132,7 +136,7 @@ func TestConductorSetupTrackedModeCanSkipGitignoreUpdate(t *testing.T) {
 		t.Fatalf("init failed: %v", err)
 	}
 
-	output, err := runBinaryInWithInput(t, bin, dir, "tracked\nn\n", "conductor", "setup")
+	output, err := runBinaryInWithInput(t, bin, dir, "tracked\nn\n", conductorDebugArgs("setup")...)
 	if err != nil {
 		t.Fatalf("conductor setup failed: %v\n%s", err, output)
 	}
@@ -150,7 +154,7 @@ func TestConductorSetupFailsWithoutInit(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 
-	output, err := runBinaryIn(t, bin, dir, "conductor", "setup")
+	output, err := runBinaryIn(t, bin, dir, conductorDebugArgs("setup")...)
 	if err == nil {
 		t.Fatalf("expected conductor setup to fail without init, got:\n%s", output)
 	}
@@ -169,12 +173,12 @@ func TestConductorSetupReusesExistingConfig(t *testing.T) {
 	}
 
 	// First setup
-	if _, err := runBinaryIn(t, bin, dir, "conductor", "setup"); err != nil {
+	if _, err := runBinaryIn(t, bin, dir, conductorDebugArgs("setup")...); err != nil {
 		t.Fatalf("first setup failed: %v", err)
 	}
 
 	// Second setup should reuse
-	output, err := runBinaryIn(t, bin, dir, "conductor", "setup")
+	output, err := runBinaryIn(t, bin, dir, conductorDebugArgs("setup")...)
 	if err != nil {
 		t.Fatalf("second setup failed: %v\n%s", err, output)
 	}
@@ -192,7 +196,7 @@ func TestConductorSetupShowsAgentGuidance(t *testing.T) {
 		t.Fatalf("init failed: %v", err)
 	}
 
-	output, err := runBinaryIn(t, bin, dir, "conductor", "setup")
+	output, err := runBinaryIn(t, bin, dir, conductorDebugArgs("setup")...)
 	if err != nil {
 		t.Fatalf("conductor setup failed: %v\n%s", err, output)
 	}
@@ -215,7 +219,7 @@ func TestConductorSetupWithToolFlag(t *testing.T) {
 		t.Fatalf("init failed: %v", err)
 	}
 
-	output, err := runBinaryIn(t, bin, dir, "conductor", "setup", "--tool", "codex")
+	output, err := runBinaryIn(t, bin, dir, conductorDebugArgs("setup", "--tool", "codex")...)
 	if err != nil {
 		t.Fatalf("conductor setup --tool codex failed: %v\n%s", err, output)
 	}
@@ -243,7 +247,7 @@ func TestConductorSetupUsesEffectivePriorityHead(t *testing.T) {
 		t.Fatalf("write springfield.toml: %v", err)
 	}
 
-	output, err := runBinaryIn(t, bin, dir, "conductor", "setup")
+	output, err := runBinaryIn(t, bin, dir, conductorDebugArgs("setup")...)
 	if err != nil {
 		t.Fatalf("conductor setup failed: %v\n%s", err, output)
 	}
@@ -297,7 +301,7 @@ func TestConductorSetupShowsNextSteps(t *testing.T) {
 		t.Fatalf("init failed: %v", err)
 	}
 
-	output, err := runBinaryIn(t, bin, dir, "conductor", "setup")
+	output, err := runBinaryIn(t, bin, dir, conductorDebugArgs("setup")...)
 	if err != nil {
 		t.Fatalf("conductor setup failed: %v\n%s", err, output)
 	}
@@ -306,7 +310,7 @@ func TestConductorSetupShowsNextSteps(t *testing.T) {
 		t.Errorf("expected next steps in output, got:\n%s", output)
 	}
 
-	if !strings.Contains(output, "springfield conductor run") {
+	if !strings.Contains(output, "springfield internal-debug conductor run") {
 		t.Errorf("expected conductor run hint, got:\n%s", output)
 	}
 }
@@ -337,7 +341,7 @@ func TestConductorRunFromNestedDirUsesResolvedProjectRoot(t *testing.T) {
 		bin,
 		dir,
 		[]string{"PATH=" + t.TempDir()},
-		"conductor", "run", "--dir", nestedDir,
+		conductorDebugArgs("run", "--dir", nestedDir)...,
 	)
 	if err == nil {
 		t.Fatalf("expected conductor run to fail, output:\n%s", output)
