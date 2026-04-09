@@ -3,6 +3,7 @@ package conductor_test
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"springfield/internal/core/config"
@@ -99,6 +100,58 @@ func TestSaveStateRoundTrips(t *testing.T) {
 
 	if got := reloaded.PlanError("02-config"); got != "timeout" {
 		t.Fatalf("02-config error: got %q want timeout", got)
+	}
+}
+
+func TestLoadProjectReadsLegacyStateFromConductorRuntime(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root)
+	writeLegacyConductorConfig(t, root, sequentialOnlyConfig())
+	writeLegacyConductorState(t, root, &conductor.State{
+		Plans: map[string]*conductor.PlanState{
+			"01-bootstrap": {
+				Status:   conductor.StatusFailed,
+				Error:    "legacy failure",
+				Agent:    "claude",
+				Attempts: 2,
+			},
+		},
+	})
+
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("load project: %v", err)
+	}
+
+	if got := project.PlanStatus("01-bootstrap"); got != conductor.StatusFailed {
+		t.Fatalf("status: got %q want %q", got, conductor.StatusFailed)
+	}
+	if got := project.PlanError("01-bootstrap"); got != "legacy failure" {
+		t.Fatalf("error: got %q want legacy failure", got)
+	}
+	if got := project.PlanAttempts("01-bootstrap"); got != 2 {
+		t.Fatalf("attempts: got %d want 2", got)
+	}
+}
+
+func TestSaveStateWritesSpringfieldOwnedPathAfterLegacyRead(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root)
+	writeLegacyConductorConfig(t, root, sequentialOnlyConfig())
+	writeLegacyConductorState(t, root, conductor.NewState())
+
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("load project: %v", err)
+	}
+
+	project.MarkCompleted("01-bootstrap", "claude")
+	if err := project.SaveState(); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(root, ".springfield", "execution", "state.json")); err != nil {
+		t.Fatalf("expected Springfield-owned state path: %v", err)
 	}
 }
 

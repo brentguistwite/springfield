@@ -17,9 +17,9 @@ func conductorRunArgs(args ...string) []string {
 func writeConductorConfigBinary(t *testing.T, root string, cfg *conductor.Config) {
 	t.Helper()
 
-	dir := filepath.Join(root, ".springfield", "conductor")
+	dir := filepath.Join(root, ".springfield", "execution")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("mkdir conductor: %v", err)
+		t.Fatalf("mkdir execution: %v", err)
 	}
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
@@ -28,7 +28,7 @@ func writeConductorConfigBinary(t *testing.T, root string, cfg *conductor.Config
 	}
 
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), data, 0o644); err != nil {
-		t.Fatalf("write conductor config: %v", err)
+		t.Fatalf("write execution config: %v", err)
 	}
 }
 

@@ -37,7 +37,7 @@ func TestSetup_GeneratesConfigWhenNoneExists(t *testing.T) {
 	}
 
 	var cfg conductor.Config
-	if err := rt.ReadJSON("conductor/config.json", &cfg); err != nil {
+	if err := rt.ReadJSON("execution/config.json", &cfg); err != nil {
 		t.Fatalf("reading generated config: %v", err)
 	}
 
@@ -74,7 +74,7 @@ func TestSetup_ReusesExistingValidConfig(t *testing.T) {
 	// Verify original config is preserved
 	rt, _ := storage.FromRoot(root)
 	var cfg conductor.Config
-	rt.ReadJSON("conductor/config.json", &cfg)
+	rt.ReadJSON("execution/config.json", &cfg)
 
 	if cfg.Tool != "claude" {
 		t.Errorf("Tool = %q, want original %q", cfg.Tool, "claude")
@@ -151,7 +151,7 @@ func TestSetup_ConfigPathRelativeToProject(t *testing.T) {
 		t.Fatalf("Setup() error: %v", err)
 	}
 
-	expectedPath := filepath.Join(root, ".springfield", "conductor", "config.json")
+	expectedPath := filepath.Join(root, ".springfield", "execution", "config.json")
 	if result.Path != expectedPath {
 		t.Errorf("Path = %q, want %q", result.Path, expectedPath)
 	}
@@ -198,7 +198,7 @@ func TestUpdateConfig_OverwritesExisting(t *testing.T) {
 	// Verify updated config by loading it
 	rt, _ := storage.FromRoot(root)
 	var cfg conductor.Config
-	if err := rt.ReadJSON("conductor/config.json", &cfg); err != nil {
+	if err := rt.ReadJSON("execution/config.json", &cfg); err != nil {
 		t.Fatalf("reading updated config: %v", err)
 	}
 
@@ -221,7 +221,7 @@ func TestUpdateConfig_OverwritesExisting(t *testing.T) {
 		t.Errorf("WorktreeBase = %q, want %q", cfg.WorktreeBase, ".custom-worktrees")
 	}
 
-	data, err := os.ReadFile(filepath.Join(root, ".springfield", "conductor", "config.json"))
+	data, err := os.ReadFile(filepath.Join(root, ".springfield", "execution", "config.json"))
 	if err != nil {
 		t.Fatalf("ReadFile updated config: %v", err)
 	}
@@ -317,5 +317,55 @@ func TestLoadProject_ReadsLegacyConfigTerms(t *testing.T) {
 	}
 	if project.Config.SingleWorkstreamTimeout != 600 {
 		t.Fatalf("SingleWorkstreamTimeout = %d, want 600", project.Config.SingleWorkstreamTimeout)
+	}
+}
+
+func TestSetup_ReusesLegacyConfigPath(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root)
+	writeLegacyConductorConfig(t, root, sequentialOnlyConfig())
+
+	result, err := conductor.Setup(root, conductor.SetupDefaults())
+	if err != nil {
+		t.Fatalf("Setup() error: %v", err)
+	}
+	if !result.Reused {
+		t.Fatal("expected legacy config to be reused")
+	}
+	if got, want := result.Path, filepath.Join(root, ".springfield", "conductor", "config.json"); got != want {
+		t.Fatalf("Path = %q, want %q", got, want)
+	}
+}
+
+func TestUpdateConfig_WritesSpringfieldOwnedPathAfterLegacyRead(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root)
+	writeLegacyConductorConfig(t, root, sequentialOnlyConfig())
+
+	updateOpts := conductor.SetupOptions{
+		Tool:                       "codex",
+		PlansDir:                   conductor.TrackedPlansDir,
+		MaxRetries:                 5,
+		SingleWorkstreamIterations: 100,
+		SingleWorkstreamTimeout:    7200,
+		WorktreeBase:               ".custom-worktrees",
+	}
+
+	result, err := conductor.UpdateConfig(root, updateOpts)
+	if err != nil {
+		t.Fatalf("UpdateConfig() error: %v", err)
+	}
+
+	if got, want := result.Path, filepath.Join(root, ".springfield", "execution", "config.json"); got != want {
+		t.Fatalf("Path = %q, want %q", got, want)
+	}
+
+	rt, _ := storage.FromRoot(root)
+	var cfg conductor.Config
+	if err := rt.ReadJSON("execution/config.json", &cfg); err != nil {
+		t.Fatalf("reading updated config: %v", err)
+	}
+	if cfg.Tool != "codex" {
+		t.Fatalf("Tool = %q, want codex", cfg.Tool)
 	}
 }

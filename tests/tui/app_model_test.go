@@ -616,7 +616,7 @@ func TestModelSetupFlowCreatesCoreState(t *testing.T) {
 			ProjectRoot:         "/tmp/demo",
 			ConfigPath:          "/tmp/demo/springfield.toml",
 			RuntimeDir:          "/tmp/demo/.springfield",
-			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ExecutionConfigPath: "/tmp/demo/.springfield/execution/config.json",
 		},
 		initResult: config.InitResult{
 			ConfigCreated:     true,
@@ -652,7 +652,7 @@ func TestSetupScreenShowsActionableConductorPrompt(t *testing.T) {
 			ProjectRoot:         "/tmp/demo",
 			ConfigPath:          "/tmp/demo/springfield.toml",
 			RuntimeDir:          "/tmp/demo/.springfield",
-			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ExecutionConfigPath: "/tmp/demo/.springfield/execution/config.json",
 			ConfigPresent:       true,
 			RuntimePresent:      true,
 			ExecutionReady:      false,
@@ -678,14 +678,14 @@ func TestSetupScreenConfiguresExecution(t *testing.T) {
 			ProjectRoot:         "/tmp/demo",
 			ConfigPath:          "/tmp/demo/springfield.toml",
 			RuntimeDir:          "/tmp/demo/.springfield",
-			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ExecutionConfigPath: "/tmp/demo/.springfield/execution/config.json",
 			ConfigPresent:       true,
 			RuntimePresent:      true,
 			ExecutionReady:      false,
 		},
 		executionConfigResult: tui.ExecutionConfigResult{
 			Created: true,
-			Path:    "/tmp/demo/.springfield/conductor/config.json",
+			Path:    "/tmp/demo/.springfield/execution/config.json",
 		},
 	}
 
@@ -719,7 +719,7 @@ func TestSetupScreenShowsExecutionConfigFailure(t *testing.T) {
 			ProjectRoot:         "/tmp/demo",
 			ConfigPath:          "/tmp/demo/springfield.toml",
 			RuntimeDir:          "/tmp/demo/.springfield",
-			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ExecutionConfigPath: "/tmp/demo/.springfield/execution/config.json",
 			ConfigPresent:       true,
 			RuntimePresent:      true,
 			ExecutionReady:      false,
@@ -744,14 +744,14 @@ func TestSetupScreenFullyReadyAfterExecutionConfig(t *testing.T) {
 			ProjectRoot:         "/tmp/demo",
 			ConfigPath:          "/tmp/demo/springfield.toml",
 			RuntimeDir:          "/tmp/demo/.springfield",
-			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ExecutionConfigPath: "/tmp/demo/.springfield/execution/config.json",
 			ConfigPresent:       true,
 			RuntimePresent:      true,
 			ExecutionReady:      false,
 		},
 		executionConfigResult: tui.ExecutionConfigResult{
 			Created: true,
-			Path:    "/tmp/demo/.springfield/conductor/config.json",
+			Path:    "/tmp/demo/.springfield/execution/config.json",
 		},
 	}
 
@@ -802,7 +802,7 @@ func TestAdvancedSetupStorageModeSelection(t *testing.T) {
 			ProjectRoot:         "/tmp/demo",
 			ConfigPath:          "/tmp/demo/springfield.toml",
 			RuntimeDir:          "/tmp/demo/.springfield",
-			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ExecutionConfigPath: "/tmp/demo/.springfield/execution/config.json",
 			ConfigPresent:       true,
 			RuntimePresent:      true,
 			ExecutionReady:      true,
@@ -869,7 +869,7 @@ func TestAdvancedSetupAgentPriorityReorder(t *testing.T) {
 			ProjectRoot:         "/tmp/demo",
 			ConfigPath:          "/tmp/demo/springfield.toml",
 			RuntimeDir:          "/tmp/demo/.springfield",
-			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ExecutionConfigPath: "/tmp/demo/.springfield/execution/config.json",
 			ConfigPresent:       true,
 			RuntimePresent:      true,
 			ExecutionReady:      true,
@@ -1001,7 +1001,7 @@ func TestAdvancedSetupSettingsForm(t *testing.T) {
 			ProjectRoot:         "/tmp/demo",
 			ConfigPath:          "/tmp/demo/springfield.toml",
 			RuntimeDir:          "/tmp/demo/.springfield",
-			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ExecutionConfigPath: "/tmp/demo/.springfield/execution/config.json",
 			ConfigPresent:       true,
 			RuntimePresent:      true,
 			ExecutionReady:      true,
@@ -1043,7 +1043,7 @@ func TestAdvancedSetupCompleteStepSavesAndOffersDoctor(t *testing.T) {
 			ProjectRoot:         "/tmp/demo",
 			ConfigPath:          "/tmp/demo/springfield.toml",
 			RuntimeDir:          "/tmp/demo/.springfield",
-			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ExecutionConfigPath: "/tmp/demo/.springfield/execution/config.json",
 			ConfigPresent:       true,
 			RuntimePresent:      true,
 			ExecutionReady:      true,
@@ -1100,7 +1100,7 @@ func TestAdvancedSetupStorageChangeShowsExistingPlansNote(t *testing.T) {
 		setup:           readySetupStatus(),
 		agentDetections: []tui.AgentDetection{{ID: "claude", Name: "Claude Code", Installed: true}},
 		executionConfig: &tui.ExecutionConfig{
-			PlansDir:                   ".springfield/conductor/plans",
+			PlansDir:                   ".springfield/execution/plans",
 			WorktreeBase:               ".worktrees",
 			MaxRetries:                 2,
 			SingleWorkstreamIterations: 50,
@@ -1116,7 +1116,7 @@ func TestAdvancedSetupStorageChangeShowsExistingPlansNote(t *testing.T) {
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'c'}})
 
 	view := model.View()
-	if !strings.Contains(view, "Existing plans remain at .springfield/conductor/plans") {
+	if !strings.Contains(view, "Existing plans remain at .springfield/execution/plans") {
 		t.Fatalf("expected old plans dir note, got:\n%s", view)
 	}
 }
@@ -1210,7 +1210,7 @@ func TestSetupShowsBasicAdvancedChoice(t *testing.T) {
 			ProjectRoot:         "/tmp/demo",
 			ConfigPath:          "/tmp/demo/springfield.toml",
 			RuntimeDir:          "/tmp/demo/.springfield",
-			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ExecutionConfigPath: "/tmp/demo/.springfield/execution/config.json",
 			ConfigPresent:       true,
 			RuntimePresent:      true,
 		},
@@ -1239,7 +1239,7 @@ func TestSetupBasicUsesDefaultsAndOffersDoctorHandoff(t *testing.T) {
 			ProjectRoot:         "/tmp/demo",
 			ConfigPath:          "/tmp/demo/springfield.toml",
 			RuntimeDir:          "/tmp/demo/.springfield",
-			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ExecutionConfigPath: "/tmp/demo/.springfield/execution/config.json",
 			ConfigPresent:       true,
 			RuntimePresent:      true,
 		},
@@ -1276,7 +1276,7 @@ func TestSetupBasicPreservesTrackedStorageSummary(t *testing.T) {
 			ProjectRoot:         "/tmp/demo",
 			ConfigPath:          "/tmp/demo/springfield.toml",
 			RuntimeDir:          "/tmp/demo/.springfield",
-			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ExecutionConfigPath: "/tmp/demo/.springfield/execution/config.json",
 			ConfigPresent:       true,
 			RuntimePresent:      true,
 			ExecutionReady:      true,
@@ -1312,7 +1312,7 @@ func TestSetupAdvancedNavigatesToAdvancedScreen(t *testing.T) {
 			ProjectRoot:         "/tmp/demo",
 			ConfigPath:          "/tmp/demo/springfield.toml",
 			RuntimeDir:          "/tmp/demo/.springfield",
-			ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+			ExecutionConfigPath: "/tmp/demo/.springfield/execution/config.json",
 			ConfigPresent:       true,
 			RuntimePresent:      true,
 		},
@@ -1358,7 +1358,7 @@ func readySetupStatus() tui.SetupStatus {
 		ProjectRoot:         "/tmp/demo",
 		ConfigPath:          "/tmp/demo/springfield.toml",
 		RuntimeDir:          "/tmp/demo/.springfield",
-		ExecutionConfigPath: "/tmp/demo/.springfield/conductor/config.json",
+		ExecutionConfigPath: "/tmp/demo/.springfield/execution/config.json",
 		ConfigPresent:       true,
 		RuntimePresent:      true,
 		ExecutionReady:      true,

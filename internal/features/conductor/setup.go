@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	LocalPlansDir   = ".springfield/conductor/plans"
-	TrackedPlansDir = "springfield/plans"
+	LocalPlansDir       = ".springfield/execution/plans"
+	TrackedPlansDir     = "springfield/plans"
+	legacyLocalPlansDir = ".springfield/conductor/plans"
 )
 
 // SetupOptions holds guided inputs for conductor config generation.
@@ -46,7 +47,7 @@ func SetupDefaults() SetupOptions {
 	}
 }
 
-// Setup generates .springfield/conductor/config.json from guided inputs.
+// Setup generates Springfield-managed execution config from guided inputs.
 // If valid config already exists, it is preserved and reused.
 func Setup(rootDir string, opts SetupOptions) (SetupResult, error) {
 	rt, err := storage.FromRoot(rootDir)
@@ -64,11 +65,12 @@ func Setup(rootDir string, opts SetupOptions) (SetupResult, error) {
 
 	// Check for existing valid config
 	var existing Config
-	if err := rt.ReadJSON(configPath, &existing); err == nil {
+	if matchedPath, err := readConfig(rt, &existing); err == nil {
+		existingFile, _ := rt.Path(matchedPath)
 		return SetupResult{
 			Created: false,
 			Reused:  true,
-			Path:    configFile,
+			Path:    existingFile,
 		}, nil
 	}
 
@@ -124,7 +126,7 @@ func UpdateConfig(rootDir string, opts SetupOptions) (UpdateResult, error) {
 
 	// Verify existing config exists
 	var existing Config
-	if err := rt.ReadJSON(configPath, &existing); err != nil {
+	if _, err := readConfig(rt, &existing); err != nil {
 		return UpdateResult{}, errors.New("no existing conductor config to update; use Setup for first-run")
 	}
 
@@ -167,7 +169,7 @@ func IsReady(rootDir string) (bool, error) {
 	}
 
 	var cfg Config
-	if err := rt.ReadJSON(configPath, &cfg); err != nil {
+	if _, err := readConfig(rt, &cfg); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return false, nil
 		}

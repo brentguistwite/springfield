@@ -33,7 +33,7 @@ func writeConductorConfig(t *testing.T, root string, cfg *conductor.Config) {
 		t.Fatalf("build runtime: %v", err)
 	}
 
-	if err := runtime.WriteJSON("conductor/config.json", cfg); err != nil {
+	if err := runtime.WriteJSON("execution/config.json", cfg); err != nil {
 		t.Fatalf("write conductor config: %v", err)
 	}
 }
@@ -46,8 +46,34 @@ func writeConductorState(t *testing.T, root string, state *conductor.State) {
 		t.Fatalf("build runtime: %v", err)
 	}
 
-	if err := runtime.WriteJSON("conductor/state.json", state); err != nil {
+	if err := runtime.WriteJSON("execution/state.json", state); err != nil {
 		t.Fatalf("write conductor state: %v", err)
+	}
+}
+
+func writeLegacyConductorConfig(t *testing.T, root string, cfg *conductor.Config) {
+	t.Helper()
+
+	runtime, err := storage.FromRoot(root)
+	if err != nil {
+		t.Fatalf("build runtime: %v", err)
+	}
+
+	if err := runtime.WriteJSON("conductor/config.json", cfg); err != nil {
+		t.Fatalf("write legacy conductor config: %v", err)
+	}
+}
+
+func writeLegacyConductorState(t *testing.T, root string, state *conductor.State) {
+	t.Helper()
+
+	runtime, err := storage.FromRoot(root)
+	if err != nil {
+		t.Fatalf("build runtime: %v", err)
+	}
+
+	if err := runtime.WriteJSON("conductor/state.json", state); err != nil {
+		t.Fatalf("write legacy conductor state: %v", err)
 	}
 }
 

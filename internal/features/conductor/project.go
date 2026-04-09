@@ -9,8 +9,10 @@ import (
 )
 
 const (
-	configPath = "conductor/config.json"
-	statePath  = "conductor/state.json"
+	configPath       = "execution/config.json"
+	statePath        = "execution/state.json"
+	legacyConfigPath = "conductor/config.json"
+	legacyStatePath  = "conductor/state.json"
 )
 
 // Project owns conductor config and state for one Springfield project.
@@ -29,12 +31,12 @@ func LoadProject(startDir string) (*Project, error) {
 	}
 
 	var cfg Config
-	if err := runtime.ReadJSON(configPath, &cfg); err != nil {
+	if _, err := readConfig(runtime, &cfg); err != nil {
 		return nil, err
 	}
 
 	state := NewState()
-	if err := runtime.ReadJSON(statePath, state); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if _, err := readState(runtime, state); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
 
@@ -149,4 +151,28 @@ func (p *Project) MarkFailed(name, reason, agent, evidencePath string) {
 // ResetState clears execution progress and starts fresh.
 func (p *Project) ResetState() {
 	p.State = NewState()
+}
+
+func readConfig(runtime storage.Runtime, cfg *Config) (string, error) {
+	return readJSONCompat(runtime, cfg, configPath, legacyConfigPath)
+}
+
+func readState(runtime storage.Runtime, state *State) (string, error) {
+	return readJSONCompat(runtime, state, statePath, legacyStatePath)
+}
+
+func readJSONCompat(runtime storage.Runtime, target any, paths ...string) (string, error) {
+	var lastErr error
+	for _, path := range paths {
+		err := runtime.ReadJSON(path, target)
+		if err == nil {
+			return path, nil
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			lastErr = err
+			continue
+		}
+		return "", err
+	}
+	return "", lastErr
 }

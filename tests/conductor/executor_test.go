@@ -94,6 +94,24 @@ func TestRuntimeExecutorMissingPlanFile(t *testing.T) {
 	}
 }
 
+func TestRuntimeExecutorFallsBackToLegacyLocalPlans(t *testing.T) {
+	root := t.TempDir()
+	plansDir := filepath.Join(root, ".springfield", "execution", "plans")
+	legacyPlansDir := filepath.Join(root, ".springfield", "conductor", "plans")
+	writePlanFile(t, legacyPlansDir, "01-bootstrap", "implement bootstrap feature")
+
+	runner := newTestRuntime("claude", fakeCommandFunc(0, nil))
+	executor := conductor.NewRuntimeExecutor(runner, []agents.ID{"claude"}, plansDir, root, agents.ExecutionSettings{})
+
+	result, err := executor.Execute("01-bootstrap")
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if result.Agent != "claude" {
+		t.Fatalf("agent: got %q want claude", result.Agent)
+	}
+}
+
 func TestRunnerPassesAgentOnSuccess(t *testing.T) {
 	_, runner, _ := newRunner(t, sequentialOnlyConfig())
 

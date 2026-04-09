@@ -21,7 +21,7 @@ func (f *fakeExecutor) Execute(plan string) (conductor.ExecuteResult, error) {
 	}
 	result := conductor.ExecuteResult{Agent: agent}
 	if message, ok := f.failOn[plan]; ok {
-		result.EvidencePath = ".springfield/conductor/evidence/" + plan + ".log"
+		result.EvidencePath = ".springfield/execution/evidence/" + plan + ".log"
 		return result, errors.New(message)
 	}
 	return result, nil

@@ -44,7 +44,7 @@ func TestConductorSetupGeneratesConfig(t *testing.T) {
 	}
 
 	// Config file must exist
-	configPath := filepath.Join(dir, ".springfield", "conductor", "config.json")
+	configPath := filepath.Join(dir, ".springfield", "execution", "config.json")
 	if _, err := os.Stat(configPath); err != nil {
 		t.Errorf("config file not created at %s: %v", configPath, err)
 	}
@@ -63,7 +63,7 @@ func TestConductorSetupDefaultsToLocalPlanStorage(t *testing.T) {
 		t.Fatalf("conductor setup failed: %v\n%s", err, output)
 	}
 
-	configPath := filepath.Join(dir, ".springfield", "conductor", "config.json")
+	configPath := filepath.Join(dir, ".springfield", "execution", "config.json")
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatalf("read config: %v", err)
@@ -74,7 +74,7 @@ func TestConductorSetupDefaultsToLocalPlanStorage(t *testing.T) {
 		t.Fatalf("unmarshal config: %v", err)
 	}
 
-	if cfg.PlansDir != ".springfield/conductor/plans" {
+	if cfg.PlansDir != ".springfield/execution/plans" {
 		t.Fatalf("PlansDir = %q, want local default", cfg.PlansDir)
 	}
 
@@ -96,7 +96,7 @@ func TestConductorSetupTrackedModeOffersGitignoreUpdate(t *testing.T) {
 		t.Fatalf("conductor setup failed: %v\n%s", err, output)
 	}
 
-	configPath := filepath.Join(dir, ".springfield", "conductor", "config.json")
+	configPath := filepath.Join(dir, ".springfield", "execution", "config.json")
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatalf("read config: %v", err)
@@ -243,7 +243,7 @@ func TestConductorSetupUsesEffectivePriorityHead(t *testing.T) {
 		t.Fatalf("conductor setup failed: %v\n%s", err, output)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, ".springfield", "conductor", "config.json"))
+	data, err := os.ReadFile(filepath.Join(dir, ".springfield", "execution", "config.json"))
 	if err != nil {
 		t.Fatalf("read conductor config: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestConductorRunFromNestedDirUsesResolvedProjectRoot(t *testing.T) {
 	}
 
 	cfg := &conductor.Config{
-		PlansDir:   ".springfield/conductor/plans",
+		PlansDir:   ".springfield/execution/plans",
 		Tool:       "bogus",
 		Sequential: []string{"01-bootstrap"},
 	}
@@ -338,7 +338,7 @@ func TestConductorRunFromNestedDirUsesResolvedProjectRoot(t *testing.T) {
 		t.Fatalf("expected conductor run to fail, output:\n%s", output)
 	}
 
-	nestedPlanPath := filepath.Join(nestedDir, ".springfield", "conductor", "plans")
+	nestedPlanPath := filepath.Join(nestedDir, ".springfield", "execution", "plans")
 	if strings.Contains(output, nestedPlanPath) {
 		t.Fatalf("expected plan lookup to avoid nested path %q, got:\n%s", nestedPlanPath, output)
 	}

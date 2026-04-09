@@ -81,7 +81,7 @@ func newConductorSetupCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Generate conductor config from guided defaults.",
-		Long:  "Create .springfield/conductor/config.json so the conductor is ready to run without manual JSON editing.",
+		Long:  "Create .springfield/execution/config.json so the conductor is ready to run without manual JSON editing.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			loaded, err := config.LoadFrom(dir)
