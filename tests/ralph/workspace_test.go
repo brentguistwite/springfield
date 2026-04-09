@@ -239,9 +239,9 @@ func TestWorkspaceRunNextLeavesPlanUnchangedWhenRunPersistenceFails(t *testing.T
 		t.Fatalf("init plan: %v", err)
 	}
 
-	runsPath := filepath.Join(rootDir, ".springfield", "ralph", "runs")
+	runsPath := filepath.Join(rootDir, ".springfield", "execution", "single", "runs")
 	if err := os.MkdirAll(filepath.Dir(runsPath), 0o755); err != nil {
-		t.Fatalf("create Ralph dir: %v", err)
+		t.Fatalf("create Springfield single-run dir: %v", err)
 	}
 	if err := os.WriteFile(runsPath, []byte("blocker"), 0o644); err != nil {
 		t.Fatalf("write runs blocker: %v", err)
@@ -471,5 +471,74 @@ func TestWorkspaceListRunsReturnsStableOrder(t *testing.T) {
 
 	if runs[0].ID != first.ID || runs[1].ID != second.ID {
 		t.Fatalf("expected stable ascending order, got %+v", runs)
+	}
+}
+
+func TestWorkspaceLoadPlanFallsBackToLegacyPath(t *testing.T) {
+	rootDir := t.TempDir()
+	workspace, err := ralph.OpenRoot(rootDir)
+	if err != nil {
+		t.Fatalf("open root workspace: %v", err)
+	}
+
+	legacyPlan := ralph.Plan{
+		Name: "legacy",
+		Spec: ralph.Spec{
+			Project: "springfield",
+			Stories: []ralph.Story{{ID: "US-001", Title: "Legacy story"}},
+		},
+	}
+
+	legacyPath := filepath.Join(rootDir, ".springfield", "ralph", "plans", "legacy.json")
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+		t.Fatalf("create legacy plan dir: %v", err)
+	}
+	data := []byte("{\n  \"name\": \"legacy\",\n  \"spec\": {\n    \"project\": \"springfield\",\n    \"stories\": [\n      {\n        \"id\": \"US-001\",\n        \"title\": \"Legacy story\"\n      }\n    ]\n  }\n}\n")
+	if err := os.WriteFile(legacyPath, data, 0o644); err != nil {
+		t.Fatalf("write legacy plan: %v", err)
+	}
+
+	plan, err := workspace.LoadPlan("legacy")
+	if err != nil {
+		t.Fatalf("load plan: %v", err)
+	}
+
+	if plan.Name != legacyPlan.Name {
+		t.Fatalf("expected plan name %q, got %q", legacyPlan.Name, plan.Name)
+	}
+	if plan.Spec.Project != legacyPlan.Spec.Project {
+		t.Fatalf("expected project %q, got %q", legacyPlan.Spec.Project, plan.Spec.Project)
+	}
+	if len(plan.Spec.Stories) != 1 || plan.Spec.Stories[0].ID != "US-001" || plan.Spec.Stories[0].Title != "Legacy story" {
+		t.Fatalf("expected legacy story to load, got %+v", plan.Spec.Stories)
+	}
+}
+
+func TestWorkspaceListRunsFallsBackToLegacyPath(t *testing.T) {
+	rootDir := t.TempDir()
+	workspace, err := ralph.OpenRoot(rootDir)
+	if err != nil {
+		t.Fatalf("open root workspace: %v", err)
+	}
+
+	legacyRun := []byte("{\n  \"id\": \"legacy-run\",\n  \"plan_name\": \"refresh\",\n  \"story_id\": \"US-001\",\n  \"status\": \"failed\",\n  \"started_at\": \"2026-04-08T00:00:00Z\",\n  \"ended_at\": \"2026-04-08T00:01:00Z\"\n}\n")
+	legacyPath := filepath.Join(rootDir, ".springfield", "ralph", "runs", "legacy-run.json")
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+		t.Fatalf("create legacy run dir: %v", err)
+	}
+	if err := os.WriteFile(legacyPath, legacyRun, 0o644); err != nil {
+		t.Fatalf("write legacy run: %v", err)
+	}
+
+	runs, err := workspace.ListRuns()
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+	if runs[0].ID != "legacy-run" {
+		t.Fatalf("expected legacy run id, got %q", runs[0].ID)
 	}
 }

@@ -1,6 +1,7 @@
 package ralph
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,13 @@ import (
 	"time"
 
 	"springfield/internal/storage"
+)
+
+const (
+	singlePlansDir = "execution/single/plans"
+	singleRunsDir  = "execution/single/runs"
+	legacyPlansDir = "ralph/plans"
+	legacyRunsDir  = "ralph/runs"
 )
 
 // Workspace owns Ralph state for one Springfield project root.
@@ -69,7 +77,7 @@ func (w Workspace) InitPlan(name string, spec Spec) error {
 // LoadPlan reads a previously persisted Ralph plan.
 func (w Workspace) LoadPlan(name string) (Plan, error) {
 	var plan Plan
-	if err := w.runtime.ReadJSON(planPath(name), &plan); err != nil {
+	if err := w.readJSONWithFallback(planPath(name), legacyPlanPath(name), &plan); err != nil {
 		return Plan{}, fmt.Errorf("load Ralph plan %q: %w", name, err)
 	}
 
@@ -78,29 +86,16 @@ func (w Workspace) LoadPlan(name string) (Plan, error) {
 
 // ListPlans returns all persisted Ralph plans in stable order.
 func (w Workspace) ListPlans() ([]Plan, error) {
-	plansDir, err := w.runtime.Path("ralph", "plans")
+	planPaths, err := w.listJSONWithFallback(singlePlansDir, legacyPlansDir)
 	if err != nil {
-		return nil, err
-	}
-
-	entries, err := os.ReadDir(plansDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-
 		return nil, fmt.Errorf("list Ralph plans: %w", err)
 	}
 
-	plans := make([]Plan, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-
+	plans := make([]Plan, 0, len(planPaths))
+	for _, planPath := range planPaths {
 		var plan Plan
-		if err := w.runtime.ReadJSON(filepath.Join("ralph", "plans", entry.Name()), &plan); err != nil {
-			return nil, fmt.Errorf("load Ralph plan %s: %w", entry.Name(), err)
+		if err := w.runtime.ReadJSON(planPath, &plan); err != nil {
+			return nil, fmt.Errorf("load Ralph plan %s: %w", filepath.Base(planPath), err)
 		}
 
 		plans = append(plans, plan)
@@ -126,29 +121,16 @@ func (w Workspace) SaveRun(record RunRecord) error {
 
 // ListRuns returns all persisted Ralph run records in stable order.
 func (w Workspace) ListRuns() ([]RunRecord, error) {
-	runsDir, err := w.runtime.Path("ralph", "runs")
+	runPaths, err := w.listJSONWithFallback(singleRunsDir, legacyRunsDir)
 	if err != nil {
-		return nil, err
-	}
-
-	entries, err := os.ReadDir(runsDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-
 		return nil, fmt.Errorf("list Ralph runs: %w", err)
 	}
 
-	runs := make([]RunRecord, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-
+	runs := make([]RunRecord, 0, len(runPaths))
+	for _, runPath := range runPaths {
 		var record RunRecord
-		if err := w.runtime.ReadJSON(filepath.Join("ralph", "runs", entry.Name()), &record); err != nil {
-			return nil, fmt.Errorf("load Ralph run %s: %w", entry.Name(), err)
+		if err := w.runtime.ReadJSON(runPath, &record); err != nil {
+			return nil, fmt.Errorf("load Ralph run %s: %w", filepath.Base(runPath), err)
 		}
 
 		runs = append(runs, record)
@@ -275,11 +257,19 @@ func (w Workspace) ResetStories(planName string, storyIDs ...string) error {
 }
 
 func planPath(name string) string {
-	return filepath.Join("ralph", "plans", sanitizeName(name)+".json")
+	return filepath.Join(singlePlansDir, sanitizeName(name)+".json")
 }
 
 func runPath(id string) string {
-	return filepath.Join("ralph", "runs", sanitizeName(id)+".json")
+	return filepath.Join(singleRunsDir, sanitizeName(id)+".json")
+}
+
+func legacyPlanPath(name string) string {
+	return filepath.Join(legacyPlansDir, sanitizeName(name)+".json")
+}
+
+func legacyRunPath(id string) string {
+	return filepath.Join(legacyRunsDir, sanitizeName(id)+".json")
 }
 
 func sanitizeName(name string) string {
@@ -305,4 +295,45 @@ func (w Workspace) setStoryPassed(planName string, storyID string, passed bool) 
 	}
 
 	return fmt.Errorf("story %q not found in Ralph plan %q", storyID, planName)
+}
+
+func (w Workspace) readJSONWithFallback(primaryPath string, legacyPath string, target any) error {
+	if err := w.runtime.ReadJSON(primaryPath, target); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	return w.runtime.ReadJSON(legacyPath, target)
+}
+
+func (w Workspace) listJSONWithFallback(primaryDir string, legacyDir string) ([]string, error) {
+	paths := make([]string, 0)
+	seen := make(map[string]bool)
+
+	for _, dir := range []string{primaryDir, legacyDir} {
+		dirPath, err := w.runtime.Path(dir)
+		if err != nil {
+			return nil, err
+		}
+
+		entries, err := os.ReadDir(dirPath)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, err
+		}
+
+		for _, entry := range entries {
+			if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" || seen[entry.Name()] {
+				continue
+			}
+
+			seen[entry.Name()] = true
+			paths = append(paths, filepath.Join(dir, entry.Name()))
+		}
+	}
+
+	return paths, nil
 }

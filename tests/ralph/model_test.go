@@ -74,7 +74,7 @@ func TestWorkspaceInitPlanAndLoadPlan(t *testing.T) {
 		t.Fatalf("init plan: %v", err)
 	}
 
-	planPath := filepath.Join(rootDir, ".springfield", "ralph", "plans", "refresh.json")
+	planPath := filepath.Join(rootDir, ".springfield", "execution", "single", "plans", "refresh.json")
 	if _, err := os.Stat(planPath); err != nil {
 		t.Fatalf("expected persisted plan at %s: %v", planPath, err)
 	}

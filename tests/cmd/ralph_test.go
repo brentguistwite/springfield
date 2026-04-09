@@ -107,6 +107,15 @@ func TestRalphInitStatusAndRun(t *testing.T) {
 		t.Fatalf("expected init output, got:\n%s", output)
 	}
 
+	canonicalPlanPath := filepath.Join(dir, ".springfield", "execution", "single", "plans", "refresh.json")
+	if _, err := os.Stat(canonicalPlanPath); err != nil {
+		t.Fatalf("expected Springfield-owned plan path %s: %v", canonicalPlanPath, err)
+	}
+	legacyPlanPath := filepath.Join(dir, ".springfield", "ralph", "plans", "refresh.json")
+	if _, err := os.Stat(legacyPlanPath); !os.IsNotExist(err) {
+		t.Fatalf("expected legacy plan path to stay unwritten, stat err=%v", err)
+	}
+
 	output, err = runBinaryIn(t, bin, dir, ralphDebugArgs("status", "--name", "refresh")...)
 	if err != nil {
 		t.Fatalf("ralph status failed: %v\n%s", err, output)
