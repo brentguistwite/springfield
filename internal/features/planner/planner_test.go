@@ -11,15 +11,23 @@ import (
 )
 
 type fakeRunner struct {
-	prompt string
-	output string
-	err    error
+	prompt  string
+	prompts []string
+	output  string
+	outputs []string
+	err     error
 }
 
 func (f *fakeRunner) Run(prompt string) (string, error) {
 	f.prompt = prompt
+	f.prompts = append(f.prompts, prompt)
 	if f.err != nil {
 		return "", f.err
+	}
+	if len(f.outputs) > 0 {
+		output := f.outputs[0]
+		f.outputs = f.outputs[1:]
+		return output, nil
 	}
 	return f.output, nil
 }
@@ -197,6 +205,92 @@ func TestSessionNextRejectsInvalidPlannerResponse(t *testing.T) {
 
 	if _, err := session.Next("Need next question"); err == nil {
 		t.Fatal("expected invalid planner response to fail")
+	}
+}
+
+func TestSessionNextCarriesInitialRequestIntoFollowUpTurns(t *testing.T) {
+	root := t.TempDir()
+	projectContext := "project instructions from AGENTS"
+	if err := os.WriteFile(root+"/AGENTS.md", []byte(projectContext), 0o644); err != nil {
+		t.Fatalf("write AGENTS.md: %v", err)
+	}
+
+	runner := &fakeRunner{
+		outputs: []string{
+			`{"mode":"question","question":"Which workflow surface should ship first?"}`,
+			`{
+				"mode":"draft",
+				"work_id":"wave-c1",
+				"title":"Wave C1 planning loop",
+				"summary":"Connect the TUI planning flow to the real planner session.",
+				"split":"single",
+				"workstreams":[
+					{"name":"01","title":"Implement Wave C1","summary":"Keep it in one stream."}
+				]
+			}`,
+		},
+	}
+
+	session := &planner.Session{
+		ProjectRoot: root,
+		Runner:      runner,
+	}
+
+	first, err := session.Next("Connect the TUI planning flow to the real planner session")
+	if err != nil {
+		t.Fatalf("first session next: %v", err)
+	}
+	if first.Mode != planner.ModeQuestion {
+		t.Fatalf("first mode = %q", first.Mode)
+	}
+
+	second, err := session.Next("Start with New Work")
+	if err != nil {
+		t.Fatalf("second session next: %v", err)
+	}
+	if second.Mode != planner.ModeDraft {
+		t.Fatalf("second mode = %q", second.Mode)
+	}
+
+	if got, want := len(runner.prompts), 2; got != want {
+		t.Fatalf("prompts = %d, want %d", got, want)
+	}
+
+	followUpPrompt := runner.prompts[1]
+	for _, want := range []string{
+		projectContext,
+		"Connect the TUI planning flow to the real planner session",
+		"Which workflow surface should ship first?",
+		"Start with New Work",
+	} {
+		if !strings.Contains(followUpPrompt, want) {
+			t.Fatalf("follow-up prompt should contain %q, got:\n%s", want, followUpPrompt)
+		}
+	}
+}
+
+func TestSessionNextStillRejectsInvalidPlannerResponseAfterQuestion(t *testing.T) {
+	runner := &fakeRunner{
+		outputs: []string{
+			`{"mode":"question","question":"Which workflow surface should ship first?"}`,
+			`{"mode":"draft","work_id":" ","title":"Broken","summary":"still broken","split":"single","workstreams":[{"name":"01","title":"Broken"}]}`,
+		},
+	}
+	session := &planner.Session{
+		ProjectRoot: t.TempDir(),
+		Runner:      runner,
+	}
+
+	first, err := session.Next("Connect the planner")
+	if err != nil {
+		t.Fatalf("first session next: %v", err)
+	}
+	if first.Mode != planner.ModeQuestion {
+		t.Fatalf("first mode = %q", first.Mode)
+	}
+
+	if _, err := session.Next("Start with TUI"); err == nil {
+		t.Fatal("expected invalid follow-up planner response to fail")
 	}
 }
 

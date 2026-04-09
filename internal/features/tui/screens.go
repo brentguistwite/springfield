@@ -8,7 +8,6 @@ import (
 
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/doctor"
-	"springfield/internal/features/planner"
 )
 
 type menuItem struct {
@@ -298,12 +297,13 @@ type newWorkScreen struct {
 	phase    newWorkPhase
 	input    string
 	request  string
-	draft    *planner.Response
+	draft    *PlannedWorkDraft
 	status   string
 	lastErr  string
 }
 
 func newNewWorkScreen(services Services) newWorkScreen {
+	services.ResetPlannedWork()
 	return newWorkScreen{services: services}
 }
 
@@ -314,6 +314,7 @@ func (n newWorkScreen) Update(msg tea.Msg) (newWorkScreen, tea.Cmd) {
 	}
 
 	if key.Type == tea.KeyEsc {
+		n.services.ResetPlannedWork()
 		return n, goBack
 	}
 
@@ -331,23 +332,28 @@ func (n newWorkScreen) Update(msg tea.Msg) (newWorkScreen, tea.Cmd) {
 				return n, nil
 			}
 
-			resp, err := n.services.PlanWork(request)
+			result, err := n.services.PlanWork(request)
 			if err != nil {
 				n.lastErr = err.Error()
 				return n, nil
 			}
 
-			if resp.Mode == planner.ModeQuestion {
-				n.status = "Planner question: " + resp.Question
+			if result.Question != "" {
+				n.request = request
+				n.status = "Planner question: " + result.Question
+				n.input = ""
 				n.lastErr = ""
 				return n, nil
 			}
 
 			n.phase = newWorkPhaseReview
-			n.request = request
-			n.draft = &resp
+			if n.request == "" {
+				n.request = request
+			}
+			n.draft = result.Draft
 			n.status = ""
 			n.lastErr = ""
+			n.input = ""
 		case tea.KeyRunes:
 			n.input += string(key.Runes)
 		}
@@ -358,7 +364,7 @@ func (n newWorkScreen) Update(msg tea.Msg) (newWorkScreen, tea.Cmd) {
 			if n.draft == nil {
 				return n, nil
 			}
-			if err := n.services.ApproveDraft(n.request, *n.draft); err != nil {
+			if err := n.services.ApprovePlannedWork(); err != nil {
 				n.lastErr = err.Error()
 				n.status = ""
 				return n, nil
@@ -366,17 +372,29 @@ func (n newWorkScreen) Update(msg tea.Msg) (newWorkScreen, tea.Cmd) {
 			n.status = "Draft approved and saved under .springfield/work."
 			n.lastErr = ""
 		case "g":
-			resp, err := n.services.PlanWork(n.request)
+			result, err := n.services.RegeneratePlannedWork()
 			if err != nil {
 				n.lastErr = err.Error()
 				n.status = ""
 				return n, nil
 			}
-			n.draft = &resp
+			if result.Question != "" {
+				n.phase = newWorkPhaseInput
+				n.draft = nil
+				n.status = "Planner question: " + result.Question
+				n.input = ""
+				n.lastErr = ""
+				return n, nil
+			}
+			n.draft = result.Draft
 			n.status = "Draft regenerated."
 			n.lastErr = ""
 		case "b":
 			n.phase = newWorkPhaseInput
+			n.services.ResetPlannedWork()
+			n.draft = nil
+			n.request = ""
+			n.input = ""
 			n.status = ""
 			n.lastErr = ""
 		}

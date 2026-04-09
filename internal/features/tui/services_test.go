@@ -10,9 +10,198 @@ import (
 
 	"springfield/internal/core/config"
 	"springfield/internal/features/conductor"
+	"springfield/internal/features/planner"
 	"springfield/internal/features/ralph"
 	"springfield/internal/storage"
 )
+
+type fakePlanningSession struct {
+	inputs    []string
+	responses []planner.Response
+	err       error
+}
+
+func (f *fakePlanningSession) Next(input string) (planner.Response, error) {
+	f.inputs = append(f.inputs, input)
+	if f.err != nil {
+		return planner.Response{}, f.err
+	}
+	if len(f.responses) == 0 {
+		return planner.Response{}, fmt.Errorf("unexpected planner call for %q", input)
+	}
+	resp := f.responses[0]
+	f.responses = f.responses[1:]
+	return resp, nil
+}
+
+func TestPlanWorkUsesPlannerBoundary(t *testing.T) {
+	root := t.TempDir()
+	session := &fakePlanningSession{
+		responses: []planner.Response{
+			{
+				Mode:    planner.ModeDraft,
+				WorkID:  "wave-c1",
+				Title:   "Wave C1 planning loop",
+				Summary: "Connect the TUI planning flow to the real planner session.",
+				Split:   planner.SplitSingle,
+				Workstreams: []planner.Workstream{
+					{Name: "01", Title: "Implement Wave C1", Summary: "Keep it in one stream."},
+				},
+			},
+		},
+	}
+
+	var gotRoot string
+	services := &runtimeServices{
+		cwd: func() (string, error) { return root, nil },
+		newPlanningSession: func(projectRoot string) planningSession {
+			gotRoot = projectRoot
+			return session
+		},
+	}
+
+	result, err := services.PlanWork("Connect the TUI planning flow to the real planner session")
+	if err != nil {
+		t.Fatalf("PlanWork: %v", err)
+	}
+
+	if gotRoot != root {
+		t.Fatalf("planner root = %q, want %q", gotRoot, root)
+	}
+	if got, want := len(session.inputs), 1; got != want {
+		t.Fatalf("planner calls = %d, want %d", got, want)
+	}
+	if got, want := session.inputs[0], "Connect the TUI planning flow to the real planner session"; got != want {
+		t.Fatalf("planner input = %q, want %q", got, want)
+	}
+	if result.Draft == nil || result.Draft.Title != "Wave C1 planning loop" {
+		t.Fatalf("expected reviewable draft from planner boundary, got %#v", result)
+	}
+}
+
+func TestPlanWorkReturnsPlannerQuestion(t *testing.T) {
+	services := &runtimeServices{
+		cwd: func() (string, error) { return t.TempDir(), nil },
+		newPlanningSession: func(projectRoot string) planningSession {
+			return &fakePlanningSession{
+				responses: []planner.Response{
+					{
+						Mode:     planner.ModeQuestion,
+						Question: "Which Springfield surface should ship first?",
+					},
+				},
+			}
+		},
+	}
+
+	result, err := services.PlanWork("Make planning real")
+	if err != nil {
+		t.Fatalf("PlanWork: %v", err)
+	}
+
+	if got, want := result.Question, "Which Springfield surface should ship first?"; got != want {
+		t.Fatalf("question = %q, want %q", got, want)
+	}
+	if result.Draft != nil {
+		t.Fatalf("expected no draft when planner asks a question, got %#v", result.Draft)
+	}
+}
+
+func TestPlanWorkReturnsReviewableDraft(t *testing.T) {
+	services := &runtimeServices{
+		cwd: func() (string, error) { return t.TempDir(), nil },
+		newPlanningSession: func(projectRoot string) planningSession {
+			return &fakePlanningSession{
+				responses: []planner.Response{
+					{
+						Mode:    planner.ModeDraft,
+						WorkID:  "wave-c1",
+						Title:   "Wave C1 planning loop",
+						Summary: "Connect the TUI planning flow to the real planner session.",
+						Split:   planner.SplitMulti,
+						Workstreams: []planner.Workstream{
+							{Name: "01", Title: "Planner boundary"},
+							{Name: "02", Title: "TUI review flow", Summary: "Wire review and approve."},
+						},
+					},
+				},
+			}
+		},
+	}
+
+	result, err := services.PlanWork("Connect the planner")
+	if err != nil {
+		t.Fatalf("PlanWork: %v", err)
+	}
+
+	if result.Question != "" {
+		t.Fatalf("expected draft result, got question %q", result.Question)
+	}
+	if result.Draft == nil {
+		t.Fatal("expected draft result")
+	}
+	if got, want := result.Draft.WorkID, "wave-c1"; got != want {
+		t.Fatalf("work id = %q, want %q", got, want)
+	}
+	if got, want := result.Draft.Split, planner.SplitMulti; got != want {
+		t.Fatalf("split = %q, want %q", got, want)
+	}
+	if got, want := len(result.Draft.Workstreams), 2; got != want {
+		t.Fatalf("workstreams = %d, want %d", got, want)
+	}
+	if got, want := result.Draft.Workstreams[1].Summary, "Wire review and approve."; got != want {
+		t.Fatalf("second summary = %q, want %q", got, want)
+	}
+}
+
+func TestApprovePlannedWorkWritesWorkflowDraft(t *testing.T) {
+	root := t.TempDir()
+	services := &runtimeServices{
+		cwd: func() (string, error) { return root, nil },
+		newPlanningSession: func(projectRoot string) planningSession {
+			return &fakePlanningSession{
+				responses: []planner.Response{
+					{
+						Mode:    planner.ModeDraft,
+						WorkID:  "wave-c1",
+						Title:   "Wave C1 planning loop",
+						Summary: "Connect the TUI planning flow to the real planner session.",
+						Split:   planner.SplitSingle,
+						Workstreams: []planner.Workstream{
+							{Name: "01", Title: "Implement Wave C1", Summary: "Keep it in one stream."},
+						},
+					},
+				},
+			}
+		},
+	}
+
+	if _, err := services.PlanWork("Connect the TUI planning flow to the real planner session"); err != nil {
+		t.Fatalf("PlanWork: %v", err)
+	}
+	if err := services.ApprovePlannedWork(); err != nil {
+		t.Fatalf("ApprovePlannedWork: %v", err)
+	}
+
+	requestPath := filepath.Join(root, ".springfield", "work", "wave-c1", "request.md")
+	body, err := os.ReadFile(requestPath)
+	if err != nil {
+		t.Fatalf("read request.md: %v", err)
+	}
+	if got, want := string(body), "Connect the TUI planning flow to the real planner session"; got != want {
+		t.Fatalf("request body = %q, want %q", got, want)
+	}
+
+	for _, path := range []string{
+		filepath.Join(root, ".springfield", "work", "wave-c1", "workstream-01.json"),
+		filepath.Join(root, ".springfield", "work", "wave-c1", "run-state.json"),
+		filepath.Join(root, ".springfield", "work", "index.json"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+	}
+}
 
 func TestRunRalphNextUsesProjectExecutionSettings(t *testing.T) {
 	root := t.TempDir()

@@ -3,10 +3,10 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"springfield/internal/core/agents"
@@ -25,8 +25,23 @@ import (
 )
 
 type runtimeServices struct {
-	cwd      func() (string, error)
-	lookPath func(string) (string, error)
+	cwd                func() (string, error)
+	lookPath           func(string) (string, error)
+	newPlanningSession func(projectRoot string) planningSession
+	planning           *planningState
+}
+
+type planningSession interface {
+	Next(input string) (planner.Response, error)
+}
+
+type planningState struct {
+	projectRoot string
+	session     planningSession
+	request     string
+	answers     []string
+	draft       planner.Response
+	hasDraft    bool
 }
 
 func priorityAgentIDs(priority []string) []agents.ID {
@@ -48,7 +63,7 @@ func newRuntimeServices(cwd func() (string, error), lookPath func(string) (strin
 		lookPath = exec.LookPath
 	}
 
-	return runtimeServices{
+	return &runtimeServices{
 		cwd:      cwd,
 		lookPath: lookPath,
 	}
@@ -487,58 +502,80 @@ func (s runtimeServices) DoctorSummary() doctor.Report {
 	return doctor.Run(context.Background(), registry)
 }
 
-func (s runtimeServices) PlanWork(request string) (planner.Response, error) {
-	trimmed := strings.TrimSpace(request)
+func (s *runtimeServices) PlanWork(input string) (PlanWorkResult, error) {
+	trimmed := strings.TrimSpace(input)
 	if trimmed == "" {
-		return planner.Response{}, errors.New("enter a work request first")
+		return PlanWorkResult{}, errors.New("enter a work request first")
 	}
 
-	title := titleCaseRequest(trimmed)
-	response := planner.Response{
-		Mode:    planner.ModeDraft,
-		WorkID:  slugifyRequest(trimmed),
-		Title:   title,
-		Summary: trimmed,
-		Split:   planner.SplitSingle,
-		Workstreams: []planner.Workstream{
-			{
-				Name:    "01",
-				Title:   title,
-				Summary: "Initial Springfield workstream draft.",
-			},
-		},
+	if s.planning == nil || s.planning.hasDraft {
+		projectRoot, err := s.planningProjectRoot()
+		if err != nil {
+			return PlanWorkResult{}, err
+		}
+		s.planning = &planningState{
+			projectRoot: projectRoot,
+			session:     s.planningSession(projectRoot),
+			request:     trimmed,
+		}
+	} else {
+		s.planning.answers = append(s.planning.answers, trimmed)
 	}
 
-	if looksMultiWork(trimmed) {
-		response.Split = planner.SplitMulti
-		response.Workstreams = []planner.Workstream{
-			{Name: "01", Title: title + " — Core", Summary: "Primary implementation slice."},
-			{Name: "02", Title: title + " — Review", Summary: "Follow-up review and integration slice."},
+	resp, err := s.planning.session.Next(trimmed)
+	if err != nil {
+		return PlanWorkResult{}, err
+	}
+	return s.updatePlanningResult(resp), nil
+}
+
+func (s *runtimeServices) RegeneratePlannedWork() (PlanWorkResult, error) {
+	if s.planning == nil || strings.TrimSpace(s.planning.request) == "" {
+		return PlanWorkResult{}, errors.New("no planned work to regenerate")
+	}
+
+	request := s.planning.request
+	answers := append([]string(nil), s.planning.answers...)
+	projectRoot := s.planning.projectRoot
+
+	state := &planningState{
+		projectRoot: projectRoot,
+		session:     s.planningSession(projectRoot),
+		request:     request,
+		answers:     answers,
+	}
+
+	resp, err := state.session.Next(request)
+	if err != nil {
+		return PlanWorkResult{}, err
+	}
+	for _, answer := range answers {
+		if resp.Mode != planner.ModeQuestion {
+			return PlanWorkResult{}, errors.New("planner regenerate replay did not return expected follow-up question")
+		}
+		resp, err = state.session.Next(answer)
+		if err != nil {
+			return PlanWorkResult{}, err
 		}
 	}
 
-	if err := planner.Validate(response); err != nil {
-		return planner.Response{}, err
-	}
-
-	return response, nil
+	s.planning = state
+	return s.updatePlanningResult(resp), nil
 }
 
-func (s runtimeServices) ApproveDraft(request string, resp planner.Response) error {
-	status := s.SetupStatus()
-	if status.Error != "" {
-		return errors.New(status.Error)
+func (s *runtimeServices) ApprovePlannedWork() error {
+	if s.planning == nil || !s.planning.hasDraft {
+		return errors.New("no planned work draft ready to approve")
 	}
 
-	root := status.ProjectRoot
-	if root == "" {
-		root = status.WorkingDir
-	}
-
-	return workflow.WriteDraft(root, workflow.Draft{
-		RequestBody: request,
-		Response:    resp,
+	return workflow.WriteDraft(s.planning.projectRoot, workflow.Draft{
+		RequestBody: s.planning.request,
+		Response:    s.planning.draft,
 	})
+}
+
+func (s *runtimeServices) ResetPlannedWork() {
+	s.planning = nil
 }
 
 func minInt(left, right int) int {
@@ -548,30 +585,126 @@ func minInt(left, right int) int {
 	return right
 }
 
-var nonSlugRunes = regexp.MustCompile(`[^a-z0-9]+`)
-
-func slugifyRequest(input string) string {
-	slug := strings.ToLower(strings.TrimSpace(input))
-	slug = nonSlugRunes.ReplaceAllString(slug, "-")
-	slug = strings.Trim(slug, "-")
-	if slug == "" {
-		return "new-work"
+func (s *runtimeServices) planningProjectRoot() (string, error) {
+	status := s.SetupStatus()
+	if status.Error != "" {
+		return "", errors.New(status.Error)
 	}
-	return slug
+	if status.ProjectRoot != "" {
+		return status.ProjectRoot, nil
+	}
+	if status.WorkingDir != "" {
+		return status.WorkingDir, nil
+	}
+	return "", errors.New("could not resolve project root for planning")
 }
 
-func titleCaseRequest(input string) string {
-	words := strings.Fields(input)
-	if len(words) == 0 {
-		return "New Work"
+func (s *runtimeServices) planningSession(projectRoot string) planningSession {
+	if s.newPlanningSession != nil {
+		return s.newPlanningSession(projectRoot)
 	}
-	if len(words) > 6 {
-		words = words[:6]
+	return &planner.Session{
+		ProjectRoot: projectRoot,
+		Runner: plannerRuntimeRunner{
+			projectRoot: projectRoot,
+			lookPath:    s.lookPath,
+		},
 	}
-	return strings.Join(words, " ")
 }
 
-func looksMultiWork(input string) bool {
-	lower := strings.ToLower(input)
-	return strings.Contains(lower, " and ") || strings.Contains(lower, "multi") || strings.Contains(lower, "split")
+func (s *runtimeServices) updatePlanningResult(resp planner.Response) PlanWorkResult {
+	if s.planning == nil {
+		return summarizePlan(resp)
+	}
+	if resp.Mode == planner.ModeDraft {
+		s.planning.draft = resp
+		s.planning.hasDraft = true
+	} else {
+		s.planning.draft = planner.Response{}
+		s.planning.hasDraft = false
+	}
+	return summarizePlan(resp)
+}
+
+func summarizePlan(resp planner.Response) PlanWorkResult {
+	if resp.Mode == planner.ModeQuestion {
+		return PlanWorkResult{Question: resp.Question}
+	}
+
+	workstreams := make([]PlannedWorkstreamSummary, 0, len(resp.Workstreams))
+	for _, workstream := range resp.Workstreams {
+		workstreams = append(workstreams, PlannedWorkstreamSummary{
+			Name:    workstream.Name,
+			Title:   workstream.Title,
+			Summary: workstream.Summary,
+		})
+	}
+
+	return PlanWorkResult{
+		Draft: &PlannedWorkDraft{
+			WorkID:      resp.WorkID,
+			Title:       resp.Title,
+			Summary:     resp.Summary,
+			Split:       resp.Split,
+			Workstreams: workstreams,
+		},
+	}
+}
+
+type plannerRuntimeRunner struct {
+	projectRoot string
+	lookPath    func(string) (string, error)
+}
+
+func (r plannerRuntimeRunner) Run(prompt string) (string, error) {
+	registry := agents.NewRegistry(
+		claude.New(r.lookPath),
+		codex.New(r.lookPath),
+		gemini.New(r.lookPath),
+	)
+	priority, settings, err := r.loadConfig()
+	if err != nil {
+		return "", err
+	}
+
+	result := runtime.NewRunner(registry).Run(context.Background(), runtime.Request{
+		AgentIDs:          priority,
+		Prompt:            prompt,
+		WorkDir:           r.projectRoot,
+		ExecutionSettings: settings,
+	})
+	if result.Err != nil {
+		return "", result.Err
+	}
+	if result.Status != runtime.StatusPassed {
+		return "", fmt.Errorf("planner agent %q failed", result.Agent)
+	}
+
+	lines := make([]string, 0, len(result.Events))
+	for _, event := range result.Events {
+		if event.Type != coreexec.EventStdout {
+			continue
+		}
+		lines = append(lines, event.Data)
+	}
+
+	output := strings.TrimSpace(strings.Join(lines, "\n"))
+	if output == "" {
+		return "", fmt.Errorf("planner agent %q returned no stdout", result.Agent)
+	}
+	return output, nil
+}
+
+func (r plannerRuntimeRunner) loadConfig() ([]agents.ID, agents.ExecutionSettings, error) {
+	loaded, err := config.LoadFrom(r.projectRoot)
+	if err == nil {
+		return priorityAgentIDs(loaded.Config.EffectivePriority()), loaded.Config.ExecutionSettings(), nil
+	}
+
+	var missing *config.MissingConfigError
+	if errors.As(err, &missing) {
+		return []agents.ID{agents.AgentClaude, agents.AgentCodex, agents.AgentGemini}, agents.ExecutionSettings{}, nil
+	}
+
+	return nil, agents.ExecutionSettings{}, err
 }

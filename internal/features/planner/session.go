@@ -17,18 +17,37 @@ type Runner interface {
 type Session struct {
 	ProjectRoot string
 	Runner      Runner
+	request     string
+	pending     string
+	turns       []turn
 }
 
 // Next asks the planner for the next question or a draft response.
-func (s Session) Next(userInput string) (Response, error) {
+func (s *Session) Next(userInput string) (Response, error) {
 	if s.Runner == nil {
 		return Response{}, fmt.Errorf("planner runner is required")
+	}
+
+	input := strings.TrimSpace(userInput)
+	switch {
+	case s.request == "":
+		s.request = input
+	case s.pending != "":
+		s.turns = append(s.turns, turn{
+			Question: s.pending,
+			Answer:   input,
+		})
+		s.pending = ""
+	case input != "":
+		s.turns = append(s.turns, turn{
+			Answer: input,
+		})
 	}
 
 	output, err := playbooks.Build(playbooks.Input{
 		Kind:        playbooks.KindConductor,
 		ProjectRoot: s.ProjectRoot,
-		TaskBody:    planningTask(strings.TrimSpace(userInput)),
+		TaskBody:    planningTask(s.request, s.turns),
 	})
 	if err != nil {
 		return Response{}, fmt.Errorf("build planning prompt: %w", err)
@@ -46,27 +65,57 @@ func (s Session) Next(userInput string) (Response, error) {
 	if err := Validate(resp); err != nil {
 		return Response{}, fmt.Errorf("validate planner response: %w", err)
 	}
+	if resp.Mode == ModeQuestion {
+		s.pending = strings.TrimSpace(resp.Question)
+	} else {
+		s.pending = ""
+	}
 
 	return resp, nil
 }
 
-func planningTask(userInput string) string {
-	return strings.TrimSpace(`
-Plan the user's request for Springfield.
+type turn struct {
+	Question string
+	Answer   string
+}
 
-User request:
-` + userInput + `
+func planningTask(request string, turns []turn) string {
+	var builder strings.Builder
 
-Return JSON only. No markdown fences. No prose before or after the JSON.
+	builder.WriteString("Plan the user's request for Springfield.\n\n")
+	builder.WriteString("Initial request:\n")
+	builder.WriteString(request)
+	builder.WriteString("\n\n")
 
-JSON contract:
-- mode: "question" or "draft"
-- question: required when mode is "question"
-- work_id: required when mode is "draft"
-- title: required when mode is "draft"
-- summary: required when mode is "draft"
-- split: "single" or "multi" when mode is "draft"
-- workstreams: at least one item when mode is "draft"
-- each workstream needs name, title, and optional summary
-`)
+	if len(turns) == 0 {
+		builder.WriteString("Follow-up answers: none yet.\n\n")
+	} else {
+		builder.WriteString("Planning conversation so far:\n")
+		for _, turn := range turns {
+			if turn.Question != "" {
+				builder.WriteString("Planner question: ")
+				builder.WriteString(turn.Question)
+				builder.WriteString("\n")
+			}
+			if turn.Answer != "" {
+				builder.WriteString("User answer: ")
+				builder.WriteString(turn.Answer)
+				builder.WriteString("\n")
+			}
+			builder.WriteString("\n")
+		}
+	}
+
+	builder.WriteString("Return JSON only. No markdown fences. No prose before or after the JSON.\n\n")
+	builder.WriteString("JSON contract:\n")
+	builder.WriteString("- mode: \"question\" or \"draft\"\n")
+	builder.WriteString("- question: required when mode is \"question\"\n")
+	builder.WriteString("- work_id: required when mode is \"draft\"\n")
+	builder.WriteString("- title: required when mode is \"draft\"\n")
+	builder.WriteString("- summary: required when mode is \"draft\"\n")
+	builder.WriteString("- split: \"single\" or \"multi\" when mode is \"draft\"\n")
+	builder.WriteString("- workstreams: at least one item when mode is \"draft\"\n")
+	builder.WriteString("- each workstream needs name, title, and optional summary\n")
+
+	return strings.TrimSpace(builder.String())
 }

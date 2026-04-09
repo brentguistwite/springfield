@@ -48,14 +48,16 @@ type fakeServices struct {
 	updateConductorCalls         int
 	updateConductorResult        tui.ConductorSetupResult
 	updateConductorErr           error
-	planResponse                 planner.Response
+	planResults                  []tui.PlanWorkResult
 	planErr                      error
 	planCalls                    int
-	planInput                    string
+	planInputs                   []string
+	regenerateResults            []tui.PlanWorkResult
+	regenerateErr                error
+	regenerateCalls              int
 	approveCalls                 int
-	approveRequest               string
-	approveResponse              planner.Response
 	approveErr                   error
+	resetPlanCalls               int
 }
 
 func (f *fakeServices) SetupStatus() tui.SetupStatus {
@@ -165,17 +167,44 @@ func (f *fakeServices) UpdateConductor(opts tui.ConductorSetupInput) (tui.Conduc
 	return f.updateConductorResult, f.updateConductorErr
 }
 
-func (f *fakeServices) PlanWork(request string) (planner.Response, error) {
+func (f *fakeServices) PlanWork(request string) (tui.PlanWorkResult, error) {
 	f.planCalls++
-	f.planInput = request
-	return f.planResponse, f.planErr
+	f.planInputs = append(f.planInputs, request)
+	if f.planErr != nil {
+		return tui.PlanWorkResult{}, f.planErr
+	}
+	if len(f.planResults) == 0 {
+		return tui.PlanWorkResult{}, nil
+	}
+	result := f.planResults[0]
+	if len(f.planResults) > 1 {
+		f.planResults = f.planResults[1:]
+	}
+	return result, nil
 }
 
-func (f *fakeServices) ApproveDraft(request string, resp planner.Response) error {
+func (f *fakeServices) RegeneratePlannedWork() (tui.PlanWorkResult, error) {
+	f.regenerateCalls++
+	if f.regenerateErr != nil {
+		return tui.PlanWorkResult{}, f.regenerateErr
+	}
+	if len(f.regenerateResults) == 0 {
+		return tui.PlanWorkResult{}, nil
+	}
+	result := f.regenerateResults[0]
+	if len(f.regenerateResults) > 1 {
+		f.regenerateResults = f.regenerateResults[1:]
+	}
+	return result, nil
+}
+
+func (f *fakeServices) ApprovePlannedWork() error {
 	f.approveCalls++
-	f.approveRequest = request
-	f.approveResponse = resp
 	return f.approveErr
+}
+
+func (f *fakeServices) ResetPlannedWork() {
+	f.resetPlanCalls++
 }
 
 // updateModel processes a message and follows up on any returned command.
@@ -237,17 +266,22 @@ func TestModelStartsOnHomeScreen(t *testing.T) {
 	}
 }
 
-func TestModelSpringfieldPlanningFlowEntersNewWork(t *testing.T) {
+func plannedDraftResult(id, title, summary string, split planner.Split, workstreams []tui.PlannedWorkstreamSummary) tui.PlanWorkResult {
+	return tui.PlanWorkResult{
+		Draft: &tui.PlannedWorkDraft{
+			WorkID:      id,
+			Title:       title,
+			Summary:     summary,
+			Split:       split,
+			Workstreams: workstreams,
+		},
+	}
+}
+
+func TestModelSpringfieldPlanningFlowShowsPlannerQuestion(t *testing.T) {
 	services := &fakeServices{
-		planResponse: planner.Response{
-			Mode:    planner.ModeDraft,
-			WorkID:  "wave-b",
-			Title:   "Wave B planning surface",
-			Summary: "Add planner and review surfaces.",
-			Split:   planner.SplitSingle,
-			Workstreams: []planner.Workstream{
-				{Name: "01", Title: "Implement Wave B"},
-			},
+		planResults: []tui.PlanWorkResult{
+			{Question: "Which Springfield surface should ship first?"},
 		},
 	}
 
@@ -262,29 +296,85 @@ func TestModelSpringfieldPlanningFlowEntersNewWork(t *testing.T) {
 	if services.planCalls != 1 {
 		t.Fatalf("expected one planning call, got %d", services.planCalls)
 	}
-	if services.planInput != "Plan Wave B" {
-		t.Fatalf("plan input = %q", services.planInput)
+	if got, want := services.planInputs[0], "Plan Wave B"; got != want {
+		t.Fatalf("plan input = %q, want %q", got, want)
 	}
 
 	view := model.View()
-	for _, marker := range []string{"Wave B planning surface", "Implement Wave B"} {
+	for _, marker := range []string{"Planner question:", "Which Springfield surface should ship first?"} {
 		if !strings.Contains(view, marker) {
-			t.Fatalf("expected review view to contain %q, got:\n%s", marker, view)
+			t.Fatalf("expected planning view to contain %q, got:\n%s", marker, view)
 		}
 	}
 }
 
-func TestModelSpringfieldReviewFlowShowsSingleDraft(t *testing.T) {
+func TestModelSpringfieldPlanningFlowAnswersPlannerQuestionToDraft(t *testing.T) {
 	services := &fakeServices{
-		planResponse: planner.Response{
-			Mode:    planner.ModeDraft,
-			WorkID:  "single-flow",
-			Title:   "Single flow",
-			Summary: "Keep planning in one stream.",
-			Split:   planner.SplitSingle,
-			Workstreams: []planner.Workstream{
-				{Name: "01", Title: "Single workstream", Summary: "One stream."},
-			},
+		planResults: []tui.PlanWorkResult{
+			{Question: "Which Springfield surface should ship first?"},
+			plannedDraftResult(
+				"wave-c1",
+				"Wave C1 planning loop",
+				"Connect the TUI planning flow to the real planner session.",
+				planner.SplitSingle,
+				[]tui.PlannedWorkstreamSummary{
+					{Name: "01", Title: "Implement Wave C1", Summary: "Keep it in one stream."},
+				},
+			),
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	for _, r := range "Plan Wave C1" {
+		model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	for _, r := range "Start with New Work" {
+		model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if got, want := services.planCalls, 2; got != want {
+		t.Fatalf("plan calls = %d, want %d", got, want)
+	}
+	if got, want := services.planInputs[1], "Start with New Work"; got != want {
+		t.Fatalf("second plan input = %q, want %q", got, want)
+	}
+
+	view := model.View()
+	for _, marker := range []string{"Wave C1 planning loop", "Split: single", "Implement Wave C1"} {
+		if !strings.Contains(view, marker) {
+			t.Fatalf("expected review marker %q, got:\n%s", marker, view)
+		}
+	}
+}
+
+func TestModelSpringfieldReviewFlowRegenerateRecallsPlanner(t *testing.T) {
+	services := &fakeServices{
+		planResults: []tui.PlanWorkResult{
+			plannedDraftResult(
+				"wave-c1",
+				"Wave C1 planning loop",
+				"Initial draft.",
+				planner.SplitSingle,
+				[]tui.PlannedWorkstreamSummary{
+					{Name: "01", Title: "Initial draft"},
+				},
+			),
+		},
+		regenerateResults: []tui.PlanWorkResult{
+			plannedDraftResult(
+				"wave-c1",
+				"Wave C1 planning loop regenerated",
+				"Updated draft.",
+				planner.SplitMulti,
+				[]tui.PlannedWorkstreamSummary{
+					{Name: "01", Title: "Planner boundary"},
+					{Name: "02", Title: "TUI review flow"},
+				},
+			),
 		},
 	}
 
@@ -293,27 +383,32 @@ func TestModelSpringfieldReviewFlowShowsSingleDraft(t *testing.T) {
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+
+	if got, want := services.regenerateCalls, 1; got != want {
+		t.Fatalf("regenerate calls = %d, want %d", got, want)
+	}
 
 	view := model.View()
-	for _, marker := range []string{"Split: single", "Single workstream"} {
+	for _, marker := range []string{"Wave C1 planning loop regenerated", "Split: multi", "Planner boundary", "Draft regenerated."} {
 		if !strings.Contains(view, marker) {
-			t.Fatalf("expected single review marker %q, got:\n%s", marker, view)
+			t.Fatalf("expected regenerated review marker %q, got:\n%s", marker, view)
 		}
 	}
 }
 
-func TestModelSpringfieldReviewFlowShowsMultiDraft(t *testing.T) {
+func TestModelSpringfieldReviewFlowApprovePersistsDraft(t *testing.T) {
 	services := &fakeServices{
-		planResponse: planner.Response{
-			Mode:    planner.ModeDraft,
-			WorkID:  "multi-flow",
-			Title:   "Multi flow",
-			Summary: "Split planning work.",
-			Split:   planner.SplitMulti,
-			Workstreams: []planner.Workstream{
-				{Name: "01", Title: "Planner core"},
-				{Name: "02", Title: "Review UI"},
-			},
+		planResults: []tui.PlanWorkResult{
+			plannedDraftResult(
+				"wave-c1",
+				"Wave C1 planning loop",
+				"Connect the TUI planning flow to the real planner session.",
+				planner.SplitSingle,
+				[]tui.PlannedWorkstreamSummary{
+					{Name: "01", Title: "Implement Wave C1"},
+				},
+			),
 		},
 	}
 
@@ -322,40 +417,55 @@ func TestModelSpringfieldReviewFlowShowsMultiDraft(t *testing.T) {
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 
-	view := model.View()
-	for _, marker := range []string{"Split: multi", "Planner core", "Review UI"} {
-		if !strings.Contains(view, marker) {
-			t.Fatalf("expected multi review marker %q, got:\n%s", marker, view)
-		}
-	}
-}
-
-func TestModelSpringfieldReviewFlowOffersApproveRegenerateBack(t *testing.T) {
-	services := &fakeServices{
-		planResponse: planner.Response{
-			Mode:    planner.ModeDraft,
-			WorkID:  "wave-b",
-			Title:   "Wave B planning surface",
-			Summary: "Add planner and review surfaces.",
-			Split:   planner.SplitSingle,
-			Workstreams: []planner.Workstream{
-				{Name: "01", Title: "Implement Wave B"},
-			},
-		},
+	if got, want := services.approveCalls, 1; got != want {
+		t.Fatalf("approve calls = %d, want %d", got, want)
 	}
 
-	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
-
 	view := model.View()
-	for _, marker := range []string{"[a] approve", "[g] regenerate", "[b] back"} {
+	for _, marker := range []string{"Draft approved and saved under .springfield/work.", "[a] approve", "[g] regenerate", "[b] back"} {
 		if !strings.Contains(view, marker) {
 			t.Fatalf("expected review action %q, got:\n%s", marker, view)
 		}
+	}
+}
+
+func TestModelSpringfieldReviewFlowBackReturnsSafely(t *testing.T) {
+	services := &fakeServices{
+		planResults: []tui.PlanWorkResult{
+			plannedDraftResult(
+				"wave-c1",
+				"Wave C1 planning loop",
+				"Connect the TUI planning flow to the real planner session.",
+				planner.SplitSingle,
+				[]tui.PlannedWorkstreamSummary{
+					{Name: "01", Title: "Implement Wave C1"},
+				},
+			),
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	resetCallsBeforeBack := services.resetPlanCalls
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+
+	if got, want := services.resetPlanCalls, resetCallsBeforeBack+1; got != want {
+		t.Fatalf("reset calls = %d, want %d", got, want)
+	}
+
+	view := model.View()
+	for _, marker := range []string{"Describe the work Springfield should plan.", "Request:"} {
+		if !strings.Contains(view, marker) {
+			t.Fatalf("expected input view marker %q, got:\n%s", marker, view)
+		}
+	}
+	if strings.Contains(view, "Wave C1 planning loop") {
+		t.Fatalf("expected review draft to be cleared after back, got:\n%s", view)
 	}
 }
 

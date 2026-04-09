@@ -172,6 +172,28 @@ type SaveAgentExecutionModesInput struct {
 	Codex  string
 }
 
+// PlannedWorkstreamSummary is the TUI-safe projection of one planned workstream.
+type PlannedWorkstreamSummary struct {
+	Name    string
+	Title   string
+	Summary string
+}
+
+// PlannedWorkDraft is the TUI-safe review model for one planner-produced draft.
+type PlannedWorkDraft struct {
+	WorkID      string
+	Title       string
+	Summary     string
+	Split       planner.Split
+	Workstreams []PlannedWorkstreamSummary
+}
+
+// PlanWorkResult describes the current planner outcome for the TUI.
+type PlanWorkResult struct {
+	Question string
+	Draft    *PlannedWorkDraft
+}
+
 // ConductorCurrentConfig is a TUI-safe projection of current conductor settings.
 type ConductorCurrentConfig struct {
 	PlansDir        string
@@ -199,6 +221,8 @@ type Services interface {
 	EnsureRecommendedExecutionDefaults() error
 	UpdateConductor(opts ConductorSetupInput) (ConductorSetupResult, error)
 	DoctorSummary() doctor.Report
-	PlanWork(request string) (planner.Response, error)
-	ApproveDraft(request string, resp planner.Response) error
+	PlanWork(input string) (PlanWorkResult, error)
+	RegeneratePlannedWork() (PlanWorkResult, error)
+	ApprovePlannedWork() error
+	ResetPlannedWork()
 }
