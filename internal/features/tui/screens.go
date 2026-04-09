@@ -619,7 +619,20 @@ func (s springfieldStatusScreen) diagnosisView() string {
 	var builder strings.Builder
 	builder.WriteString("Status — Diagnose\n\n")
 	fmt.Fprintf(&builder, "Work: %s\n", s.diagnosis.WorkID)
-	fmt.Fprintf(&builder, "Status: %s\n\n", s.diagnosis.Status)
+	fmt.Fprintf(&builder, "Status: %s\n", s.diagnosis.Status)
+	if s.diagnosis.Summary != "" {
+		fmt.Fprintf(&builder, "Summary: %s\n", s.diagnosis.Summary)
+	}
+	if len(s.diagnosis.FailingWorkstreams) > 0 {
+		fmt.Fprintf(&builder, "Failing workstreams: %s\n", strings.Join(s.diagnosis.FailingWorkstreams, ", "))
+	}
+	if s.diagnosis.LastError != "" {
+		fmt.Fprintf(&builder, "Last error: %s\n", s.diagnosis.LastError)
+	}
+	if s.diagnosis.EvidencePath != "" {
+		fmt.Fprintf(&builder, "Evidence: %s\n", s.diagnosis.EvidencePath)
+	}
+	builder.WriteString("\n")
 
 	if len(s.diagnosis.Failures) == 0 {
 		builder.WriteString("No failures detected.\n")

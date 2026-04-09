@@ -228,6 +228,32 @@ func TestSpringfieldHelp(t *testing.T) {
 	}
 }
 
+func TestSpringfieldHelpReadmeStaysSpringfieldFirst(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), "README.md"))
+	if err != nil {
+		t.Fatalf("read README: %v", err)
+	}
+
+	text := string(data)
+	lower := strings.ToLower(text)
+	for _, marker := range []string{
+		"planning is real end-to-end",
+		"execution is unified behind Springfield-owned run, status, resume, and diagnose surfaces",
+	} {
+		if !strings.Contains(lower, strings.ToLower(marker)) {
+			t.Fatalf("expected README to contain %q, got:\n%s", marker, text)
+		}
+	}
+	for _, stale := range []string{
+		"springfield conductor setup",
+		"go run . ralph --help",
+	} {
+		if strings.Contains(text, stale) {
+			t.Fatalf("expected README to drop stale guidance %q, got:\n%s", stale, text)
+		}
+	}
+}
+
 func TestSpringfieldWithoutArgsShowsShellHome(t *testing.T) {
 	output, err := runSpringfield(t)
 	if err != nil {
@@ -254,9 +280,9 @@ func TestSpringfieldSubcommandsAreReachable(t *testing.T) {
 	}{
 		{name: "init", marker: "Initialize a new Springfield project in the current directory."},
 		{name: "explain", marker: "Render the built-in Springfield explanation prompt for the current project."},
-		{name: "status", marker: "Show Springfield work status from approved work state."},
-		{name: "resume", marker: "Run or resume approved Springfield work."},
-		{name: "diagnose", marker: "Diagnose Springfield work failures and suggest next steps."},
+		{name: "status", marker: "Show status for the active Springfield work or a specific work id."},
+		{name: "resume", marker: "Run or resume the active approved Springfield work."},
+		{name: "diagnose", marker: "Summarize Springfield failures, evidence, and next steps for the active work."},
 		{name: "doctor", marker: "Doctor checks that supported agent CLIs are installed and reachable, providing install guidance for anything missing."},
 		{name: "version", marker: "Print the Springfield version"},
 	} {

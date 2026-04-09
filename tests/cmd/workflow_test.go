@@ -81,10 +81,10 @@ func TestSpringfieldDiagnoseRendersFailureGuidance(t *testing.T) {
 	writeSpringfieldConfig(t, dir, "claude")
 	writeApprovedWorkflowDraft(t, dir, planner.SplitSingle)
 	writeWorkflowRunState(t, dir, map[string]any{
-		"status":    "failed",
-		"approved":  true,
-		"split":     "single",
-		"error":     "agent failed",
+		"status":      "failed",
+		"approved":    true,
+		"split":       "single",
+		"error":       "agent failed",
 		"workstreams": []string{"01"},
 		"workstream_states": []map[string]string{
 			{
@@ -104,12 +104,73 @@ func TestSpringfieldDiagnoseRendersFailureGuidance(t *testing.T) {
 	for _, marker := range []string{
 		"Work: wave-c2",
 		"Status: failed",
-		"01  Execution adapter",
+		"Summary: 1 Springfield workstream failed.",
+		"Failing workstreams: 01",
+		"Last error: agent failed",
 		"Evidence: .springfield/work/wave-c2/logs/01.log",
+		"01  Execution adapter",
 		"resume",
 	} {
 		if !strings.Contains(output, marker) {
 			t.Fatalf("expected diagnose output to contain %q, got:\n%s", marker, output)
+		}
+	}
+	for _, legacy := range []string{"Ralph", "Conductor"} {
+		if strings.Contains(output, legacy) {
+			t.Fatalf("expected diagnose output to stay Springfield-first, got:\n%s", output)
+		}
+	}
+}
+
+func TestSpringfieldStatusHelpMentionsActiveWork(t *testing.T) {
+	output, err := runSpringfield(t, "status", "--help")
+	if err != nil {
+		t.Fatalf("status help failed: %v\n%s", err, output)
+	}
+
+	for _, marker := range []string{
+		"Show status for the active Springfield work or a specific work id.",
+		"Springfield work id (default: active work)",
+	} {
+		if !strings.Contains(output, marker) {
+			t.Fatalf("expected status help to contain %q, got:\n%s", marker, output)
+		}
+	}
+}
+
+func TestSpringfieldResumeHelpMentionsActiveWork(t *testing.T) {
+	output, err := runSpringfield(t, "resume", "--help")
+	if err != nil {
+		t.Fatalf("resume help failed: %v\n%s", err, output)
+	}
+
+	for _, marker := range []string{
+		"Run or resume the active approved Springfield work.",
+		"Springfield work id (default: active work)",
+	} {
+		if !strings.Contains(output, marker) {
+			t.Fatalf("expected resume help to contain %q, got:\n%s", marker, output)
+		}
+	}
+}
+
+func TestSpringfieldDiagnoseHelpMentionsEvidence(t *testing.T) {
+	output, err := runSpringfield(t, "diagnose", "--help")
+	if err != nil {
+		t.Fatalf("diagnose help failed: %v\n%s", err, output)
+	}
+
+	for _, marker := range []string{
+		"Summarize Springfield failures, evidence, and next steps for the active work.",
+		"Springfield work id (default: active work)",
+	} {
+		if !strings.Contains(output, marker) {
+			t.Fatalf("expected diagnose help to contain %q, got:\n%s", marker, output)
+		}
+	}
+	for _, legacy := range []string{"Ralph", "Conductor"} {
+		if strings.Contains(output, legacy) {
+			t.Fatalf("expected diagnose help to avoid legacy engine names, got:\n%s", output)
 		}
 	}
 }

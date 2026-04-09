@@ -77,10 +77,14 @@ type DiagnosisFailure struct {
 
 // Diagnosis is the Springfield-owned failure view and next-step guidance.
 type Diagnosis struct {
-	WorkID    string
-	Status    string
-	NextStep  string
-	Failures  []DiagnosisFailure
+	WorkID             string
+	Status             string
+	Summary            string
+	EvidencePath       string
+	FailingWorkstreams []string
+	LastError          string
+	NextStep           string
+	Failures           []DiagnosisFailure
 }
 
 // SingleExecutor runs one single-stream Springfield work item.
@@ -145,9 +149,19 @@ func (r Runner) Diagnose(root, workID string) (Diagnosis, error) {
 	}
 
 	failures := make([]DiagnosisFailure, 0)
+	failingWorkstreams := make([]string, 0)
+	evidencePath := ""
+	lastError := ""
 	for _, workstream := range status.Workstreams {
 		if workstream.Status != statusFailed {
 			continue
+		}
+		failingWorkstreams = append(failingWorkstreams, workstream.Name)
+		if evidencePath == "" && workstream.EvidencePath != "" {
+			evidencePath = workstream.EvidencePath
+		}
+		if lastError == "" && workstream.Error != "" {
+			lastError = workstream.Error
 		}
 		failures = append(failures, DiagnosisFailure{
 			Workstream:   workstream.Name,
@@ -158,10 +172,14 @@ func (r Runner) Diagnose(root, workID string) (Diagnosis, error) {
 	}
 
 	return Diagnosis{
-		WorkID:   status.WorkID,
-		Status:   status.Status,
-		NextStep: nextStep(status.Status, len(failures)),
-		Failures: failures,
+		WorkID:             status.WorkID,
+		Status:             status.Status,
+		Summary:            diagnosisSummary(status.Status, len(failures)),
+		EvidencePath:       evidencePath,
+		FailingWorkstreams: failingWorkstreams,
+		LastError:          lastError,
+		NextStep:           nextStep(status.Status, len(failures)),
+		Failures:           failures,
 	}, nil
 }
 
@@ -327,6 +345,21 @@ func nextStep(status string, failures int) string {
 		return "Review the failing workstreams, then resume the work."
 	default:
 		return "Resume the work to continue execution."
+	}
+}
+
+func diagnosisSummary(status string, failures int) string {
+	switch {
+	case status == statusCompleted:
+		return "Springfield work completed successfully."
+	case failures == 1:
+		return "1 Springfield workstream failed."
+	case failures > 1:
+		return fmt.Sprintf("%d Springfield workstreams failed.", failures)
+	case status == statusFailed:
+		return "Springfield work failed."
+	default:
+		return "No Springfield failures detected."
 	}
 }
 

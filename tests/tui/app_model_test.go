@@ -378,9 +378,13 @@ func TestSpringfieldDiagnoseShowsFailureGuidance(t *testing.T) {
 			},
 		},
 		springfieldDiagnosis: tui.SpringfieldDiagnosis{
-			WorkID:   "wave-c2",
-			Status:   "failed",
-			NextStep: "Review the failing workstreams, then resume the work.",
+			WorkID:             "wave-c2",
+			Status:             "failed",
+			Summary:            "1 Springfield workstream failed.",
+			EvidencePath:       ".springfield/work/wave-c2/logs/02.log",
+			FailingWorkstreams: []string{"02"},
+			LastError:          "agent failed",
+			NextStep:           "Review the failing workstreams, then resume the work.",
 			Failures: []tui.SpringfieldDiagnosisFailure{
 				{Workstream: "02", Title: "TUI surface", Error: "agent failed", EvidencePath: ".springfield/work/wave-c2/logs/02.log"},
 			},
@@ -392,9 +396,22 @@ func TestSpringfieldDiagnoseShowsFailureGuidance(t *testing.T) {
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
 
 	view := model.View()
-	for _, marker := range []string{"Status — Diagnose", "02  TUI surface", "Evidence: .springfield/work/wave-c2/logs/02.log", "resume"} {
+	for _, marker := range []string{
+		"Status — Diagnose",
+		"Summary: 1 Springfield workstream failed.",
+		"Failing workstreams: 02",
+		"Last error: agent failed",
+		"Evidence: .springfield/work/wave-c2/logs/02.log",
+		"02  TUI surface",
+		"resume",
+	} {
 		if !strings.Contains(view, marker) {
 			t.Fatalf("expected diagnosis view to contain %q, got:\n%s", marker, view)
+		}
+	}
+	for _, legacy := range []string{"Ralph", "Conductor"} {
+		if strings.Contains(view, legacy) {
+			t.Fatalf("expected Springfield-only diagnosis view, got:\n%s", view)
 		}
 	}
 }

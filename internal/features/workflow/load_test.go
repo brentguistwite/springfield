@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"springfield/internal/features/planner"
 	"springfield/internal/features/workflow"
 )
 
@@ -167,6 +168,88 @@ func TestLoadWorkRejectsUnapprovedOrMalformedWork(t *testing.T) {
 	}
 }
 
+func TestWriteDraftSetsActiveWorkID(t *testing.T) {
+	root := t.TempDir()
+
+	if err := workflow.WriteDraft(root, workflow.Draft{
+		RequestBody: "Polish Wave D1 status UX",
+		Response: plannerResponseFixture("wave-d1", "Product polish", "single", []workflowDraftWorkstream{
+			{name: "01", title: "Status UX", summary: "Tighten current work resolution."},
+		}),
+	}); err != nil {
+		t.Fatalf("WriteDraft: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, ".springfield", "work", "index.json"))
+	if err != nil {
+		t.Fatalf("read index: %v", err)
+	}
+
+	var index struct {
+		ActiveWorkID string `json:"active_work_id"`
+	}
+	if err := json.Unmarshal(data, &index); err != nil {
+		t.Fatalf("decode index: %v", err)
+	}
+	if got, want := index.ActiveWorkID, "wave-d1"; got != want {
+		t.Fatalf("active work id = %q, want %q", got, want)
+	}
+}
+
+func TestCurrentWorkIDPrefersExplicitActiveWorkID(t *testing.T) {
+	root := t.TempDir()
+	writeWorkflowJSON(t, filepath.Join(root, ".springfield", "work", "index.json"), map[string]any{
+		"active_work_id": "wave-c2",
+		"works": []map[string]string{
+			{
+				"id":    "wave-c2",
+				"title": "Unified execution surface",
+				"split": "single",
+			},
+			{
+				"id":    "wave-d1",
+				"title": "Product polish",
+				"split": "single",
+			},
+		},
+	})
+
+	workID, err := workflow.CurrentWorkID(root)
+	if err != nil {
+		t.Fatalf("CurrentWorkID: %v", err)
+	}
+	if got, want := workID, "wave-c2"; got != want {
+		t.Fatalf("work id = %q, want %q", got, want)
+	}
+}
+
+func TestCurrentWorkIDRejectsMissingExplicitActiveWorkID(t *testing.T) {
+	root := t.TempDir()
+	writeWorkflowJSON(t, filepath.Join(root, ".springfield", "work", "index.json"), map[string]any{
+		"active_work_id": "wave-missing",
+		"works": []map[string]string{
+			{
+				"id":    "wave-c2",
+				"title": "Unified execution surface",
+				"split": "single",
+			},
+			{
+				"id":    "wave-d1",
+				"title": "Product polish",
+				"split": "single",
+			},
+		},
+	})
+
+	_, err := workflow.CurrentWorkID(root)
+	if err == nil {
+		t.Fatal("expected missing active work error")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "active") {
+		t.Fatalf("expected active work error, got %v", err)
+	}
+}
+
 type workflowDraftFixture struct {
 	workID      string
 	title       string
@@ -181,6 +264,26 @@ type workflowDraftWorkstream struct {
 	name    string
 	title   string
 	summary string
+}
+
+func plannerResponseFixture(workID, title, split string, workstreams []workflowDraftWorkstream) planner.Response {
+	planned := make([]planner.Workstream, 0, len(workstreams))
+	for _, workstream := range workstreams {
+		planned = append(planned, planner.Workstream{
+			Name:    workstream.name,
+			Title:   workstream.title,
+			Summary: workstream.summary,
+		})
+	}
+
+	return planner.Response{
+		Mode:        planner.ModeDraft,
+		WorkID:      workID,
+		Title:       title,
+		Summary:     title,
+		Split:       planner.Split(split),
+		Workstreams: planned,
+	}
 }
 
 func writeWorkflowDraft(t *testing.T, root string, fixture workflowDraftFixture) {

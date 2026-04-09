@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -16,8 +17,8 @@ func NewDiagnoseCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "diagnose",
-		Short: "Diagnose Springfield work failures and suggest next steps.",
-		Long:  "Diagnose Springfield work failures and suggest next steps.",
+		Short: "Summarize Springfield failures, evidence, and next steps for the active work.",
+		Long:  "Summarize Springfield failures, evidence, and next steps for the active work.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root, resolvedWorkID, err := resolveWorkflowTarget(dir, workID)
@@ -38,6 +39,18 @@ func NewDiagnoseCommand() *cobra.Command {
 			w := cmd.OutOrStdout()
 			fmt.Fprintf(w, "Work: %s\n", diagnosis.WorkID)
 			fmt.Fprintf(w, "Status: %s\n", diagnosis.Status)
+			if diagnosis.Summary != "" {
+				fmt.Fprintf(w, "Summary: %s\n", diagnosis.Summary)
+			}
+			if len(diagnosis.FailingWorkstreams) > 0 {
+				fmt.Fprintf(w, "Failing workstreams: %s\n", strings.Join(diagnosis.FailingWorkstreams, ", "))
+			}
+			if diagnosis.LastError != "" {
+				fmt.Fprintf(w, "Last error: %s\n", diagnosis.LastError)
+			}
+			if diagnosis.EvidencePath != "" {
+				fmt.Fprintf(w, "Evidence: %s\n", diagnosis.EvidencePath)
+			}
 			fmt.Fprintln(w, "")
 			if len(diagnosis.Failures) == 0 {
 				fmt.Fprintln(w, "No failures detected.")

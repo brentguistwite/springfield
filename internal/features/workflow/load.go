@@ -104,7 +104,7 @@ func LoadWork(root, workID string) (Work, error) {
 	}, nil
 }
 
-// CurrentWorkID resolves the most recently indexed Springfield work item.
+// CurrentWorkID resolves the active Springfield work item.
 func CurrentWorkID(root string) (string, error) {
 	rt, err := storage.FromRoot(root)
 	if err != nil {
@@ -117,6 +117,14 @@ func CurrentWorkID(root string) (string, error) {
 	}
 	if len(index.Works) == 0 {
 		return "", fmt.Errorf("no Springfield work is available yet")
+	}
+
+	if index.ActiveWorkID != "" {
+		entry, ok := findIndexEntry(index, index.ActiveWorkID)
+		if !ok {
+			return "", fmt.Errorf("active Springfield work %q is missing from the work index", index.ActiveWorkID)
+		}
+		return entry.ID, nil
 	}
 
 	return index.Works[len(index.Works)-1].ID, nil

@@ -17,7 +17,8 @@ type Draft struct {
 }
 
 type workIndex struct {
-	Works []workIndexEntry `json:"works"`
+	ActiveWorkID string           `json:"active_work_id,omitempty"`
+	Works        []workIndexEntry `json:"works"`
 }
 
 type workIndexEntry struct {
@@ -104,6 +105,7 @@ func WriteDraft(root string, draft Draft) error {
 		Title: draft.Response.Title,
 		Split: string(draft.Response.Split),
 	})
+	index.ActiveWorkID = draft.Response.WorkID
 
 	if err := writeJSONFile(rt.WorkIndexPath(), index); err != nil {
 		return err

@@ -204,6 +204,111 @@ func TestRunnerFailurePreservesEvidenceForDiagnose(t *testing.T) {
 	}
 }
 
+func TestSpringfieldDiagnoseSingleFailureReturnsStructuredEvidence(t *testing.T) {
+	root := t.TempDir()
+	writeWorkflowDraft(t, root, workflowDraftFixture{
+		workID:  "wave-d1",
+		title:   "Product polish",
+		summary: "Diagnose should keep Springfield-owned evidence fields.",
+		split:   "single",
+		workstreams: []workflowDraftWorkstream{
+			{name: "01", title: "Status UX"},
+		},
+	})
+
+	runner := workflow.Runner{
+		Single: &fakeSingleExecutor{
+			report: workflow.ExecutionReport{
+				Status: "failed",
+				Workstreams: []workflow.WorkstreamRun{
+					{Name: "01", Status: "failed", Error: "agent failed", EvidencePath: ".springfield/work/wave-d1/logs/01.log"},
+				},
+			},
+		},
+		Multi: &fakeMultiExecutor{},
+	}
+
+	if _, err := runner.Run(root, "wave-d1"); err == nil {
+		t.Fatal("expected run failure")
+	}
+
+	diagnosis, err := runner.Diagnose(root, "wave-d1")
+	if err != nil {
+		t.Fatalf("Diagnose: %v", err)
+	}
+
+	if got, want := diagnosis.Summary, "1 Springfield workstream failed."; got != want {
+		t.Fatalf("summary = %q, want %q", got, want)
+	}
+	if got, want := diagnosis.EvidencePath, ".springfield/work/wave-d1/logs/01.log"; got != want {
+		t.Fatalf("evidence path = %q, want %q", got, want)
+	}
+	if got, want := diagnosis.LastError, "agent failed"; got != want {
+		t.Fatalf("last error = %q, want %q", got, want)
+	}
+	if got, want := len(diagnosis.FailingWorkstreams), 1; got != want {
+		t.Fatalf("failing workstreams = %d, want %d", got, want)
+	}
+	if got, want := diagnosis.FailingWorkstreams[0], "01"; got != want {
+		t.Fatalf("failing workstream = %q, want %q", got, want)
+	}
+}
+
+func TestSpringfieldDiagnoseMultiFailurePreservesStructuredEvidence(t *testing.T) {
+	root := t.TempDir()
+	writeWorkflowDraft(t, root, workflowDraftFixture{
+		workID:  "wave-d1",
+		title:   "Product polish",
+		summary: "Diagnose should summarize multi-stream failures consistently.",
+		split:   "multi",
+		workstreams: []workflowDraftWorkstream{
+			{name: "01", title: "Status UX"},
+			{name: "02", title: "Docs cleanup"},
+		},
+	})
+
+	runner := workflow.Runner{
+		Single: &fakeSingleExecutor{},
+		Multi: &fakeMultiExecutor{
+			report: workflow.ExecutionReport{
+				Status: "failed",
+				Workstreams: []workflow.WorkstreamRun{
+					{Name: "01", Status: "failed", Error: "status render failed", EvidencePath: ".springfield/work/wave-d1/logs/01.log"},
+					{Name: "02", Status: "failed", Error: "docs render failed", EvidencePath: ".springfield/work/wave-d1/logs/02.log"},
+				},
+			},
+		},
+	}
+
+	if _, err := runner.Run(root, "wave-d1"); err == nil {
+		t.Fatal("expected run failure")
+	}
+
+	diagnosis, err := runner.Diagnose(root, "wave-d1")
+	if err != nil {
+		t.Fatalf("Diagnose: %v", err)
+	}
+
+	if got, want := diagnosis.Summary, "2 Springfield workstreams failed."; got != want {
+		t.Fatalf("summary = %q, want %q", got, want)
+	}
+	if got, want := diagnosis.EvidencePath, ".springfield/work/wave-d1/logs/01.log"; got != want {
+		t.Fatalf("evidence path = %q, want %q", got, want)
+	}
+	if got, want := diagnosis.LastError, "status render failed"; got != want {
+		t.Fatalf("last error = %q, want %q", got, want)
+	}
+	if got, want := len(diagnosis.FailingWorkstreams), 2; got != want {
+		t.Fatalf("failing workstreams = %d, want %d", got, want)
+	}
+	if got, want := diagnosis.FailingWorkstreams[0], "01"; got != want {
+		t.Fatalf("first failing workstream = %q, want %q", got, want)
+	}
+	if got, want := diagnosis.FailingWorkstreams[1], "02"; got != want {
+		t.Fatalf("second failing workstream = %q, want %q", got, want)
+	}
+}
+
 type fakeSingleExecutor struct {
 	report   workflow.ExecutionReport
 	err      error

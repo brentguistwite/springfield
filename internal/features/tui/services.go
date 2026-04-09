@@ -181,10 +181,14 @@ func (s runtimeServices) SpringfieldDiagnosis() SpringfieldDiagnosis {
 	}
 
 	return SpringfieldDiagnosis{
-		WorkID:   diagnosis.WorkID,
-		Status:   diagnosis.Status,
-		NextStep: diagnosis.NextStep,
-		Failures: failures,
+		WorkID:             diagnosis.WorkID,
+		Status:             diagnosis.Status,
+		Summary:            diagnosis.Summary,
+		EvidencePath:       diagnosis.EvidencePath,
+		FailingWorkstreams: diagnosis.FailingWorkstreams,
+		LastError:          diagnosis.LastError,
+		NextStep:           diagnosis.NextStep,
+		Failures:           failures,
 	}
 }
 

@@ -17,8 +17,8 @@ func NewStatusCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Show Springfield work status from approved work state.",
-		Long:  "Show Springfield work status from approved work state.",
+		Short: "Show status for the active Springfield work or a specific work id.",
+		Long:  "Show status for the active Springfield work or a specific work id.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root, resolvedWorkID, err := resolveWorkflowTarget(dir, workID)
@@ -62,7 +62,7 @@ func NewStatusCommand() *cobra.Command {
 
 func bindWorkflowFlags(cmd *cobra.Command, dir *string, workID *string) {
 	cmd.Flags().StringVar(dir, "dir", ".", "project root or nested path inside the Springfield project")
-	cmd.Flags().StringVar(workID, "work", "", "Springfield work id (default: current work)")
+	cmd.Flags().StringVar(workID, "work", "", "Springfield work id (default: active work)")
 }
 
 func resolveWorkflowTarget(dir, workID string) (string, string, error) {

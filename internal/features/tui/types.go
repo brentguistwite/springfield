@@ -167,12 +167,12 @@ type SpringfieldWorkstreamStatus struct {
 
 // SpringfieldStatus captures the current Springfield execution surface state for the TUI.
 type SpringfieldStatus struct {
-	Ready      bool
-	Reason     string
-	WorkID     string
-	Title      string
-	Split      string
-	Status     string
+	Ready       bool
+	Reason      string
+	WorkID      string
+	Title       string
+	Split       string
+	Status      string
 	Workstreams []SpringfieldWorkstreamStatus
 }
 
@@ -186,10 +186,14 @@ type SpringfieldDiagnosisFailure struct {
 
 // SpringfieldDiagnosis captures Springfield-owned failure guidance for the TUI.
 type SpringfieldDiagnosis struct {
-	WorkID   string
-	Status   string
-	NextStep string
-	Failures []SpringfieldDiagnosisFailure
+	WorkID             string
+	Status             string
+	Summary            string
+	EvidencePath       string
+	FailingWorkstreams []string
+	LastError          string
+	NextStep           string
+	Failures           []SpringfieldDiagnosisFailure
 }
 
 // SpringfieldRunResult describes the outcome of a TUI-initiated Springfield run.

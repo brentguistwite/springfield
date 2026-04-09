@@ -16,8 +16,8 @@ func NewResumeCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "resume",
-		Short: "Run or resume approved Springfield work.",
-		Long:  "Run or resume approved Springfield work.",
+		Short: "Run or resume the active approved Springfield work.",
+		Long:  "Run or resume the active approved Springfield work.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root, resolvedWorkID, err := resolveWorkflowTarget(dir, workID)
