@@ -1,6 +1,7 @@
 package conductor_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -282,7 +283,7 @@ func TestSetup_WritesCanonicalEmptyArrays(t *testing.T) {
 	}
 }
 
-func TestLoadProject_ReadsLegacyConfigTerms(t *testing.T) {
+func TestLoadProjectRejectsLegacyConfigPathAndTerms(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
 
@@ -305,22 +306,16 @@ func TestLoadProject_ReadsLegacyConfigTerms(t *testing.T) {
 		t.Fatalf("write legacy config: %v", err)
 	}
 
-	project, err := conductor.LoadProject(root)
-	if err != nil {
-		t.Fatalf("LoadProject() error: %v", err)
+	_, err := conductor.LoadProject(root)
+	if err == nil {
+		t.Fatal("expected legacy conductor config path to be ignored")
 	}
-	if project.Config.PlansDir != ".conductor/plans" {
-		t.Fatalf("PlansDir = %q, want legacy tracked path", project.Config.PlansDir)
-	}
-	if project.Config.SingleWorkstreamIterations != 9 {
-		t.Fatalf("SingleWorkstreamIterations = %d, want 9", project.Config.SingleWorkstreamIterations)
-	}
-	if project.Config.SingleWorkstreamTimeout != 600 {
-		t.Fatalf("SingleWorkstreamTimeout = %d, want 600", project.Config.SingleWorkstreamTimeout)
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected os.ErrNotExist, got %v", err)
 	}
 }
 
-func TestSetup_ReusesLegacyConfigPath(t *testing.T) {
+func TestSetupCreatesCanonicalConfigWhenLegacyConfigExists(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
 	writeLegacyConductorConfig(t, root, sequentialOnlyConfig())
@@ -329,15 +324,15 @@ func TestSetup_ReusesLegacyConfigPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Setup() error: %v", err)
 	}
-	if !result.Reused {
-		t.Fatal("expected legacy config to be reused")
+	if !result.Created {
+		t.Fatal("expected canonical config to be created")
 	}
-	if got, want := result.Path, filepath.Join(root, ".springfield", "conductor", "config.json"); got != want {
+	if got, want := result.Path, filepath.Join(root, ".springfield", "execution", "config.json"); got != want {
 		t.Fatalf("Path = %q, want %q", got, want)
 	}
 }
 
-func TestUpdateConfig_WritesSpringfieldOwnedPathAfterLegacyRead(t *testing.T) {
+func TestUpdateConfigRejectsLegacyConfigPath(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
 	writeLegacyConductorConfig(t, root, sequentialOnlyConfig())
@@ -351,21 +346,8 @@ func TestUpdateConfig_WritesSpringfieldOwnedPathAfterLegacyRead(t *testing.T) {
 		WorktreeBase:               ".custom-worktrees",
 	}
 
-	result, err := conductor.UpdateConfig(root, updateOpts)
-	if err != nil {
-		t.Fatalf("UpdateConfig() error: %v", err)
-	}
-
-	if got, want := result.Path, filepath.Join(root, ".springfield", "execution", "config.json"); got != want {
-		t.Fatalf("Path = %q, want %q", got, want)
-	}
-
-	rt, _ := storage.FromRoot(root)
-	var cfg conductor.Config
-	if err := rt.ReadJSON("execution/config.json", &cfg); err != nil {
-		t.Fatalf("reading updated config: %v", err)
-	}
-	if cfg.Tool != "codex" {
-		t.Fatalf("Tool = %q, want codex", cfg.Tool)
+	_, err := conductor.UpdateConfig(root, updateOpts)
+	if err == nil {
+		t.Fatal("expected update to reject legacy-only config path")
 	}
 }

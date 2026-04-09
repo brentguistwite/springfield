@@ -474,19 +474,11 @@ func TestWorkspaceListRunsReturnsStableOrder(t *testing.T) {
 	}
 }
 
-func TestWorkspaceLoadPlanFallsBackToLegacyPath(t *testing.T) {
+func TestWorkspaceLoadPlanIgnoresLegacyPath(t *testing.T) {
 	rootDir := t.TempDir()
 	workspace, err := ralph.OpenRoot(rootDir)
 	if err != nil {
 		t.Fatalf("open root workspace: %v", err)
-	}
-
-	legacyPlan := ralph.Plan{
-		Name: "legacy",
-		Spec: ralph.Spec{
-			Project: "springfield",
-			Stories: []ralph.Story{{ID: "US-001", Title: "Legacy story"}},
-		},
 	}
 
 	legacyPath := filepath.Join(rootDir, ".springfield", "ralph", "plans", "legacy.json")
@@ -498,23 +490,16 @@ func TestWorkspaceLoadPlanFallsBackToLegacyPath(t *testing.T) {
 		t.Fatalf("write legacy plan: %v", err)
 	}
 
-	plan, err := workspace.LoadPlan("legacy")
-	if err != nil {
-		t.Fatalf("load plan: %v", err)
+	_, err = workspace.LoadPlan("legacy")
+	if err == nil {
+		t.Fatal("expected legacy Ralph plan path to be ignored")
 	}
-
-	if plan.Name != legacyPlan.Name {
-		t.Fatalf("expected plan name %q, got %q", legacyPlan.Name, plan.Name)
-	}
-	if plan.Spec.Project != legacyPlan.Spec.Project {
-		t.Fatalf("expected project %q, got %q", legacyPlan.Spec.Project, plan.Spec.Project)
-	}
-	if len(plan.Spec.Stories) != 1 || plan.Spec.Stories[0].ID != "US-001" || plan.Spec.Stories[0].Title != "Legacy story" {
-		t.Fatalf("expected legacy story to load, got %+v", plan.Spec.Stories)
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected os.ErrNotExist, got %v", err)
 	}
 }
 
-func TestWorkspaceListRunsFallsBackToLegacyPath(t *testing.T) {
+func TestWorkspaceListRunsIgnoresLegacyPath(t *testing.T) {
 	rootDir := t.TempDir()
 	workspace, err := ralph.OpenRoot(rootDir)
 	if err != nil {
@@ -535,10 +520,7 @@ func TestWorkspaceListRunsFallsBackToLegacyPath(t *testing.T) {
 		t.Fatalf("list runs: %v", err)
 	}
 
-	if len(runs) != 1 {
-		t.Fatalf("expected 1 run, got %d", len(runs))
-	}
-	if runs[0].ID != "legacy-run" {
-		t.Fatalf("expected legacy run id, got %q", runs[0].ID)
+	if len(runs) != 0 {
+		t.Fatalf("expected legacy Ralph runs to be ignored, got %d", len(runs))
 	}
 }

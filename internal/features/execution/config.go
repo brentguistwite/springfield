@@ -9,8 +9,6 @@ const (
 	TrackedPlansDir = conductor.TrackedPlansDir
 )
 
-const legacyTrackedPlansDir = ".conductor/plans"
-
 // Defaults returns Springfield-owned execution defaults.
 func Defaults() Input {
 	defaults := conductor.SetupDefaults()
@@ -28,9 +26,9 @@ func IsReady(rootDir string) (bool, error) {
 	return conductor.IsReady(rootDir)
 }
 
-// IsTrackedPlansDir accepts both Springfield-owned and legacy tracked plan locations.
+// IsTrackedPlansDir accepts Springfield's canonical tracked plan location only.
 func IsTrackedPlansDir(plansDir string) bool {
-	return plansDir == TrackedPlansDir || plansDir == legacyTrackedPlansDir
+	return plansDir == TrackedPlansDir
 }
 
 // Load reads execution config through Springfield's public execution boundary.

@@ -27,8 +27,8 @@ func TestDiagnosePendingProject(t *testing.T) {
 	if len(diagnosis.Failures) != 0 {
 		t.Fatalf("failures: got %d want 0", len(diagnosis.Failures))
 	}
-	if !strings.Contains(diagnosis.NextStep, "run") {
-		t.Fatalf("next step: got %q want run guidance", diagnosis.NextStep)
+	if diagnosis.NextStep != "Run: springfield resume" {
+		t.Fatalf("next step: got %q want Springfield resume guidance", diagnosis.NextStep)
 	}
 }
 

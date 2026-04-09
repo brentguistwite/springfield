@@ -94,7 +94,7 @@ func TestRuntimeExecutorMissingPlanFile(t *testing.T) {
 	}
 }
 
-func TestRuntimeExecutorFallsBackToLegacyLocalPlans(t *testing.T) {
+func TestRuntimeExecutorIgnoresLegacyLocalPlans(t *testing.T) {
 	root := t.TempDir()
 	plansDir := filepath.Join(root, ".springfield", "execution", "plans")
 	legacyPlansDir := filepath.Join(root, ".springfield", "conductor", "plans")
@@ -103,12 +103,9 @@ func TestRuntimeExecutorFallsBackToLegacyLocalPlans(t *testing.T) {
 	runner := newTestRuntime("claude", fakeCommandFunc(0, nil))
 	executor := conductor.NewRuntimeExecutor(runner, []agents.ID{"claude"}, plansDir, root, agents.ExecutionSettings{})
 
-	result, err := executor.Execute("01-bootstrap")
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	if result.Agent != "claude" {
-		t.Fatalf("agent: got %q want claude", result.Agent)
+	_, err := executor.Execute("01-bootstrap")
+	if err == nil {
+		t.Fatal("expected legacy local plans dir to be ignored")
 	}
 }
 

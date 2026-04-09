@@ -302,16 +302,13 @@ func TestSpringfieldSubcommandsAreReachable(t *testing.T) {
 	}
 }
 
-func TestHiddenDebugSeamIsReachableWithoutPollutingRootHelp(t *testing.T) {
+func TestInternalDebugCommandIsRemoved(t *testing.T) {
 	output, err := runSpringfield(t, "internal-debug", "--help")
-	if err != nil {
-		t.Fatalf("run springfield internal-debug --help: %v\noutput:\n%s", err, output)
+	if err == nil {
+		t.Fatalf("expected internal-debug command removal, got successful output:\n%s", output)
 	}
-
-	for _, marker := range []string{"ralph", "conductor", "Internal migration and debug commands"} {
-		if !strings.Contains(output, marker) {
-			t.Fatalf("expected hidden debug help to contain %q, got:\n%s", marker, output)
-		}
+	if !strings.Contains(output, "unknown command") {
+		t.Fatalf("expected unknown command output, got:\n%s", output)
 	}
 }
 

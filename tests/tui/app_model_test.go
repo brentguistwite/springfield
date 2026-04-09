@@ -1284,7 +1284,7 @@ func TestSetupBasicPreservesTrackedStorageSummary(t *testing.T) {
 		agentDetections:    []tui.AgentDetection{{ID: "claude", Name: "Claude Code", Installed: true}},
 		agentPriorityOrder: []string{"claude"},
 		executionConfig: &tui.ExecutionConfig{
-			PlansDir:                   ".conductor/plans",
+			PlansDir:                   "springfield/plans",
 			WorktreeBase:               ".worktrees",
 			MaxRetries:                 2,
 			SingleWorkstreamIterations: 50,
