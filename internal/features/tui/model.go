@@ -6,6 +6,7 @@ import tea "github.com/charmbracelet/bubbletea"
 type Model struct {
 	services  Services
 	screen    Screen
+	width     int
 	home      homeScreen
 	setup     setupScreen
 	advanced  advancedSetupScreen
@@ -62,6 +63,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case BackMsg:
 		m.screen = ScreenHome
 		return m, nil
+	case tea.WindowSizeMsg:
+		m.width = typed.Width
 	}
 
 	var cmd tea.Cmd
@@ -88,7 +91,7 @@ func (m Model) View() string {
 	case ScreenSetup:
 		return m.setup.View()
 	case ScreenAdvancedSetup:
-		return m.advanced.View()
+		return m.advanced.View(m.width)
 	case ScreenRalph:
 		return m.ralph.View()
 	case ScreenConductor:

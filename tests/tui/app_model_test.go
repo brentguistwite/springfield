@@ -1138,10 +1138,10 @@ func TestAdvancedSetupShowsAgentPermissionsStep(t *testing.T) {
 	view := model.View()
 	for _, marker := range []string{
 		"Agent Permissions",
-		"Springfield is not designed to work with recommended agent permissions turned off",
-		"Claude permissions",
-		"Codex permissions",
-		"Recommended",
+		"Springfield defaults to running agents without permission prompts.",
+		"Claude prompts",
+		"Codex prompts",
+		"No permission prompts (default)",
 	} {
 		if !strings.Contains(view, marker) {
 			t.Fatalf("expected permissions step to contain %q, got:\n%s", marker, view)
@@ -1171,17 +1171,52 @@ func TestAdvancedSetupPermissionsShowCustomAndCycle(t *testing.T) {
 	if !strings.Contains(view, "Custom") {
 		t.Fatalf("expected custom mode visible, got:\n%s", view)
 	}
+	if !strings.Contains(view, "Ask for permissions") {
+		t.Fatalf("expected opt-out label visible, got:\n%s", view)
+	}
 
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRight})
 	view = model.View()
-	if !strings.Contains(view, "Claude permissions:  Recommended") {
+	if !strings.Contains(view, "Claude prompts:      No permission prompts (default)") {
 		t.Fatalf("expected first cycle to land on Recommended, got:\n%s", view)
 	}
 
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRight})
 	view = model.View()
-	if !strings.Contains(view, "Claude permissions:  Off") {
+	if !strings.Contains(view, "Claude prompts:      Ask for permissions") {
 		t.Fatalf("expected second cycle to land on Off, got:\n%s", view)
+	}
+}
+
+func TestAdvancedSetupPermissionsHelpOmitsHLHint(t *testing.T) {
+	services := readyAdvancedServices()
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := model.View()
+	if strings.Contains(view, "h/l") {
+		t.Fatalf("expected help text to omit h/l hint, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Up/Down select row, Left/Right change, Enter continue, Esc back") {
+		t.Fatalf("expected simplified help text, got:\n%s", view)
+	}
+}
+
+func TestAdvancedSetupPermissionsCopyWrapsToWindowWidth(t *testing.T) {
+	services := readyAdvancedServices()
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = updateModel(t, model, tea.WindowSizeMsg{Width: 42, Height: 20})
+
+	view := model.View()
+	if !strings.Contains(view, "Springfield defaults to running agents\nwithout permission prompts.") {
+		t.Fatalf("expected wrapped permissions copy, got:\n%s", view)
 	}
 }
 

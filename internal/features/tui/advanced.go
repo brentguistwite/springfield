@@ -222,7 +222,15 @@ func (a advancedSetupScreen) updateAgentPermissions(key tea.KeyMsg) (advancedSet
 	}
 
 	switch key.String() {
-	case "h", "l", "j", "k":
+	case "k":
+		if a.executionCursor > 0 {
+			a.executionCursor--
+		}
+	case "j":
+		if a.executionCursor < 1 {
+			a.executionCursor++
+		}
+	case "h", "l":
 		a = a.cycleExecutionMode()
 	}
 
@@ -282,11 +290,11 @@ func normalizeExecutionMode(mode string) string {
 func executionModeLabel(mode string) string {
 	switch normalizeExecutionMode(mode) {
 	case "recommended":
-		return "Recommended"
+		return "No permission prompts (default)"
 	case "custom":
 		return "Custom"
 	default:
-		return "Off"
+		return "Ask for permissions"
 	}
 }
 
@@ -435,7 +443,7 @@ func yesNo(selected bool, yes bool) string {
 	return "N"
 }
 
-func (a advancedSetupScreen) View() string {
+func (a advancedSetupScreen) View(width int) string {
 	var b strings.Builder
 	b.WriteString("Advanced Setup\n\n")
 
@@ -478,13 +486,16 @@ func (a advancedSetupScreen) View() string {
 
 	case stepAgentPermissions:
 		b.WriteString("Agent Permissions\n\n")
-		b.WriteString("Springfield is not designed to work with recommended agent permissions turned off. If you disable them, you must ensure each agent has all required permissions enabled or runs may pause for approval or fail at permission boundaries.\n\n")
+		b.WriteString(wrapText("Springfield defaults to running agents without permission prompts.", width))
+		b.WriteString("\n")
+		b.WriteString(wrapText("Leave this on unless you want the agent to stop and ask before privileged actions. If you opt out, runs may pause for approval or fail at permission boundaries.", width))
+		b.WriteString("\n\n")
 		rows := []struct {
 			label string
 			value string
 		}{
-			{label: "Claude permissions", value: executionModeLabel(a.claudeMode)},
-			{label: "Codex permissions", value: executionModeLabel(a.codexMode)},
+			{label: "Claude prompts", value: executionModeLabel(a.claudeMode)},
+			{label: "Codex prompts", value: executionModeLabel(a.codexMode)},
 		}
 		for i, row := range rows {
 			cursor := "  "
@@ -493,7 +504,7 @@ func (a advancedSetupScreen) View() string {
 			}
 			fmt.Fprintf(&b, "%s%-20s %s\n", cursor, row.label+":", row.value)
 		}
-		b.WriteString("\nUp/Down select row, Left/Right or h/l cycle, Enter continue, Esc back\n")
+		b.WriteString("\nUp/Down select row, Left/Right change, Enter continue, Esc back\n")
 
 	case stepSettingsForm:
 		b.WriteString("Conductor Settings\n\n")
@@ -544,4 +555,46 @@ func (a advancedSetupScreen) View() string {
 	}
 
 	return b.String()
+}
+
+func wrapText(text string, width int) string {
+	if width <= 0 {
+		return text
+	}
+
+	lines := strings.Split(text, "\n")
+	wrapped := make([]string, 0, len(lines))
+	for _, line := range lines {
+		wrapped = append(wrapped, wrapLine(line, width))
+	}
+	return strings.Join(wrapped, "\n")
+}
+
+func wrapLine(line string, width int) string {
+	if width <= 0 || len(line) <= width {
+		return line
+	}
+
+	words := strings.Fields(line)
+	if len(words) == 0 {
+		return ""
+	}
+
+	var lines []string
+	current := words[0]
+	currentLen := len(words[0])
+
+	for _, word := range words[1:] {
+		if currentLen+1+len(word) > width {
+			lines = append(lines, current)
+			current = word
+			currentLen = len(word)
+			continue
+		}
+		current += " " + word
+		currentLen += 1 + len(word)
+	}
+
+	lines = append(lines, current)
+	return strings.Join(lines, "\n")
 }
