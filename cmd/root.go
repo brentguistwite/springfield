@@ -32,6 +32,9 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(
 		NewInitCommand(),
 		NewExplainCommand(),
+		NewStatusCommand(),
+		NewResumeCommand(),
+		NewDiagnoseCommand(),
 		NewTUICommand(),
 		NewRalphCommand(),
 		NewConductorCommand(),

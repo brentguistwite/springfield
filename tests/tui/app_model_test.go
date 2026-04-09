@@ -20,6 +20,16 @@ type fakeServices struct {
 	conductorSetup               tui.ConductorSetupResult
 	conductorSetupErr            error
 	conductorSetupCalls          int
+	springfieldStatus            tui.SpringfieldStatus
+	springfieldDiagnosis         tui.SpringfieldDiagnosis
+	springfieldRunResult         tui.SpringfieldRunResult
+	springfieldRunErr            error
+	springfieldRunCalls          int
+	springfieldRunEvents         []tui.RuntimeEvent
+	springfieldResumeResult      tui.SpringfieldRunResult
+	springfieldResumeErr         error
+	springfieldResumeCalls       int
+	springfieldResumeEvents      []tui.RuntimeEvent
 	ralph                        tui.RalphSummary
 	conductor                    tui.ConductorSummary
 	report                       doctor.Report
@@ -79,6 +89,34 @@ func (f *fakeServices) SetupConductor(opts tui.ConductorSetupInput) (tui.Conduct
 		f.setup.ConductorConfigReady = true
 	}
 	return f.conductorSetup, f.conductorSetupErr
+}
+
+func (f *fakeServices) SpringfieldStatus() tui.SpringfieldStatus {
+	return f.springfieldStatus
+}
+
+func (f *fakeServices) SpringfieldDiagnosis() tui.SpringfieldDiagnosis {
+	return f.springfieldDiagnosis
+}
+
+func (f *fakeServices) RunSpringfieldWork(onEvent func(tui.RuntimeEvent)) (tui.SpringfieldRunResult, error) {
+	f.springfieldRunCalls++
+	if onEvent != nil {
+		for _, e := range f.springfieldRunEvents {
+			onEvent(e)
+		}
+	}
+	return f.springfieldRunResult, f.springfieldRunErr
+}
+
+func (f *fakeServices) ResumeSpringfieldWork(onEvent func(tui.RuntimeEvent)) (tui.SpringfieldRunResult, error) {
+	f.springfieldResumeCalls++
+	if onEvent != nil {
+		for _, e := range f.springfieldResumeEvents {
+			onEvent(e)
+		}
+	}
+	return f.springfieldResumeResult, f.springfieldResumeErr
 }
 
 func (f *fakeServices) RalphSummary() tui.RalphSummary {
@@ -254,7 +292,7 @@ func TestModelStartsOnHomeScreen(t *testing.T) {
 	model := tui.NewModel(&fakeServices{})
 	view := model.View()
 
-	for _, marker := range []string{"Springfield", "Guided Setup", "New Work", "Advanced Setup", "Doctor"} {
+	for _, marker := range []string{"Springfield", "Guided Setup", "New Work", "Status", "Advanced Setup", "Doctor"} {
 		if !strings.Contains(view, marker) {
 			t.Fatalf("expected home view to contain %q, got:\n%s", marker, view)
 		}
@@ -264,6 +302,131 @@ func TestModelStartsOnHomeScreen(t *testing.T) {
 			t.Fatalf("expected Springfield-first home view to omit %q, got:\n%s", legacy, view)
 		}
 	}
+}
+
+func TestSpringfieldStatusScreenShowsApprovedWork(t *testing.T) {
+	services := &fakeServices{
+		springfieldStatus: tui.SpringfieldStatus{
+			Ready:  true,
+			WorkID: "wave-c2",
+			Title:  "Unified execution surface",
+			Split:  "single",
+			Status: "ready",
+			Workstreams: []tui.SpringfieldWorkstreamStatus{
+				{Name: "01", Title: "Execution adapter", Status: "ready"},
+			},
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = navigateToScreen(t, model, tui.ScreenStatus)
+
+	view := model.View()
+	for _, marker := range []string{"Status", "Work: wave-c2", "Unified execution surface", "Status: ready", "01  ready  Execution adapter"} {
+		if !strings.Contains(view, marker) {
+			t.Fatalf("expected status view to contain %q, got:\n%s", marker, view)
+		}
+	}
+}
+
+func TestSpringfieldRunStartsApprovedWork(t *testing.T) {
+	services := &fakeServices{
+		springfieldStatus: tui.SpringfieldStatus{
+			Ready:  true,
+			WorkID: "wave-c2",
+			Title:  "Unified execution surface",
+			Split:  "single",
+			Status: "ready",
+			Workstreams: []tui.SpringfieldWorkstreamStatus{
+				{Name: "01", Title: "Execution adapter", Status: "ready"},
+			},
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = navigateToScreen(t, model, tui.ScreenStatus)
+	if !strings.Contains(model.View(), "r run work") {
+		t.Fatalf("expected run hint in Springfield status view, got:\n%s", model.View())
+	}
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+
+	services.springfieldStatus.Status = "completed"
+	services.springfieldStatus.Workstreams[0].Status = "completed"
+	model = sendMsg(t, model, tui.SpringfieldRunCompleteMsg{
+		Result: tui.SpringfieldRunResult{WorkID: "wave-c2", Status: "completed"},
+	})
+
+	view := model.View()
+	for _, marker := range []string{"Status: completed", "Last run: wave-c2 [completed]"} {
+		if !strings.Contains(view, marker) {
+			t.Fatalf("expected completed Springfield run view to contain %q, got:\n%s", marker, view)
+		}
+	}
+}
+
+func TestSpringfieldDiagnoseShowsFailureGuidance(t *testing.T) {
+	services := &fakeServices{
+		springfieldStatus: tui.SpringfieldStatus{
+			Ready:  true,
+			WorkID: "wave-c2",
+			Title:  "Unified execution surface",
+			Split:  "multi",
+			Status: "failed",
+			Workstreams: []tui.SpringfieldWorkstreamStatus{
+				{Name: "01", Title: "CLI surface", Status: "completed"},
+				{Name: "02", Title: "TUI surface", Status: "failed", Error: "agent failed", EvidencePath: ".springfield/work/wave-c2/logs/02.log"},
+			},
+		},
+		springfieldDiagnosis: tui.SpringfieldDiagnosis{
+			WorkID:   "wave-c2",
+			Status:   "failed",
+			NextStep: "Review the failing workstreams, then resume the work.",
+			Failures: []tui.SpringfieldDiagnosisFailure{
+				{Workstream: "02", Title: "TUI surface", Error: "agent failed", EvidencePath: ".springfield/work/wave-c2/logs/02.log"},
+			},
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = navigateToScreen(t, model, tui.ScreenStatus)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+
+	view := model.View()
+	for _, marker := range []string{"Status — Diagnose", "02  TUI surface", "Evidence: .springfield/work/wave-c2/logs/02.log", "resume"} {
+		if !strings.Contains(view, marker) {
+			t.Fatalf("expected diagnosis view to contain %q, got:\n%s", marker, view)
+		}
+	}
+}
+
+func TestSpringfieldResumeRunsFailedWork(t *testing.T) {
+	services := &fakeServices{
+		springfieldStatus: tui.SpringfieldStatus{
+			Ready:  true,
+			WorkID: "wave-c2",
+			Title:  "Unified execution surface",
+			Split:  "single",
+			Status: "failed",
+			Workstreams: []tui.SpringfieldWorkstreamStatus{
+				{Name: "01", Title: "Execution adapter", Status: "failed", Error: "agent failed"},
+			},
+		},
+		springfieldDiagnosis: tui.SpringfieldDiagnosis{
+			WorkID:   "wave-c2",
+			Status:   "failed",
+			NextStep: "Review the failing workstreams, then resume the work.",
+			Failures: []tui.SpringfieldDiagnosisFailure{
+				{Workstream: "01", Title: "Execution adapter", Error: "agent failed"},
+			},
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = navigateToScreen(t, model, tui.ScreenStatus)
+	if !strings.Contains(model.View(), "r resume work") {
+		t.Fatalf("expected resume hint in Springfield status view, got:\n%s", model.View())
+	}
+	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
 }
 
 func plannedDraftResult(id, title, summary string, split planner.Split, workstreams []tui.PlannedWorkstreamSummary) tui.PlanWorkResult {

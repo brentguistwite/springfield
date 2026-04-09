@@ -19,6 +19,7 @@ type menuItem struct {
 var homeMenu = []menuItem{
 	{label: "Guided Setup", screen: ScreenSetup},
 	{label: "New Work", screen: ScreenNewWork},
+	{label: "Status", screen: ScreenStatus},
 	{label: "Advanced Setup", screen: ScreenAdvancedSetup},
 	{label: "Doctor", screen: ScreenDoctor},
 	{label: "Quit", quit: true},
@@ -449,6 +450,212 @@ func (n newWorkScreen) View() string {
 	return builder.String()
 }
 
+type springfieldStatusScreen struct {
+	services  Services
+	summary   SpringfieldStatus
+	diagnosis SpringfieldDiagnosis
+	monitor   MonitorState
+	events    []RuntimeEvent
+	eventCh   <-chan RuntimeEvent
+	lastRun   *SpringfieldRunResult
+	lastErr   string
+	diagnose  bool
+}
+
+func newSpringfieldStatusScreen(services Services) springfieldStatusScreen {
+	return springfieldStatusScreen{
+		services:  services,
+		summary:   services.SpringfieldStatus(),
+		diagnosis: services.SpringfieldDiagnosis(),
+	}
+}
+
+func (s springfieldStatusScreen) Update(msg tea.Msg) (springfieldStatusScreen, tea.Cmd) {
+	switch typed := msg.(type) {
+	case RuntimeEventMsg:
+		s.events = append(s.events, typed.Event)
+		if s.eventCh != nil {
+			return s, waitForRuntimeEvent(s.eventCh)
+		}
+		return s, nil
+
+	case SpringfieldRunCompleteMsg:
+		s.eventCh = nil
+		s.lastRun = &typed.Result
+		if typed.Err != nil {
+			s.monitor = MonitorFailed
+			s.lastErr = typed.Err.Error()
+		} else {
+			s.lastErr = ""
+			if typed.Result.Status == "completed" {
+				s.monitor = MonitorSucceeded
+			} else {
+				s.monitor = MonitorFailed
+			}
+		}
+		s.summary = s.services.SpringfieldStatus()
+		s.diagnosis = s.services.SpringfieldDiagnosis()
+		return s, nil
+
+	case tea.KeyMsg:
+		switch typed.Type {
+		case tea.KeyEsc:
+			if s.monitor == MonitorRunning {
+				return s, nil
+			}
+			return s, goBack
+		}
+
+		switch typed.String() {
+		case "d":
+			if s.monitor != MonitorRunning && springfieldHasFailures(s.summary) {
+				s.diagnose = !s.diagnose
+			}
+			return s, nil
+		case "r":
+			if s.monitor == MonitorRunning || !s.summary.Ready {
+				return s, nil
+			}
+			ch := make(chan RuntimeEvent, 100)
+			s.monitor = MonitorRunning
+			s.events = nil
+			s.lastRun = nil
+			s.lastErr = ""
+			s.eventCh = ch
+			if springfieldShouldResume(s.summary) {
+				return s, tea.Batch(
+					waitForRuntimeEvent(ch),
+					resumeSpringfieldAsync(s.services, ch),
+				)
+			}
+			return s, tea.Batch(
+				waitForRuntimeEvent(ch),
+				runSpringfieldAsync(s.services, ch),
+			)
+		}
+	}
+
+	return s, nil
+}
+
+func (s springfieldStatusScreen) View() string {
+	if s.diagnose {
+		return s.diagnosisView()
+	}
+
+	var builder strings.Builder
+	builder.WriteString("Status\n\n")
+	if !s.summary.Ready {
+		fmt.Fprintf(&builder, "%s\n\nEsc back\n", s.summary.Reason)
+		return builder.String()
+	}
+
+	fmt.Fprintf(&builder, "Work: %s\n", s.summary.WorkID)
+	fmt.Fprintf(&builder, "Title: %s\n", s.summary.Title)
+	fmt.Fprintf(&builder, "Split: %s\n", s.summary.Split)
+	fmt.Fprintf(&builder, "Status: %s\n", s.summary.Status)
+
+	builder.WriteString("\nWorkstreams:\n")
+	for _, workstream := range s.summary.Workstreams {
+		fmt.Fprintf(&builder, "  %s  %s  %s\n", workstream.Name, workstream.Status, workstream.Title)
+		if workstream.Error != "" {
+			fmt.Fprintf(&builder, "    Error: %s\n", workstream.Error)
+		}
+		if workstream.EvidencePath != "" {
+			fmt.Fprintf(&builder, "    Evidence: %s\n", workstream.EvidencePath)
+		}
+	}
+
+	switch s.monitor {
+	case MonitorRunning:
+		builder.WriteString("\nStatus: running...\n")
+	case MonitorSucceeded:
+		builder.WriteString("\nStatus: succeeded\n")
+	case MonitorFailed:
+		builder.WriteString("\nStatus: failed\n")
+	}
+
+	if len(s.events) > 0 {
+		builder.WriteString("\nEvents:\n")
+		start := 0
+		if len(s.events) > 10 {
+			start = len(s.events) - 10
+		}
+		for _, event := range s.events[start:] {
+			fmt.Fprintf(&builder, "  [%s] %s\n", event.Source, event.Data)
+		}
+	}
+
+	if s.monitor != MonitorRunning {
+		if s.lastRun != nil {
+			fmt.Fprintf(&builder, "\nLast run: %s [%s]\n", s.lastRun.WorkID, s.lastRun.Status)
+			if s.lastRun.Error != "" {
+				fmt.Fprintf(&builder, "  error: %s\n", s.lastRun.Error)
+			}
+		}
+		if s.lastErr != "" {
+			fmt.Fprintf(&builder, "\nRun failed: %s\n", s.lastErr)
+		}
+	}
+
+	if s.monitor == MonitorRunning {
+		builder.WriteString("\nrunning... Esc blocked\n")
+		return builder.String()
+	}
+
+	action := "r run work"
+	if springfieldShouldResume(s.summary) {
+		action = "r resume work"
+	}
+	if springfieldHasFailures(s.summary) {
+		fmt.Fprintf(&builder, "\n%s, d diagnose, Esc back\n", action)
+		return builder.String()
+	}
+	fmt.Fprintf(&builder, "\n%s, Esc back\n", action)
+	return builder.String()
+}
+
+func (s springfieldStatusScreen) diagnosisView() string {
+	var builder strings.Builder
+	builder.WriteString("Status — Diagnose\n\n")
+	fmt.Fprintf(&builder, "Work: %s\n", s.diagnosis.WorkID)
+	fmt.Fprintf(&builder, "Status: %s\n\n", s.diagnosis.Status)
+
+	if len(s.diagnosis.Failures) == 0 {
+		builder.WriteString("No failures detected.\n")
+	} else {
+		for _, failure := range s.diagnosis.Failures {
+			fmt.Fprintf(&builder, "%s  %s\n", failure.Workstream, failure.Title)
+			fmt.Fprintf(&builder, "  Error: %s\n", failure.Error)
+			if failure.EvidencePath != "" {
+				fmt.Fprintf(&builder, "  Evidence: %s\n", failure.EvidencePath)
+			}
+			builder.WriteString("\n")
+		}
+	}
+
+	fmt.Fprintf(&builder, "Next step: %s\n", s.diagnosis.NextStep)
+	if springfieldShouldResume(s.summary) {
+		builder.WriteString("d back, r resume work, Esc back\n")
+	} else {
+		builder.WriteString("d back, r run work, Esc back\n")
+	}
+	return builder.String()
+}
+
+func springfieldHasFailures(summary SpringfieldStatus) bool {
+	for _, workstream := range summary.Workstreams {
+		if workstream.Status == "failed" {
+			return true
+		}
+	}
+	return false
+}
+
+func springfieldShouldResume(summary SpringfieldStatus) bool {
+	return summary.Status == "failed" || springfieldHasFailures(summary)
+}
+
 type ralphScreen struct {
 	services   Services
 	summary    RalphSummary
@@ -857,6 +1064,26 @@ func runConductorAsync(svc Services, ch chan<- RuntimeEvent) tea.Cmd {
 		})
 		close(ch)
 		return ConductorRunCompleteMsg{Result: result, Err: err}
+	}
+}
+
+func runSpringfieldAsync(svc Services, ch chan<- RuntimeEvent) tea.Cmd {
+	return func() tea.Msg {
+		result, err := svc.RunSpringfieldWork(func(e RuntimeEvent) {
+			ch <- e
+		})
+		close(ch)
+		return SpringfieldRunCompleteMsg{Result: result, Err: err}
+	}
+}
+
+func resumeSpringfieldAsync(svc Services, ch chan<- RuntimeEvent) tea.Cmd {
+	return func() tea.Msg {
+		result, err := svc.ResumeSpringfieldWork(func(e RuntimeEvent) {
+			ch <- e
+		})
+		close(ch)
+		return SpringfieldRunCompleteMsg{Result: result, Err: err}
 	}
 }
 

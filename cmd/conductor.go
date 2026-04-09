@@ -26,6 +26,7 @@ func NewConductorCommand() *cobra.Command {
 		Use:   "conductor",
 		Short: "Run Springfield conductor workflows.",
 		Long:  "Orchestrate plan execution, check status, resume from failures, and diagnose issues.",
+		Hidden: true,
 	}
 
 	root.AddCommand(

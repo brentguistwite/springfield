@@ -33,10 +33,19 @@ type workstreamFile struct {
 }
 
 type runStateFile struct {
-	Status      string   `json:"status"`
-	Approved    bool     `json:"approved"`
-	Split       string   `json:"split"`
-	Workstreams []string `json:"workstreams"`
+	Status           string                 `json:"status"`
+	Approved         bool                   `json:"approved"`
+	Split            string                 `json:"split"`
+	Workstreams      []string               `json:"workstreams"`
+	Error            string                 `json:"error,omitempty"`
+	WorkstreamStates []workstreamStatusFile `json:"workstream_states,omitempty"`
+}
+
+type workstreamStatusFile struct {
+	Name         string `json:"name"`
+	Status       string `json:"status"`
+	Error        string `json:"error,omitempty"`
+	EvidencePath string `json:"evidence_path,omitempty"`
 }
 
 // WriteDraft persists one approved planning draft under .springfield/work.

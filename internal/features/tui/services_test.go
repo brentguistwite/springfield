@@ -12,6 +12,7 @@ import (
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/planner"
 	"springfield/internal/features/ralph"
+	"springfield/internal/features/workflow"
 	"springfield/internal/storage"
 )
 
@@ -203,6 +204,73 @@ func TestApprovePlannedWorkWritesWorkflowDraft(t *testing.T) {
 	}
 }
 
+func TestSpringfieldStatusUsesWorkflowBoundary(t *testing.T) {
+	root := t.TempDir()
+	writeRuntimeServiceConfig(t, root, strings.Join([]string{
+		"[project]",
+		`default_agent = "claude"`,
+		"",
+	}, "\n"))
+	writeWorkflowDraftForService(t, root)
+
+	services := runtimeServices{
+		cwd:      func() (string, error) { return root, nil },
+		lookPath: osexec.LookPath,
+	}
+
+	status := services.SpringfieldStatus()
+	if !status.Ready {
+		t.Fatalf("expected Springfield status ready, got %#v", status)
+	}
+	if got, want := status.WorkID, "wave-c2"; got != want {
+		t.Fatalf("work id = %q, want %q", got, want)
+	}
+	if got, want := status.Status, "ready"; got != want {
+		t.Fatalf("status = %q, want %q", got, want)
+	}
+	if got, want := len(status.Workstreams), 1; got != want {
+		t.Fatalf("workstreams = %d, want %d", got, want)
+	}
+}
+
+func TestSpringfieldRunUsesProjectExecutionSettings(t *testing.T) {
+	root := t.TempDir()
+	writeRuntimeServiceConfig(t, root, strings.Join([]string{
+		"[project]",
+		`default_agent = "claude"`,
+		"",
+		"[agents.claude]",
+		`permission_mode = " bypassPermissions "`,
+		"",
+	}, "\n"))
+	writeWorkflowDraftForService(t, root)
+
+	fakeBinDir := filepath.Join(root, "bin")
+	argvPath := filepath.Join(root, "claude.argv")
+	installRuntimeServiceFakeBinary(t, fakeBinDir, "claude", argvPath)
+	t.Setenv("PATH", fakeBinDir)
+
+	services := runtimeServices{
+		cwd:      func() (string, error) { return root, nil },
+		lookPath: osexec.LookPath,
+	}
+
+	result, err := services.RunSpringfieldWork(nil)
+	if err != nil {
+		t.Fatalf("RunSpringfieldWork: %v", err)
+	}
+	if got, want := result.Status, "completed"; got != want {
+		t.Fatalf("run status = %q, want %q", got, want)
+	}
+
+	args := readRuntimeServiceArgs(t, argvPath)
+	for _, want := range []string{"-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions"} {
+		if !containsRuntimeServiceArg(args, want) {
+			t.Fatalf("expected recorded args to contain %q, got %v", want, args)
+		}
+	}
+}
+
 func TestRunRalphNextUsesProjectExecutionSettings(t *testing.T) {
 	root := t.TempDir()
 	writeRuntimeServiceConfig(t, root, strings.Join([]string{
@@ -356,6 +424,26 @@ func containsRuntimeServiceArg(args []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func writeWorkflowDraftForService(t *testing.T, root string) {
+	t.Helper()
+
+	if err := workflow.WriteDraft(root, workflow.Draft{
+		RequestBody: "Implement Wave C2.",
+		Response: planner.Response{
+			Mode:    planner.ModeDraft,
+			WorkID:  "wave-c2",
+			Title:   "Unified execution surface",
+			Summary: "Route approved Springfield work through one execution runner.",
+			Split:   planner.SplitSingle,
+			Workstreams: []planner.Workstream{
+				{Name: "01", Title: "Execution adapter", Summary: "Use the unified runner."},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("WriteDraft: %v", err)
+	}
 }
 
 func TestEnsureRecommendedExecutionDefaultsWritesRecommendedWhenUnset(t *testing.T) {

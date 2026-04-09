@@ -23,6 +23,7 @@ func NewRalphCommand() *cobra.Command {
 		Use:   "ralph",
 		Short: "Manage Ralph plans and runs from Springfield.",
 		Long:  "Manage Ralph plans, story selection, and local run history.",
+		Hidden: true,
 	}
 
 	cmd.PersistentFlags().String("dir", ".", "Project root for Springfield runtime state")

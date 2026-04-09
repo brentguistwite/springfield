@@ -117,6 +117,85 @@ func (s runtimeServices) InitProject() (config.InitResult, error) {
 	return config.Init(targetDir)
 }
 
+func (s runtimeServices) SpringfieldStatus() SpringfieldStatus {
+	root, workID, err := s.springfieldTarget()
+	if err != nil {
+		return SpringfieldStatus{Reason: err.Error()}
+	}
+
+	runner, err := workflow.NewRuntimeRunner(root, s.lookPath, nil)
+	if err != nil {
+		return SpringfieldStatus{Reason: err.Error()}
+	}
+
+	status, err := runner.Status(root, workID)
+	if err != nil {
+		return SpringfieldStatus{Reason: err.Error()}
+	}
+
+	workstreams := make([]SpringfieldWorkstreamStatus, 0, len(status.Workstreams))
+	for _, workstream := range status.Workstreams {
+		workstreams = append(workstreams, SpringfieldWorkstreamStatus{
+			Name:         workstream.Name,
+			Title:        workstream.Title,
+			Status:       workstream.Status,
+			Error:        workstream.Error,
+			EvidencePath: workstream.EvidencePath,
+		})
+	}
+
+	return SpringfieldStatus{
+		Ready:       true,
+		WorkID:      status.WorkID,
+		Title:       status.Title,
+		Split:       status.Split,
+		Status:      status.Status,
+		Workstreams: workstreams,
+	}
+}
+
+func (s runtimeServices) SpringfieldDiagnosis() SpringfieldDiagnosis {
+	root, workID, err := s.springfieldTarget()
+	if err != nil {
+		return SpringfieldDiagnosis{NextStep: err.Error()}
+	}
+
+	runner, err := workflow.NewRuntimeRunner(root, s.lookPath, nil)
+	if err != nil {
+		return SpringfieldDiagnosis{NextStep: err.Error()}
+	}
+
+	diagnosis, err := runner.Diagnose(root, workID)
+	if err != nil {
+		return SpringfieldDiagnosis{NextStep: err.Error()}
+	}
+
+	failures := make([]SpringfieldDiagnosisFailure, 0, len(diagnosis.Failures))
+	for _, failure := range diagnosis.Failures {
+		failures = append(failures, SpringfieldDiagnosisFailure{
+			Workstream:   failure.Workstream,
+			Title:        failure.Title,
+			Error:        failure.Error,
+			EvidencePath: failure.EvidencePath,
+		})
+	}
+
+	return SpringfieldDiagnosis{
+		WorkID:   diagnosis.WorkID,
+		Status:   diagnosis.Status,
+		NextStep: diagnosis.NextStep,
+		Failures: failures,
+	}
+}
+
+func (s runtimeServices) RunSpringfieldWork(onEvent func(RuntimeEvent)) (SpringfieldRunResult, error) {
+	return s.runSpringfield(onEvent, false)
+}
+
+func (s runtimeServices) ResumeSpringfieldWork(onEvent func(RuntimeEvent)) (SpringfieldRunResult, error) {
+	return s.runSpringfield(onEvent, true)
+}
+
 func (s runtimeServices) RalphSummary() RalphSummary {
 	status := s.SetupStatus()
 	if status.Error != "" {
@@ -490,6 +569,62 @@ func (s runtimeServices) UpdateConductor(input ConductorSetupInput) (ConductorSe
 		Path:             result.Path,
 		GitignoreUpdated: result.GitignoreUpdated,
 	}, nil
+}
+
+func (s runtimeServices) runSpringfield(onEvent func(RuntimeEvent), resume bool) (SpringfieldRunResult, error) {
+	root, workID, err := s.springfieldTarget()
+	if err != nil {
+		return SpringfieldRunResult{}, err
+	}
+
+	handler := coreexec.EventHandler(nil)
+	if onEvent != nil {
+		handler = func(e coreexec.Event) {
+			onEvent(RuntimeEvent{Source: string(e.Type), Data: e.Data})
+		}
+	}
+
+	runner, err := workflow.NewRuntimeRunner(root, s.lookPath, handler)
+	if err != nil {
+		return SpringfieldRunResult{}, err
+	}
+
+	var result workflow.RunResult
+	if resume {
+		result, err = runner.Resume(root, workID)
+	} else {
+		result, err = runner.Run(root, workID)
+	}
+	if err != nil {
+		return SpringfieldRunResult{
+			WorkID: result.WorkID,
+			Status: result.Status,
+			Error:  result.Error,
+		}, err
+	}
+
+	return SpringfieldRunResult{
+		WorkID: result.WorkID,
+		Status: result.Status,
+		Error:  result.Error,
+	}, nil
+}
+
+func (s runtimeServices) springfieldTarget() (string, string, error) {
+	status := s.SetupStatus()
+	if status.Error != "" {
+		return "", "", errors.New(status.Error)
+	}
+	if !status.ConfigPresent {
+		return "", "", errors.New("run Guided Setup first to create springfield.toml")
+	}
+
+	workID, err := workflow.CurrentWorkID(status.ProjectRoot)
+	if err != nil {
+		return "", "", err
+	}
+
+	return status.ProjectRoot, workID, nil
 }
 
 func (s runtimeServices) DoctorSummary() doctor.Report {

@@ -13,6 +13,7 @@ const (
 	ScreenHome Screen = iota
 	ScreenSetup
 	ScreenNewWork
+	ScreenStatus
 	ScreenAdvancedSetup
 	ScreenRalph
 	ScreenConductor
@@ -155,6 +156,55 @@ type ConductorRunCompleteMsg struct {
 	Err    error
 }
 
+// SpringfieldWorkstreamStatus is the TUI-safe projection of one Springfield workstream.
+type SpringfieldWorkstreamStatus struct {
+	Name         string
+	Title        string
+	Status       string
+	Error        string
+	EvidencePath string
+}
+
+// SpringfieldStatus captures the current Springfield execution surface state for the TUI.
+type SpringfieldStatus struct {
+	Ready      bool
+	Reason     string
+	WorkID     string
+	Title      string
+	Split      string
+	Status     string
+	Workstreams []SpringfieldWorkstreamStatus
+}
+
+// SpringfieldDiagnosisFailure is the TUI-safe projection of one Springfield failure.
+type SpringfieldDiagnosisFailure struct {
+	Workstream   string
+	Title        string
+	Error        string
+	EvidencePath string
+}
+
+// SpringfieldDiagnosis captures Springfield-owned failure guidance for the TUI.
+type SpringfieldDiagnosis struct {
+	WorkID   string
+	Status   string
+	NextStep string
+	Failures []SpringfieldDiagnosisFailure
+}
+
+// SpringfieldRunResult describes the outcome of a TUI-initiated Springfield run.
+type SpringfieldRunResult struct {
+	WorkID string
+	Status string
+	Error  string
+}
+
+// SpringfieldRunCompleteMsg signals that an async Springfield run finished.
+type SpringfieldRunCompleteMsg struct {
+	Result SpringfieldRunResult
+	Err    error
+}
+
 // AgentDetection is a TUI-safe projection of agent availability.
 type AgentDetection struct {
 	ID        string
@@ -212,6 +262,10 @@ type Services interface {
 	AgentPriority() []string
 	AgentExecutionModes() AgentExecutionModes
 	ConductorCurrentConfig() *ConductorCurrentConfig
+	SpringfieldStatus() SpringfieldStatus
+	SpringfieldDiagnosis() SpringfieldDiagnosis
+	RunSpringfieldWork(onEvent func(RuntimeEvent)) (SpringfieldRunResult, error)
+	ResumeSpringfieldWork(onEvent func(RuntimeEvent)) (SpringfieldRunResult, error)
 	RalphSummary() RalphSummary
 	RunRalphNext(planName string, onEvent func(RuntimeEvent)) (RalphRunResult, error)
 	ConductorSummary() ConductorSummary

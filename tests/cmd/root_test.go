@@ -221,6 +221,11 @@ func TestSpringfieldHelp(t *testing.T) {
 	if !strings.Contains(output, "doctor") {
 		t.Fatalf("expected help output to mention doctor, got:\n%s", output)
 	}
+	for _, name := range []string{"status", "resume", "diagnose"} {
+		if !strings.Contains(output, name) {
+			t.Fatalf("expected help output to mention %s, got:\n%s", name, output)
+		}
+	}
 }
 
 func TestSpringfieldWithoutArgsShowsShellHome(t *testing.T) {
@@ -249,8 +254,9 @@ func TestSpringfieldSubcommandsAreReachable(t *testing.T) {
 	}{
 		{name: "init", marker: "Initialize a new Springfield project in the current directory."},
 		{name: "explain", marker: "Render the built-in Springfield explanation prompt for the current project."},
-		{name: "ralph", marker: "Manage Ralph plans, story selection, and local run history."},
-		{name: "conductor", marker: "Orchestrate plan execution, check status, resume from failures, and diagnose issues."},
+		{name: "status", marker: "Show Springfield work status from approved work state."},
+		{name: "resume", marker: "Run or resume approved Springfield work."},
+		{name: "diagnose", marker: "Diagnose Springfield work failures and suggest next steps."},
 		{name: "doctor", marker: "Doctor checks that supported agent CLIs are installed and reachable, providing install guidance for anything missing."},
 		{name: "version", marker: "Print the Springfield version"},
 	} {
