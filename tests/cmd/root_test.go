@@ -172,6 +172,12 @@ func TestInitCreatesProjectInCurrentDir(t *testing.T) {
 	if !strings.Contains(output, "Created .springfield/") {
 		t.Errorf("expected runtime dir message, got:\n%s", output)
 	}
+	if strings.Contains(output, "springfield conductor setup") {
+		t.Errorf("init should not direct users to the conductor surface, got:\n%s", output)
+	}
+	if !strings.Contains(output, `Next: run "springfield" to continue in guided setup.`) {
+		t.Errorf("expected Springfield-only next step, got:\n%s", output)
+	}
 
 	// Re-run should show skip messages
 	output2, err := runBinaryIn(t, bin, dir, "init")
@@ -203,14 +209,17 @@ func TestSpringfieldHelp(t *testing.T) {
 		t.Fatalf("expected help output to mention springfield, got:\n%s", output)
 	}
 
-	if !strings.Contains(output, "Bare springfield opens the TUI-first Springfield shell.") {
-		t.Fatalf("expected help output to describe the TUI-first default, got:\n%s", output)
+	if strings.Contains(output, "springfield ralph") {
+		t.Fatalf("help should not advertise legacy ralph surface, got:\n%s", output)
 	}
-
-	for _, subcommand := range []string{"ralph", "conductor", "doctor"} {
-		if !strings.Contains(output, subcommand) {
-			t.Fatalf("expected help output to mention %q, got:\n%s", subcommand, output)
-		}
+	if strings.Contains(output, "springfield conductor") {
+		t.Fatalf("help should not advertise legacy conductor surface, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Springfield is the local-first CLI and TUI entrypoint") {
+		t.Fatalf("expected Springfield-first help text, got:\n%s", output)
+	}
+	if !strings.Contains(output, "doctor") {
+		t.Fatalf("expected help output to mention doctor, got:\n%s", output)
 	}
 }
 

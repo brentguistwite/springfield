@@ -20,8 +20,8 @@ func Execute() error {
 func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "springfield",
-		Short:         "Springfield unifies Ralph and Ralph Conductor behind one local-first surface.",
-		Long:          "Springfield is the local-first CLI and TUI entrypoint for the unified Ralph product surface.\n\nBare springfield opens the TUI-first Springfield shell.",
+		Short:         "Springfield is the local-first product surface for planning and running work.",
+		Long:          "Springfield is the local-first CLI and TUI entrypoint for defining, explaining, and running work.\n\nBare springfield opens the TUI-first Springfield shell.",
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {

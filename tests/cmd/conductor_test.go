@@ -275,7 +275,7 @@ func TestConductorSetupUsesEffectivePriorityHead(t *testing.T) {
 	}
 }
 
-func TestInitHintsAtConductorSetup(t *testing.T) {
+func TestInitHintsAtGuidedSetup(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 
@@ -284,8 +284,8 @@ func TestInitHintsAtConductorSetup(t *testing.T) {
 		t.Fatalf("init failed: %v\n%s", err, output)
 	}
 
-	if !strings.Contains(output, "conductor setup") {
-		t.Errorf("expected init to hint at conductor setup, got:\n%s", output)
+	if !strings.Contains(output, `Next: run "springfield" to continue in guided setup.`) {
+		t.Errorf("expected init to hint at guided setup, got:\n%s", output)
 	}
 }
 
