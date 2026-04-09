@@ -219,7 +219,7 @@ func (s setupScreen) View() string {
 	fmt.Fprintf(&b, "Project root: %s\n", s.status.ProjectRoot)
 	fmt.Fprintf(&b, "Config: %s\n", readyLabel(s.status.ConfigPresent, s.status.ConfigPath))
 	fmt.Fprintf(&b, "Runtime dir: %s\n", readyLabel(s.status.RuntimePresent, s.status.RuntimeDir))
-	fmt.Fprintf(&b, "Conductor config: %s\n", readyLabel(s.status.ConductorConfigReady, s.status.ConductorConfigPath))
+	fmt.Fprintf(&b, "Execution config: %s\n", readyLabel(s.status.ConductorConfigReady, s.status.ConductorConfigPath))
 
 	if s.lastResult != nil {
 		b.WriteString("\nLast action:\n")
@@ -227,9 +227,9 @@ func (s setupScreen) View() string {
 		case s.lastResult.err != "":
 			fmt.Fprintf(&b, "  failed: %s\n", s.lastResult.err)
 		case s.lastResult.conductorConfigCreated:
-			b.WriteString("  conductor config created\n")
+			b.WriteString("  execution config created\n")
 		case s.lastResult.conductorConfigReused:
-			b.WriteString("  conductor config already exists, reused\n")
+			b.WriteString("  execution config already exists, reused\n")
 		default:
 			fmt.Fprintf(&b, "  springfield.toml created: %t\n", s.lastResult.configCreated)
 			fmt.Fprintf(&b, "  .springfield created: %t\n", s.lastResult.runtimeCreated)
@@ -241,7 +241,7 @@ func (s setupScreen) View() string {
 	case setupPhaseInit:
 		b.WriteString("Enter creates springfield.toml and .springfield in the project root.\n")
 	case setupPhaseChoice:
-		b.WriteString("How would you like to configure conductor?\n\n")
+		b.WriteString("How would you like to configure execution?\n\n")
 		choices := []struct{ label, desc string }{
 			{"Basic", "use local storage and Springfield-recommended agent permissions (recommended)"},
 			{"Advanced", "choose storage mode, agent priority, permissions, and tuning options"},
@@ -268,9 +268,9 @@ func (s setupScreen) View() string {
 		}
 		modes := s.services.AgentExecutionModes()
 		if modes.Claude == "recommended" && modes.Codex == "recommended" {
-			b.WriteString("Recommended agent permissions are enabled for Claude and Codex. Springfield is designed to use these settings so Ralph and Conductor can run as intended.\n")
+			b.WriteString("Recommended agent permissions are enabled for Claude and Codex. Springfield is designed to use these settings so guided planning and execution can run as intended.\n")
 		} else {
-			b.WriteString("Springfield is designed to use recommended agent permissions for Claude and Codex so Ralph and Conductor can run as intended.\n")
+			b.WriteString("Springfield is designed to use recommended agent permissions for Claude and Codex so guided planning and execution can run as intended.\n")
 		}
 		b.WriteString("Run doctor to verify prerequisites? [Enter] or [Esc] to go home\n")
 	}

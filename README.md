@@ -4,13 +4,18 @@ Local-first CLI and TUI entrypoint for planning, explaining, and running work.
 
 ## Current Surface
 
-Springfield ships a TUI-first shell plus stable CLI entrypoints for setup and diagnostics. Planning is real end-to-end. Execution is unified behind Springfield-owned run, status, resume, and diagnose surfaces. Ralph and Conductor remain internal engines behind the Springfield product surface.
+Springfield ships a TUI-first shell plus stable CLI entrypoints for setup and diagnostics. Planning is real end-to-end. Execution is unified behind Springfield-owned run, status, resume, and diagnose surfaces. The internal single-workstream and multi-workstream engines stay behind the Springfield product surface.
 
 Running bare `springfield` opens a TUI shell. CLI subcommands remain accessible underneath:
 
 ```bash
 springfield            # TUI-first interactive shell
 springfield init       # Scaffold springfield.toml and .springfield/
+springfield explain    # Render the shared Springfield explanation playbook
+springfield skills     # Optional power-user skill wrapper install/list surface
+springfield status     # Inspect approved Springfield work
+springfield resume     # Run or resume approved Springfield work
+springfield diagnose   # Summarize failures and next steps
 springfield doctor     # Local setup diagnostics
 springfield version    # Print build version
 ```
@@ -111,7 +116,28 @@ Add plan names to `sequential` (run in order) or `batches` (run in parallel grou
 Execution flags are not stored in this JSON; `springfield.toml` is the source of truth for agent execution modes.
 
 Runtime state (generated files, caches) lives in `.springfield/` and should not be committed.
-Tracked plan storage is optional and intended for teams that want plan files in version control. Hidden engine-specific commands still exist for migration and debugging, but Springfield is the only intended user-facing workflow.
+Tracked plan storage is optional and intended for teams that want plan files in version control. Hidden legacy debug commands still exist for migration and debugging, but Springfield is the only intended user-facing workflow.
+
+## Optional Direct Skills
+
+Springfield can also write optional direct skill wrappers for power users. These wrappers are thin files generated from the same shared Springfield playbooks used by `springfield explain`; they do not replace the primary Springfield workflow.
+
+Inspect the built-in wrappers:
+
+```bash
+springfield skills list
+```
+
+Install both wrappers into any skill directory your agent tooling already loads:
+
+```bash
+springfield skills install --dir ~/.codex/skills/springfield
+```
+
+This installs exactly two wrappers:
+
+- `plan`
+- `explain`
 
 ## Release Workflow
 

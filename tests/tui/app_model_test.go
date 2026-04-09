@@ -786,9 +786,14 @@ func TestSetupScreenTriggersConductorSetup(t *testing.T) {
 	}
 
 	view := model.View()
-	for _, marker := range []string{"conductor config created", "Setup complete.", "Recommended agent permissions are enabled for Claude and Codex"} {
+	for _, marker := range []string{"execution config created", "Setup complete.", "Recommended agent permissions are enabled for Claude and Codex"} {
 		if !strings.Contains(view, marker) {
 			t.Fatalf("expected setup view to contain %q, got:\n%s", marker, view)
+		}
+	}
+	for _, legacy := range []string{"Ralph", "Conductor"} {
+		if strings.Contains(view, legacy) {
+			t.Fatalf("expected setup completion copy to stay Springfield-first, got:\n%s", view)
 		}
 	}
 }
@@ -1627,9 +1632,14 @@ func TestAdvancedSetupSettingsForm(t *testing.T) {
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := model.View()
-	for _, marker := range []string{"Worktree base", "Max retries", "Ralph iterations", "Ralph timeout"} {
+	for _, marker := range []string{"Worktree base", "Max retries", "Single-workstream iterations", "Single-workstream timeout"} {
 		if !strings.Contains(view, marker) {
 			t.Fatalf("expected settings form to contain %q, got:\n%s", marker, view)
+		}
+	}
+	for _, legacy := range []string{"Ralph", "Conductor"} {
+		if strings.Contains(view, legacy) {
+			t.Fatalf("expected advanced setup form to omit legacy engine names, got:\n%s", view)
 		}
 	}
 	if !strings.Contains(view, ".worktrees") {

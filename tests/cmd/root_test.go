@@ -247,6 +247,7 @@ func TestSpringfieldHelpReadmeStaysSpringfieldFirst(t *testing.T) {
 	for _, stale := range []string{
 		"springfield conductor setup",
 		"go run . ralph --help",
+		"springfield ralph",
 	} {
 		if strings.Contains(text, stale) {
 			t.Fatalf("expected README to drop stale guidance %q, got:\n%s", stale, text)
@@ -280,6 +281,7 @@ func TestSpringfieldSubcommandsAreReachable(t *testing.T) {
 	}{
 		{name: "init", marker: "Initialize a new Springfield project in the current directory."},
 		{name: "explain", marker: "Render the built-in Springfield explanation prompt for the current project."},
+		{name: "skills", marker: "Install or inspect optional Springfield direct skill wrappers."},
 		{name: "status", marker: "Show status for the active Springfield work or a specific work id."},
 		{name: "resume", marker: "Run or resume the active approved Springfield work."},
 		{name: "diagnose", marker: "Summarize Springfield failures, evidence, and next steps for the active work."},

@@ -59,6 +59,11 @@ type formField struct {
 	value string
 }
 
+const (
+	singleWorkstreamIterationsLabel = "Single-workstream iterations"
+	singleWorkstreamTimeoutLabel    = "Single-workstream timeout (s)"
+)
+
 func newAdvancedSetupScreen(services Services) advancedSetupScreen {
 	status := services.SetupStatus()
 	agents := services.DetectAgents()
@@ -89,8 +94,8 @@ func newAdvancedSetupScreen(services Services) advancedSetupScreen {
 			s.formFields = []formField{
 				{label: "Worktree base", value: current.WorktreeBase},
 				{label: "Max retries", value: fmt.Sprintf("%d", current.MaxRetries)},
-				{label: "Ralph iterations", value: fmt.Sprintf("%d", current.RalphIterations)},
-				{label: "Ralph timeout (s)", value: fmt.Sprintf("%d", current.RalphTimeout)},
+				{label: singleWorkstreamIterationsLabel, value: fmt.Sprintf("%d", current.RalphIterations)},
+				{label: singleWorkstreamTimeoutLabel, value: fmt.Sprintf("%d", current.RalphTimeout)},
 			}
 		}
 	}
@@ -102,8 +107,8 @@ func defaultFormFields() []formField {
 	return []formField{
 		{label: "Worktree base", value: defaults.WorktreeBase},
 		{label: "Max retries", value: fmt.Sprintf("%d", defaults.MaxRetries)},
-		{label: "Ralph iterations", value: fmt.Sprintf("%d", defaults.RalphIterations)},
-		{label: "Ralph timeout (s)", value: fmt.Sprintf("%d", defaults.RalphTimeout)},
+		{label: singleWorkstreamIterationsLabel, value: fmt.Sprintf("%d", defaults.RalphIterations)},
+		{label: singleWorkstreamTimeoutLabel, value: fmt.Sprintf("%d", defaults.RalphTimeout)},
 	}
 }
 
@@ -360,11 +365,11 @@ func (a advancedSetupScreen) validateSettings() (ConductorSetupInput, error) {
 	if err != nil {
 		return ConductorSetupInput{}, err
 	}
-	iterations, err := parseWholeNumber("Ralph iterations", a.formFields[2].value)
+	iterations, err := parseWholeNumber(singleWorkstreamIterationsLabel, a.formFields[2].value)
 	if err != nil {
 		return ConductorSetupInput{}, err
 	}
-	timeout, err := parseWholeNumber("Ralph timeout (s)", a.formFields[3].value)
+	timeout, err := parseWholeNumber(singleWorkstreamTimeoutLabel, a.formFields[3].value)
 	if err != nil {
 		return ConductorSetupInput{}, err
 	}
@@ -507,7 +512,7 @@ func (a advancedSetupScreen) View(width int) string {
 		b.WriteString("\nUp/Down select row, Left/Right change, Enter continue, Esc back\n")
 
 	case stepSettingsForm:
-		b.WriteString("Conductor Settings\n\n")
+		b.WriteString("Execution Settings\n\n")
 		if a.formErr != "" {
 			fmt.Fprintf(&b, "Error: %s\n\n", a.formErr)
 		}

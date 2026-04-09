@@ -32,6 +32,7 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(
 		NewInitCommand(),
 		NewExplainCommand(),
+		NewSkillsCommand(),
 		NewStatusCommand(),
 		NewResumeCommand(),
 		NewDiagnoseCommand(),
