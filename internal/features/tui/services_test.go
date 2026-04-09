@@ -268,6 +268,237 @@ func TestSpringfieldRunUsesProjectExecutionSettings(t *testing.T) {
 	}
 }
 
+func TestSpringfieldRunUsesConfiguredPriorityAndFallsBackOnRateLimit(t *testing.T) {
+	root := t.TempDir()
+	writeRuntimeServiceConfig(t, root, strings.Join([]string{
+		"[project]",
+		`default_agent = "claude"`,
+		`agent_priority = ["codex", "claude"]`,
+		"",
+	}, "\n"))
+	writeWorkflowDraftForService(t, root)
+
+	fakeBinDir := filepath.Join(root, "bin")
+	orderPath := filepath.Join(root, "agent-order.log")
+	codexArgvPath := filepath.Join(root, "codex.argv")
+	claudeArgvPath := filepath.Join(root, "claude.argv")
+	installRuntimeServiceScriptBinary(t, fakeBinDir, "codex", strings.Join([]string{
+		"#!/bin/sh",
+		fmt.Sprintf("echo codex >> %q", orderPath),
+		fmt.Sprintf("printf '%%s\\n' \"$@\" > %q", codexArgvPath),
+		"echo 'rate limit exceeded' >&2",
+		"exit 1",
+	}, "\n"))
+	installRuntimeServiceScriptBinary(t, fakeBinDir, "claude", strings.Join([]string{
+		"#!/bin/sh",
+		fmt.Sprintf("echo claude >> %q", orderPath),
+		fmt.Sprintf("printf '%%s\\n' \"$@\" > %q", claudeArgvPath),
+		"echo 'agent-output'",
+	}, "\n"))
+	t.Setenv("PATH", fakeBinDir)
+
+	services := runtimeServices{
+		cwd:      func() (string, error) { return root, nil },
+		lookPath: osexec.LookPath,
+	}
+
+	result, err := services.RunSpringfieldWork(nil)
+	if err != nil {
+		t.Fatalf("RunSpringfieldWork: %v", err)
+	}
+	if got, want := result.Status, "completed"; got != want {
+		t.Fatalf("run status = %q, want %q", got, want)
+	}
+
+	order := readRuntimeServiceArgs(t, orderPath)
+	if got, want := strings.Join(order, ","), "codex,claude"; got != want {
+		t.Fatalf("agent order = %q, want %q", got, want)
+	}
+
+	codexArgs := readRuntimeServiceArgs(t, codexArgvPath)
+	for _, want := range []string{"exec", "--json"} {
+		if !containsRuntimeServiceArg(codexArgs, want) {
+			t.Fatalf("expected codex args to contain %q, got %v", want, codexArgs)
+		}
+	}
+
+	claudeArgs := readRuntimeServiceArgs(t, claudeArgvPath)
+	for _, want := range []string{"-p", "--output-format", "stream-json", "--verbose"} {
+		if !containsRuntimeServiceArg(claudeArgs, want) {
+			t.Fatalf("expected claude args to contain %q, got %v", want, claudeArgs)
+		}
+	}
+
+	status := services.SpringfieldStatus()
+	if !status.Ready {
+		t.Fatalf("expected Springfield status ready, got %#v", status)
+	}
+	if got, want := status.Status, "completed"; got != want {
+		t.Fatalf("persisted status = %q, want %q", got, want)
+	}
+	if got, want := len(status.Workstreams), 1; got != want {
+		t.Fatalf("workstreams = %d, want %d", got, want)
+	}
+	if got, want := status.Workstreams[0].Status, "completed"; got != want {
+		t.Fatalf("workstream status = %q, want %q", got, want)
+	}
+}
+
+func TestSpringfieldResumeUsesConfiguredPriorityAndFallsBackOnRateLimit(t *testing.T) {
+	root := t.TempDir()
+	writeRuntimeServiceConfig(t, root, strings.Join([]string{
+		"[project]",
+		`default_agent = "claude"`,
+		`agent_priority = ["codex", "claude"]`,
+		"",
+	}, "\n"))
+	writeWorkflowDraftForService(t, root)
+
+	fakeBinDir := filepath.Join(root, "bin")
+	orderPath := filepath.Join(root, "resume-agent-order.log")
+	codexArgvPath := filepath.Join(root, "resume-codex.argv")
+	claudeArgvPath := filepath.Join(root, "resume-claude.argv")
+	installRuntimeServiceScriptBinary(t, fakeBinDir, "codex", strings.Join([]string{
+		"#!/bin/sh",
+		fmt.Sprintf("echo codex >> %q", orderPath),
+		fmt.Sprintf("printf '%%s\\n' \"$@\" > %q", codexArgvPath),
+		"echo '429 too many requests' >&2",
+		"exit 1",
+	}, "\n"))
+	installRuntimeServiceScriptBinary(t, fakeBinDir, "claude", strings.Join([]string{
+		"#!/bin/sh",
+		fmt.Sprintf("echo claude >> %q", orderPath),
+		fmt.Sprintf("printf '%%s\\n' \"$@\" > %q", claudeArgvPath),
+		"echo 'agent-output'",
+	}, "\n"))
+	t.Setenv("PATH", fakeBinDir)
+
+	services := runtimeServices{
+		cwd:      func() (string, error) { return root, nil },
+		lookPath: osexec.LookPath,
+	}
+
+	result, err := services.ResumeSpringfieldWork(nil)
+	if err != nil {
+		t.Fatalf("ResumeSpringfieldWork: %v", err)
+	}
+	if got, want := result.Status, "completed"; got != want {
+		t.Fatalf("resume status = %q, want %q", got, want)
+	}
+
+	order := readRuntimeServiceArgs(t, orderPath)
+	if got, want := strings.Join(order, ","), "codex,claude"; got != want {
+		t.Fatalf("agent order = %q, want %q", got, want)
+	}
+
+	status := services.SpringfieldStatus()
+	if !status.Ready {
+		t.Fatalf("expected Springfield status ready, got %#v", status)
+	}
+	if got, want := status.Status, "completed"; got != want {
+		t.Fatalf("persisted status = %q, want %q", got, want)
+	}
+}
+
+func TestSpringfieldRunDoesNotFallBackAfterGenericFailure(t *testing.T) {
+	root := t.TempDir()
+	writeRuntimeServiceConfig(t, root, strings.Join([]string{
+		"[project]",
+		`default_agent = "claude"`,
+		`agent_priority = ["codex", "claude"]`,
+		"",
+	}, "\n"))
+	writeWorkflowDraftForService(t, root)
+
+	fakeBinDir := filepath.Join(root, "bin")
+	orderPath := filepath.Join(root, "generic-agent-order.log")
+	codexArgvPath := filepath.Join(root, "generic-codex.argv")
+	claudeArgvPath := filepath.Join(root, "generic-claude.argv")
+	installRuntimeServiceScriptBinary(t, fakeBinDir, "codex", strings.Join([]string{
+		"#!/bin/sh",
+		fmt.Sprintf("echo codex >> %q", orderPath),
+		fmt.Sprintf("printf '%%s\\n' \"$@\" > %q", codexArgvPath),
+		"echo 'syntax error' >&2",
+		"exit 1",
+	}, "\n"))
+	installRuntimeServiceScriptBinary(t, fakeBinDir, "claude", strings.Join([]string{
+		"#!/bin/sh",
+		fmt.Sprintf("echo claude >> %q", orderPath),
+		fmt.Sprintf("printf '%%s\\n' \"$@\" > %q", claudeArgvPath),
+		"echo 'agent-output'",
+	}, "\n"))
+	t.Setenv("PATH", fakeBinDir)
+
+	services := runtimeServices{
+		cwd:      func() (string, error) { return root, nil },
+		lookPath: osexec.LookPath,
+	}
+
+	result, err := services.RunSpringfieldWork(nil)
+	if err == nil {
+		t.Fatal("expected RunSpringfieldWork to fail on generic first-agent failure")
+	}
+	if got, want := result.Status, "failed"; got != want {
+		t.Fatalf("run status = %q, want %q", got, want)
+	}
+
+	order := readRuntimeServiceArgs(t, orderPath)
+	if got, want := strings.Join(order, ","), "codex"; got != want {
+		t.Fatalf("agent order = %q, want %q", got, want)
+	}
+
+	if _, err := os.Stat(claudeArgvPath); !os.IsNotExist(err) {
+		t.Fatalf("expected claude not to run after generic failure, stat err = %v", err)
+	}
+
+	status := services.SpringfieldStatus()
+	if !status.Ready {
+		t.Fatalf("expected Springfield status ready, got %#v", status)
+	}
+	if got, want := status.Status, "failed"; got != want {
+		t.Fatalf("persisted status = %q, want %q", got, want)
+	}
+	if got, want := status.Workstreams[0].Status, "failed"; got != want {
+		t.Fatalf("workstream status = %q, want %q", got, want)
+	}
+}
+
+func TestSetupStatusLeavesExecutionNotReadyWhenExecutionConfigMalformed(t *testing.T) {
+	root := t.TempDir()
+	writeRuntimeServiceConfig(t, root, strings.Join([]string{
+		"[project]",
+		`default_agent = "claude"`,
+		"",
+	}, "\n"))
+
+	configPath := filepath.Join(root, ".springfield", "execution", "config.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("mkdir execution dir: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte("{not-json"), 0o644); err != nil {
+		t.Fatalf("write malformed execution config: %v", err)
+	}
+
+	services := runtimeServices{
+		cwd:      func() (string, error) { return root, nil },
+		lookPath: osexec.LookPath,
+	}
+
+	status := services.SetupStatus()
+	if !status.ConfigPresent {
+		t.Fatalf("expected config present, got %#v", status)
+	}
+	if !status.RuntimePresent {
+		t.Fatalf("expected runtime present, got %#v", status)
+	}
+	if status.ExecutionReady {
+		t.Fatalf("expected malformed execution config to stay not ready, got %#v", status)
+	}
+	if status.Error != "" {
+		t.Fatalf("expected malformed execution config not to set setup error, got %q", status.Error)
+	}
+}
+
 func writeRuntimeServiceConfig(t *testing.T, root, body string) {
 	t.Helper()
 
@@ -286,6 +517,19 @@ func installRuntimeServiceFakeBinary(t *testing.T, binDir, name, argvPath string
 	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\necho 'agent-output'\n", argvPath)
 	path := filepath.Join(binDir, name)
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake %s binary: %v", name, err)
+	}
+}
+
+func installRuntimeServiceScriptBinary(t *testing.T, binDir, name, script string) {
+	t.Helper()
+
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir fake bin dir: %v", err)
+	}
+
+	path := filepath.Join(binDir, name)
+	if err := os.WriteFile(path, []byte(script+"\n"), 0o755); err != nil {
 		t.Fatalf("write fake %s binary: %v", name, err)
 	}
 }

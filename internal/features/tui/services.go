@@ -100,7 +100,9 @@ func (s runtimeServices) SetupStatus() SetupStatus {
 
 	status.ExecutionConfigPath = filepath.Join(status.RuntimeDir, "execution", "config.json")
 	if info, err := os.Stat(status.ExecutionConfigPath); err == nil && !info.IsDir() {
-		status.ExecutionReady = true
+		if _, err := execution.Load(status.ProjectRoot); err == nil {
+			status.ExecutionReady = true
+		}
 	}
 
 	return status

@@ -85,6 +85,7 @@ type setupPhase int
 const (
 	setupPhaseInit setupPhase = iota
 	setupPhaseChoice
+	setupPhaseBasicFailed
 	setupPhaseBasicDone
 )
 
@@ -131,7 +132,9 @@ func (s setupScreen) Update(msg tea.Msg) (setupScreen, tea.Cmd) {
 		s.status = s.services.SetupStatus()
 		if s.status.NeedsInit() {
 			s.phase = setupPhaseInit
-		} else if s.phase == setupPhaseInit {
+		} else if !s.status.ExecutionReady && (s.phase == setupPhaseInit || s.phase == setupPhaseBasicFailed || s.phase == setupPhaseBasicDone) {
+			s.phase = setupPhaseChoice
+		} else if s.phase == setupPhaseInit || s.phase == setupPhaseBasicFailed {
 			s.phase = setupPhaseChoice
 		}
 		return s, nil
@@ -171,7 +174,7 @@ func (s setupScreen) Update(msg tea.Msg) (setupScreen, tea.Cmd) {
 			}
 			if err := s.services.EnsureRecommendedExecutionDefaults(); err != nil {
 				s.lastResult = &setupResult{err: err.Error()}
-				s.phase = setupPhaseBasicDone
+				s.phase = setupPhaseBasicFailed
 				return s, nil
 			}
 			// Basic path -- setup conductor with defaults
@@ -190,6 +193,9 @@ func (s setupScreen) Update(msg tea.Msg) (setupScreen, tea.Cmd) {
 				}
 				if err != nil {
 					s.lastResult.err = err.Error()
+					s.phase = setupPhaseBasicFailed
+					s.status = s.services.SetupStatus()
+					return s, nil
 				}
 				s.status = s.services.SetupStatus()
 			}
@@ -253,6 +259,8 @@ func (s setupScreen) View() string {
 			}
 			fmt.Fprintf(&b, "%s%s — %s\n", cursor, c.label, c.desc)
 		}
+	case setupPhaseBasicFailed:
+		b.WriteString("Basic setup failed.\n")
 	case setupPhaseBasicDone:
 		b.WriteString("Setup complete.\n")
 		b.WriteString(fmt.Sprintf("Storage: %s\n", basicSetupStorageLabel(s.services.CurrentExecutionConfig())))

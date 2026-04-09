@@ -712,6 +712,33 @@ func TestSetupScreenConfiguresExecution(t *testing.T) {
 	}
 }
 
+func TestSetupScreenConfiguresExecutionWhenExistingConfigPathIsNotReady(t *testing.T) {
+	services := &fakeServices{
+		setup: tui.SetupStatus{
+			WorkingDir:          "/tmp/demo",
+			ProjectRoot:         "/tmp/demo",
+			ConfigPath:          "/tmp/demo/springfield.toml",
+			RuntimeDir:          "/tmp/demo/.springfield",
+			ExecutionConfigPath: "/tmp/demo/.springfield/execution/config.json",
+			ConfigPresent:       true,
+			RuntimePresent:      true,
+			ExecutionReady:      false,
+		},
+		executionConfigResult: tui.ExecutionConfigResult{
+			Created: true,
+			Path:    "/tmp/demo/.springfield/execution/config.json",
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if services.executionConfigCalls != 1 {
+		t.Fatalf("expected malformed existing config path to still trigger ConfigureExecution, got %d calls", services.executionConfigCalls)
+	}
+}
+
 func TestSetupScreenShowsExecutionConfigFailure(t *testing.T) {
 	services := &fakeServices{
 		setup: tui.SetupStatus{
@@ -732,8 +759,130 @@ func TestSetupScreenShowsExecutionConfigFailure(t *testing.T) {
 	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
 	view := model.View()
+	if !strings.Contains(view, "Basic setup failed.") {
+		t.Fatalf("expected failure banner in view, got:\n%s", view)
+	}
 	if !strings.Contains(view, "permission denied") {
 		t.Fatalf("expected failure message in view, got:\n%s", view)
+	}
+	if strings.Contains(view, "Setup complete.") {
+		t.Fatalf("expected setup completion copy to be absent on failure, got:\n%s", view)
+	}
+	if strings.Contains(view, "Run doctor to verify prerequisites?") {
+		t.Fatalf("expected doctor handoff to be absent on failure, got:\n%s", view)
+	}
+}
+
+func TestSetupBasicDefaultsFailureDoesNotShowSuccessSummary(t *testing.T) {
+	services := &fakeServices{
+		setup: tui.SetupStatus{
+			WorkingDir:          "/tmp/demo",
+			ProjectRoot:         "/tmp/demo",
+			ConfigPath:          "/tmp/demo/springfield.toml",
+			RuntimeDir:          "/tmp/demo/.springfield",
+			ExecutionConfigPath: "/tmp/demo/.springfield/execution/config.json",
+			ConfigPresent:       true,
+			RuntimePresent:      true,
+			ExecutionReady:      false,
+		},
+		ensureExecutionDefaultsErr: errors.New("defaults write failed"),
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if services.executionConfigCalls != 0 {
+		t.Fatalf("expected execution config not called after defaults failure, got %d", services.executionConfigCalls)
+	}
+
+	view := model.View()
+	if !strings.Contains(view, "Basic setup failed.") {
+		t.Fatalf("expected failure banner in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "defaults write failed") {
+		t.Fatalf("expected defaults failure message in view, got:\n%s", view)
+	}
+	if strings.Contains(view, "Setup complete.") {
+		t.Fatalf("expected setup completion copy to be absent on failure, got:\n%s", view)
+	}
+	if strings.Contains(view, "Run doctor to verify prerequisites?") {
+		t.Fatalf("expected doctor handoff to be absent on failure, got:\n%s", view)
+	}
+}
+
+func TestSetupBasicFailureRefreshReturnsToChoice(t *testing.T) {
+	services := &fakeServices{
+		setup: tui.SetupStatus{
+			WorkingDir:          "/tmp/demo",
+			ProjectRoot:         "/tmp/demo",
+			ConfigPath:          "/tmp/demo/springfield.toml",
+			RuntimeDir:          "/tmp/demo/.springfield",
+			ExecutionConfigPath: "/tmp/demo/.springfield/execution/config.json",
+			ConfigPresent:       true,
+			RuntimePresent:      true,
+			ExecutionReady:      false,
+		},
+		ensureExecutionDefaultsErr: errors.New("defaults write failed"),
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	failedView := model.View()
+	if !strings.Contains(failedView, "Basic setup failed.") {
+		t.Fatalf("expected failure banner before refresh, got:\n%s", failedView)
+	}
+
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	view := model.View()
+	if !strings.Contains(view, "How would you like to configure execution?") {
+		t.Fatalf("expected refresh to return to setup choice, got:\n%s", view)
+	}
+	if strings.Contains(view, "Basic setup failed.") {
+		t.Fatalf("expected refresh to leave failure state, got:\n%s", view)
+	}
+}
+
+func TestSetupBasicSuccessRefreshDemotesToChoiceWhenExecutionReadyRegresses(t *testing.T) {
+	services := &fakeServices{
+		setup: tui.SetupStatus{
+			WorkingDir:          "/tmp/demo",
+			ProjectRoot:         "/tmp/demo",
+			ConfigPath:          "/tmp/demo/springfield.toml",
+			RuntimeDir:          "/tmp/demo/.springfield",
+			ExecutionConfigPath: "/tmp/demo/.springfield/execution/config.json",
+			ConfigPresent:       true,
+			RuntimePresent:      true,
+			ExecutionReady:      true,
+		},
+		agentDetections:    []tui.AgentDetection{{ID: "claude", Name: "Claude Code", Installed: true}},
+		agentPriorityOrder: []string{"claude"},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	successView := model.View()
+	if !strings.Contains(successView, "Setup complete.") {
+		t.Fatalf("expected success state before refresh, got:\n%s", successView)
+	}
+
+	services.setup.ExecutionReady = false
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
+
+	view := model.View()
+	if !strings.Contains(view, "How would you like to configure execution?") {
+		t.Fatalf("expected refresh to return to setup choice after readiness regression, got:\n%s", view)
+	}
+	if strings.Contains(view, "Setup complete.") {
+		t.Fatalf("expected stale success summary to be absent after refresh, got:\n%s", view)
+	}
+	if strings.Contains(view, "Run doctor to verify prerequisites?") {
+		t.Fatalf("expected stale doctor handoff to be absent after refresh, got:\n%s", view)
 	}
 }
 
