@@ -6,6 +6,8 @@ Local-first CLI and TUI entrypoint for planning, explaining, and running work.
 
 Springfield ships a TUI-first shell plus stable CLI entrypoints for setup and diagnostics. Planning is real end-to-end. Execution is unified behind Springfield-owned run, status, resume, and diagnose surfaces. The internal single-workstream and multi-workstream engines stay behind the Springfield product surface.
 
+Inside the codebase, `internal/features/execution` owns runtime adapter construction and engine routing. `internal/features/workflow` owns persisted Springfield work state plus status/diagnose projection.
+
 Running bare `springfield` opens a TUI shell. CLI subcommands remain accessible underneath:
 
 ```bash

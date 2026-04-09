@@ -4,45 +4,42 @@ import (
 	"strings"
 	"testing"
 
+	"springfield/internal/features/execution"
 	"springfield/internal/features/workflow"
 )
 
-func TestRunnerRunRoutesSingleSplitToSingleExecutor(t *testing.T) {
+func TestRunnerRunRoutesThroughExecutionAdapterForSingleWork(t *testing.T) {
 	root := t.TempDir()
 	writeWorkflowDraft(t, root, workflowDraftFixture{
 		workID:  "wave-c2",
 		title:   "Unified execution surface",
-		summary: "Run one approved workstream through the single engine.",
+		summary: "Run one approved workstream through the Springfield adapter.",
 		split:   "single",
 		workstreams: []workflowDraftWorkstream{
-			{name: "01", title: "Execution adapter", summary: "Use the single engine boundary."},
+			{name: "01", title: "Execution adapter", summary: "Use the Springfield execution seam."},
 		},
 	})
 
-	single := &fakeSingleExecutor{
-		report: workflow.ExecutionReport{
+	executor := &fakeExecutionExecutor{
+		report: execution.Report{
 			Status: "completed",
-			Workstreams: []workflow.WorkstreamRun{
+			Workstreams: []execution.WorkstreamRun{
 				{Name: "01", Status: "completed"},
 			},
 		},
 	}
-	multi := &fakeMultiExecutor{}
-	runner := workflow.Runner{Single: single, Multi: multi}
+	runner := workflow.Runner{Executor: executor}
 
 	result, err := runner.Run(root, "wave-c2")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
-	if got, want := single.calls, 1; got != want {
-		t.Fatalf("single calls = %d, want %d", got, want)
+	if got, want := executor.calls, 1; got != want {
+		t.Fatalf("executor calls = %d, want %d", got, want)
 	}
-	if got := multi.calls; got != 0 {
-		t.Fatalf("multi calls = %d, want 0", got)
-	}
-	if got, want := single.lastWork.ID, "wave-c2"; got != want {
-		t.Fatalf("single work id = %q, want %q", got, want)
+	if got, want := executor.lastWork.Split, "single"; got != want {
+		t.Fatalf("work split = %q, want %q", got, want)
 	}
 	if got, want := result.WorkID, "wave-c2"; got != want {
 		t.Fatalf("result work id = %q, want %q", got, want)
@@ -52,12 +49,12 @@ func TestRunnerRunRoutesSingleSplitToSingleExecutor(t *testing.T) {
 	}
 }
 
-func TestRunnerRunRoutesMultiSplitToMultiExecutor(t *testing.T) {
+func TestRunnerRunRoutesThroughExecutionAdapterForMultiWork(t *testing.T) {
 	root := t.TempDir()
 	writeWorkflowDraft(t, root, workflowDraftFixture{
 		workID:  "wave-c2",
 		title:   "Unified execution surface",
-		summary: "Run multiple approved workstreams through the multi engine.",
+		summary: "Run multiple approved workstreams through the Springfield adapter.",
 		split:   "multi",
 		workstreams: []workflowDraftWorkstream{
 			{name: "01", title: "CLI surface"},
@@ -65,31 +62,30 @@ func TestRunnerRunRoutesMultiSplitToMultiExecutor(t *testing.T) {
 		},
 	})
 
-	single := &fakeSingleExecutor{}
-	multi := &fakeMultiExecutor{
-		report: workflow.ExecutionReport{
+	executor := &fakeExecutionExecutor{
+		report: execution.Report{
 			Status: "completed",
-			Workstreams: []workflow.WorkstreamRun{
+			Workstreams: []execution.WorkstreamRun{
 				{Name: "01", Status: "completed"},
 				{Name: "02", Status: "completed"},
 			},
 		},
 	}
-	runner := workflow.Runner{Single: single, Multi: multi}
+	runner := workflow.Runner{Executor: executor}
 
 	result, err := runner.Run(root, "wave-c2")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 
-	if got := single.calls; got != 0 {
-		t.Fatalf("single calls = %d, want 0", got)
+	if got, want := executor.calls, 1; got != want {
+		t.Fatalf("executor calls = %d, want %d", got, want)
 	}
-	if got, want := multi.calls, 1; got != want {
-		t.Fatalf("multi calls = %d, want %d", got, want)
+	if got, want := executor.lastWork.Split, "multi"; got != want {
+		t.Fatalf("work split = %q, want %q", got, want)
 	}
-	if got, want := len(multi.lastWork.Workstreams), 2; got != want {
-		t.Fatalf("multi workstreams = %d, want %d", got, want)
+	if got, want := len(executor.lastWork.Workstreams), 2; got != want {
+		t.Fatalf("workstreams = %d, want %d", got, want)
 	}
 	if got, want := result.Status, "completed"; got != want {
 		t.Fatalf("result status = %q, want %q", got, want)
@@ -109,15 +105,14 @@ func TestRunnerStatusReturnsSpringfieldOwnedView(t *testing.T) {
 	})
 
 	runner := workflow.Runner{
-		Single: &fakeSingleExecutor{
-			report: workflow.ExecutionReport{
+		Executor: &fakeExecutionExecutor{
+			report: execution.Report{
 				Status: "completed",
-				Workstreams: []workflow.WorkstreamRun{
+				Workstreams: []execution.WorkstreamRun{
 					{Name: "01", Status: "completed"},
 				},
 			},
 		},
-		Multi: &fakeMultiExecutor{},
 	}
 	if _, err := runner.Run(root, "wave-c2"); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -162,11 +157,10 @@ func TestRunnerFailurePreservesEvidenceForDiagnose(t *testing.T) {
 	})
 
 	runner := workflow.Runner{
-		Single: &fakeSingleExecutor{},
-		Multi: &fakeMultiExecutor{
-			report: workflow.ExecutionReport{
+		Executor: &fakeExecutionExecutor{
+			report: execution.Report{
 				Status: "failed",
-				Workstreams: []workflow.WorkstreamRun{
+				Workstreams: []execution.WorkstreamRun{
 					{Name: "01", Status: "completed"},
 					{Name: "02", Status: "failed", Error: "agent failed", EvidencePath: ".springfield/work/wave-c2/logs/02.log"},
 				},
@@ -217,15 +211,14 @@ func TestSpringfieldDiagnoseSingleFailureReturnsStructuredEvidence(t *testing.T)
 	})
 
 	runner := workflow.Runner{
-		Single: &fakeSingleExecutor{
-			report: workflow.ExecutionReport{
+		Executor: &fakeExecutionExecutor{
+			report: execution.Report{
 				Status: "failed",
-				Workstreams: []workflow.WorkstreamRun{
+				Workstreams: []execution.WorkstreamRun{
 					{Name: "01", Status: "failed", Error: "agent failed", EvidencePath: ".springfield/work/wave-d1/logs/01.log"},
 				},
 			},
 		},
-		Multi: &fakeMultiExecutor{},
 	}
 
 	if _, err := runner.Run(root, "wave-d1"); err == nil {
@@ -268,11 +261,10 @@ func TestSpringfieldDiagnoseMultiFailurePreservesStructuredEvidence(t *testing.T
 	})
 
 	runner := workflow.Runner{
-		Single: &fakeSingleExecutor{},
-		Multi: &fakeMultiExecutor{
-			report: workflow.ExecutionReport{
+		Executor: &fakeExecutionExecutor{
+			report: execution.Report{
 				Status: "failed",
-				Workstreams: []workflow.WorkstreamRun{
+				Workstreams: []execution.WorkstreamRun{
 					{Name: "01", Status: "failed", Error: "status render failed", EvidencePath: ".springfield/work/wave-d1/logs/01.log"},
 					{Name: "02", Status: "failed", Error: "docs render failed", EvidencePath: ".springfield/work/wave-d1/logs/02.log"},
 				},
@@ -309,27 +301,14 @@ func TestSpringfieldDiagnoseMultiFailurePreservesStructuredEvidence(t *testing.T
 	}
 }
 
-type fakeSingleExecutor struct {
-	report   workflow.ExecutionReport
+type fakeExecutionExecutor struct {
+	report   execution.Report
 	err      error
 	calls    int
-	lastWork workflow.Work
+	lastWork execution.Work
 }
 
-func (f *fakeSingleExecutor) Run(root string, work workflow.Work) (workflow.ExecutionReport, error) {
-	f.calls++
-	f.lastWork = work
-	return f.report, f.err
-}
-
-type fakeMultiExecutor struct {
-	report   workflow.ExecutionReport
-	err      error
-	calls    int
-	lastWork workflow.Work
-}
-
-func (f *fakeMultiExecutor) Run(root string, work workflow.Work) (workflow.ExecutionReport, error) {
+func (f *fakeExecutionExecutor) Run(root string, work execution.Work) (execution.Report, error) {
 	f.calls++
 	f.lastWork = work
 	return f.report, f.err

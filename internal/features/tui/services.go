@@ -124,7 +124,7 @@ func (s runtimeServices) SpringfieldStatus() SpringfieldStatus {
 		return SpringfieldStatus{Reason: err.Error()}
 	}
 
-	runner, err := workflow.NewRuntimeRunner(root, s.lookPath, nil)
+	runner, err := s.newWorkflowRunner(root, nil)
 	if err != nil {
 		return SpringfieldStatus{Reason: err.Error()}
 	}
@@ -161,7 +161,7 @@ func (s runtimeServices) SpringfieldDiagnosis() SpringfieldDiagnosis {
 		return SpringfieldDiagnosis{NextStep: err.Error()}
 	}
 
-	runner, err := workflow.NewRuntimeRunner(root, s.lookPath, nil)
+	runner, err := s.newWorkflowRunner(root, nil)
 	if err != nil {
 		return SpringfieldDiagnosis{NextStep: err.Error()}
 	}
@@ -382,7 +382,7 @@ func (s runtimeServices) runSpringfield(onEvent func(RuntimeEvent), resume bool)
 		}
 	}
 
-	runner, err := workflow.NewRuntimeRunner(root, s.lookPath, handler)
+	runner, err := s.newWorkflowRunner(root, handler)
 	if err != nil {
 		return SpringfieldRunResult{}, err
 	}
@@ -423,6 +423,14 @@ func (s runtimeServices) springfieldTarget() (string, string, error) {
 	}
 
 	return status.ProjectRoot, workID, nil
+}
+
+func (s runtimeServices) newWorkflowRunner(root string, onEvent coreexec.EventHandler) (workflow.Runner, error) {
+	executor, err := execution.NewRuntimeRunner(root, s.lookPath, onEvent)
+	if err != nil {
+		return workflow.Runner{}, err
+	}
+	return workflow.Runner{Executor: executor}, nil
 }
 
 func (s runtimeServices) DoctorSummary() doctor.Report {
