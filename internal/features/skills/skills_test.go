@@ -52,9 +52,14 @@ func TestRenderUsesSharedPlaybookPrompt(t *testing.T) {
 	if rendered.Prompt != out.Prompt {
 		t.Fatalf("expected prompt to come from shared playbook builder")
 	}
-	for _, marker := range []string{"Springfield", "Built-in Conductor playbook.", "agents context"} {
+	for _, marker := range []string{"Springfield", "Built-in Springfield playbook.", "agents context"} {
 		if !strings.Contains(rendered.Content, marker) {
 			t.Fatalf("expected rendered content to contain %q, got:\n%s", marker, rendered.Content)
+		}
+	}
+	for _, legacy := range []string{"Ralph", "Conductor"} {
+		if strings.Contains(rendered.Content, legacy) {
+			t.Fatalf("expected rendered content to omit %q, got:\n%s", legacy, rendered.Content)
 		}
 	}
 }

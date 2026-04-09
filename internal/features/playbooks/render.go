@@ -51,7 +51,7 @@ func loadBuiltin(purpose Purpose) (string, string, error) {
 func builtinSourceForPurpose(purpose Purpose) (string, error) {
 	switch purpose {
 	case PurposePlan, PurposeExplain:
-		return "builtin/conductor.md", nil
+		return "builtin/springfield.md", nil
 	default:
 		return "", fmt.Errorf("unsupported playbook purpose %q", purpose)
 	}

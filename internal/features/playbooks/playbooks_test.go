@@ -17,12 +17,13 @@ func TestPlanPurposeLoadsSharedBuiltin(t *testing.T) {
 		t.Fatalf("build plan playbook: %v", err)
 	}
 
-	if out.BuiltinSource != "builtin/conductor.md" {
+	if out.BuiltinSource != "builtin/springfield.md" {
 		t.Fatalf("builtin source = %q", out.BuiltinSource)
 	}
-	if !strings.Contains(out.Prompt, "Built-in Conductor playbook.") {
+	if !strings.Contains(out.Prompt, "Built-in Springfield playbook.") {
 		t.Fatalf("expected shared builtin content, got:\n%s", out.Prompt)
 	}
+	assertNoLegacyEngineNames(t, out.Prompt)
 }
 
 func TestExplainPurposeLoadsSharedBuiltin(t *testing.T) {
@@ -35,12 +36,13 @@ func TestExplainPurposeLoadsSharedBuiltin(t *testing.T) {
 		t.Fatalf("build explain playbook: %v", err)
 	}
 
-	if out.BuiltinSource != "builtin/conductor.md" {
+	if out.BuiltinSource != "builtin/springfield.md" {
 		t.Fatalf("builtin source = %q", out.BuiltinSource)
 	}
-	if !strings.Contains(out.Prompt, "Built-in Conductor playbook.") {
+	if !strings.Contains(out.Prompt, "Built-in Springfield playbook.") {
 		t.Fatalf("expected shared builtin content, got:\n%s", out.Prompt)
 	}
+	assertNoLegacyEngineNames(t, out.Prompt)
 }
 
 func TestProjectContextPrefersAgents(t *testing.T) {
@@ -102,7 +104,7 @@ func TestRenderIncludesSectionsInOrder(t *testing.T) {
 		t.Fatalf("build playbook: %v", err)
 	}
 
-	builtinIndex := strings.Index(out.Prompt, "Built-in Conductor playbook.")
+	builtinIndex := strings.Index(out.Prompt, "Built-in Springfield playbook.")
 	projectIndex := strings.Index(out.Prompt, "project guidance")
 	taskIndex := strings.Index(out.Prompt, "task body")
 	if builtinIndex == -1 || projectIndex == -1 || taskIndex == -1 {
@@ -111,6 +113,7 @@ func TestRenderIncludesSectionsInOrder(t *testing.T) {
 	if !(builtinIndex < projectIndex && projectIndex < taskIndex) {
 		t.Fatalf("expected stable builtin -> project -> task order, got:\n%s", out.Prompt)
 	}
+	assertNoLegacyEngineNames(t, out.Prompt)
 }
 
 func writeContextFile(t *testing.T, root, name, body string) {
@@ -118,5 +121,15 @@ func writeContextFile(t *testing.T, root, name, body string) {
 
 	if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
 		t.Fatalf("write %s: %v", name, err)
+	}
+}
+
+func assertNoLegacyEngineNames(t *testing.T, body string) {
+	t.Helper()
+
+	for _, legacy := range []string{"Ralph", "Conductor"} {
+		if strings.Contains(body, legacy) {
+			t.Fatalf("expected Springfield-owned prompt surface to omit %q, got:\n%s", legacy, body)
+		}
 	}
 }

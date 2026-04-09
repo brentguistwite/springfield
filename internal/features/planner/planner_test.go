@@ -186,8 +186,13 @@ func TestSessionNextBuildsPlanningPromptAndParsesResponse(t *testing.T) {
 	if !strings.Contains(runner.prompt, "Add Wave B planning surface") {
 		t.Fatalf("prompt should include user input, got:\n%s", runner.prompt)
 	}
-	if !strings.Contains(runner.prompt, "Built-in Conductor playbook.") {
+	if !strings.Contains(runner.prompt, "Built-in Springfield playbook.") {
 		t.Fatalf("prompt should include built playbook content, got:\n%s", runner.prompt)
+	}
+	for _, legacy := range []string{"Ralph", "Conductor"} {
+		if strings.Contains(runner.prompt, legacy) {
+			t.Fatalf("prompt should omit legacy engine name %q, got:\n%s", legacy, runner.prompt)
+		}
 	}
 	if !strings.Contains(runner.prompt, "JSON") {
 		t.Fatalf("prompt should require JSON output, got:\n%s", runner.prompt)
