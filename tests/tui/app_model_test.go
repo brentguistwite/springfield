@@ -841,8 +841,8 @@ func TestAdvancedSetupTrackedKeepsGitignorePromptInline(t *testing.T) {
 	if !strings.Contains(view, "Plan Storage Mode") {
 		t.Fatalf("expected still on storage screen, got:\n%s", view)
 	}
-	if !strings.Contains(view, ".gitignore") {
-		t.Fatalf("expected inline gitignore prompt, got:\n%s", view)
+	if strings.Contains(view, ".gitignore") {
+		t.Fatalf("did not expect inline gitignore prompt, got:\n%s", view)
 	}
 	if strings.Contains(view, "Agent Priority") {
 		t.Fatalf("should not advance yet, got:\n%s", view)

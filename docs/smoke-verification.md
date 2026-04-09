@@ -39,23 +39,23 @@ Truthful detection with actionable install guidance for missing agent.
 Created springfield.toml
 Created .springfield/
 
-Next: run "springfield conductor setup" to configure conductor.
+Next: run "springfield" to continue in guided setup.
 ```
 
 Scaffolds `springfield.toml` with `default_agent = "claude"` and `.springfield/` state dir. Guides user to next step.
 
-### `springfield conductor setup`
+### `springfield internal-debug conductor setup`
 
 ```
 Plan storage mode:
   local  .springfield/conductor/plans
-  tracked  .conductor/plans
+  tracked  springfield/plans
 Choose plan storage [local/tracked] (default: local):
 Created .springfield/conductor/config.json
 
 Next steps:
   1. Add plan files to .springfield/conductor/plans
-  2. Run: springfield conductor run
+  2. Run: springfield internal-debug conductor run
 
 Agent prerequisites:
   Claude Code CLI must be installed and authenticated.
@@ -64,7 +64,7 @@ Agent prerequisites:
 Prompts for plan storage and defaults to local plan files under `.springfield/conductor/plans`. No manual JSON editing required.
 Fresh setup writes canonical empty arrays for `batches` and `sequential` until plans are added.
 
-### `springfield conductor status`
+### `springfield internal-debug conductor status`
 
 ```
 Progress: 0/0 plans completed
@@ -72,7 +72,7 @@ Progress: 0/0 plans completed
 
 Correctly reports that no plans are configured yet in a fresh initialized project.
 
-### `springfield conductor run --dry-run`
+### `springfield internal-debug conductor run --dry-run`
 
 ```
 No plans configured. Add plans to your conductor config, then run again.

@@ -95,7 +95,7 @@ Internal execution config at `.springfield/conductor/config.json` is generated b
 Advanced/internal setup supports these plan storage modes:
 
 - `Local (recommended)` writes plans under `.springfield/conductor/plans`
-- `Tracked` writes plans under `.conductor/plans` and can update `.gitignore`
+- `Tracked` writes plans under `springfield/plans`
 
 The generated config scaffolds defaults from `springfield.toml`. To customize it later, edit the JSON directly. The default local shape is:
 
@@ -104,8 +104,8 @@ The generated config scaffolds defaults from `springfield.toml`. To customize it
   "plans_dir": ".springfield/conductor/plans",
   "worktree_base": ".worktrees",
   "max_retries": 2,
-  "ralph_iterations": 50,
-  "ralph_timeout": 3600,
+  "single_workstream_iterations": 50,
+  "single_workstream_timeout": 3600,
   "tool": "claude",
   "sequential": [],
   "batches": []

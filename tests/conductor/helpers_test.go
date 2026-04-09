@@ -53,13 +53,13 @@ func writeConductorState(t *testing.T, root string, state *conductor.State) {
 
 func sequentialOnlyConfig() *conductor.Config {
 	return &conductor.Config{
-		PlansDir:        ".conductor/plans",
-		WorktreeBase:    ".worktrees",
-		MaxRetries:      2,
-		RalphIterations: 50,
-		RalphTimeout:    3600,
-		Tool:            "claude",
-		FallbackTool:    "codex",
+		PlansDir:                   conductor.TrackedPlansDir,
+		WorktreeBase:               ".worktrees",
+		MaxRetries:                 2,
+		SingleWorkstreamIterations: 50,
+		SingleWorkstreamTimeout:    3600,
+		Tool:                       "claude",
+		FallbackTool:               "codex",
 		Sequential: []string{
 			"01-bootstrap",
 			"02-config",
@@ -70,14 +70,14 @@ func sequentialOnlyConfig() *conductor.Config {
 
 func mixedConfig() *conductor.Config {
 	return &conductor.Config{
-		PlansDir:        ".conductor/plans",
-		WorktreeBase:    ".worktrees",
-		MaxRetries:      1,
-		RalphIterations: 30,
-		RalphTimeout:    1800,
-		Tool:            "claude",
-		Batches:         [][]string{{"batch-a", "batch-b"}, {"batch-c"}},
-		Sequential:      []string{"seq-1", "seq-2"},
+		PlansDir:                   conductor.TrackedPlansDir,
+		WorktreeBase:               ".worktrees",
+		MaxRetries:                 1,
+		SingleWorkstreamIterations: 30,
+		SingleWorkstreamTimeout:    1800,
+		Tool:                       "claude",
+		Batches:                    [][]string{{"batch-a", "batch-b"}, {"batch-c"}},
+		Sequential:                 []string{"seq-1", "seq-2"},
 	}
 }
 

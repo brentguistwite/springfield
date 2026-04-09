@@ -6,8 +6,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"springfield/internal/features/conductor"
 	"springfield/internal/features/doctor"
+	"springfield/internal/features/execution"
 )
 
 type menuItem struct {
@@ -176,13 +176,13 @@ func (s setupScreen) Update(msg tea.Msg) (setupScreen, tea.Cmd) {
 			}
 			// Basic path -- setup conductor with defaults
 			if !s.status.ExecutionReady {
-				defaults := conductor.SetupDefaults()
+				defaults := execution.Defaults()
 				result, err := s.services.ConfigureExecution(ExecutionConfigInput{
 					PlansDir:                   defaults.PlansDir,
 					WorktreeBase:               defaults.WorktreeBase,
 					MaxRetries:                 defaults.MaxRetries,
-					SingleWorkstreamIterations: defaults.RalphIterations,
-					SingleWorkstreamTimeout:    defaults.RalphTimeout,
+					SingleWorkstreamIterations: defaults.SingleWorkstreamIterations,
+					SingleWorkstreamTimeout:    defaults.SingleWorkstreamTimeout,
 				})
 				s.lastResult = &setupResult{
 					executionConfigCreated: result.Created,
@@ -280,7 +280,7 @@ func (s setupScreen) View() string {
 }
 
 func basicSetupStorageLabel(current *ExecutionConfig) string {
-	if current != nil && current.PlansDir == conductor.TrackedPlansDir {
+	if current != nil && execution.IsTrackedPlansDir(current.PlansDir) {
 		return "tracked"
 	}
 	return "local"

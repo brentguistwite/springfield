@@ -91,7 +91,7 @@ func TestConductorSetupTrackedModeOffersGitignoreUpdate(t *testing.T) {
 		t.Fatalf("init failed: %v", err)
 	}
 
-	output, err := runBinaryInWithInput(t, bin, dir, "tracked\ny\n", conductorDebugArgs("setup")...)
+	output, err := runBinaryInWithInput(t, bin, dir, "tracked\n", conductorDebugArgs("setup")...)
 	if err != nil {
 		t.Fatalf("conductor setup failed: %v\n%s", err, output)
 	}
@@ -107,24 +107,15 @@ func TestConductorSetupTrackedModeOffersGitignoreUpdate(t *testing.T) {
 		t.Fatalf("unmarshal config: %v", err)
 	}
 
-	if cfg.PlansDir != ".conductor/plans" {
+	if cfg.PlansDir != "springfield/plans" {
 		t.Fatalf("PlansDir = %q, want tracked path", cfg.PlansDir)
 	}
 
-	gitignore, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
-	if err != nil {
-		t.Fatalf("read .gitignore: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, ".gitignore")); err == nil {
+		t.Fatal("did not expect tracked setup to write .gitignore")
 	}
-
-	content := string(gitignore)
-	for _, line := range []string{".conductor/*", "!.conductor/plans/"} {
-		if !strings.Contains(content, line) {
-			t.Fatalf(".gitignore missing %q:\n%s", line, content)
-		}
-	}
-
-	if !strings.Contains(output, ".gitignore updated") {
-		t.Fatalf("expected gitignore update message, got:\n%s", output)
+	if strings.Contains(output, ".gitignore") {
+		t.Fatalf("did not expect .gitignore output for tracked setup, got:\n%s", output)
 	}
 }
 
@@ -136,7 +127,7 @@ func TestConductorSetupTrackedModeCanSkipGitignoreUpdate(t *testing.T) {
 		t.Fatalf("init failed: %v", err)
 	}
 
-	output, err := runBinaryInWithInput(t, bin, dir, "tracked\nn\n", conductorDebugArgs("setup")...)
+	output, err := runBinaryInWithInput(t, bin, dir, "tracked\n", conductorDebugArgs("setup")...)
 	if err != nil {
 		t.Fatalf("conductor setup failed: %v\n%s", err, output)
 	}
@@ -145,8 +136,8 @@ func TestConductorSetupTrackedModeCanSkipGitignoreUpdate(t *testing.T) {
 		t.Fatalf("did not expect .gitignore to be created when update declined")
 	}
 
-	if !strings.Contains(output, ".conductor/*") || !strings.Contains(output, "!.conductor/plans/") {
-		t.Fatalf("expected manual .gitignore snippet in output, got:\n%s", output)
+	if strings.Contains(output, ".gitignore") {
+		t.Fatalf("did not expect .gitignore prompt or snippet, got:\n%s", output)
 	}
 }
 

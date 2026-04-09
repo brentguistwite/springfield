@@ -8,7 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"springfield/internal/features/conductor"
+	"springfield/internal/features/execution"
 )
 
 type advancedStep int
@@ -27,10 +27,8 @@ type advancedSetupScreen struct {
 	step     advancedStep
 
 	// Storage mode
-	storageCursor   int // 0=Local, 1=Tracked
-	plansDir        string
-	updateGitignore bool
-	gitignoreChoice bool
+	storageCursor int // 0=Local, 1=Tracked
+	plansDir      string
 
 	// Agent priority
 	agentList   []AgentDetection
@@ -71,13 +69,12 @@ func newAdvancedSetupScreen(services Services) advancedSetupScreen {
 		agents = sortAgentsByPriority(agents, priority)
 	}
 	s := advancedSetupScreen{
-		services:        services,
-		status:          status,
-		step:            stepStorageMode,
-		plansDir:        conductor.LocalPlansDir,
-		agentList:       agents,
-		formFields:      defaultFormFields(),
-		gitignoreChoice: true,
+		services:   services,
+		status:     status,
+		step:       stepStorageMode,
+		plansDir:   execution.LocalPlansDir,
+		agentList:  agents,
+		formFields: defaultFormFields(),
 	}
 	modes := services.AgentExecutionModes()
 	s.claudeMode = normalizeExecutionMode(modes.Claude)
@@ -88,7 +85,7 @@ func newAdvancedSetupScreen(services Services) advancedSetupScreen {
 		if current != nil {
 			s.plansDir = current.PlansDir
 			s.oldPlansDir = current.PlansDir
-			if current.PlansDir == conductor.TrackedPlansDir {
+			if execution.IsTrackedPlansDir(current.PlansDir) {
 				s.storageCursor = 1
 			}
 			s.formFields = []formField{
@@ -103,12 +100,12 @@ func newAdvancedSetupScreen(services Services) advancedSetupScreen {
 }
 
 func defaultFormFields() []formField {
-	defaults := conductor.SetupDefaults()
+	defaults := execution.Defaults()
 	return []formField{
 		{label: "Worktree base", value: defaults.WorktreeBase},
 		{label: "Max retries", value: fmt.Sprintf("%d", defaults.MaxRetries)},
-		{label: singleWorkstreamIterationsLabel, value: fmt.Sprintf("%d", defaults.RalphIterations)},
-		{label: singleWorkstreamTimeoutLabel, value: fmt.Sprintf("%d", defaults.RalphTimeout)},
+		{label: singleWorkstreamIterationsLabel, value: fmt.Sprintf("%d", defaults.SingleWorkstreamIterations)},
+		{label: singleWorkstreamTimeoutLabel, value: fmt.Sprintf("%d", defaults.SingleWorkstreamTimeout)},
 	}
 }
 
@@ -154,24 +151,11 @@ func (a advancedSetupScreen) updateStorageMode(key tea.KeyMsg) (advancedSetupScr
 		}
 	case tea.KeyEnter:
 		if a.storageCursor == 0 {
-			a.plansDir = conductor.LocalPlansDir
-			a.updateGitignore = false
+			a.plansDir = execution.LocalPlansDir
 		} else {
-			a.plansDir = conductor.TrackedPlansDir
-			a.updateGitignore = a.gitignoreChoice
+			a.plansDir = execution.TrackedPlansDir
 		}
 		a.step = stepAgentPriority
-	}
-
-	switch key.String() {
-	case "y":
-		if a.storageCursor == 1 {
-			a.gitignoreChoice = true
-		}
-	case "n":
-		if a.storageCursor == 1 {
-			a.gitignoreChoice = false
-		}
 	}
 	return a, nil
 }
@@ -379,7 +363,6 @@ func (a advancedSetupScreen) validateSettings() (ExecutionConfigInput, error) {
 		MaxRetries:                 maxRetries,
 		SingleWorkstreamIterations: iterations,
 		SingleWorkstreamTimeout:    timeout,
-		UpdateGitignore:            a.updateGitignore,
 	}, nil
 }
 
@@ -435,19 +418,6 @@ func (a advancedSetupScreen) updateComplete(key tea.KeyMsg) (advancedSetupScreen
 	return a, nil
 }
 
-func yesNo(selected bool, yes bool) string {
-	if selected == yes {
-		if yes {
-			return "Y"
-		}
-		return "n"
-	}
-	if yes {
-		return "y"
-	}
-	return "N"
-}
-
 func (a advancedSetupScreen) View(width int) string {
 	var b strings.Builder
 	b.WriteString("Advanced Setup\n\n")
@@ -459,8 +429,8 @@ func (a advancedSetupScreen) View(width int) string {
 			label string
 			desc  string
 		}{
-			{"Local", fmt.Sprintf("plans in %s, not version-controlled", conductor.LocalPlansDir)},
-			{"Tracked", fmt.Sprintf("plans in %s, checked into git", conductor.TrackedPlansDir)},
+			{"Local", fmt.Sprintf("plans in %s, not version-controlled", execution.LocalPlansDir)},
+			{"Tracked", fmt.Sprintf("plans in %s, checked into git", execution.TrackedPlansDir)},
 		}
 		for i, opt := range storageOptions {
 			cursor := "  "
@@ -468,9 +438,6 @@ func (a advancedSetupScreen) View(width int) string {
 				cursor = "> "
 			}
 			fmt.Fprintf(&b, "%s%s — %s\n", cursor, opt.label, opt.desc)
-		}
-		if a.storageCursor == 1 {
-			fmt.Fprintf(&b, "\nUpdate .gitignore? [%s/%s]\n", yesNo(a.gitignoreChoice, true), yesNo(a.gitignoreChoice, false))
 		}
 		b.WriteString("\nUp/Down navigate, Enter select, Esc back\n")
 
@@ -535,7 +502,7 @@ func (a advancedSetupScreen) View(width int) string {
 			b.WriteString("Esc back\n")
 		} else {
 			b.WriteString("Configuration saved.\n\n")
-			if a.plansDir == conductor.LocalPlansDir {
+			if !execution.IsTrackedPlansDir(a.plansDir) {
 				b.WriteString("Storage: local\n")
 			} else {
 				b.WriteString("Storage: tracked\n")

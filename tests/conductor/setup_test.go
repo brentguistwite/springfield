@@ -120,11 +120,11 @@ func TestSetupDefaults_ReasonableValues(t *testing.T) {
 	if opts.MaxRetries < 1 {
 		t.Error("MaxRetries should be >= 1")
 	}
-	if opts.RalphIterations < 1 {
-		t.Error("RalphIterations should be >= 1")
+	if opts.SingleWorkstreamIterations < 1 {
+		t.Error("SingleWorkstreamIterations should be >= 1")
 	}
-	if opts.RalphTimeout < 1 {
-		t.Error("RalphTimeout should be >= 1")
+	if opts.SingleWorkstreamTimeout < 1 {
+		t.Error("SingleWorkstreamTimeout should be >= 1")
 	}
 }
 
@@ -176,13 +176,12 @@ func TestUpdateConfig_OverwritesExisting(t *testing.T) {
 
 	// Then: update with new values
 	updateOpts := conductor.SetupOptions{
-		Tool:            "codex",
-		PlansDir:        conductor.TrackedPlansDir,
-		MaxRetries:      5,
-		RalphIterations: 100,
-		RalphTimeout:    7200,
-		WorktreeBase:    ".custom-worktrees",
-		UpdateGitignore: true,
+		Tool:                       "codex",
+		PlansDir:                   conductor.TrackedPlansDir,
+		MaxRetries:                 5,
+		SingleWorkstreamIterations: 100,
+		SingleWorkstreamTimeout:    7200,
+		WorktreeBase:               ".custom-worktrees",
 	}
 
 	result, err := conductor.UpdateConfig(root, updateOpts)
@@ -196,10 +195,6 @@ func TestUpdateConfig_OverwritesExisting(t *testing.T) {
 	if result.Path == "" {
 		t.Error("expected non-empty Path")
 	}
-	if !result.GitignoreUpdated {
-		t.Error("expected GitignoreUpdated=true for TrackedPlansDir with UpdateGitignore")
-	}
-
 	// Verify updated config by loading it
 	rt, _ := storage.FromRoot(root)
 	var cfg conductor.Config
@@ -216,14 +211,26 @@ func TestUpdateConfig_OverwritesExisting(t *testing.T) {
 	if cfg.MaxRetries != 5 {
 		t.Errorf("MaxRetries = %d, want 5", cfg.MaxRetries)
 	}
-	if cfg.RalphIterations != 100 {
-		t.Errorf("RalphIterations = %d, want 100", cfg.RalphIterations)
+	if cfg.SingleWorkstreamIterations != 100 {
+		t.Errorf("SingleWorkstreamIterations = %d, want 100", cfg.SingleWorkstreamIterations)
 	}
-	if cfg.RalphTimeout != 7200 {
-		t.Errorf("RalphTimeout = %d, want 7200", cfg.RalphTimeout)
+	if cfg.SingleWorkstreamTimeout != 7200 {
+		t.Errorf("SingleWorkstreamTimeout = %d, want 7200", cfg.SingleWorkstreamTimeout)
 	}
 	if cfg.WorktreeBase != ".custom-worktrees" {
 		t.Errorf("WorktreeBase = %q, want %q", cfg.WorktreeBase, ".custom-worktrees")
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, ".springfield", "conductor", "config.json"))
+	if err != nil {
+		t.Fatalf("ReadFile updated config: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, `"single_workstream_iterations": 100`) {
+		t.Fatalf("expected Springfield-owned key in updated config, got:\n%s", content)
+	}
+	if strings.Contains(content, "ralph_iterations") {
+		t.Fatalf("did not expect legacy ralph_iterations key after update, got:\n%s", content)
 	}
 }
 
@@ -272,5 +279,43 @@ func TestSetup_WritesCanonicalEmptyArrays(t *testing.T) {
 	}
 	if !strings.Contains(json, `"batches": []`) {
 		t.Fatalf("setup did not write canonical empty batches array: %s", json)
+	}
+}
+
+func TestLoadProject_ReadsLegacyConfigTerms(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root)
+
+	configPath := filepath.Join(root, ".springfield", "conductor", "config.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+
+	body := `{
+  "plans_dir": ".conductor/plans",
+  "worktree_base": ".worktrees",
+  "max_retries": 2,
+  "ralph_iterations": 9,
+  "ralph_timeout": 600,
+  "tool": "claude",
+  "sequential": ["01-bootstrap"],
+  "batches": []
+}`
+	if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("write legacy config: %v", err)
+	}
+
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("LoadProject() error: %v", err)
+	}
+	if project.Config.PlansDir != ".conductor/plans" {
+		t.Fatalf("PlansDir = %q, want legacy tracked path", project.Config.PlansDir)
+	}
+	if project.Config.SingleWorkstreamIterations != 9 {
+		t.Fatalf("SingleWorkstreamIterations = %d, want 9", project.Config.SingleWorkstreamIterations)
+	}
+	if project.Config.SingleWorkstreamTimeout != 600 {
+		t.Fatalf("SingleWorkstreamTimeout = %d, want 600", project.Config.SingleWorkstreamTimeout)
 	}
 }

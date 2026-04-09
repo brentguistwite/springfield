@@ -16,8 +16,8 @@ import (
 	"springfield/internal/core/config"
 	coreexec "springfield/internal/core/exec"
 	"springfield/internal/core/runtime"
-	"springfield/internal/features/conductor"
 	"springfield/internal/features/doctor"
+	"springfield/internal/features/execution"
 	"springfield/internal/features/planner"
 	"springfield/internal/features/workflow"
 	"springfield/internal/storage"
@@ -213,29 +213,21 @@ func (s runtimeServices) ConfigureExecution(input ExecutionConfigInput) (Executi
 		return ExecutionConfigResult{}, err
 	}
 
-	opts := conductor.SetupDefaults()
-	priority := loaded.Config.EffectivePriority()
-	opts.Tool = priority[0]
-	if len(priority) > 1 {
-		opts.FallbackTool = priority[1]
-	}
-	opts.PlansDir = input.PlansDir
-	opts.WorktreeBase = input.WorktreeBase
-	opts.MaxRetries = input.MaxRetries
-	opts.RalphIterations = input.SingleWorkstreamIterations
-	opts.RalphTimeout = input.SingleWorkstreamTimeout
-	opts.UpdateGitignore = input.UpdateGitignore
-
-	result, err := conductor.Setup(status.ProjectRoot, opts)
+	result, err := execution.Setup(status.ProjectRoot, loaded.Config.EffectivePriority(), execution.Input{
+		PlansDir:                   input.PlansDir,
+		WorktreeBase:               input.WorktreeBase,
+		MaxRetries:                 input.MaxRetries,
+		SingleWorkstreamIterations: input.SingleWorkstreamIterations,
+		SingleWorkstreamTimeout:    input.SingleWorkstreamTimeout,
+	})
 	if err != nil {
 		return ExecutionConfigResult{}, err
 	}
 
 	return ExecutionConfigResult{
-		Created:          result.Created,
-		Reused:           result.Reused,
-		Path:             result.Path,
-		GitignoreUpdated: result.GitignoreUpdated,
+		Created: result.Created,
+		Reused:  result.Reused,
+		Path:    result.Path,
 	}, nil
 }
 
@@ -290,16 +282,16 @@ func (s runtimeServices) CurrentExecutionConfig() *ExecutionConfig {
 	if !status.ExecutionReady {
 		return nil
 	}
-	project, err := conductor.LoadProject(status.ProjectRoot)
+	project, err := execution.Load(status.ProjectRoot)
 	if err != nil {
 		return nil
 	}
 	return &ExecutionConfig{
-		PlansDir:                   project.Config.PlansDir,
-		WorktreeBase:               project.Config.WorktreeBase,
-		MaxRetries:                 project.Config.MaxRetries,
-		SingleWorkstreamIterations: project.Config.RalphIterations,
-		SingleWorkstreamTimeout:    project.Config.RalphTimeout,
+		PlansDir:                   project.PlansDir,
+		WorktreeBase:               project.WorktreeBase,
+		MaxRetries:                 project.MaxRetries,
+		SingleWorkstreamIterations: project.SingleWorkstreamIterations,
+		SingleWorkstreamTimeout:    project.SingleWorkstreamTimeout,
 	}
 }
 
@@ -358,28 +350,20 @@ func (s runtimeServices) UpdateExecutionConfig(input ExecutionConfigInput) (Exec
 	if err != nil {
 		return ExecutionConfigResult{}, err
 	}
-	opts := conductor.SetupDefaults()
-	priority := loaded.Config.EffectivePriority()
-	opts.Tool = priority[0]
-	if len(priority) > 1 {
-		opts.FallbackTool = priority[1]
-	}
-	opts.PlansDir = input.PlansDir
-	opts.WorktreeBase = input.WorktreeBase
-	opts.MaxRetries = input.MaxRetries
-	opts.RalphIterations = input.SingleWorkstreamIterations
-	opts.RalphTimeout = input.SingleWorkstreamTimeout
-	opts.UpdateGitignore = input.UpdateGitignore
-
-	result, err := conductor.UpdateConfig(status.ProjectRoot, opts)
+	result, err := execution.Update(status.ProjectRoot, loaded.Config.EffectivePriority(), execution.Input{
+		PlansDir:                   input.PlansDir,
+		WorktreeBase:               input.WorktreeBase,
+		MaxRetries:                 input.MaxRetries,
+		SingleWorkstreamIterations: input.SingleWorkstreamIterations,
+		SingleWorkstreamTimeout:    input.SingleWorkstreamTimeout,
+	})
 	if err != nil {
 		return ExecutionConfigResult{}, err
 	}
 	return ExecutionConfigResult{
-		Created:          false,
-		Reused:           false,
-		Path:             result.Path,
-		GitignoreUpdated: result.GitignoreUpdated,
+		Created: false,
+		Reused:  false,
+		Path:    result.Path,
 	}, nil
 }
 

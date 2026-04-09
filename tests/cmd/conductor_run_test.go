@@ -52,16 +52,16 @@ func TestConductorRunReportsTruthfulFailure(t *testing.T) {
 	writeSpringfieldConfig(t, dir, "claude")
 
 	cfg := &conductor.Config{
-		PlansDir:        ".conductor/plans",
-		WorktreeBase:    ".worktrees",
-		MaxRetries:      1,
-		RalphIterations: 1,
-		RalphTimeout:    10,
-		Tool:            "claude",
-		Sequential:      []string{"01-bootstrap"},
+		PlansDir:                   conductor.TrackedPlansDir,
+		WorktreeBase:               ".worktrees",
+		MaxRetries:                 1,
+		SingleWorkstreamIterations: 1,
+		SingleWorkstreamTimeout:    10,
+		Tool:                       "claude",
+		Sequential:                 []string{"01-bootstrap"},
 	}
 	writeConductorConfigBinary(t, dir, cfg)
-	writePlanFileBinary(t, dir, ".conductor/plans", "01-bootstrap", "implement bootstrap")
+	writePlanFileBinary(t, dir, conductor.TrackedPlansDir, "01-bootstrap", "implement bootstrap")
 
 	// Real runner will fail because no agent binary exists in CI.
 	// The output must truthfully report the failure.
@@ -99,7 +99,7 @@ func TestConductorRunDryRunShowsPlans(t *testing.T) {
 	writeSpringfieldConfig(t, dir, "claude")
 
 	cfg := &conductor.Config{
-		PlansDir:     ".conductor/plans",
+		PlansDir:     conductor.TrackedPlansDir,
 		WorktreeBase: ".worktrees",
 		Tool:         "claude",
 		Sequential:   []string{"01-bootstrap", "02-config"},
@@ -120,6 +120,31 @@ func TestConductorRunDryRunShowsPlans(t *testing.T) {
 	}
 }
 
+func TestConductorRunDryRunSupportsLegacyTrackedPlansDir(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	writeSpringfieldConfig(t, dir, "claude")
+
+	cfg := &conductor.Config{
+		PlansDir:     ".conductor/plans",
+		WorktreeBase: ".worktrees",
+		Tool:         "claude",
+		Sequential:   []string{"01-bootstrap"},
+	}
+	writeConductorConfigBinary(t, dir, cfg)
+	writePlanFileBinary(t, dir, ".conductor/plans", "01-bootstrap", "implement bootstrap")
+
+	output, err := runBinaryIn(t, bin, dir, conductorRunArgs("run", "--dry-run")...)
+	if err != nil {
+		t.Fatalf("conductor run --dry-run failed: %v\n%s", err, output)
+	}
+
+	if !strings.Contains(output, "01-bootstrap") {
+		t.Fatalf("expected legacy tracked plan in dry-run output, got:\n%s", output)
+	}
+}
+
 func TestConductorStatusAfterFailedRun(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
@@ -127,17 +152,17 @@ func TestConductorStatusAfterFailedRun(t *testing.T) {
 	writeSpringfieldConfig(t, dir, "claude")
 
 	cfg := &conductor.Config{
-		PlansDir:        ".conductor/plans",
-		WorktreeBase:    ".worktrees",
-		MaxRetries:      1,
-		RalphIterations: 1,
-		RalphTimeout:    10,
-		Tool:            "claude",
-		Sequential:      []string{"01-bootstrap", "02-config"},
+		PlansDir:                   conductor.TrackedPlansDir,
+		WorktreeBase:               ".worktrees",
+		MaxRetries:                 1,
+		SingleWorkstreamIterations: 1,
+		SingleWorkstreamTimeout:    10,
+		Tool:                       "claude",
+		Sequential:                 []string{"01-bootstrap", "02-config"},
 	}
 	writeConductorConfigBinary(t, dir, cfg)
-	writePlanFileBinary(t, dir, ".conductor/plans", "01-bootstrap", "implement bootstrap")
-	writePlanFileBinary(t, dir, ".conductor/plans", "02-config", "implement config")
+	writePlanFileBinary(t, dir, conductor.TrackedPlansDir, "01-bootstrap", "implement bootstrap")
+	writePlanFileBinary(t, dir, conductor.TrackedPlansDir, "02-config", "implement config")
 
 	// Run conductor (will fail at first plan due to no agent binary)
 	runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + t.TempDir()}, conductorRunArgs("run")...)
@@ -169,16 +194,16 @@ func TestConductorDiagnoseAfterFailedRun(t *testing.T) {
 	writeSpringfieldConfig(t, dir, "claude")
 
 	cfg := &conductor.Config{
-		PlansDir:        ".conductor/plans",
-		WorktreeBase:    ".worktrees",
-		MaxRetries:      1,
-		RalphIterations: 1,
-		RalphTimeout:    10,
-		Tool:            "claude",
-		Sequential:      []string{"01-bootstrap"},
+		PlansDir:                   conductor.TrackedPlansDir,
+		WorktreeBase:               ".worktrees",
+		MaxRetries:                 1,
+		SingleWorkstreamIterations: 1,
+		SingleWorkstreamTimeout:    10,
+		Tool:                       "claude",
+		Sequential:                 []string{"01-bootstrap"},
 	}
 	writeConductorConfigBinary(t, dir, cfg)
-	writePlanFileBinary(t, dir, ".conductor/plans", "01-bootstrap", "implement bootstrap")
+	writePlanFileBinary(t, dir, conductor.TrackedPlansDir, "01-bootstrap", "implement bootstrap")
 
 	// Run conductor (will fail)
 	runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + t.TempDir()}, conductorRunArgs("run")...)
@@ -216,16 +241,16 @@ func TestConductorRunPassesCodexExecutionSettingsToSubprocess(t *testing.T) {
 	}
 
 	cfg := &conductor.Config{
-		PlansDir:        ".conductor/plans",
-		WorktreeBase:    ".worktrees",
-		MaxRetries:      1,
-		RalphIterations: 1,
-		RalphTimeout:    10,
-		Tool:            "codex",
-		Sequential:      []string{"01-bootstrap"},
+		PlansDir:                   conductor.TrackedPlansDir,
+		WorktreeBase:               ".worktrees",
+		MaxRetries:                 1,
+		SingleWorkstreamIterations: 1,
+		SingleWorkstreamTimeout:    10,
+		Tool:                       "codex",
+		Sequential:                 []string{"01-bootstrap"},
 	}
 	writeConductorConfigBinary(t, dir, cfg)
-	writePlanFileBinary(t, dir, ".conductor/plans", "01-bootstrap", "implement bootstrap")
+	writePlanFileBinary(t, dir, conductor.TrackedPlansDir, "01-bootstrap", "implement bootstrap")
 
 	fakeBinDir := filepath.Join(dir, "bin")
 	argvPath := filepath.Join(dir, "codex.argv")

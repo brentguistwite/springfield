@@ -51,15 +51,13 @@ type ExecutionConfigInput struct {
 	MaxRetries                 int
 	SingleWorkstreamIterations int
 	SingleWorkstreamTimeout    int
-	UpdateGitignore            bool
 }
 
 // ExecutionConfigResult describes what the TUI execution setup action produced.
 type ExecutionConfigResult struct {
-	Created          bool
-	Reused           bool
-	Path             string
-	GitignoreUpdated bool
+	Created bool
+	Reused  bool
+	Path    string
 }
 
 // MonitorState tracks the lifecycle of an active TUI run.
