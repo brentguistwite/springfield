@@ -31,6 +31,7 @@ func NewRootCommand() *cobra.Command {
 
 	root.AddCommand(
 		NewInitCommand(),
+		NewExplainCommand(),
 		NewTUICommand(),
 		NewRalphCommand(),
 		NewConductorCommand(),

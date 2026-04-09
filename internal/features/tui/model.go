@@ -9,6 +9,7 @@ type Model struct {
 	width     int
 	home      homeScreen
 	setup     setupScreen
+	newWork   newWorkScreen
 	advanced  advancedSetupScreen
 	ralph     ralphScreen
 	conductor conductorScreen
@@ -45,6 +46,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch typed.Screen {
 		case ScreenSetup:
 			m.setup = newSetupScreen(m.services)
+		case ScreenNewWork:
+			m.newWork = newNewWorkScreen(m.services)
 		case ScreenAdvancedSetup:
 			m.advanced = newAdvancedSetupScreen(m.services)
 			if m.advanced.status.NeedsInit() {
@@ -73,6 +76,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.home, cmd = m.home.Update(msg)
 	case ScreenSetup:
 		m.setup, cmd = m.setup.Update(msg)
+	case ScreenNewWork:
+		m.newWork, cmd = m.newWork.Update(msg)
 	case ScreenAdvancedSetup:
 		m.advanced, cmd = m.advanced.Update(msg)
 	case ScreenRalph:
@@ -90,6 +95,8 @@ func (m Model) View() string {
 	switch m.screen {
 	case ScreenSetup:
 		return m.setup.View()
+	case ScreenNewWork:
+		return m.newWork.View()
 	case ScreenAdvancedSetup:
 		return m.advanced.View(m.width)
 	case ScreenRalph:

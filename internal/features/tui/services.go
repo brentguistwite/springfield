@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"springfield/internal/core/agents"
 	"springfield/internal/core/agents/claude"
@@ -16,7 +18,9 @@ import (
 	"springfield/internal/core/runtime"
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/doctor"
+	"springfield/internal/features/planner"
 	"springfield/internal/features/ralph"
+	"springfield/internal/features/workflow"
 	"springfield/internal/storage"
 )
 
@@ -483,9 +487,91 @@ func (s runtimeServices) DoctorSummary() doctor.Report {
 	return doctor.Run(context.Background(), registry)
 }
 
+func (s runtimeServices) PlanWork(request string) (planner.Response, error) {
+	trimmed := strings.TrimSpace(request)
+	if trimmed == "" {
+		return planner.Response{}, errors.New("enter a work request first")
+	}
+
+	title := titleCaseRequest(trimmed)
+	response := planner.Response{
+		Mode:    planner.ModeDraft,
+		WorkID:  slugifyRequest(trimmed),
+		Title:   title,
+		Summary: trimmed,
+		Split:   planner.SplitSingle,
+		Workstreams: []planner.Workstream{
+			{
+				Name:    "01",
+				Title:   title,
+				Summary: "Initial Springfield workstream draft.",
+			},
+		},
+	}
+
+	if looksMultiWork(trimmed) {
+		response.Split = planner.SplitMulti
+		response.Workstreams = []planner.Workstream{
+			{Name: "01", Title: title + " — Core", Summary: "Primary implementation slice."},
+			{Name: "02", Title: title + " — Review", Summary: "Follow-up review and integration slice."},
+		}
+	}
+
+	if err := planner.Validate(response); err != nil {
+		return planner.Response{}, err
+	}
+
+	return response, nil
+}
+
+func (s runtimeServices) ApproveDraft(request string, resp planner.Response) error {
+	status := s.SetupStatus()
+	if status.Error != "" {
+		return errors.New(status.Error)
+	}
+
+	root := status.ProjectRoot
+	if root == "" {
+		root = status.WorkingDir
+	}
+
+	return workflow.WriteDraft(root, workflow.Draft{
+		RequestBody: request,
+		Response:    resp,
+	})
+}
+
 func minInt(left, right int) int {
 	if left < right {
 		return left
 	}
 	return right
+}
+
+var nonSlugRunes = regexp.MustCompile(`[^a-z0-9]+`)
+
+func slugifyRequest(input string) string {
+	slug := strings.ToLower(strings.TrimSpace(input))
+	slug = nonSlugRunes.ReplaceAllString(slug, "-")
+	slug = strings.Trim(slug, "-")
+	if slug == "" {
+		return "new-work"
+	}
+	return slug
+}
+
+func titleCaseRequest(input string) string {
+	words := strings.Fields(input)
+	if len(words) == 0 {
+		return "New Work"
+	}
+	if len(words) > 6 {
+		words = words[:6]
+	}
+	return strings.Join(words, " ")
+}
+
+func looksMultiWork(input string) bool {
+	lower := strings.ToLower(input)
+	return strings.Contains(lower, " and ") || strings.Contains(lower, "multi") || strings.Contains(lower, "split")
 }

@@ -8,6 +8,7 @@ import (
 
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/doctor"
+	"springfield/internal/features/planner"
 )
 
 type menuItem struct {
@@ -18,9 +19,8 @@ type menuItem struct {
 
 var homeMenu = []menuItem{
 	{label: "Guided Setup", screen: ScreenSetup},
+	{label: "New Work", screen: ScreenNewWork},
 	{label: "Advanced Setup", screen: ScreenAdvancedSetup},
-	{label: "Ralph", screen: ScreenRalph},
-	{label: "Conductor", screen: ScreenConductor},
 	{label: "Doctor", screen: ScreenDoctor},
 	{label: "Quit", quit: true},
 }
@@ -66,7 +66,7 @@ func (h homeScreen) View() string {
 	var builder strings.Builder
 
 	builder.WriteString("Springfield\n")
-	builder.WriteString("Local-first shell for Ralph and Conductor.\n\n")
+	builder.WriteString("Local-first shell for planning and running work.\n\n")
 
 	for index, item := range homeMenu {
 		cursor := "  "
@@ -284,6 +284,151 @@ func basicSetupStorageLabel(current *ConductorCurrentConfig) string {
 		return "tracked"
 	}
 	return "local"
+}
+
+type newWorkPhase int
+
+const (
+	newWorkPhaseInput newWorkPhase = iota
+	newWorkPhaseReview
+)
+
+type newWorkScreen struct {
+	services Services
+	phase    newWorkPhase
+	input    string
+	request  string
+	draft    *planner.Response
+	status   string
+	lastErr  string
+}
+
+func newNewWorkScreen(services Services) newWorkScreen {
+	return newWorkScreen{services: services}
+}
+
+func (n newWorkScreen) Update(msg tea.Msg) (newWorkScreen, tea.Cmd) {
+	key, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return n, nil
+	}
+
+	if key.Type == tea.KeyEsc {
+		return n, goBack
+	}
+
+	switch n.phase {
+	case newWorkPhaseInput:
+		switch key.Type {
+		case tea.KeyBackspace:
+			if len(n.input) > 0 {
+				n.input = n.input[:len(n.input)-1]
+			}
+		case tea.KeyEnter:
+			request := strings.TrimSpace(n.input)
+			if request == "" {
+				n.lastErr = "Enter a work request first."
+				return n, nil
+			}
+
+			resp, err := n.services.PlanWork(request)
+			if err != nil {
+				n.lastErr = err.Error()
+				return n, nil
+			}
+
+			if resp.Mode == planner.ModeQuestion {
+				n.status = "Planner question: " + resp.Question
+				n.lastErr = ""
+				return n, nil
+			}
+
+			n.phase = newWorkPhaseReview
+			n.request = request
+			n.draft = &resp
+			n.status = ""
+			n.lastErr = ""
+		case tea.KeyRunes:
+			n.input += string(key.Runes)
+		}
+
+	case newWorkPhaseReview:
+		switch key.String() {
+		case "a":
+			if n.draft == nil {
+				return n, nil
+			}
+			if err := n.services.ApproveDraft(n.request, *n.draft); err != nil {
+				n.lastErr = err.Error()
+				n.status = ""
+				return n, nil
+			}
+			n.status = "Draft approved and saved under .springfield/work."
+			n.lastErr = ""
+		case "g":
+			resp, err := n.services.PlanWork(n.request)
+			if err != nil {
+				n.lastErr = err.Error()
+				n.status = ""
+				return n, nil
+			}
+			n.draft = &resp
+			n.status = "Draft regenerated."
+			n.lastErr = ""
+		case "b":
+			n.phase = newWorkPhaseInput
+			n.status = ""
+			n.lastErr = ""
+		}
+	}
+
+	return n, nil
+}
+
+func (n newWorkScreen) View() string {
+	var builder strings.Builder
+
+	builder.WriteString("New Work\n\n")
+
+	switch n.phase {
+	case newWorkPhaseInput:
+		builder.WriteString("Describe the work Springfield should plan.\n\n")
+		builder.WriteString("Request:\n")
+		fmt.Fprintf(&builder, "> %s\n", n.input)
+		if n.status != "" {
+			fmt.Fprintf(&builder, "\n%s\n", n.status)
+		}
+		if n.lastErr != "" {
+			fmt.Fprintf(&builder, "\nError: %s\n", n.lastErr)
+		}
+		builder.WriteString("\nEnter generate draft, Esc back\n")
+	default:
+		builder.WriteString("Review Draft\n\n")
+		fmt.Fprintf(&builder, "Request: %s\n", n.request)
+		if n.draft != nil {
+			fmt.Fprintf(&builder, "Work ID: %s\n", n.draft.WorkID)
+			fmt.Fprintf(&builder, "Title: %s\n", n.draft.Title)
+			fmt.Fprintf(&builder, "Summary: %s\n", n.draft.Summary)
+			fmt.Fprintf(&builder, "Split: %s\n", n.draft.Split)
+			builder.WriteString("\nWorkstreams:\n")
+			for _, workstream := range n.draft.Workstreams {
+				fmt.Fprintf(&builder, "  - [%s] %s", workstream.Name, workstream.Title)
+				if workstream.Summary != "" {
+					fmt.Fprintf(&builder, " — %s", workstream.Summary)
+				}
+				builder.WriteString("\n")
+			}
+		}
+		if n.status != "" {
+			fmt.Fprintf(&builder, "\n%s\n", n.status)
+		}
+		if n.lastErr != "" {
+			fmt.Fprintf(&builder, "\nError: %s\n", n.lastErr)
+		}
+		builder.WriteString("\n[a] approve  [g] regenerate  [b] back  Esc home\n")
+	}
+
+	return builder.String()
 }
 
 type ralphScreen struct {

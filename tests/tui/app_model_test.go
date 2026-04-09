@@ -9,6 +9,7 @@ import (
 
 	"springfield/internal/core/config"
 	"springfield/internal/features/doctor"
+	"springfield/internal/features/planner"
 	"springfield/internal/features/tui"
 )
 
@@ -47,6 +48,14 @@ type fakeServices struct {
 	updateConductorCalls         int
 	updateConductorResult        tui.ConductorSetupResult
 	updateConductorErr           error
+	planResponse                 planner.Response
+	planErr                      error
+	planCalls                    int
+	planInput                    string
+	approveCalls                 int
+	approveRequest               string
+	approveResponse              planner.Response
+	approveErr                   error
 }
 
 func (f *fakeServices) SetupStatus() tui.SetupStatus {
@@ -156,6 +165,19 @@ func (f *fakeServices) UpdateConductor(opts tui.ConductorSetupInput) (tui.Conduc
 	return f.updateConductorResult, f.updateConductorErr
 }
 
+func (f *fakeServices) PlanWork(request string) (planner.Response, error) {
+	f.planCalls++
+	f.planInput = request
+	return f.planResponse, f.planErr
+}
+
+func (f *fakeServices) ApproveDraft(request string, resp planner.Response) error {
+	f.approveCalls++
+	f.approveRequest = request
+	f.approveResponse = resp
+	return f.approveErr
+}
+
 // updateModel processes a message and follows up on any returned command.
 func updateModel(t *testing.T, model tui.Model, msg tea.Msg) tui.Model {
 	t.Helper()
@@ -194,13 +216,145 @@ func sendMsg(t *testing.T, model tui.Model, msg tea.Msg) tui.Model {
 	return updated
 }
 
+func navigateToScreen(t *testing.T, model tui.Model, screen tui.Screen) tui.Model {
+	t.Helper()
+	return updateModel(t, model, tui.NavigateMsg{Screen: screen})
+}
+
 func TestModelStartsOnHomeScreen(t *testing.T) {
 	model := tui.NewModel(&fakeServices{})
 	view := model.View()
 
-	for _, marker := range []string{"Springfield", "Guided Setup", "Advanced Setup", "Ralph", "Conductor", "Doctor"} {
+	for _, marker := range []string{"Springfield", "Guided Setup", "New Work", "Advanced Setup", "Doctor"} {
 		if !strings.Contains(view, marker) {
 			t.Fatalf("expected home view to contain %q, got:\n%s", marker, view)
+		}
+	}
+	for _, legacy := range []string{"Ralph", "Conductor"} {
+		if strings.Contains(view, legacy) {
+			t.Fatalf("expected Springfield-first home view to omit %q, got:\n%s", legacy, view)
+		}
+	}
+}
+
+func TestModelSpringfieldPlanningFlowEntersNewWork(t *testing.T) {
+	services := &fakeServices{
+		planResponse: planner.Response{
+			Mode:    planner.ModeDraft,
+			WorkID:  "wave-b",
+			Title:   "Wave B planning surface",
+			Summary: "Add planner and review surfaces.",
+			Split:   planner.SplitSingle,
+			Workstreams: []planner.Workstream{
+				{Name: "01", Title: "Implement Wave B"},
+			},
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	for _, r := range "Plan Wave B" {
+		model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	if services.planCalls != 1 {
+		t.Fatalf("expected one planning call, got %d", services.planCalls)
+	}
+	if services.planInput != "Plan Wave B" {
+		t.Fatalf("plan input = %q", services.planInput)
+	}
+
+	view := model.View()
+	for _, marker := range []string{"Wave B planning surface", "Implement Wave B"} {
+		if !strings.Contains(view, marker) {
+			t.Fatalf("expected review view to contain %q, got:\n%s", marker, view)
+		}
+	}
+}
+
+func TestModelSpringfieldReviewFlowShowsSingleDraft(t *testing.T) {
+	services := &fakeServices{
+		planResponse: planner.Response{
+			Mode:    planner.ModeDraft,
+			WorkID:  "single-flow",
+			Title:   "Single flow",
+			Summary: "Keep planning in one stream.",
+			Split:   planner.SplitSingle,
+			Workstreams: []planner.Workstream{
+				{Name: "01", Title: "Single workstream", Summary: "One stream."},
+			},
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := model.View()
+	for _, marker := range []string{"Split: single", "Single workstream"} {
+		if !strings.Contains(view, marker) {
+			t.Fatalf("expected single review marker %q, got:\n%s", marker, view)
+		}
+	}
+}
+
+func TestModelSpringfieldReviewFlowShowsMultiDraft(t *testing.T) {
+	services := &fakeServices{
+		planResponse: planner.Response{
+			Mode:    planner.ModeDraft,
+			WorkID:  "multi-flow",
+			Title:   "Multi flow",
+			Summary: "Split planning work.",
+			Split:   planner.SplitMulti,
+			Workstreams: []planner.Workstream{
+				{Name: "01", Title: "Planner core"},
+				{Name: "02", Title: "Review UI"},
+			},
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := model.View()
+	for _, marker := range []string{"Split: multi", "Planner core", "Review UI"} {
+		if !strings.Contains(view, marker) {
+			t.Fatalf("expected multi review marker %q, got:\n%s", marker, view)
+		}
+	}
+}
+
+func TestModelSpringfieldReviewFlowOffersApproveRegenerateBack(t *testing.T) {
+	services := &fakeServices{
+		planResponse: planner.Response{
+			Mode:    planner.ModeDraft,
+			WorkID:  "wave-b",
+			Title:   "Wave B planning surface",
+			Summary: "Add planner and review surfaces.",
+			Split:   planner.SplitSingle,
+			Workstreams: []planner.Workstream{
+				{Name: "01", Title: "Implement Wave B"},
+			},
+		},
+	}
+
+	model := tui.NewModel(services)
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+
+	view := model.View()
+	for _, marker := range []string{"[a] approve", "[g] regenerate", "[b] back"} {
+		if !strings.Contains(view, marker) {
+			t.Fatalf("expected review action %q, got:\n%s", marker, view)
 		}
 	}
 }
@@ -254,9 +408,7 @@ func TestModelRendersRalphSummary(t *testing.T) {
 		},
 	})
 
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenRalph)
 
 	view := model.View()
 	for _, marker := range []string{"Ralph", "refresh", "US-002", "US-001", "passed"} {
@@ -279,10 +431,7 @@ func TestModelRendersConductorSummary(t *testing.T) {
 		},
 	})
 
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenConductor)
 
 	view := model.View()
 	for _, marker := range []string{"Conductor", "Progress: 1/3", "02-config", "compile error"} {
@@ -424,9 +573,7 @@ func TestRalphScreenRunsNextStory(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenRalph)
 
 	// Press 'r' — transitions to running state
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
@@ -464,9 +611,7 @@ func TestRalphScreenShowsRunFailure(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenRalph)
 
 	// Press 'r' to start
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
@@ -496,9 +641,7 @@ func TestRalphScreenShowsStreamingEvents(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenRalph)
 
 	// Start run
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
@@ -540,9 +683,7 @@ func TestRalphScreenMonitorIdleToRunningToSucceeded(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenRalph)
 
 	// Idle: no status line
 	view := model.View()
@@ -578,9 +719,7 @@ func TestRalphScreenMonitorIdleToRunningToFailed(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenRalph)
 
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	model = sendMsg(t, model, tui.RalphRunCompleteMsg{
@@ -604,9 +743,7 @@ func TestRalphScreenBlocksEscWhileRunning(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenRalph)
 
 	// Start run
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
@@ -630,9 +767,7 @@ func TestRalphScreenBlocksRunWhileRunning(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenRalph)
 
 	// Start first run
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
@@ -658,10 +793,7 @@ func TestConductorScreenRunsNextPhase(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenConductor)
 
 	// Press 'r' to start
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
@@ -696,10 +828,7 @@ func TestConductorScreenShowsRunFailure(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenConductor)
 
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	model = sendMsg(t, model, tui.ConductorRunCompleteMsg{
@@ -722,10 +851,7 @@ func TestConductorScreenShowsStreamingEvents(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenConductor)
 
 	// Start run
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
@@ -752,10 +878,7 @@ func TestConductorScreenBlocksEscWhileRunning(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenConductor)
 
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEsc})
@@ -776,9 +899,7 @@ func TestRalphScreenNoCliDeadEnd(t *testing.T) {
 		},
 	})
 
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenRalph)
 
 	view := model.View()
 	if strings.Contains(view, "springfield ralph --help") {
@@ -798,10 +919,7 @@ func TestConductorScreenNoCliDeadEnd(t *testing.T) {
 		},
 	})
 
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenConductor)
 
 	view := model.View()
 	if strings.Contains(view, "springfield conductor --help") {
@@ -827,10 +945,7 @@ func TestConductorScreenDiagnosisViewToggle(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenConductor)
 
 	// Press 'd' to enter diagnosis view
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
@@ -864,10 +979,7 @@ func TestConductorScreenDiagnosisShowsEvidencePath(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenConductor)
 
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 
@@ -887,10 +999,7 @@ func TestConductorScreenDiagnosisNoFailuresMessage(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenConductor)
 
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 
@@ -914,10 +1023,7 @@ func TestConductorScreenNextStepNoCliReference(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenConductor)
 
 	view := model.View()
 	// Should not show raw CLI commands in the TUI
@@ -939,10 +1045,7 @@ func TestConductorScreenShowsDiagnoseHint(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenConductor)
 
 	view := model.View()
 	if !strings.Contains(view, "d diagnose") {
@@ -960,10 +1063,7 @@ func TestConductorScreenAfterFailedRunShowsDiagnosis(t *testing.T) {
 	}
 
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenConductor)
 
 	// Start run
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}})
@@ -1004,8 +1104,7 @@ func TestAdvancedSetupRedirectsWhenNoConfig(t *testing.T) {
 	}
 	model := tui.NewModel(services)
 	// Navigate to Advanced Setup (second item in menu)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenAdvancedSetup)
 	view := model.View()
 	if !strings.Contains(view, "Guided Setup") {
 		t.Fatalf("expected redirect to Guided Setup, got:\n%s", view)
@@ -1027,8 +1126,7 @@ func TestAdvancedSetupStorageModeSelection(t *testing.T) {
 	}
 	model := tui.NewModel(services)
 	// Navigate to Advanced Setup (index 1 in menu)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenAdvancedSetup)
 	view := model.View()
 	if !strings.Contains(view, "Local") || !strings.Contains(view, "Tracked") {
 		t.Fatalf("expected storage mode choices, got:\n%s", view)
@@ -1039,8 +1137,7 @@ func TestAdvancedSetupTrackedShowsGitignorePrompt(t *testing.T) {
 	services := readyAdvancedServices()
 	model := tui.NewModel(services)
 	// Navigate to Advanced Setup
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenAdvancedSetup)
 	// Select Tracked row
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
@@ -1053,8 +1150,7 @@ func TestAdvancedSetupTrackedShowsGitignorePrompt(t *testing.T) {
 func TestAdvancedSetupTrackedKeepsGitignorePromptInline(t *testing.T) {
 	services := readyAdvancedServices()
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenAdvancedSetup)
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyDown})
 
 	view := model.View()
@@ -1072,8 +1168,7 @@ func TestAdvancedSetupTrackedKeepsGitignorePromptInline(t *testing.T) {
 func TestAdvancedSetupTrackedEnterAdvancesAfterInlineChoice(t *testing.T) {
 	services := readyAdvancedServices()
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenAdvancedSetup)
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
@@ -1104,8 +1199,7 @@ func TestAdvancedSetupAgentPriorityReorder(t *testing.T) {
 
 	model := tui.NewModel(services)
 	// Navigate to Advanced Setup (index 1)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenAdvancedSetup)
 	// Pick Local storage (Enter on default)
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
@@ -1130,8 +1224,7 @@ func TestAdvancedSetupAgentPriorityReorder(t *testing.T) {
 func TestAdvancedSetupShowsAgentPermissionsStep(t *testing.T) {
 	services := readyAdvancedServices()
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenAdvancedSetup)
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
@@ -1162,8 +1255,7 @@ func TestAdvancedSetupPermissionsShowCustomAndCycle(t *testing.T) {
 		},
 	}
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenAdvancedSetup)
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
@@ -1191,8 +1283,7 @@ func TestAdvancedSetupPermissionsShowCustomAndCycle(t *testing.T) {
 func TestAdvancedSetupPermissionsHelpOmitsHLHint(t *testing.T) {
 	services := readyAdvancedServices()
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenAdvancedSetup)
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 
@@ -1208,8 +1299,7 @@ func TestAdvancedSetupPermissionsHelpOmitsHLHint(t *testing.T) {
 func TestAdvancedSetupPermissionsCopyWrapsToWindowWidth(t *testing.T) {
 	services := readyAdvancedServices()
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenAdvancedSetup)
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = updateModel(t, model, tea.WindowSizeMsg{Width: 42, Height: 20})
@@ -1238,8 +1328,7 @@ func TestAdvancedSetupSettingsForm(t *testing.T) {
 	}
 	model := tui.NewModel(services)
 	// Advanced Setup (index 1)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenAdvancedSetup)
 	// Local storage (Enter)
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	// Agent priority (Enter to confirm)
@@ -1276,8 +1365,7 @@ func TestAdvancedSetupCompleteStepSavesAndOffersDoctor(t *testing.T) {
 	}
 	model := tui.NewModel(services)
 	// Advanced Setup (index 1)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenAdvancedSetup)
 	// Local storage
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	// Agent priority confirm
@@ -1331,8 +1419,7 @@ func TestAdvancedSetupStorageChangeShowsExistingPlansNote(t *testing.T) {
 		},
 	}
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenAdvancedSetup)
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyDown})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
@@ -1388,8 +1475,7 @@ func TestAdvancedSetupLastFieldEnterSubmits(t *testing.T) {
 		agentDetections: []tui.AgentDetection{{ID: "claude", Name: "Claude Code", Installed: true}},
 	}
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenAdvancedSetup)
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
@@ -1409,8 +1495,7 @@ func TestAdvancedSetupInvalidNumericFieldShowsError(t *testing.T) {
 		agentDetections: []tui.AgentDetection{{ID: "claude", Name: "Claude Code", Installed: true}},
 	}
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenAdvancedSetup)
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
@@ -1568,11 +1653,7 @@ func TestModelRendersDoctorSummary(t *testing.T) {
 		},
 	})
 
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenDoctor)
 
 	view := model.View()
 	for _, marker := range []string{"Doctor", "Claude Code", "Install Codex CLI", "1/2 agent(s) available"} {
@@ -1612,8 +1693,7 @@ func readyAdvancedServices() *fakeServices {
 func advanceToAdvancedComplete(t *testing.T, services *fakeServices) tui.Model {
 	t.Helper()
 	model := tui.NewModel(services)
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyDown})
-	model = updateModel(t, model, tea.KeyMsg{Type: tea.KeyEnter})
+	model = navigateToScreen(t, model, tui.ScreenAdvancedSetup)
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})
 	model = sendMsg(t, model, tea.KeyMsg{Type: tea.KeyEnter})

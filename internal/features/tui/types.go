@@ -3,6 +3,7 @@ package tui
 import (
 	"springfield/internal/core/config"
 	"springfield/internal/features/doctor"
+	"springfield/internal/features/planner"
 )
 
 // Screen identifies which TUI screen is active.
@@ -11,6 +12,7 @@ type Screen int
 const (
 	ScreenHome Screen = iota
 	ScreenSetup
+	ScreenNewWork
 	ScreenAdvancedSetup
 	ScreenRalph
 	ScreenConductor
@@ -197,4 +199,6 @@ type Services interface {
 	EnsureRecommendedExecutionDefaults() error
 	UpdateConductor(opts ConductorSetupInput) (ConductorSetupResult, error)
 	DoctorSummary() doctor.Report
+	PlanWork(request string) (planner.Response, error)
+	ApproveDraft(request string, resp planner.Response) error
 }

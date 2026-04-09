@@ -229,7 +229,7 @@ func TestSpringfieldWithoutArgsShowsShellHome(t *testing.T) {
 		t.Fatalf("run springfield: %v\noutput:\n%s", err, output)
 	}
 
-	if !strings.Contains(output, "Local-first shell for Ralph and Conductor.") {
+	if !strings.Contains(output, "Local-first shell for planning and running work.") {
 		t.Fatalf("expected shell home output, got:\n%s", output)
 	}
 
@@ -248,6 +248,7 @@ func TestSpringfieldSubcommandsAreReachable(t *testing.T) {
 		marker string
 	}{
 		{name: "init", marker: "Initialize a new Springfield project in the current directory."},
+		{name: "explain", marker: "Render the built-in Springfield explanation prompt for the current project."},
 		{name: "ralph", marker: "Manage Ralph plans, story selection, and local run history."},
 		{name: "conductor", marker: "Orchestrate plan execution, check status, resume from failures, and diagnose issues."},
 		{name: "doctor", marker: "Doctor checks that supported agent CLIs are installed and reachable, providing install guidance for anything missing."},
@@ -261,6 +262,49 @@ func TestSpringfieldSubcommandsAreReachable(t *testing.T) {
 		if !strings.Contains(output, subcommand.marker) {
 			t.Fatalf("expected %s help output to contain %q, got:\n%s", subcommand.name, subcommand.marker, output)
 		}
+	}
+}
+
+func TestExplainRendersPlaybookBackedOutput(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("project context from AGENTS"), 0o644); err != nil {
+		t.Fatalf("write AGENTS.md: %v", err)
+	}
+
+	output, err := runBinaryIn(t, bin, dir, "explain")
+	if err != nil {
+		t.Fatalf("run springfield explain: %v\noutput:\n%s", err, output)
+	}
+
+	if !strings.Contains(output, "# Springfield Playbook") {
+		t.Fatalf("expected explain output to render playbook prompt, got:\n%s", output)
+	}
+	if !strings.Contains(output, "project context from AGENTS") {
+		t.Fatalf("expected explain output to include project context, got:\n%s", output)
+	}
+}
+
+func TestExplainPrefersAGENTSContext(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("AGENTS wins"), 0o644); err != nil {
+		t.Fatalf("write AGENTS.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte("CLAUDE fallback"), 0o644); err != nil {
+		t.Fatalf("write CLAUDE.md: %v", err)
+	}
+
+	output, err := runBinaryIn(t, bin, dir, "explain")
+	if err != nil {
+		t.Fatalf("run springfield explain: %v\noutput:\n%s", err, output)
+	}
+
+	if !strings.Contains(output, "AGENTS wins") {
+		t.Fatalf("expected AGENTS context in explain output, got:\n%s", output)
+	}
+	if strings.Contains(output, "CLAUDE fallback") {
+		t.Fatalf("expected AGENTS to take precedence over CLAUDE, got:\n%s", output)
 	}
 }
 
