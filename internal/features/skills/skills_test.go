@@ -9,14 +9,14 @@ import (
 	"springfield/internal/features/playbooks"
 )
 
-func TestCatalogShapeLockedToPlanAndExplain(t *testing.T) {
+func TestCatalogShapeLockedToClaudeCodeAndCodex(t *testing.T) {
 	catalog := Catalog()
 	if len(catalog) != 2 {
 		t.Fatalf("catalog len = %d, want 2", len(catalog))
 	}
 
 	got := []string{catalog[0].Name, catalog[1].Name}
-	want := []string{"plan", "explain"}
+	want := []string{"claude-code", "codex"}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("catalog[%d] = %q, want %q", i, got[i], want[i])
@@ -30,14 +30,14 @@ func TestRenderUsesSharedPlaybookPrompt(t *testing.T) {
 		t.Fatalf("write AGENTS.md: %v", err)
 	}
 
-	def, err := Lookup("explain")
+	def, err := Lookup("codex")
 	if err != nil {
-		t.Fatalf("lookup explain: %v", err)
+		t.Fatalf("lookup codex: %v", err)
 	}
 
 	rendered, err := Render(root, def.Name)
 	if err != nil {
-		t.Fatalf("render explain: %v", err)
+		t.Fatalf("render codex: %v", err)
 	}
 
 	out, err := playbooks.Build(playbooks.Input{
@@ -46,7 +46,7 @@ func TestRenderUsesSharedPlaybookPrompt(t *testing.T) {
 		TaskBody:    def.TaskBody,
 	})
 	if err != nil {
-		t.Fatalf("build explain playbook: %v", err)
+		t.Fatalf("build codex playbook: %v", err)
 	}
 
 	if rendered.Prompt != out.Prompt {
@@ -64,38 +64,45 @@ func TestRenderUsesSharedPlaybookPrompt(t *testing.T) {
 	}
 }
 
-func TestInstallWritesSelectedSkillDirectory(t *testing.T) {
+func TestInstallWritesSelectedHostArtifacts(t *testing.T) {
 	root := t.TempDir()
-	target := filepath.Join(root, "skills")
+	claudeDir := filepath.Join(root, ".claude", "commands")
+	codexDir := filepath.Join(root, ".codex", "skills")
 
-	installed, err := Install(root, target, []string{"plan"})
+	installed, err := Install(root, InstallOptions{
+		Hosts:     []string{"codex"},
+		ClaudeDir: claudeDir,
+		CodexDir:  codexDir,
+	})
 	if err != nil {
-		t.Fatalf("install plan: %v", err)
+		t.Fatalf("install codex: %v", err)
 	}
 
 	if len(installed) != 1 {
 		t.Fatalf("installed len = %d, want 1", len(installed))
 	}
-	if installed[0].Skill.Name != "plan" {
-		t.Fatalf("installed skill = %q, want plan", installed[0].Skill.Name)
+	if installed[0].Host.Name != "codex" {
+		t.Fatalf("installed host = %q, want codex", installed[0].Host.Name)
 	}
 
-	data, err := os.ReadFile(filepath.Join(target, "plan", "SKILL.md"))
+	data, err := os.ReadFile(filepath.Join(codexDir, "springfield", "SKILL.md"))
 	if err != nil {
-		t.Fatalf("read installed plan skill: %v", err)
+		t.Fatalf("read installed codex artifact: %v", err)
 	}
 	if !strings.Contains(string(data), "Springfield") {
-		t.Fatalf("expected installed plan wrapper to mention Springfield, got:\n%s", string(data))
+		t.Fatalf("expected installed codex artifact to mention Springfield, got:\n%s", string(data))
+	}
+	if _, err := os.Stat(filepath.Join(claudeDir, "springfield.md")); !os.IsNotExist(err) {
+		t.Fatalf("expected codex-only install to skip claude artifact, stat err=%v", err)
 	}
 }
 
-func TestCatalogUsesSpringfieldOwnedPurposes(t *testing.T) {
+func TestCatalogUsesPlanPlaybookPurpose(t *testing.T) {
 	catalog := Catalog()
 
-	if got, want := catalog[0].Purpose, playbooks.PurposePlan; got != want {
-		t.Fatalf("catalog[0] purpose = %q, want %q", got, want)
-	}
-	if got, want := catalog[1].Purpose, playbooks.PurposeExplain; got != want {
-		t.Fatalf("catalog[1] purpose = %q, want %q", got, want)
+	for i, host := range catalog {
+		if got, want := host.Purpose, playbooks.PurposePlan; got != want {
+			t.Fatalf("catalog[%d] purpose = %q, want %q", i, got, want)
+		}
 	}
 }

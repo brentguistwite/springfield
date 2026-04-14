@@ -1,12 +1,41 @@
 package cmd
 
 import (
-	"os"
+	"fmt"
 
 	"github.com/spf13/cobra"
-
-	"springfield/internal/features/tui"
 )
+
+const rootUsageTemplate = `Usage:{{if .Runnable}}
+  {{.UseLine}}{{end}}{{if .HasAvailableSubCommands}}
+  {{.CommandPath}} [command]{{end}}{{if gt (len .Aliases) 0}}
+
+Aliases:
+  {{.NameAndAliases}}{{end}}{{if .HasExample}}
+
+Examples:
+{{.Example}}{{end}}{{if .HasAvailableSubCommands}}{{$cmds := .Commands}}{{if eq (len .Groups) 0}}
+
+Available Commands:{{range $cmds}}{{if .IsAvailableCommand}}
+  {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{else}}{{range $group := .Groups}}
+
+{{.Title}}{{range $cmds}}{{if (and (eq .GroupID $group.ID) .IsAvailableCommand)}}
+  {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{end}}{{if not .AllChildCommandsHaveGroup}}
+
+Additional Commands:{{range $cmds}}{{if (and (eq .GroupID "") .IsAvailableCommand)}}
+  {{rpad .Name .NamePadding }} {{.Short}}{{end}}{{end}}{{end}}{{end}}{{end}}{{if .HasAvailableLocalFlags}}
+
+Flags:
+{{.LocalFlags.FlagUsages | trimTrailingWhitespaces}}{{end}}{{if .HasAvailableInheritedFlags}}
+
+Global Flags:
+{{.InheritedFlags.FlagUsages | trimTrailingWhitespaces}}{{end}}{{if .HasHelpSubCommands}}
+
+Additional help topics:{{range .Commands}}{{if .IsAdditionalHelpTopicCommand}}
+  {{rpad .CommandPath .CommandPathPadding}} {{.Short}}{{end}}{{end}}{{end}}{{if .HasAvailableSubCommands}}
+
+Use "{{.CommandPath}} [command] --help" for more information about a command.{{end}}
+`
 
 // Version is injected at build time for release artifacts.
 var Version = "dev"
@@ -20,26 +49,42 @@ func Execute() error {
 func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "springfield",
-		Short:         "Springfield is the local-first product surface for planning and running work.",
-		Long:          "Springfield is the local-first CLI and TUI entrypoint for defining, explaining, and running work.\n\nBare springfield opens the TUI-first Springfield shell.",
+		Short:         "Springfield is the plugin-first local setup surface for agent-native work.",
+		Long:          "Springfield is the plugin-first local setup surface for agent-native work.\n\nUse init to scaffold project state, install to set up Claude Code and Codex, doctor to verify local tooling, and status or resume to manage approved work.",
 		SilenceErrors: true,
 		SilenceUsage:  true,
+		CompletionOptions: cobra.CompletionOptions{
+			DisableDefaultCmd: true,
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return tui.NewApp(os.Stdin, os.Stdout).Run()
+			if err := cmd.Help(); err != nil {
+				return err
+			}
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), "\nInstall Springfield into Claude Code and Codex.\nNext: run \"springfield install\".")
+			return err
 		},
 	}
+	root.SetUsageTemplate(rootUsageTemplate)
 
 	root.AddCommand(
 		NewInitCommand(),
-		NewExplainCommand(),
-		NewSkillsCommand(),
+		NewInstallCommand(),
 		NewStatusCommand(),
 		NewResumeCommand(),
-		NewDiagnoseCommand(),
-		NewTUICommand(),
 		NewDoctorCommand(),
 		NewVersionCommand(),
 	)
+
+	root.SetHelpCommand(&cobra.Command{
+		Use:    "help [command]",
+		Short:  "Help about any command",
+		Long:   "Help about any command",
+		Hidden: true,
+		Args:   cobra.ArbitraryArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			root.HelpFunc()(root, args)
+		},
+	})
 
 	return root
 }

@@ -50,11 +50,11 @@ func TestLoadWorkLoadsMultipleApprovedWorkstreams(t *testing.T) {
 	writeWorkflowDraft(t, root, workflowDraftFixture{
 		workID:  "wave-c2",
 		title:   "Unified execution surface",
-		summary: "Split execution between CLI and TUI.",
+		summary: "Split execution between status and resume follow-up slices.",
 		split:   "multi",
 		workstreams: []workflowDraftWorkstream{
-			{name: "01", title: "CLI surface", summary: "Add status, resume, diagnose."},
-			{name: "02", title: "TUI surface", summary: "Add unified run and diagnose flow."},
+			{name: "01", title: "Status surface", summary: "Add active-work status output."},
+			{name: "02", title: "Resume surface", summary: "Add approved-work resume flow."},
 		},
 	})
 
@@ -69,7 +69,7 @@ func TestLoadWorkLoadsMultipleApprovedWorkstreams(t *testing.T) {
 	if got, want := work.Workstreams[1].Name, "02"; got != want {
 		t.Fatalf("second workstream name = %q, want %q", got, want)
 	}
-	if got, want := work.Workstreams[1].Summary, "Add unified run and diagnose flow."; got != want {
+	if got, want := work.Workstreams[1].Summary, "Add approved-work resume flow."; got != want {
 		t.Fatalf("second workstream summary = %q, want %q", got, want)
 	}
 }

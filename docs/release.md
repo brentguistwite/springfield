@@ -1,6 +1,6 @@
 # Springfield Release Workflow
 
-Springfield release polish lives around one invariant: tagged releases publish installable artifacts without any hand-edited version files.
+Springfield release polish lives around one invariant: tagged releases publish installable artifacts for the thin Springfield CLI without any hand-edited version files.
 
 ## Preflight
 

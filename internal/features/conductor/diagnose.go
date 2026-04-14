@@ -23,7 +23,7 @@ type Diagnosis struct {
 	NextStep  string
 }
 
-// Diagnose inspects project state and returns user-facing guidance.
+// Diagnose inspects project state and returns internal guidance for conductor state.
 func Diagnose(project *Project) *Diagnosis {
 	schedule := BuildSchedule(project.Config)
 	completed, total := schedule.Progress(project.State)

@@ -8,7 +8,7 @@ import (
 )
 
 // Run performs readiness checks across all registered agents and returns
-// a structured report suitable for CLI output or TUI rendering.
+// a structured report suitable for Springfield CLI output.
 func Run(ctx context.Context, registry agents.Registry) Report {
 	detections := registry.DetectAll(ctx)
 	checks := make([]Check, 0, len(detections))

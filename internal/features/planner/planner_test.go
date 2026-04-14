@@ -47,7 +47,7 @@ func TestValidateAcceptsSingleDraft(t *testing.T) {
 		Mode:    planner.ModeDraft,
 		WorkID:  "wave-b",
 		Title:   "Wave B planning surface",
-		Summary: "Add planner contract, session loop, writer, explain, and TUI review flow.",
+		Summary: "Add planner contract, session loop, writer, explain, and review flow.",
 		Split:   planner.SplitSingle,
 		Workstreams: []planner.Workstream{
 			{
@@ -78,7 +78,7 @@ func TestValidateAcceptsMultiDraft(t *testing.T) {
 			},
 			{
 				Name:    "02",
-				Title:   "TUI review",
+				Title:   "Draft review",
 				Summary: "Add Springfield-first review flow.",
 			},
 		},
@@ -212,6 +212,23 @@ func TestSessionNextRejectsInvalidPlannerResponse(t *testing.T) {
 	}
 }
 
+func TestSessionNextStripsMarkdownFencesBeforeDecode(t *testing.T) {
+	session := planner.Session{
+		ProjectRoot: t.TempDir(),
+		Runner: &fakeRunner{
+			output: "```json\n{\"mode\":\"question\",\"question\":\"Which surface should ship first?\"}\n```",
+		},
+	}
+
+	resp, err := session.Next("Need next question")
+	if err != nil {
+		t.Fatalf("session next: %v", err)
+	}
+	if got, want := resp.Question, "Which surface should ship first?"; got != want {
+		t.Fatalf("question = %q, want %q", got, want)
+	}
+}
+
 func TestSessionNextCarriesInitialRequestIntoFollowUpTurns(t *testing.T) {
 	root := t.TempDir()
 	projectContext := "project instructions from AGENTS"
@@ -226,7 +243,7 @@ func TestSessionNextCarriesInitialRequestIntoFollowUpTurns(t *testing.T) {
 				"mode":"draft",
 				"work_id":"wave-c1",
 				"title":"Wave C1 planning loop",
-				"summary":"Connect the TUI planning flow to the real planner session.",
+				"summary":"Connect the planning flow to the real planner session.",
 				"split":"single",
 				"workstreams":[
 					{"name":"01","title":"Implement Wave C1","summary":"Keep it in one stream."}
@@ -240,7 +257,7 @@ func TestSessionNextCarriesInitialRequestIntoFollowUpTurns(t *testing.T) {
 		Runner:      runner,
 	}
 
-	first, err := session.Next("Connect the TUI planning flow to the real planner session")
+	first, err := session.Next("Connect the planning flow to the real planner session")
 	if err != nil {
 		t.Fatalf("first session next: %v", err)
 	}
@@ -263,7 +280,7 @@ func TestSessionNextCarriesInitialRequestIntoFollowUpTurns(t *testing.T) {
 	followUpPrompt := runner.prompts[1]
 	for _, want := range []string{
 		projectContext,
-		"Connect the TUI planning flow to the real planner session",
+		"Connect the planning flow to the real planner session",
 		"Which workflow surface should ship first?",
 		"Start with New Work",
 	} {
@@ -293,7 +310,7 @@ func TestSessionNextStillRejectsInvalidPlannerResponseAfterQuestion(t *testing.T
 		t.Fatalf("first mode = %q", first.Mode)
 	}
 
-	if _, err := session.Next("Start with TUI"); err == nil {
+	if _, err := session.Next("Start with review flow"); err == nil {
 		t.Fatal("expected invalid follow-up planner response to fail")
 	}
 }

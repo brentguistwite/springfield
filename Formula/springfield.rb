@@ -1,5 +1,5 @@
 class Springfield < Formula
-  desc "Local-first CLI and TUI for the unified Ralph product surface"
+  desc "Plugin-first local CLI for Springfield setup and workflow control"
   homepage "https://github.com/OWNER/REPO"
   version "0.0.0"
 

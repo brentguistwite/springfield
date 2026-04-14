@@ -38,7 +38,7 @@ func NewInitCommand() *cobra.Command {
 			}
 
 			fmt.Fprintln(cmd.OutOrStdout(), "")
-			fmt.Fprintln(cmd.OutOrStdout(), "Next: run \"springfield\" to continue in guided setup.")
+			fmt.Fprintln(cmd.OutOrStdout(), "Next: run \"springfield install\" to set up Springfield for your agent hosts.")
 
 			return nil
 		},

@@ -43,26 +43,6 @@ type Status struct {
 	Workstreams []WorkstreamStatus
 }
 
-// DiagnosisFailure captures one failing Springfield workstream.
-type DiagnosisFailure struct {
-	Workstream   string
-	Title        string
-	Error        string
-	EvidencePath string
-}
-
-// Diagnosis is the Springfield-owned failure view and next-step guidance.
-type Diagnosis struct {
-	WorkID             string
-	Status             string
-	Summary            string
-	EvidencePath       string
-	FailingWorkstreams []string
-	LastError          string
-	NextStep           string
-	Failures           []DiagnosisFailure
-}
-
 // Runner executes Springfield work through the execution adapter boundary.
 type Runner struct {
 	Executor execution.Executor
@@ -104,48 +84,6 @@ func (r Runner) Status(root, workID string) (Status, error) {
 	}
 
 	return status, nil
-}
-
-// Diagnose returns the Springfield-owned diagnosis for one work item.
-func (r Runner) Diagnose(root, workID string) (Diagnosis, error) {
-	status, err := r.Status(root, workID)
-	if err != nil {
-		return Diagnosis{}, err
-	}
-
-	failures := make([]DiagnosisFailure, 0)
-	failingWorkstreams := make([]string, 0)
-	evidencePath := ""
-	lastError := ""
-	for _, workstream := range status.Workstreams {
-		if workstream.Status != statusFailed {
-			continue
-		}
-		failingWorkstreams = append(failingWorkstreams, workstream.Name)
-		if evidencePath == "" && workstream.EvidencePath != "" {
-			evidencePath = workstream.EvidencePath
-		}
-		if lastError == "" && workstream.Error != "" {
-			lastError = workstream.Error
-		}
-		failures = append(failures, DiagnosisFailure{
-			Workstream:   workstream.Name,
-			Title:        workstream.Title,
-			Error:        workstream.Error,
-			EvidencePath: workstream.EvidencePath,
-		})
-	}
-
-	return Diagnosis{
-		WorkID:             status.WorkID,
-		Status:             status.Status,
-		Summary:            diagnosisSummary(status.Status, len(failures)),
-		EvidencePath:       evidencePath,
-		FailingWorkstreams: failingWorkstreams,
-		LastError:          lastError,
-		NextStep:           nextStep(status.Status, len(failures)),
-		Failures:           failures,
-	}, nil
 }
 
 func (r Runner) run(root, workID string) (RunResult, error) {
@@ -286,32 +224,6 @@ func defaultWorkstreamStatus(reportStatus string) string {
 		return statusFailed
 	}
 	return statusCompleted
-}
-
-func nextStep(status string, failures int) string {
-	switch {
-	case status == statusCompleted:
-		return "Work completed successfully."
-	case failures > 0:
-		return "Review the failing workstreams, then resume the work."
-	default:
-		return "Resume the work to continue execution."
-	}
-}
-
-func diagnosisSummary(status string, failures int) string {
-	switch {
-	case status == statusCompleted:
-		return "Springfield work completed successfully."
-	case failures == 1:
-		return "1 Springfield workstream failed."
-	case failures > 1:
-		return fmt.Sprintf("%d Springfield workstreams failed.", failures)
-	case status == statusFailed:
-		return "Springfield work failed."
-	default:
-		return "No Springfield failures detected."
-	}
 }
 
 func publicStatus(status string, approved bool) string {

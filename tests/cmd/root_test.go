@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -157,6 +158,34 @@ func readRecordedArgs(t *testing.T, path string) []string {
 	return strings.Split(text, "\n")
 }
 
+func availableCommands(help string) []string {
+	lines := strings.Split(help, "\n")
+	commands := make([]string, 0)
+	inCommands := false
+
+	for _, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "Available Commands:"):
+			inCommands = true
+			continue
+		case inCommands && strings.TrimSpace(line) == "":
+			inCommands = false
+			continue
+		case inCommands && strings.HasPrefix(line, "Flags:"):
+			inCommands = false
+			continue
+		case inCommands:
+			fields := strings.Fields(line)
+			if len(fields) > 0 {
+				commands = append(commands, fields[0])
+			}
+		}
+	}
+
+	slices.Sort(commands)
+	return commands
+}
+
 func TestInitCreatesProjectInCurrentDir(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
@@ -175,7 +204,7 @@ func TestInitCreatesProjectInCurrentDir(t *testing.T) {
 	if strings.Contains(output, "springfield conductor setup") {
 		t.Errorf("init should not direct users to the conductor surface, got:\n%s", output)
 	}
-	if !strings.Contains(output, `Next: run "springfield" to continue in guided setup.`) {
+	if !strings.Contains(output, `Next: run "springfield install" to set up Springfield for your agent hosts.`) {
 		t.Errorf("expected Springfield-only next step, got:\n%s", output)
 	}
 
@@ -218,20 +247,35 @@ func TestSpringfieldHelp(t *testing.T) {
 	if strings.Contains(output, "internal-debug") {
 		t.Fatalf("help should not advertise hidden debug surface, got:\n%s", output)
 	}
-	if !strings.Contains(output, "Springfield is the local-first CLI and TUI entrypoint") {
+	if !strings.Contains(output, "Springfield is the plugin-first local setup surface") {
 		t.Fatalf("expected Springfield-first help text, got:\n%s", output)
 	}
-	if !strings.Contains(output, "doctor") {
-		t.Fatalf("expected help output to mention doctor, got:\n%s", output)
-	}
-	for _, name := range []string{"status", "resume", "diagnose"} {
-		if !strings.Contains(output, name) {
-			t.Fatalf("expected help output to mention %s, got:\n%s", name, output)
-		}
+
+	if got, want := availableCommands(output), []string{"doctor", "init", "install", "resume", "status", "version"}; !slices.Equal(got, want) {
+		t.Fatalf("available commands = %v, want %v\nfull output:\n%s", got, want, output)
 	}
 }
 
-func TestSpringfieldHelpReadmeStaysSpringfieldFirst(t *testing.T) {
+func TestSpringfieldBareShowsInstallGuidance(t *testing.T) {
+	output, err := runSpringfield(t)
+	if err != nil {
+		t.Fatalf("run bare springfield: %v\noutput:\n%s", err, output)
+	}
+
+	for _, marker := range []string{
+		"Install Springfield into Claude Code and Codex.",
+		"springfield install",
+	} {
+		if !strings.Contains(output, marker) {
+			t.Fatalf("expected bare springfield output to contain %q, got:\n%s", marker, output)
+		}
+	}
+	if strings.Contains(output, "Guided Setup") {
+		t.Fatalf("bare springfield should not include retired interactive-shell guidance, got:\n%s", output)
+	}
+}
+
+func TestSpringfieldHelpReadmeStaysPluginFirst(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repoRoot(t), "README.md"))
 	if err != nil {
 		t.Fatalf("read README: %v", err)
@@ -240,8 +284,10 @@ func TestSpringfieldHelpReadmeStaysSpringfieldFirst(t *testing.T) {
 	text := string(data)
 	lower := strings.ToLower(text)
 	for _, marker := range []string{
-		"planning is real end-to-end",
-		"execution is unified behind Springfield-owned run, status, resume, and diagnose surfaces",
+		"plugin-first",
+		"springfield install",
+		"claude code",
+		"codex",
 	} {
 		if !strings.Contains(lower, strings.ToLower(marker)) {
 			t.Fatalf("expected README to contain %q, got:\n%s", marker, text)
@@ -251,6 +297,8 @@ func TestSpringfieldHelpReadmeStaysSpringfieldFirst(t *testing.T) {
 		"springfield conductor setup",
 		"go run . ralph --help",
 		"springfield ralph",
+		"springfield tui",
+		"springfield explain",
 	} {
 		if strings.Contains(text, stale) {
 			t.Fatalf("expected README to drop stale guidance %q, got:\n%s", stale, text)
@@ -258,36 +306,35 @@ func TestSpringfieldHelpReadmeStaysSpringfieldFirst(t *testing.T) {
 	}
 }
 
-func TestSpringfieldWithoutArgsShowsShellHome(t *testing.T) {
+func TestSpringfieldWithoutArgsShowsHelpAndGuidance(t *testing.T) {
 	output, err := runSpringfield(t)
 	if err != nil {
 		t.Fatalf("run springfield: %v\noutput:\n%s", err, output)
 	}
 
-	if !strings.Contains(output, "Local-first shell for planning and running work.") {
-		t.Fatalf("expected shell home output, got:\n%s", output)
+	for _, marker := range []string{
+		"Usage:",
+		"springfield install",
+		"Install Springfield into Claude Code and Codex.",
+	} {
+		if !strings.Contains(output, marker) {
+			t.Fatalf("expected bare springfield output to contain %q, got:\n%s", marker, output)
+		}
 	}
-
-	if !strings.Contains(output, "Guided Setup") {
-		t.Fatalf("expected Guided Setup in shell home output, got:\n%s", output)
-	}
-
-	if strings.Contains(output, "Usage:") {
-		t.Fatalf("expected bare springfield to avoid a plain help dump, got:\n%s", output)
+	if strings.Contains(output, "Guided Setup") {
+		t.Fatalf("expected bare springfield to avoid TUI shell output, got:\n%s", output)
 	}
 }
 
-func TestSpringfieldSubcommandsAreReachable(t *testing.T) {
+func TestSpringfieldPublicSubcommandsAreReachable(t *testing.T) {
 	for _, subcommand := range []struct {
 		name   string
 		marker string
 	}{
 		{name: "init", marker: "Initialize a new Springfield project in the current directory."},
-		{name: "explain", marker: "Render the built-in Springfield explanation prompt for the current project."},
-		{name: "skills", marker: "Install or inspect optional Springfield direct skill wrappers."},
+		{name: "install", marker: "Install Springfield into Claude Code and Codex."},
 		{name: "status", marker: "Show status for the active Springfield work or a specific work id."},
 		{name: "resume", marker: "Run or resume the active approved Springfield work."},
-		{name: "diagnose", marker: "Summarize Springfield failures, evidence, and next steps for the active work."},
 		{name: "doctor", marker: "Doctor checks that supported agent CLIs are installed and reachable, providing install guidance for anything missing."},
 		{name: "version", marker: "Print the Springfield version"},
 	} {
@@ -312,46 +359,15 @@ func TestInternalDebugCommandIsRemoved(t *testing.T) {
 	}
 }
 
-func TestExplainRendersPlaybookBackedOutput(t *testing.T) {
-	bin := buildBinary(t)
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("project context from AGENTS"), 0o644); err != nil {
-		t.Fatalf("write AGENTS.md: %v", err)
-	}
-
-	output, err := runBinaryIn(t, bin, dir, "explain")
-	if err != nil {
-		t.Fatalf("run springfield explain: %v\noutput:\n%s", err, output)
-	}
-
-	if !strings.Contains(output, "# Springfield Playbook") {
-		t.Fatalf("expected explain output to render playbook prompt, got:\n%s", output)
-	}
-	if !strings.Contains(output, "project context from AGENTS") {
-		t.Fatalf("expected explain output to include project context, got:\n%s", output)
-	}
-}
-
-func TestExplainPrefersAGENTSContext(t *testing.T) {
-	bin := buildBinary(t)
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("AGENTS wins"), 0o644); err != nil {
-		t.Fatalf("write AGENTS.md: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte("CLAUDE fallback"), 0o644); err != nil {
-		t.Fatalf("write CLAUDE.md: %v", err)
-	}
-
-	output, err := runBinaryIn(t, bin, dir, "explain")
-	if err != nil {
-		t.Fatalf("run springfield explain: %v\noutput:\n%s", err, output)
-	}
-
-	if !strings.Contains(output, "AGENTS wins") {
-		t.Fatalf("expected AGENTS context in explain output, got:\n%s", output)
-	}
-	if strings.Contains(output, "CLAUDE fallback") {
-		t.Fatalf("expected AGENTS to take precedence over CLAUDE, got:\n%s", output)
+func TestOnlyPublicTopLevelCommandsRemainReachable(t *testing.T) {
+	for _, subcommand := range []string{"explain", "skills", "internal-debug"} {
+		output, err := runSpringfield(t, subcommand, "--help")
+		if err == nil {
+			t.Fatalf("expected %s command removal, got successful output:\n%s", subcommand, output)
+		}
+		if !strings.Contains(output, "unknown command") {
+			t.Fatalf("expected unknown command output for %s, got:\n%s", subcommand, output)
+		}
 	}
 }
 

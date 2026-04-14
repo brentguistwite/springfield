@@ -7,72 +7,85 @@ import (
 	"springfield/internal/features/playbooks"
 )
 
-// Skill describes one optional Springfield-owned direct skill wrapper.
-type Skill struct {
-	Name        string
-	Summary     string
-	Purpose     playbooks.Purpose
-	TaskBody    string
-	Header      string
-	Description string
+// Host describes one Springfield-owned installation target.
+type Host struct {
+	Name         string
+	Summary      string
+	Purpose      playbooks.Purpose
+	TaskBody     string
+	Header       string
+	Description  string
+	RelativePath string
 }
 
-// Rendered is the resolved prompt plus wrapper content for one direct skill.
+// Rendered is the resolved prompt plus host-specific artifact content.
 type Rendered struct {
-	Skill   Skill
+	Host    Host
 	Prompt  string
 	Content string
 }
 
-// Installed describes one written skill wrapper file.
+// Installed describes one written host artifact file.
 type Installed struct {
-	Skill Skill
-	Path  string
+	Host Host
+	Path string
 }
 
-var catalog = []Skill{
+// InstallOptions controls where Springfield writes host artifacts.
+type InstallOptions struct {
+	Hosts     []string
+	ClaudeDir string
+	CodexDir  string
+}
+
+var catalog = []Host{
 	{
-		Name:        "plan",
-		Summary:     "Optional Springfield planning wrapper for power users.",
-		Purpose:     playbooks.PurposePlan,
-		Header:      "Springfield Direct Skill: plan",
-		Description: "Optional Springfield direct skill wrapper. Springfield remains the primary product surface.",
+		Name:         "claude-code",
+		Summary:      "Springfield slash command for Claude Code.",
+		Purpose:      playbooks.PurposePlan,
+		Header:       "Springfield Command",
+		Description:  "Use `/springfield` in Claude Code to run Springfield inside this project.",
+		RelativePath: "springfield.md",
 		TaskBody: strings.TrimSpace(`
-Plan the user's request for Springfield.
+Use Springfield as the primary agent-native surface for this project.
 
 Keep Springfield as the only user-facing surface.
-Ask clarifying questions when needed, then drive toward a concrete Springfield work definition with named workstreams.
+If the user asks what Springfield does, explain the current project context and Springfield guidance before planning or execution.
+When work is requested, ask clarifying questions when needed, then drive toward a concrete Springfield work definition with named workstreams.
 Stay aligned with the shared Springfield playbook and the current project's guidance.
 `),
 	},
 	{
-		Name:        "explain",
-		Summary:     "Optional Springfield explanation wrapper for power users.",
-		Purpose:     playbooks.PurposeExplain,
-		Header:      "Springfield Direct Skill: explain",
-		Description: "Optional Springfield direct skill wrapper. Springfield remains the primary product surface.",
+		Name:         "codex",
+		Summary:      "Springfield skill for Codex.",
+		Purpose:      playbooks.PurposePlan,
+		Header:       "Springfield Skill",
+		Description:  "Use the Springfield skill in Codex to run Springfield inside this project.",
+		RelativePath: "springfield/SKILL.md",
 		TaskBody: strings.TrimSpace(`
-Explain how Springfield should approach work in this project.
+Use Springfield as the primary agent-native surface for this project.
 
 Keep Springfield as the only user-facing surface.
-Explain the current project context and the built-in playbook guidance that will shape planning and execution.
+If the user asks what Springfield does, explain the current project context and Springfield guidance before planning or execution.
+When work is requested, ask clarifying questions when needed, then drive toward a concrete Springfield work definition with named workstreams.
+Stay aligned with the shared Springfield playbook and the current project's guidance.
 `),
 	},
 }
 
-// Catalog returns the fixed Springfield direct skill set.
-func Catalog() []Skill {
-	out := make([]Skill, len(catalog))
+// Catalog returns the fixed Springfield host target set.
+func Catalog() []Host {
+	out := make([]Host, len(catalog))
 	copy(out, catalog)
 	return out
 }
 
-// Lookup resolves one named direct skill.
-func Lookup(name string) (Skill, error) {
-	for _, skill := range catalog {
-		if skill.Name == name {
-			return skill, nil
+// Lookup resolves one named host target.
+func Lookup(name string) (Host, error) {
+	for _, host := range catalog {
+		if host.Name == name {
+			return host, nil
 		}
 	}
-	return Skill{}, fmt.Errorf("unknown Springfield direct skill %q", name)
+	return Host{}, fmt.Errorf("unknown Springfield install target %q", name)
 }

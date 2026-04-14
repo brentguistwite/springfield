@@ -7,31 +7,31 @@ import (
 	"springfield/internal/features/playbooks"
 )
 
-// Render resolves one Springfield direct skill from the shared playbook builder.
+// Render resolves one Springfield host artifact from the shared playbook builder.
 func Render(projectRoot, name string) (Rendered, error) {
-	skill, err := Lookup(name)
+	host, err := Lookup(name)
 	if err != nil {
 		return Rendered{}, err
 	}
 
 	output, err := playbooks.Build(playbooks.Input{
-		Purpose:     skill.Purpose,
+		Purpose:     host.Purpose,
 		ProjectRoot: projectRoot,
-		TaskBody:    skill.TaskBody,
+		TaskBody:    host.TaskBody,
 	})
 	if err != nil {
 		return Rendered{}, err
 	}
 
 	var builder strings.Builder
-	fmt.Fprintf(&builder, "# %s\n\n", skill.Header)
-	builder.WriteString(skill.Description)
+	fmt.Fprintf(&builder, "# %s\n\n", host.Header)
+	builder.WriteString(host.Description)
 	builder.WriteString("\n\n")
 	builder.WriteString(strings.TrimSpace(output.Prompt))
 	builder.WriteString("\n")
 
 	return Rendered{
-		Skill:   skill,
+		Host:    host,
 		Prompt:  output.Prompt,
 		Content: builder.String(),
 	}, nil

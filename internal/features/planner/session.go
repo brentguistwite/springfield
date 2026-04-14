@@ -59,7 +59,7 @@ func (s *Session) Next(userInput string) (Response, error) {
 	}
 
 	var resp Response
-	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
+	if err := json.Unmarshal([]byte(stripFences(raw)), &resp); err != nil {
 		return Response{}, fmt.Errorf("decode planner response: %w", err)
 	}
 	if err := Validate(resp); err != nil {
@@ -72,6 +72,23 @@ func (s *Session) Next(userInput string) (Response, error) {
 	}
 
 	return resp, nil
+}
+
+func stripFences(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if !strings.HasPrefix(trimmed, "```") {
+		return trimmed
+	}
+
+	lines := strings.Split(trimmed, "\n")
+	if len(lines) < 2 {
+		return trimmed
+	}
+	lines = lines[1:]
+	if len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "```" {
+		lines = lines[:len(lines)-1]
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 type turn struct {

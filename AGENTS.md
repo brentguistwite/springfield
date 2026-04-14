@@ -27,7 +27,7 @@ Strict boundaries between modules. Tests should target the exported package inte
 
 ## Working Rules
 
-- Treat the CLI and TUI as product surfaces, not debug wrappers.
+- Treat the CLI as a product surface, not a debug wrapper.
 - Design around public module contracts first, then internals.
 - In Go, prefer small cohesive packages with explicit exported APIs over grab-bag utility packages.
 - Prefer stable project-local state over hidden global machine state.

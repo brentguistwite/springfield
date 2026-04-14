@@ -33,3 +33,30 @@ type Workstream struct {
 	Title   string `json:"title"`
 	Summary string `json:"summary,omitempty"`
 }
+
+// Conversation is the narrow planning conversation boundary.
+type Conversation interface {
+	Next(input string) (Response, error)
+}
+
+// WorkstreamSummary is the package-safe projection of a planned workstream.
+type WorkstreamSummary struct {
+	Name    string
+	Title   string
+	Summary string
+}
+
+// Draft is the package-safe review model for one planner-produced draft.
+type Draft struct {
+	WorkID      string
+	Title       string
+	Summary     string
+	Split       Split
+	Workstreams []WorkstreamSummary
+}
+
+// PlanResult describes the current planner outcome.
+type PlanResult struct {
+	Question string
+	Draft    *Draft
+}
