@@ -16,9 +16,13 @@ func Build(input Input) (Output, error) {
 		return Output{}, err
 	}
 
-	projectSource, projectBody, err := loadProjectContext(input.ProjectRoot)
-	if err != nil {
-		return Output{}, err
+	projectSource := ""
+	projectBody := ""
+	if input.IncludeProjectContext {
+		projectSource, projectBody, err = loadProjectContext(input.ProjectRoot)
+		if err != nil {
+			return Output{}, err
+		}
 	}
 
 	return Output{
@@ -50,7 +54,7 @@ func loadBuiltin(purpose Purpose) (string, string, error) {
 
 func builtinSourceForPurpose(purpose Purpose) (string, error) {
 	switch purpose {
-	case PurposePlan, PurposeExplain:
+	case PurposePlan, PurposeExplain, PurposeStart, PurposeStatus, PurposeRecover:
 		return "builtin/springfield.md", nil
 	default:
 		return "", fmt.Errorf("unsupported playbook purpose %q", purpose)

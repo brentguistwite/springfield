@@ -38,7 +38,7 @@ func NewInitCommand() *cobra.Command {
 			}
 
 			fmt.Fprintln(cmd.OutOrStdout(), "")
-			fmt.Fprintln(cmd.OutOrStdout(), "Next: run \"springfield install\" to set up Springfield for your agent hosts.")
+			fmt.Fprintln(cmd.OutOrStdout(), "Next: install Springfield from the Claude marketplace or Codex plugin/catalog. Use \"springfield install\" only for local host sync, bootstrap, or fallback workflows.")
 
 			return nil
 		},

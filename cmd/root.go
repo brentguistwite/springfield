@@ -49,8 +49,8 @@ func Execute() error {
 func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "springfield",
-		Short:         "Springfield is the plugin-first local setup surface for agent-native work.",
-		Long:          "Springfield is the plugin-first local setup surface for agent-native work.\n\nUse init to scaffold project state, install to set up Claude Code and Codex, doctor to verify local tooling, and status or resume to manage approved work.",
+		Short:         "Springfield is plugin-first for agent-native work.",
+		Long:          "Springfield is plugin-first for agent-native work.\n\nPrimary install path: use the Claude marketplace or Codex plugin/catalog entry. Use init to scaffold project state, install to sync local Claude Code and Codex artifacts for bootstrap or fallback workflows, doctor to verify local tooling, and status or resume to manage approved work.",
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		CompletionOptions: cobra.CompletionOptions{
@@ -60,7 +60,7 @@ func NewRootCommand() *cobra.Command {
 			if err := cmd.Help(); err != nil {
 				return err
 			}
-			_, err := fmt.Fprintln(cmd.OutOrStdout(), "\nInstall Springfield into Claude Code and Codex.\nNext: run \"springfield install\".")
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), "\nPrimary install path: use the Claude marketplace or Codex plugin/catalog entry.\nFor local host sync or fallback: run \"springfield install\".")
 			return err
 		},
 	}

@@ -7,42 +7,44 @@ import (
 	"testing"
 )
 
-func TestPlanPurposeLoadsSharedBuiltin(t *testing.T) {
-	out, err := Build(Input{
-		Purpose:     PurposePlan,
-		ProjectRoot: t.TempDir(),
-		TaskBody:    "Ship the change.",
-	})
-	if err != nil {
-		t.Fatalf("build plan playbook: %v", err)
+func TestPurposesLoadSharedBuiltin(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		purpose Purpose
+		task    string
+	}{
+		{name: "plan", purpose: PurposePlan, task: "Ship the change."},
+		{name: "start", purpose: PurposeStart, task: "Start Springfield work."},
+		{name: "status", purpose: PurposeStatus, task: "Inspect Springfield work."},
+		{name: "recover", purpose: PurposeRecover, task: "Recover Springfield work."},
 	}
 
-	if out.BuiltinSource != "builtin/springfield.md" {
-		t.Fatalf("builtin source = %q", out.BuiltinSource)
-	}
-	if !strings.Contains(out.Prompt, "Built-in Springfield playbook.") {
-		t.Fatalf("expected shared builtin content, got:\n%s", out.Prompt)
-	}
-	assertNoLegacyEngineNames(t, out.Prompt)
-}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-func TestExplainPurposeLoadsSharedBuiltin(t *testing.T) {
-	out, err := Build(Input{
-		Purpose:     PurposeExplain,
-		ProjectRoot: t.TempDir(),
-		TaskBody:    "Run the workstreams.",
-	})
-	if err != nil {
-		t.Fatalf("build explain playbook: %v", err)
-	}
+			out, err := Build(Input{
+				Purpose:               tc.purpose,
+				ProjectRoot:           t.TempDir(),
+				IncludeProjectContext: false,
+				TaskBody:              tc.task,
+			})
+			if err != nil {
+				t.Fatalf("build %s playbook: %v", tc.name, err)
+			}
 
-	if out.BuiltinSource != "builtin/springfield.md" {
-		t.Fatalf("builtin source = %q", out.BuiltinSource)
+			if out.BuiltinSource != "builtin/springfield.md" {
+				t.Fatalf("builtin source = %q", out.BuiltinSource)
+			}
+			if !strings.Contains(out.Prompt, "Built-in Springfield playbook.") {
+				t.Fatalf("expected shared builtin content, got:\n%s", out.Prompt)
+			}
+			assertNoLegacyEngineNames(t, out.Prompt)
+		})
 	}
-	if !strings.Contains(out.Prompt, "Built-in Springfield playbook.") {
-		t.Fatalf("expected shared builtin content, got:\n%s", out.Prompt)
-	}
-	assertNoLegacyEngineNames(t, out.Prompt)
 }
 
 func TestProjectContextPrefersAgents(t *testing.T) {
@@ -51,9 +53,10 @@ func TestProjectContextPrefersAgents(t *testing.T) {
 	writeContextFile(t, root, "CLAUDE.md", "claude context")
 
 	out, err := Build(Input{
-		Purpose:     PurposePlan,
-		ProjectRoot: root,
-		TaskBody:    "Ship the change.",
+		Purpose:               PurposePlan,
+		ProjectRoot:           root,
+		IncludeProjectContext: true,
+		TaskBody:              "Ship the change.",
 	})
 	if err != nil {
 		t.Fatalf("build playbook: %v", err)
@@ -75,9 +78,10 @@ func TestProjectContextFallsBackToClaude(t *testing.T) {
 	writeContextFile(t, root, "CLAUDE.md", "claude context")
 
 	out, err := Build(Input{
-		Purpose:     PurposePlan,
-		ProjectRoot: root,
-		TaskBody:    "Ship the change.",
+		Purpose:               PurposePlan,
+		ProjectRoot:           root,
+		IncludeProjectContext: true,
+		TaskBody:              "Ship the change.",
 	})
 	if err != nil {
 		t.Fatalf("build playbook: %v", err)
@@ -96,9 +100,10 @@ func TestRenderIncludesSectionsInOrder(t *testing.T) {
 	writeContextFile(t, root, "AGENTS.md", "project guidance")
 
 	out, err := Build(Input{
-		Purpose:     PurposeExplain,
-		ProjectRoot: root,
-		TaskBody:    "task body",
+		Purpose:               PurposeRecover,
+		ProjectRoot:           root,
+		IncludeProjectContext: true,
+		TaskBody:              "task body",
 	})
 	if err != nil {
 		t.Fatalf("build playbook: %v", err)
@@ -114,6 +119,31 @@ func TestRenderIncludesSectionsInOrder(t *testing.T) {
 		t.Fatalf("expected stable builtin -> project -> task order, got:\n%s", out.Prompt)
 	}
 	assertNoLegacyEngineNames(t, out.Prompt)
+}
+
+func TestOmitProjectContextLeavesProjectSectionOut(t *testing.T) {
+	root := t.TempDir()
+	writeContextFile(t, root, "AGENTS.md", "project guidance")
+
+	out, err := Build(Input{
+		Purpose:               PurposeStatus,
+		ProjectRoot:           root,
+		IncludeProjectContext: false,
+		TaskBody:              "task body",
+	})
+	if err != nil {
+		t.Fatalf("build playbook: %v", err)
+	}
+
+	if out.ProjectSource != "" {
+		t.Fatalf("project source = %q, want empty", out.ProjectSource)
+	}
+	if strings.Contains(out.Prompt, "project guidance") {
+		t.Fatalf("expected prompt to omit project context, got:\n%s", out.Prompt)
+	}
+	if !strings.Contains(out.Prompt, "task body") {
+		t.Fatalf("expected task body in prompt, got:\n%s", out.Prompt)
+	}
 }
 
 func writeContextFile(t *testing.T, root, name, body string) {

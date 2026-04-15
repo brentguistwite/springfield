@@ -17,8 +17,8 @@ func NewInstallCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "install",
-		Short: "Install Springfield into Claude Code and Codex.",
-		Long:  "Install Springfield into Claude Code and Codex. By default Springfield writes both host artifacts; use --host to limit installation to a specific target.",
+		Short: "Sync Springfield local host artifacts for Claude Code and Codex.",
+		Long:  "Sync Springfield local host artifacts for Claude Code and Codex. This command is for local bootstrap, development, or fallback workflows when plugin/catalog distribution is not being used. By default Springfield writes both local host artifacts; use --host to limit installation to a specific target.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root, err := os.Getwd()
@@ -36,7 +36,7 @@ func NewInstallCommand() *cobra.Command {
 			}
 
 			w := cmd.OutOrStdout()
-			fmt.Fprintln(w, "Installed Springfield plugins:")
+			fmt.Fprintln(w, "Synced Springfield local host artifacts:")
 			for _, item := range installed {
 				fmt.Fprintf(w, "  %s  %s\n", item.Host.Name, item.Path)
 			}
@@ -44,7 +44,7 @@ func NewInstallCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringSliceVar(&hosts, "host", nil, "Install only selected targets: claude-code, codex")
+	cmd.Flags().StringSliceVar(&hosts, "host", nil, "Sync only selected local targets: claude-code, codex")
 	cmd.Flags().StringVar(&claudeDir, "claude-dir", "", "Override the Claude Code commands directory")
 	cmd.Flags().StringVar(&codexDir, "codex-dir", "", "Override the Codex skills directory")
 	return cmd

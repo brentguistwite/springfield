@@ -30,6 +30,9 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Validate plugin metadata
+        run: go test ./tests/plugin/...
+
       - name: Build release archive
         env:
           CGO_ENABLED: "0"
@@ -85,7 +88,7 @@ jobs:
 
           cat > Formula/springfield.rb <<FORMULA
           class Springfield < Formula
-            desc "Local-first CLI and TUI for the unified Ralph product surface"
+            desc "Plugin-first local CLI for Springfield setup and workflow control"
             homepage "https://github.com/${REPOSITORY}"
             version "${version}"
 

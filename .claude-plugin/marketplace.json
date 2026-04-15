@@ -1,0 +1,17 @@
+{
+  "name": "springfield",
+  "owner": {
+    "name": "Brent Guistwite"
+  },
+  "plugins": [
+    {
+      "name": "springfield",
+      "description": "Springfield plugin for starting, inspecting, and recovering project work",
+      "version": "0.1.0",
+      "source": "./",
+      "author": {
+        "name": "Brent Guistwite"
+      }
+    }
+  ]
+}

@@ -204,7 +204,7 @@ func TestInitCreatesProjectInCurrentDir(t *testing.T) {
 	if strings.Contains(output, "springfield conductor setup") {
 		t.Errorf("init should not direct users to the conductor surface, got:\n%s", output)
 	}
-	if !strings.Contains(output, `Next: run "springfield install" to set up Springfield for your agent hosts.`) {
+	if !strings.Contains(output, `Next: install Springfield from the Claude marketplace or Codex plugin/catalog. Use "springfield install" only for local host sync, bootstrap, or fallback workflows.`) {
 		t.Errorf("expected Springfield-only next step, got:\n%s", output)
 	}
 
@@ -247,7 +247,7 @@ func TestSpringfieldHelp(t *testing.T) {
 	if strings.Contains(output, "internal-debug") {
 		t.Fatalf("help should not advertise hidden debug surface, got:\n%s", output)
 	}
-	if !strings.Contains(output, "Springfield is the plugin-first local setup surface") {
+	if !strings.Contains(output, "Springfield is plugin-first") {
 		t.Fatalf("expected Springfield-first help text, got:\n%s", output)
 	}
 
@@ -263,7 +263,7 @@ func TestSpringfieldBareShowsInstallGuidance(t *testing.T) {
 	}
 
 	for _, marker := range []string{
-		"Install Springfield into Claude Code and Codex.",
+		"Primary install path: use the Claude marketplace or Codex plugin/catalog entry.",
 		"springfield install",
 	} {
 		if !strings.Contains(output, marker) {
@@ -285,6 +285,8 @@ func TestSpringfieldHelpReadmeStaysPluginFirst(t *testing.T) {
 	lower := strings.ToLower(text)
 	for _, marker := range []string{
 		"plugin-first",
+		"marketplace",
+		"catalog",
 		"springfield install",
 		"claude code",
 		"codex",
@@ -315,7 +317,7 @@ func TestSpringfieldWithoutArgsShowsHelpAndGuidance(t *testing.T) {
 	for _, marker := range []string{
 		"Usage:",
 		"springfield install",
-		"Install Springfield into Claude Code and Codex.",
+		"Primary install path: use the Claude marketplace or Codex plugin/catalog entry.",
 	} {
 		if !strings.Contains(output, marker) {
 			t.Fatalf("expected bare springfield output to contain %q, got:\n%s", marker, output)
@@ -332,7 +334,7 @@ func TestSpringfieldPublicSubcommandsAreReachable(t *testing.T) {
 		marker string
 	}{
 		{name: "init", marker: "Initialize a new Springfield project in the current directory."},
-		{name: "install", marker: "Install Springfield into Claude Code and Codex."},
+		{name: "install", marker: "Sync Springfield local host artifacts for Claude Code and Codex."},
 		{name: "status", marker: "Show status for the active Springfield work or a specific work id."},
 		{name: "resume", marker: "Run or resume the active approved Springfield work."},
 		{name: "doctor", marker: "Doctor checks that supported agent CLIs are installed and reachable, providing install guidance for anything missing."},

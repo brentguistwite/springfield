@@ -3,20 +3,27 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"springfield/internal/features/playbooks"
 )
 
-func TestCatalogShapeLockedToClaudeCodeAndCodex(t *testing.T) {
+func TestCatalogShapeLockedToSpringfieldSkills(t *testing.T) {
+	t.Parallel()
+
 	catalog := Catalog()
-	if len(catalog) != 2 {
-		t.Fatalf("catalog len = %d, want 2", len(catalog))
+	if len(catalog) != 3 {
+		t.Fatalf("catalog len = %d, want 3", len(catalog))
 	}
 
-	got := []string{catalog[0].Name, catalog[1].Name}
-	want := []string{"claude-code", "codex"}
+	got := []string{
+		string(catalog[0].Name),
+		string(catalog[1].Name),
+		string(catalog[2].Name),
+	}
+	want := []string{"start", "status", "recover"}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("catalog[%d] = %q, want %q", i, got[i], want[i])
@@ -24,47 +31,134 @@ func TestCatalogShapeLockedToClaudeCodeAndCodex(t *testing.T) {
 	}
 }
 
-func TestRenderUsesSharedPlaybookPrompt(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("agents context"), 0o644); err != nil {
-		t.Fatalf("write AGENTS.md: %v", err)
+func TestRenderUsesSharedHostNeutralPlaybookPrompt(t *testing.T) {
+	t.Parallel()
+
+	def, err := Lookup("start")
+	if err != nil {
+		t.Fatalf("lookup start: %v", err)
 	}
 
-	def, err := Lookup("codex")
+	rendered, err := Render(string(def.Name))
 	if err != nil {
-		t.Fatalf("lookup codex: %v", err)
-	}
-
-	rendered, err := Render(root, def.Name)
-	if err != nil {
-		t.Fatalf("render codex: %v", err)
+		t.Fatalf("render start: %v", err)
 	}
 
 	out, err := playbooks.Build(playbooks.Input{
-		Purpose:     def.Purpose,
-		ProjectRoot: root,
-		TaskBody:    def.TaskBody,
+		Purpose:               playbooks.PurposeStart,
+		IncludeProjectContext: false,
+		TaskBody:              def.TaskBody,
 	})
 	if err != nil {
-		t.Fatalf("build codex playbook: %v", err)
+		t.Fatalf("build start playbook: %v", err)
 	}
 
 	if rendered.Prompt != out.Prompt {
 		t.Fatalf("expected prompt to come from shared playbook builder")
 	}
-	for _, marker := range []string{"Springfield", "Built-in Springfield playbook.", "agents context"} {
+	for _, marker := range []string{"Springfield", "Built-in Springfield playbook.", "Start Springfield work for the current project."} {
 		if !strings.Contains(rendered.Content, marker) {
 			t.Fatalf("expected rendered content to contain %q, got:\n%s", marker, rendered.Content)
 		}
 	}
-	for _, legacy := range []string{"Ralph", "Conductor"} {
-		if strings.Contains(rendered.Content, legacy) {
-			t.Fatalf("expected rendered content to omit %q, got:\n%s", legacy, rendered.Content)
+	for _, unwanted := range []string{"Ralph", "Conductor"} {
+		if strings.Contains(rendered.Content, unwanted) {
+			t.Fatalf("expected rendered content to omit %q, got:\n%s", unwanted, rendered.Content)
+		}
+	}
+}
+
+func TestSkillsHaveDistinctTaskBehavior(t *testing.T) {
+	t.Parallel()
+
+	start, err := Render("start")
+	if err != nil {
+		t.Fatalf("render start: %v", err)
+	}
+	status, err := Render("status")
+	if err != nil {
+		t.Fatalf("render status: %v", err)
+	}
+	recover, err := Render("recover")
+	if err != nil {
+		t.Fatalf("render recover: %v", err)
+	}
+
+	if !strings.Contains(start.Content, "Turn the request into a concrete Springfield work definition with named workstreams, constraints, and success criteria.") {
+		t.Fatalf("expected start prompt boundary to be kickoff-specific, got:\n%s", start.Content)
+	}
+	if !strings.Contains(status.Content, "Summarize the active or most recent Springfield work, workstream status, blockers, risks, and the clearest next action.") {
+		t.Fatalf("expected status prompt boundary to be status-specific, got:\n%s", status.Content)
+	}
+	if !strings.Contains(recover.Content, "Identify the break in state, explain what is recoverable, and drive toward the safest concrete next step to resume progress.") {
+		t.Fatalf("expected recover prompt boundary to be recovery-specific, got:\n%s", recover.Content)
+	}
+}
+
+func TestCanonicalCheckedInSkillsMatchRenderedContent(t *testing.T) {
+	t.Parallel()
+
+	root := repoRoot(t)
+	for _, name := range []string{"start", "status", "recover"} {
+		rendered, err := Render(name)
+		if err != nil {
+			t.Fatalf("render %s: %v", name, err)
+		}
+
+		data, err := os.ReadFile(filepath.Join(root, "skills", name, "SKILL.md"))
+		if err != nil {
+			t.Fatalf("read checked-in skill %s: %v", name, err)
+		}
+		if string(data) != rendered.Content {
+			t.Fatalf("checked-in skill %s did not match rendered content", name)
+		}
+	}
+}
+
+func TestCanonicalCheckedInCommandsMatchRenderedContent(t *testing.T) {
+	t.Parallel()
+
+	root := repoRoot(t)
+	for _, name := range []string{"start", "status", "recover"} {
+		rendered, err := RenderCommand(name)
+		if err != nil {
+			t.Fatalf("render command %s: %v", name, err)
+		}
+
+		data, err := os.ReadFile(filepath.Join(root, "commands", name+".md"))
+		if err != nil {
+			t.Fatalf("read checked-in command %s: %v", name, err)
+		}
+		if string(data) != rendered.Content {
+			t.Fatalf("checked-in command %s did not match rendered content", name)
+		}
+	}
+}
+
+func TestRenderedSkillsIncludeFrontmatter(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"start", "status", "recover"} {
+		rendered, err := Render(name)
+		if err != nil {
+			t.Fatalf("render %s: %v", name, err)
+		}
+
+		for _, marker := range []string{
+			"---\n",
+			"name: " + name,
+			"description:",
+		} {
+			if !strings.Contains(rendered.Content, marker) {
+				t.Fatalf("expected rendered %s skill to contain %q, got:\n%s", name, marker, rendered.Content)
+			}
 		}
 	}
 }
 
 func TestInstallWritesSelectedHostArtifacts(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir()
 	claudeDir := filepath.Join(root, ".claude", "commands")
 	codexDir := filepath.Join(root, ".codex", "skills")
@@ -89,20 +183,63 @@ func TestInstallWritesSelectedHostArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read installed codex artifact: %v", err)
 	}
-	if !strings.Contains(string(data), "Springfield") {
-		t.Fatalf("expected installed codex artifact to mention Springfield, got:\n%s", string(data))
+	for _, marker := range []string{"Springfield", "start", "status", "recover"} {
+		if !strings.Contains(string(data), marker) {
+			t.Fatalf("expected installed codex artifact to contain %q, got:\n%s", marker, string(data))
+		}
 	}
 	if _, err := os.Stat(filepath.Join(claudeDir, "springfield.md")); !os.IsNotExist(err) {
 		t.Fatalf("expected codex-only install to skip claude artifact, stat err=%v", err)
 	}
 }
 
-func TestCatalogUsesPlanPlaybookPurpose(t *testing.T) {
-	catalog := Catalog()
+func TestInstallDefaultsCodexToAgentsSkillsDir(t *testing.T) {
+	t.Parallel()
 
-	for i, host := range catalog {
-		if got, want := host.Purpose, playbooks.PurposePlan; got != want {
-			t.Fatalf("catalog[%d] purpose = %q, want %q", i, got, want)
+	home := t.TempDir()
+	projectRoot := t.TempDir()
+
+	oldHome := os.Getenv("HOME")
+	t.Cleanup(func() {
+		if oldHome == "" {
+			_ = os.Unsetenv("HOME")
+			return
 		}
+		_ = os.Setenv("HOME", oldHome)
+	})
+	if err := os.Setenv("HOME", home); err != nil {
+		t.Fatalf("set HOME: %v", err)
 	}
+
+	installed, err := Install(projectRoot, InstallOptions{Hosts: []string{"codex"}})
+	if err != nil {
+		t.Fatalf("install codex with default home: %v", err)
+	}
+
+	if len(installed) != 1 {
+		t.Fatalf("installed len = %d, want 1", len(installed))
+	}
+
+	want := filepath.Join(home, ".agents", "skills", "springfield", "SKILL.md")
+	if installed[0].Path != want {
+		t.Fatalf("installed path = %q, want %q", installed[0].Path, want)
+	}
+
+	data, err := os.ReadFile(want)
+	if err != nil {
+		t.Fatalf("read installed codex skill: %v", err)
+	}
+	if !strings.Contains(string(data), "name: springfield") {
+		t.Fatalf("expected installed codex skill to include frontmatter, got:\n%s", string(data))
+	}
+}
+
+func repoRoot(t *testing.T) string {
+	t.Helper()
+
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve current file")
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", ".."))
 }

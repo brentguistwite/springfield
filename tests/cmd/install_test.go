@@ -14,7 +14,9 @@ func TestInstallHelpTargetsClaudeCodeAndCodex(t *testing.T) {
 	}
 
 	for _, marker := range []string{
-		"Install Springfield into Claude Code and Codex.",
+		"Sync Springfield local host artifacts for Claude Code and Codex.",
+		"local bootstrap",
+		"fallback workflows",
 		"claude-code",
 		"codex",
 	} {
@@ -57,7 +59,7 @@ func TestInstallWritesClaudeAndCodexArtifacts(t *testing.T) {
 	claudePath := filepath.Join(claudeDir, "springfield.md")
 	codexPath := filepath.Join(codexDir, "springfield", "SKILL.md")
 	for _, marker := range []string{
-		"Installed Springfield plugins:",
+		"Synced Springfield local host artifacts:",
 		claudePath,
 		codexPath,
 	} {
@@ -157,5 +159,36 @@ func TestInstallSupportsSingleHostSelection(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(codexDir, "springfield", "SKILL.md")); err != nil {
 		t.Fatalf("expected codex-only install to write codex artifact: %v", err)
+	}
+}
+
+func TestInstallDefaultsCodexToAgentsSkillsDir(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	home := t.TempDir()
+
+	output, err := runBinaryInWithEnv(
+		t,
+		bin,
+		dir,
+		[]string{"HOME=" + home},
+		"install",
+		"--host", "codex",
+	)
+	if err != nil {
+		t.Fatalf("default codex install failed: %v\n%s", err, output)
+	}
+
+	want := filepath.Join(home, ".agents", "skills", "springfield", "SKILL.md")
+	if !strings.Contains(output, want) {
+		t.Fatalf("expected output to contain default codex path %q, got:\n%s", want, output)
+	}
+
+	data, err := os.ReadFile(want)
+	if err != nil {
+		t.Fatalf("read default codex skill: %v", err)
+	}
+	if !strings.Contains(string(data), "name: springfield") {
+		t.Fatalf("expected default codex skill to include frontmatter, got:\n%s", string(data))
 	}
 }

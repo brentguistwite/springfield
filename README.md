@@ -2,14 +2,14 @@
 
 Plugin-first, agent-native Springfield with a thin local CLI.
 
-Springfield keeps project-local state in the repo, installs Springfield-branded host artifacts for Claude Code and Codex, and uses a small public CLI for bootstrap and runtime status.
+Springfield keeps project-local state in the repo, distributes end-user setup through host plugins/catalogs first, and keeps a thin local CLI for project bootstrap, local host sync, and runtime status.
 
 ## Public CLI
 
 ```bash
 springfield            # Show help and next-step guidance
 springfield init       # Scaffold springfield.toml and .springfield/
-springfield install    # Install Springfield into Claude Code and Codex
+springfield install    # Sync local Claude Code/Codex host artifacts
 springfield doctor     # Check local agent CLI availability
 springfield status     # Inspect approved Springfield work
 springfield resume     # Run or resume approved Springfield work
@@ -20,6 +20,15 @@ V1 host targets:
 
 - Claude Code
 - Codex
+
+## End-User Install
+
+Primary path:
+
+- Claude: install Springfield from the Claude marketplace.
+- Codex: install Springfield from the Codex plugin/catalog flow.
+
+Use the local CLI only when you need project bootstrap plus local host sync, development setup, or a fallback path outside plugin/catalog distribution.
 
 ## Quick Start
 
@@ -34,16 +43,22 @@ Inside a project:
 
 ```bash
 springfield init
+springfield doctor
+```
+
+If you need local host integration instead of marketplace/catalog install:
+
+```bash
 springfield install
 springfield doctor
 ```
 
-By default `springfield install` writes:
+By default `springfield install` writes deterministic local artifacts:
 
 - `~/.claude/commands/springfield.md`
-- `~/.codex/skills/springfield/SKILL.md`
+- `~/.agents/skills/springfield/SKILL.md`
 
-These installed Springfield artifacts carry the shared Springfield playbook plus project context from `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md` when present.
+These local artifacts carry the shared Springfield playbook plus project context from `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md` when present.
 
 ## Configuration
 
@@ -67,7 +82,8 @@ approval_policy = "never"
 Notes:
 
 - `springfield init` scaffolds `springfield.toml` and `.springfield/`.
-- `springfield install` is the primary bootstrap step after `init`.
+- Primary end-user install is the Claude marketplace or Codex plugin/catalog flow.
+- `springfield install` is the local sync/bootstrap/fallback path after `init`.
 - Recommended execution defaults target Claude Code and Codex together.
 - Runtime state under `.springfield/` is local project state and should not be committed.
 

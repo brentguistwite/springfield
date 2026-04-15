@@ -6,13 +6,17 @@ type Purpose string
 const (
 	PurposePlan    Purpose = "plan"
 	PurposeExplain Purpose = "explain"
+	PurposeStart   Purpose = "start"
+	PurposeStatus  Purpose = "status"
+	PurposeRecover Purpose = "recover"
 )
 
 // Input is the Springfield-owned prompt build contract.
 type Input struct {
-	Purpose     Purpose
-	ProjectRoot string
-	TaskBody    string
+	Purpose               Purpose
+	ProjectRoot           string
+	IncludeProjectContext bool
+	TaskBody              string
 }
 
 // Output captures the resolved sources plus the rendered prompt.

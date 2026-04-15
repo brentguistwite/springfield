@@ -7,7 +7,7 @@ import (
 )
 
 func loadProjectContext(root string) (string, string, error) {
-	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md", "GEMINI.md"} {
 		path := filepath.Join(root, name)
 		data, err := os.ReadFile(path)
 		if err == nil {

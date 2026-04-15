@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// Install renders and writes Springfield host artifacts.
-// When opts.Hosts is empty, the full fixed host catalog is installed.
+// Install renders and writes Springfield local host artifacts.
+// When opts.Hosts is empty, the full fixed host target set is installed.
 func Install(projectRoot string, opts InstallOptions) ([]Installed, error) {
 	hosts, err := selectedHosts(opts.Hosts)
 	if err != nil {
@@ -27,12 +27,12 @@ func Install(projectRoot string, opts InstallOptions) ([]Installed, error) {
 
 	codexDir := strings.TrimSpace(opts.CodexDir)
 	if codexDir == "" {
-		codexDir = filepath.Join(home, ".codex", "skills")
+		codexDir = filepath.Join(home, ".agents", "skills")
 	}
 
 	installed := make([]Installed, 0, len(hosts))
 	for _, host := range hosts {
-		rendered, err := Render(projectRoot, host.Name)
+		content, err := renderLocalTarget(projectRoot, host)
 		if err != nil {
 			return nil, err
 		}
@@ -42,7 +42,7 @@ func Install(projectRoot string, opts InstallOptions) ([]Installed, error) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return nil, fmt.Errorf("create parent dir for %s: %w", host.Name, err)
 		}
-		if err := os.WriteFile(path, []byte(rendered.Content), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			return nil, fmt.Errorf("write %s artifact: %w", host.Name, err)
 		}
 
@@ -55,9 +55,9 @@ func Install(projectRoot string, opts InstallOptions) ([]Installed, error) {
 	return installed, nil
 }
 
-func selectedHosts(names []string) ([]Host, error) {
+func selectedHosts(names []string) ([]LocalTarget, error) {
 	if len(names) == 0 {
-		return Catalog(), nil
+		return localCatalog(), nil
 	}
 
 	want := make(map[string]bool, len(names))
@@ -69,8 +69,8 @@ func selectedHosts(names []string) ([]Host, error) {
 		want[trimmed] = true
 	}
 
-	hosts := make([]Host, 0, len(want))
-	for _, host := range catalog {
+	hosts := make([]LocalTarget, 0, len(want))
+	for _, host := range localCatalog() {
 		if want[host.Name] {
 			hosts = append(hosts, host)
 			delete(want, host.Name)

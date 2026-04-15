@@ -45,9 +45,10 @@ func (s *Session) Next(userInput string) (Response, error) {
 	}
 
 	output, err := playbooks.Build(playbooks.Input{
-		Purpose:     playbooks.PurposePlan,
-		ProjectRoot: s.ProjectRoot,
-		TaskBody:    planningTask(s.request, s.turns),
+		Purpose:               playbooks.PurposePlan,
+		ProjectRoot:           s.ProjectRoot,
+		IncludeProjectContext: true,
+		TaskBody:              planningTask(s.request, s.turns),
 	})
 	if err != nil {
 		return Response{}, fmt.Errorf("build planning prompt: %w", err)
