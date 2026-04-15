@@ -161,7 +161,9 @@ func TestClaudePluginStructure(t *testing.T) {
 	}
 
 	marketplace := readJSON[marketplaceManifest](t, root, ".claude-plugin/marketplace.json")
-	assertMentionsSpringfieldOnly(t, ".claude-plugin/marketplace.json name", marketplace.Name)
+	if marketplace.Name != "brentguistwite" {
+		t.Fatalf("marketplace name = %q, want brentguistwite", marketplace.Name)
+	}
 	if len(marketplace.Plugins) != 1 {
 		t.Fatalf("marketplace plugin count = %d, want 1", len(marketplace.Plugins))
 	}
