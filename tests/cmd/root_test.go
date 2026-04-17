@@ -251,7 +251,7 @@ func TestSpringfieldHelp(t *testing.T) {
 		t.Fatalf("expected Springfield-first help text, got:\n%s", output)
 	}
 
-	if got, want := availableCommands(output), []string{"doctor", "init", "install", "resume", "status", "version"}; !slices.Equal(got, want) {
+	if got, want := availableCommands(output), []string{"doctor", "init", "install", "plan", "resume", "start", "status", "version"}; !slices.Equal(got, want) {
 		t.Fatalf("available commands = %v, want %v\nfull output:\n%s", got, want, output)
 	}
 }
@@ -335,7 +335,7 @@ func TestSpringfieldPublicSubcommandsAreReachable(t *testing.T) {
 	}{
 		{name: "init", marker: "Initialize a new Springfield project in the current directory."},
 		{name: "install", marker: "Sync Springfield local host artifacts for Claude Code and Codex."},
-		{name: "status", marker: "Show status for the active Springfield work or a specific work id."},
+		{name: "status", marker: "Show status for the active Springfield batch or a specific work id."},
 		{name: "resume", marker: "Run or resume the active approved Springfield work."},
 		{name: "doctor", marker: "Doctor checks that supported agent CLIs are installed and reachable, providing install guidance for anything missing."},
 		{name: "version", marker: "Print the Springfield version"},

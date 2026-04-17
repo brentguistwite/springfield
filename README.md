@@ -2,7 +2,7 @@
 
 Plugin-first, agent-native Springfield with a thin local CLI.
 
-Springfield keeps project-local state in the repo, distributes end-user setup through host plugins/catalogs first, and keeps a thin local CLI for project bootstrap, local host sync, and runtime status.
+Springfield keeps project-local state in the repo, distributes end-user setup through host plugins/catalogs first, and keeps a thin local CLI for project bootstrap, local host sync, and runtime execution.
 
 ## Public CLI
 
@@ -11,8 +11,9 @@ springfield            # Show help and next-step guidance
 springfield init       # Scaffold springfield.toml and .springfield/
 springfield install    # Sync local Claude Code/Codex host artifacts
 springfield doctor     # Check local agent CLI availability
-springfield status     # Inspect approved Springfield work
-springfield resume     # Run or resume approved Springfield work
+springfield plan       # Compile a work request into a runnable batch
+springfield start      # Execute the active batch from its saved cursor
+springfield status     # Inspect the active batch or work
 springfield version    # Print build version
 ```
 
@@ -87,28 +88,36 @@ Notes:
 - Recommended execution defaults target Claude Code and Codex together.
 - Runtime state under `.springfield/` is local project state and should not be committed.
 
-Internal execution config at `.springfield/execution/config.json` is Springfield-managed state. The default local shape is:
-
-```json
-{
-  "plans_dir": ".springfield/execution/plans",
-  "worktree_base": ".worktrees",
-  "max_retries": 2,
-  "single_workstream_iterations": 50,
-  "single_workstream_timeout": 3600,
-  "tool": "claude",
-  "sequential": [],
-  "batches": []
-}
-```
-
 ## Runtime Flow
 
-Once Springfield work has been planned and approved, use:
+Use `plan` to compile a work request into a runnable batch, then `start` to execute it:
 
 ```bash
+# Compile from a plan file
+springfield plan --file path/to/plan.md
+
+# Or compile from a direct prompt
+springfield plan --prompt "Implement OAuth 2.0 login"
+
+# Execute the compiled batch
+springfield start
+
+# Check progress
 springfield status
-springfield resume
+```
+
+Execution is serial by default. Parallel execution only happens when the batch explicitly marks independent phases — this is rare and must be intentional.
+
+Integration modes (set with `--integration`):
+- `batch` (default): completed slice branches merge into `feature/<batch-id>`
+- `standalone`: each slice keeps its own branch
+- `main`: merge directly to `main` (use with care)
+
+If a batch already exists, use `--replace` to archive it and start fresh, or `--append` to add new slices:
+
+```bash
+springfield plan --replace --prompt "New approach"
+springfield plan --append --file extra-work.md
 ```
 
 Use `springfield doctor` whenever local agent tooling looks unhealthy or a host CLI is missing.

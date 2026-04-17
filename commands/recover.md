@@ -1,10 +1,10 @@
 ---
-description: Use Springfield recover to diagnose stuck Springfield work and restore a safe next step.
+description: Use Springfield recover to diagnose a stuck batch or failed slice and restore a safe next step.
 ---
 
 # Springfield Recover
 
-Use Springfield recover to diagnose stuck Springfield work and restore a safe next step.
+Use Springfield recover to diagnose a stuck batch or failed slice and restore a safe next step.
 
 # Springfield Playbook
 Source: builtin/springfield.md
@@ -19,10 +19,30 @@ Built-in Springfield playbook.
 
 # Current Task
 
-Recover Springfield work that is stalled, failed, or missing expected state.
+Recover a Springfield batch that is stalled, blocked, or has a failed slice.
 
 Read project guidance from AGENTS.md first, then CLAUDE.md, then GEMINI.md when present.
-Identify the break in state, explain what is recoverable, and drive toward the safest concrete next step to resume progress.
+
+## Step 1 — Read current state
+
+Run `springfield status` to see the active batch, current phase, and slice statuses.
+
+Also read `.springfield/run.json` for the last checkpoint and last known error.
+
+## Step 2 — Diagnose
+
+Identify which slice failed or stalled and why. Check:
+- The last error in `run.json`
+- The slice's branch or worktree refs if set
+- Any blockers mentioned in the batch source
+
+## Step 3 — Recover
+
+Propose the safest concrete next step:
+- For a failed slice: fix the underlying issue, then run `springfield start` to resume from cursor.
+- For a blocked slice: explain what needs to happen before execution can continue.
+- For a corrupt batch: use `springfield plan --replace` to start fresh with a new batch.
+
 Prefer recovery and continuation over starting a fresh plan unless the existing state cannot be salvaged.
 Keep Springfield as the only user-facing surface.
 

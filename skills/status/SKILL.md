@@ -1,11 +1,11 @@
 ---
 name: status
-description: Use Springfield status to inspect current Springfield work and explain where it stands.
+description: Use Springfield status to inspect the active batch and explain where it stands.
 ---
 
 # Springfield Status
 
-Use Springfield status to inspect current Springfield work and explain where it stands.
+Use Springfield status to inspect the active batch and explain where it stands.
 
 # Springfield Playbook
 Source: builtin/springfield.md
@@ -20,9 +20,16 @@ Built-in Springfield playbook.
 
 # Current Task
 
-Inspect the current Springfield work for the project and report the current state.
+Inspect the current Springfield batch for the project and report the current state.
 
 Read project guidance from AGENTS.md first, then CLAUDE.md, then GEMINI.md when present.
-Summarize the active or most recent Springfield work, workstream status, blockers, risks, and the clearest next action.
+
+Run `springfield status` to get the machine-readable view, then summarize:
+- The active batch id and title
+- The current phase and integration mode
+- Which slices are done, running, blocked, or queued
+- The last known error if any
+- The clearest next action for the user
+
 Do not invent new work unless the user explicitly asks to re-plan it.
 Keep Springfield as the only user-facing surface.

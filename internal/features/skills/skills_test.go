@@ -56,7 +56,7 @@ func TestRenderUsesSharedHostNeutralPlaybookPrompt(t *testing.T) {
 	if rendered.Prompt != out.Prompt {
 		t.Fatalf("expected prompt to come from shared playbook builder")
 	}
-	for _, marker := range []string{"Springfield", "Built-in Springfield playbook.", "Start Springfield work for the current project."} {
+	for _, marker := range []string{"Springfield", "Built-in Springfield playbook.", "Execute the active Springfield batch for the current project."} {
 		if !strings.Contains(rendered.Content, marker) {
 			t.Fatalf("expected rendered content to contain %q, got:\n%s", marker, rendered.Content)
 		}
@@ -84,13 +84,13 @@ func TestSkillsHaveDistinctTaskBehavior(t *testing.T) {
 		t.Fatalf("render recover: %v", err)
 	}
 
-	if !strings.Contains(start.Content, "Turn the request into a concrete Springfield work definition with named workstreams, constraints, and success criteria.") {
-		t.Fatalf("expected start prompt boundary to be kickoff-specific, got:\n%s", start.Content)
+	if !strings.Contains(start.Content, "Execute the active Springfield batch for the current project.") {
+		t.Fatalf("expected start prompt boundary to be execution-specific, got:\n%s", start.Content)
 	}
-	if !strings.Contains(status.Content, "Summarize the active or most recent Springfield work, workstream status, blockers, risks, and the clearest next action.") {
+	if !strings.Contains(status.Content, "Run `springfield status` to get the machine-readable view") {
 		t.Fatalf("expected status prompt boundary to be status-specific, got:\n%s", status.Content)
 	}
-	if !strings.Contains(recover.Content, "Identify the break in state, explain what is recoverable, and drive toward the safest concrete next step to resume progress.") {
+	if !strings.Contains(recover.Content, "Recover a Springfield batch that is stalled, blocked, or has a failed slice.") {
 		t.Fatalf("expected recover prompt boundary to be recovery-specific, got:\n%s", recover.Content)
 	}
 }

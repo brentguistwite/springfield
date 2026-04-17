@@ -1,10 +1,10 @@
 ---
-description: Use Springfield start to shape a new work definition for the current project.
+description: Use Springfield start to execute the active batch for the current project from its saved cursor.
 ---
 
 # Springfield Start
 
-Use Springfield start to shape a new work definition for the current project.
+Use Springfield start to execute the active batch for the current project from its saved cursor.
 
 # Springfield Playbook
 Source: builtin/springfield.md
@@ -19,11 +19,28 @@ Built-in Springfield playbook.
 
 # Current Task
 
-Start Springfield work for the current project.
+Execute the active Springfield batch for the current project.
 
 Read project guidance from AGENTS.md first, then CLAUDE.md, then GEMINI.md when present.
-Clarify the requested outcome only when the request is underspecified.
-Turn the request into a concrete Springfield work definition with named workstreams, constraints, and success criteria.
+
+## Step 1 — Check for active batch
+
+Run `springfield status` to confirm an active batch exists and review its current cursor.
+
+If no active batch exists, stop and tell the user to run `/springfield:plan` first.
+
+## Step 2 — Execute
+
+Run `springfield start` to execute from the saved cursor.
+
+- Execution is serial by default.
+- Parallel execution only happens when the batch explicitly marks independent phases.
+- If a slice fails, report the blocker clearly and do not proceed to the next slice.
+
+## Step 3 — Report
+
+After execution, report the batch outcome: which slices completed, which failed and why, and what the user should do next.
+
 Keep Springfield as the only user-facing surface.
 
 ## Invocation Input

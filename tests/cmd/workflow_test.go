@@ -82,8 +82,8 @@ func TestSpringfieldStatusHelpMentionsActiveWork(t *testing.T) {
 	}
 
 	for _, marker := range []string{
-		"Show status for the active Springfield work or a specific work id.",
-		"Springfield work id (default: active work)",
+		"Show status for the active Springfield batch or a specific work id.",
+		"Springfield work id",
 	} {
 		if !strings.Contains(output, marker) {
 			t.Fatalf("expected status help to contain %q, got:\n%s", marker, output)
