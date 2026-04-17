@@ -2,7 +2,6 @@ package config
 
 import (
 	"bytes"
-	"os"
 
 	"github.com/BurntSushi/toml"
 )
@@ -34,7 +33,7 @@ func Save(loaded Loaded) error {
 		return err
 	}
 
-	return os.WriteFile(loaded.Path, buf.Bytes(), 0644)
+	return writeFileAtomic(loaded.Path, buf.Bytes(), 0644)
 }
 
 func newSaveConfig(cfg Config) saveConfig {

@@ -21,6 +21,7 @@ func isTTY(fd int) bool {
 // NewInitCommand creates the `springfield init` subcommand.
 func NewInitCommand() *cobra.Command {
 	var agentsFlag string
+	var resetFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -37,7 +38,7 @@ func NewInitCommand() *cobra.Command {
 				return err
 			}
 
-			result, err := config.Init(dir, priority)
+			result, err := config.Init(dir, priority, config.InitOptions{Reset: resetFlag})
 			if err != nil {
 				return err
 			}
@@ -46,7 +47,14 @@ func NewInitCommand() *cobra.Command {
 				fmt.Fprintf(cmd.OutOrStdout(), "Backed up previous %s to %s\n", config.FileName, result.BackupPath)
 			}
 
-			fmt.Fprintln(cmd.OutOrStdout(), "Created "+config.FileName)
+			switch {
+			case result.ConfigCreated || result.BackupPath != "":
+				fmt.Fprintln(cmd.OutOrStdout(), "Created "+config.FileName)
+			case result.ConfigUpdated:
+				fmt.Fprintln(cmd.OutOrStdout(), "Updated "+config.FileName+" with recommended defaults")
+			default:
+				fmt.Fprintln(cmd.OutOrStdout(), config.FileName+" already up to date")
+			}
 
 			if result.RuntimeDirCreated {
 				fmt.Fprintln(cmd.OutOrStdout(), "Created .springfield/")
@@ -62,6 +70,7 @@ func NewInitCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&agentsFlag, "agents", "", "Comma-separated agent priority list (e.g. claude,codex)")
+	cmd.Flags().BoolVar(&resetFlag, "reset", false, "Back up existing config and rewrite from scratch (destructive)")
 
 	return cmd
 }

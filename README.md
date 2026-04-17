@@ -85,7 +85,7 @@ Notes:
 - `springfield init` asks for the agent priority order (default `claude,codex`) and scaffolds `springfield.toml` + `.springfield/` with recommended execution settings for Claude and Codex. Use `--agents codex,claude` to skip the prompt, or pipe input to run non-interactively.
 - Primary end-user install is the Claude marketplace or Codex plugin/catalog flow.
 - `springfield install` is the local sync/bootstrap/fallback path after `init`.
-- Re-running `init` backs up the existing `springfield.toml` to `springfield.toml.bak-<timestamp>` before writing fresh.
+- Re-running `init` preserves existing config, only filling in missing recommended defaults and agent priority. Use `springfield init --reset` to back up the current config and rewrite it from scratch.
 - Runtime state under `.springfield/` is local project state and should not be committed.
 
 ## Runtime Flow

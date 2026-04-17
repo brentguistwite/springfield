@@ -78,21 +78,57 @@ func TestInitNonTTYDefaultsToSupportedAgents(t *testing.T) {
 	}
 }
 
-// TestInitReInitPrintsBackupPath verifies re-init prints the backup path.
-func TestInitReInitPrintsBackupPath(t *testing.T) {
+// TestInitReInitNoResetNoBackup verifies that re-running init without --reset does not
+// create a backup file and prints no backup message.
+func TestInitReInitNoResetNoBackup(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 
-	// First init
+	// First init.
 	_, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude,codex")
 	if err != nil {
 		t.Fatalf("first init failed: %v", err)
 	}
 
-	// Second init (re-init)
+	// Second init without --reset.
 	output, err := runBinaryIn(t, bin, dir, "init", "--agents", "codex,claude")
 	if err != nil {
-		t.Fatalf("re-init failed: %v\n%s", err, output)
+		t.Fatalf("re-init (no --reset) failed: %v\n%s", err, output)
+	}
+
+	if strings.Contains(output, "Backed up") {
+		t.Errorf("expected no backup message on re-init without --reset, got:\n%s", output)
+	}
+
+	// Verify no .bak-* file exists.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	pattern := regexp.MustCompile(`^springfield\.toml\.bak-`)
+	for _, e := range entries {
+		if pattern.MatchString(e.Name()) {
+			t.Errorf("unexpected backup file found: %s", e.Name())
+		}
+	}
+}
+
+// TestInitResetPrintsBackupPath verifies --reset prints the backup path and creates
+// a .bak-* file.
+func TestInitResetPrintsBackupPath(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	// First init.
+	_, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude,codex")
+	if err != nil {
+		t.Fatalf("first init failed: %v", err)
+	}
+
+	// Re-init with --reset.
+	output, err := runBinaryIn(t, bin, dir, "init", "--agents", "codex,claude", "--reset")
+	if err != nil {
+		t.Fatalf("re-init --reset failed: %v\n%s", err, output)
 	}
 
 	if !strings.Contains(output, "Backed up previous springfield.toml to") {

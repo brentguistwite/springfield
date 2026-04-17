@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"springfield/internal/core/config"
@@ -12,18 +13,18 @@ import (
 func TestInitCreatesConfigAndRuntimeDir(t *testing.T) {
 	dir := t.TempDir()
 
-	result, err := config.Init(dir, []string{"codex", "claude"})
+	result, err := config.Init(dir, []string{"codex", "claude"}, config.InitOptions{})
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
 
-	// Config file should exist and be loadable
+	// Config file should exist and be loadable.
 	configPath := filepath.Join(dir, config.FileName)
 	if _, err := os.Stat(configPath); err != nil {
 		t.Fatalf("config file not created: %v", err)
 	}
 
-	// Runtime dir should exist
+	// Runtime dir should exist.
 	runtimeDir := filepath.Join(dir, ".springfield")
 	info, err := os.Stat(runtimeDir)
 	if err != nil {
@@ -33,15 +34,21 @@ func TestInitCreatesConfigAndRuntimeDir(t *testing.T) {
 		t.Fatal(".springfield should be a directory")
 	}
 
-	// RuntimeDirCreated true, BackupPath empty (no pre-existing config)
-	if !result.RuntimeDirCreated {
-		t.Error("expected RuntimeDirCreated=true")
+	// ConfigCreated true, BackupPath empty (no pre-existing config).
+	if !result.ConfigCreated {
+		t.Error("expected ConfigCreated=true")
+	}
+	if result.ConfigUpdated {
+		t.Error("expected ConfigUpdated=false on fresh init")
 	}
 	if result.BackupPath != "" {
 		t.Errorf("expected BackupPath empty, got %q", result.BackupPath)
 	}
+	if !result.RuntimeDirCreated {
+		t.Error("expected RuntimeDirCreated=true")
+	}
 
-	// Created config should be loadable with priority-specific defaults
+	// Created config should be loadable with priority-specific defaults.
 	loaded, err := config.LoadFrom(dir)
 	if err != nil {
 		t.Fatalf("created config should be loadable: %v", err)
@@ -54,7 +61,7 @@ func TestInitCreatesConfigAndRuntimeDir(t *testing.T) {
 		t.Errorf("agent_priority: want [codex claude], got %v", priority)
 	}
 
-	// Both agent sections always emitted with recommended defaults
+	// Both agent sections always emitted with recommended defaults.
 	if got := loaded.Config.Agents.Claude.PermissionMode; got != "bypassPermissions" {
 		t.Errorf("claude permission_mode: want bypassPermissions, got %q", got)
 	}
@@ -66,58 +73,292 @@ func TestInitCreatesConfigAndRuntimeDir(t *testing.T) {
 	}
 }
 
-func TestInitBacksUpExistingConfig(t *testing.T) {
+func TestInitMergePreservesPlans(t *testing.T) {
 	dir := t.TempDir()
 
-	// Pre-create config with custom content
+	// Pre-create config with a [plans] section.
 	configPath := filepath.Join(dir, config.FileName)
-	original := []byte("[project]\ndefault_agent = \"custom-agent\"\n")
-	if err := os.WriteFile(configPath, original, 0644); err != nil {
+	original := `[project]
+default_agent = "claude"
+agent_priority = ["claude", "codex"]
+
+[agents.claude]
+permission_mode = "bypassPermissions"
+
+[agents.codex]
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+
+[plans.release]
+agent = "codex"
+`
+	if err := os.WriteFile(configPath, []byte(original), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	result, err := config.Init(dir, []string{"claude", "codex"})
+	// Re-init with different priority (merge mode, no reset).
+	result, err := config.Init(dir, []string{"codex", "claude"}, config.InitOptions{})
 	if err != nil {
 		t.Fatalf("re-init failed: %v", err)
 	}
 
-	// BackupPath must be set
-	if result.BackupPath == "" {
-		t.Fatal("expected BackupPath to be set")
+	if result.BackupPath != "" {
+		t.Errorf("expected no backup in merge mode, got %q", result.BackupPath)
+	}
+	if result.ConfigCreated {
+		t.Error("expected ConfigCreated=false on re-init")
+	}
+	// Priority changed codex→first, so ConfigUpdated should be true.
+	if !result.ConfigUpdated {
+		t.Error("expected ConfigUpdated=true (priority changed)")
 	}
 
-	// Backup file must contain original content
-	backed, err := os.ReadFile(result.BackupPath)
-	if err != nil {
-		t.Fatalf("read backup file: %v", err)
-	}
-	if string(backed) != string(original) {
-		t.Errorf("backup content mismatch\nwant: %q\ngot:  %q", string(original), string(backed))
-	}
-
-	// New config file has fresh content (not the custom agent)
+	// [plans.release] must survive.
 	loaded, err := config.LoadFrom(dir)
 	if err != nil {
 		t.Fatalf("load after re-init: %v", err)
 	}
-	if loaded.Config.Project.DefaultAgent == "custom-agent" {
-		t.Error("new config still has old default_agent; expected fresh scaffold")
+	plan, ok := loaded.Config.Plans["release"]
+	if !ok {
+		t.Error("expected [plans.release] to be preserved after merge")
+	} else if plan.Agent != "codex" {
+		t.Errorf("plans.release.agent: want codex, got %q", plan.Agent)
+	}
+
+	// Priority updated.
+	if loaded.Config.Project.DefaultAgent != "codex" {
+		t.Errorf("default_agent: want codex, got %q", loaded.Config.Project.DefaultAgent)
+	}
+}
+
+func TestInitMergeFillsMissingAgentDefaults(t *testing.T) {
+	dir := t.TempDir()
+
+	// Pre-create config with only [project] section (no agents).
+	configPath := filepath.Join(dir, config.FileName)
+	original := `[project]
+default_agent = "claude"
+agent_priority = ["claude", "codex"]
+`
+	if err := os.WriteFile(configPath, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := config.Init(dir, []string{"claude", "codex"}, config.InitOptions{})
+	if err != nil {
+		t.Fatalf("re-init failed: %v", err)
+	}
+
+	if result.BackupPath != "" {
+		t.Errorf("expected no backup in merge mode, got %q", result.BackupPath)
+	}
+	// Agents were filled in → ConfigUpdated.
+	if !result.ConfigUpdated {
+		t.Error("expected ConfigUpdated=true (agent defaults filled)")
+	}
+
+	loaded, err := config.LoadFrom(dir)
+	if err != nil {
+		t.Fatalf("load after merge: %v", err)
+	}
+	if loaded.Config.Agents.Claude.PermissionMode != "bypassPermissions" {
+		t.Errorf("claude permission_mode: want bypassPermissions, got %q", loaded.Config.Agents.Claude.PermissionMode)
+	}
+	if loaded.Config.Agents.Codex.SandboxMode != "danger-full-access" {
+		t.Errorf("codex sandbox_mode: want danger-full-access, got %q", loaded.Config.Agents.Codex.SandboxMode)
+	}
+	if loaded.Config.Agents.Codex.ApprovalPolicy != "never" {
+		t.Errorf("codex approval_policy: want never, got %q", loaded.Config.Agents.Codex.ApprovalPolicy)
+	}
+}
+
+func TestInitMergePreservesCustomAgentSettings(t *testing.T) {
+	dir := t.TempDir()
+
+	// Pre-create config with a non-default but valid claude permission_mode.
+	// "acceptEdits" is valid and differs from the recommended "bypassPermissions",
+	// so merge must preserve it and still fill in the absent Codex section.
+	configPath := filepath.Join(dir, config.FileName)
+	original := `[project]
+default_agent = "claude"
+agent_priority = ["claude", "codex"]
+
+[agents.claude]
+permission_mode = "acceptEdits"
+`
+	if err := os.WriteFile(configPath, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := config.Init(dir, []string{"claude", "codex"}, config.InitOptions{})
+	if err != nil {
+		t.Fatalf("re-init failed: %v", err)
+	}
+
+	if result.BackupPath != "" {
+		t.Errorf("expected no backup in merge mode, got %q", result.BackupPath)
+	}
+	// Codex defaults were filled in → ConfigUpdated must be true.
+	if !result.ConfigUpdated {
+		t.Error("expected ConfigUpdated=true (Codex defaults filled in)")
+	}
+
+	loaded, err := config.LoadFrom(dir)
+	if err != nil {
+		t.Fatalf("load after merge: %v", err)
+	}
+
+	// Custom claude setting must be preserved (not overwritten with recommended).
+	if loaded.Config.Agents.Claude.PermissionMode != "acceptEdits" {
+		t.Errorf("claude permission_mode: want acceptEdits (preserved), got %q", loaded.Config.Agents.Claude.PermissionMode)
+	}
+
+	// Codex was absent → should be filled with defaults.
+	if loaded.Config.Agents.Codex.SandboxMode != "danger-full-access" {
+		t.Errorf("codex sandbox_mode: want danger-full-access, got %q", loaded.Config.Agents.Codex.SandboxMode)
+	}
+	if loaded.Config.Agents.Codex.ApprovalPolicy != "never" {
+		t.Errorf("codex approval_policy: want never, got %q", loaded.Config.Agents.Codex.ApprovalPolicy)
+	}
+}
+
+func TestInitMergeUpdatesAgentPriority(t *testing.T) {
+	dir := t.TempDir()
+
+	configPath := filepath.Join(dir, config.FileName)
+	original := `[project]
+default_agent = "claude"
+agent_priority = ["claude"]
+
+[agents.claude]
+permission_mode = "bypassPermissions"
+
+[agents.codex]
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+`
+	if err := os.WriteFile(configPath, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := config.Init(dir, []string{"codex", "claude"}, config.InitOptions{})
+	if err != nil {
+		t.Fatalf("re-init failed: %v", err)
+	}
+	if !result.ConfigUpdated {
+		t.Error("expected ConfigUpdated=true (priority changed)")
+	}
+
+	loaded, err := config.LoadFrom(dir)
+	if err != nil {
+		t.Fatalf("load after merge: %v", err)
+	}
+	priority := loaded.Config.EffectivePriority()
+	if len(priority) != 2 || priority[0] != "codex" || priority[1] != "claude" {
+		t.Errorf("agent_priority: want [codex claude], got %v", priority)
+	}
+	if loaded.Config.Project.DefaultAgent != "codex" {
+		t.Errorf("default_agent: want codex, got %q", loaded.Config.Project.DefaultAgent)
+	}
+}
+
+func TestInitMergeIsIdempotent(t *testing.T) {
+	dir := t.TempDir()
+
+	// Fresh init.
+	_, err := config.Init(dir, []string{"claude", "codex"}, config.InitOptions{})
+	if err != nil {
+		t.Fatalf("first init failed: %v", err)
+	}
+
+	// Second init with same priority — no changes needed.
+	result, err := config.Init(dir, []string{"claude", "codex"}, config.InitOptions{})
+	if err != nil {
+		t.Fatalf("second init failed: %v", err)
+	}
+	if result.ConfigUpdated {
+		t.Error("expected ConfigUpdated=false on idempotent re-init")
+	}
+	if result.BackupPath != "" {
+		t.Errorf("expected no backup on idempotent re-init, got %q", result.BackupPath)
+	}
+}
+
+func TestInitResetBacksUpAndWritesFresh(t *testing.T) {
+	dir := t.TempDir()
+
+	// Pre-create a minimal valid config (with agents) so it round-trips cleanly.
+	configPath := filepath.Join(dir, config.FileName)
+	original := `[project]
+default_agent = "claude"
+agent_priority = ["claude", "codex"]
+
+[agents.claude]
+permission_mode = "bypassPermissions"
+
+[agents.codex]
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+
+[plans.release]
+agent = "codex"
+`
+	if err := os.WriteFile(configPath, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := config.Init(dir, []string{"claude", "codex"}, config.InitOptions{Reset: true})
+	if err != nil {
+		t.Fatalf("reset init failed: %v", err)
+	}
+
+	// BackupPath must be set.
+	if result.BackupPath == "" {
+		t.Fatal("expected BackupPath to be set on --reset")
+	}
+
+	// Backup file must contain original content.
+	backed, err := os.ReadFile(result.BackupPath)
+	if err != nil {
+		t.Fatalf("read backup file: %v", err)
+	}
+	if string(backed) != original {
+		t.Errorf("backup content mismatch\nwant: %q\ngot:  %q", original, string(backed))
+	}
+
+	// New config has fresh scaffold — no [plans.release].
+	loaded, err := config.LoadFrom(dir)
+	if err != nil {
+		t.Fatalf("load after reset: %v", err)
+	}
+	if _, ok := loaded.Config.Plans["release"]; ok {
+		t.Error("expected [plans.release] to be gone after --reset")
 	}
 	if loaded.Config.Project.DefaultAgent != "claude" {
-		t.Errorf("new default_agent: want claude, got %q", loaded.Config.Project.DefaultAgent)
+		t.Errorf("default_agent: want claude, got %q", loaded.Config.Project.DefaultAgent)
 	}
 }
 
 func TestInitBackupPathFormat(t *testing.T) {
 	dir := t.TempDir()
 
-	// Pre-create config so a backup will be made
 	configPath := filepath.Join(dir, config.FileName)
-	if err := os.WriteFile(configPath, []byte("[project]\n"), 0644); err != nil {
+	stub := `[project]
+default_agent = "claude"
+agent_priority = ["claude", "codex"]
+
+[agents.claude]
+permission_mode = "bypassPermissions"
+
+[agents.codex]
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+`
+	if err := os.WriteFile(configPath, []byte(stub), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	result, err := config.Init(dir, []string{"claude", "codex"})
+	result, err := config.Init(dir, []string{"claude", "codex"}, config.InitOptions{Reset: true})
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
@@ -129,5 +370,24 @@ func TestInitBackupPathFormat(t *testing.T) {
 	pattern := regexp.MustCompile(`^springfield\.toml\.bak-\d{8}T\d{6}Z$`)
 	if !pattern.MatchString(base) {
 		t.Errorf("backup filename %q does not match expected pattern springfield.toml.bak-<ISO8601>", base)
+	}
+}
+
+func TestInitAtomicWriteLeavesNoOrphan(t *testing.T) {
+	dir := t.TempDir()
+
+	_, err := config.Init(dir, []string{"claude", "codex"}, config.InitOptions{})
+	if err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp-") {
+			t.Errorf("orphan temp file found: %s", e.Name())
+		}
 	}
 }
