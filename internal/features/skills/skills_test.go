@@ -14,20 +14,77 @@ func TestCatalogShapeLockedToSpringfieldSkills(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 3 {
-		t.Fatalf("catalog len = %d, want 3", len(catalog))
+	if len(catalog) != 4 {
+		t.Fatalf("catalog len = %d, want 4", len(catalog))
 	}
 
 	got := []string{
 		string(catalog[0].Name),
 		string(catalog[1].Name),
 		string(catalog[2].Name),
+		string(catalog[3].Name),
 	}
-	want := []string{"start", "status", "recover"}
+	want := []string{"plan", "start", "status", "recover"}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("catalog[%d] = %q, want %q", i, got[i], want[i])
 		}
+	}
+}
+
+func TestCatalog_IncludesPlan(t *testing.T) {
+	t.Parallel()
+
+	for _, s := range Catalog() {
+		if string(s.Name) == "plan" {
+			if s.Purpose != playbooks.PurposePlan {
+				t.Errorf("plan skill Purpose = %q, want %q", s.Purpose, playbooks.PurposePlan)
+			}
+			if s.RelativePath != "skills/plan/SKILL.md" {
+				t.Errorf("plan skill RelativePath = %q, want skills/plan/SKILL.md", s.RelativePath)
+			}
+			return
+		}
+	}
+	t.Fatalf("plan skill missing from catalog")
+}
+
+func TestLookup_Plan(t *testing.T) {
+	t.Parallel()
+
+	s, err := Lookup("plan")
+	if err != nil {
+		t.Fatalf("Lookup(plan): %v", err)
+	}
+	if string(s.Name) != "plan" {
+		t.Errorf("Name = %q, want plan", s.Name)
+	}
+}
+
+func TestRender_Plan(t *testing.T) {
+	t.Parallel()
+
+	r, err := Render("plan")
+	if err != nil {
+		t.Fatalf("Render(plan): %v", err)
+	}
+	if !strings.Contains(r.Content, "Springfield Plan") {
+		t.Errorf("rendered content missing Springfield Plan header:\n%s", r.Content)
+	}
+	if !strings.Contains(r.Content, "Compile a Springfield batch") {
+		t.Errorf("rendered content missing TaskBody opener:\n%s", r.Content)
+	}
+}
+
+func TestRenderCommand_Plan(t *testing.T) {
+	t.Parallel()
+
+	r, err := RenderCommand("plan")
+	if err != nil {
+		t.Fatalf("RenderCommand(plan): %v", err)
+	}
+	if !strings.Contains(r.Content, "$ARGUMENTS") {
+		t.Errorf("rendered command missing $ARGUMENTS hook:\n%s", r.Content)
 	}
 }
 
@@ -99,7 +156,7 @@ func TestCanonicalCheckedInSkillsMatchRenderedContent(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
-	for _, name := range []string{"start", "status", "recover"} {
+	for _, name := range []string{"plan", "start", "status", "recover"} {
 		rendered, err := Render(name)
 		if err != nil {
 			t.Fatalf("render %s: %v", name, err)
@@ -119,7 +176,7 @@ func TestCanonicalCheckedInCommandsMatchRenderedContent(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
-	for _, name := range []string{"start", "status", "recover"} {
+	for _, name := range []string{"plan", "start", "status", "recover"} {
 		rendered, err := RenderCommand(name)
 		if err != nil {
 			t.Fatalf("render command %s: %v", name, err)
@@ -138,7 +195,7 @@ func TestCanonicalCheckedInCommandsMatchRenderedContent(t *testing.T) {
 func TestRenderedSkillsIncludeFrontmatter(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"start", "status", "recover"} {
+	for _, name := range []string{"plan", "start", "status", "recover"} {
 		rendered, err := Render(name)
 		if err != nil {
 			t.Fatalf("render %s: %v", name, err)
@@ -183,10 +240,29 @@ func TestInstallWritesSelectedHostArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read installed codex artifact: %v", err)
 	}
-	for _, marker := range []string{"Springfield", "start", "status", "recover"} {
+	for _, marker := range []string{"Springfield", "plan", "start", "status", "recover"} {
 		if !strings.Contains(string(data), marker) {
 			t.Fatalf("expected installed codex artifact to contain %q, got:\n%s", marker, string(data))
 		}
+	}
+	// Lock plan-first ordering of the user-visible Springfield Skills bullet list.
+	body := string(data)
+	sectionIdx := strings.Index(body, "## Springfield Skills")
+	if sectionIdx < 0 {
+		t.Fatalf("installed codex helper missing '## Springfield Skills' section:\n%s", body)
+	}
+	section := body[sectionIdx:]
+	wantOrder := []string{"- plan", "- start", "- status", "- recover"}
+	last := -1
+	for _, marker := range wantOrder {
+		idx := strings.Index(section, marker)
+		if idx < 0 {
+			t.Fatalf("Springfield Skills section missing %q:\n%s", marker, section)
+		}
+		if idx <= last {
+			t.Fatalf("Springfield Skills section out of order: %q at %d, prior marker at %d:\n%s", marker, idx, last, section)
+		}
+		last = idx
 	}
 	if _, err := os.Stat(filepath.Join(claudeDir, "springfield.md")); !os.IsNotExist(err) {
 		t.Fatalf("expected codex-only install to skip claude artifact, stat err=%v", err)

@@ -26,7 +26,7 @@ Read project guidance from AGENTS.md first, then CLAUDE.md, then GEMINI.md when 
 
 Run `springfield status` to get the machine-readable view, then summarize:
 - The active batch id and title
-- The current phase and integration mode
+- The current phase
 - Which slices are done, running, blocked, or queued
 - The last known error if any
 - The clearest next action for the user

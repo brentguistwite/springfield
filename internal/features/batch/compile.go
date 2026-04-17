@@ -14,8 +14,6 @@ type CompileInput struct {
 	Source string
 	// Kind indicates whether Source came from a file or a direct prompt.
 	Kind SourceKind
-	// Integration controls how slice branches are merged.
-	Integration IntegrationMode
 	// ExistingIDs is the set of batch IDs already in use (for collision avoidance).
 	ExistingIDs map[string]struct{}
 }
@@ -35,11 +33,6 @@ func Compile(in CompileInput) (CompileOutput, error) {
 	title := strings.TrimSpace(in.Title)
 	if title == "" {
 		title = derivedTitle(in.Source)
-	}
-
-	integration := in.Integration
-	if integration == "" {
-		integration = IntegrationBatch
 	}
 
 	existingIDs := in.ExistingIDs
@@ -80,44 +73,55 @@ func Compile(in CompileInput) (CompileOutput, error) {
 	}
 
 	b := Batch{
-		ID:              batchID,
-		Title:           title,
-		SourceKind:      in.Kind,
-		IntegrationMode: integration,
-		Phases:          phases,
-		Slices:          slices,
+		ID:         batchID,
+		Title:      title,
+		SourceKind: in.Kind,
+		Phases:     phases,
+		Slices:     slices,
 	}
 
 	return CompileOutput{Batch: b, Source: in.Source}, nil
 }
 
-// reTaskHeader matches markdown task headers like "## Task 1:", "## 1.", "## Step 1 —"
-var reTaskHeader = regexp.MustCompile(`(?m)^#{1,3}\s+(?:Task\s+)?(\d+)[.:)\s—–-]+(.*?)$`)
+// reTaskHeader matches markdown task headers like "## Task 1:" or "## Step 1 —".
+// The Task/Step prefix is mandatory so numbered subheadings inside a body
+// (e.g. "### 1. Acceptance Criteria") do not split slices.
+var reTaskHeader = regexp.MustCompile(`(?m)^#{1,3}\s+(?:Task|Step)\s+(\d+)[.:)\s—–-]+(.*?)$`)
 
 // parseMarkdownSlices extracts ordered slices from a plan markdown document.
+// Each slice's Summary is the markdown between its task header and the next
+// task header (or end of document), trimmed of surrounding whitespace.
 func parseMarkdownSlices(md string) []Slice {
-	matches := reTaskHeader.FindAllStringSubmatch(md, -1)
+	matches := reTaskHeader.FindAllStringSubmatchIndex(md, -1)
 	if len(matches) == 0 {
 		return nil
 	}
 
 	seen := map[string]struct{}{}
 	slices := make([]Slice, 0, len(matches))
-	for _, m := range matches {
-		num := strings.TrimSpace(m[1])
-		title := strings.TrimSpace(m[2])
+	for i, m := range matches {
+		num := strings.TrimSpace(md[m[2]:m[3]])
+		title := strings.TrimSpace(md[m[4]:m[5]])
 		if title == "" {
 			title = "Task " + num
 		}
+
+		bodyStart := m[1]
+		bodyEnd := len(md)
+		if i+1 < len(matches) {
+			bodyEnd = matches[i+1][0]
+		}
+		summary := strings.TrimSpace(md[bodyStart:bodyEnd])
 
 		id := fmt.Sprintf("%02s", num)
 		id = UniqueID(id, seen)
 		seen[id] = struct{}{}
 
 		slices = append(slices, Slice{
-			ID:     id,
-			Title:  title,
-			Status: SliceQueued,
+			ID:      id,
+			Title:   title,
+			Summary: summary,
+			Status:  SliceQueued,
 		})
 	}
 	return slices

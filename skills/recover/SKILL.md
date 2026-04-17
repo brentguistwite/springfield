@@ -34,7 +34,6 @@ Also read `.springfield/run.json` for the last checkpoint and last known error.
 
 Identify which slice failed or stalled and why. Check:
 - The last error in `run.json`
-- The slice's branch or worktree refs if set
 - Any blockers mentioned in the batch source
 
 ## Step 3 — Recover

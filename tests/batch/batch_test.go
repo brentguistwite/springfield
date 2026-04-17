@@ -2,6 +2,7 @@ package batch_test
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,9 +54,6 @@ func TestCompilePromptMode(t *testing.T) {
 	}
 	if out.Batch.ID != "add-oauth" {
 		t.Errorf("batch ID = %q, want add-oauth", out.Batch.ID)
-	}
-	if out.Batch.IntegrationMode != batch.IntegrationBatch {
-		t.Errorf("integration mode = %q, want batch", out.Batch.IntegrationMode)
 	}
 	if len(out.Batch.Slices) != 1 {
 		t.Fatalf("slice count = %d, want 1", len(out.Batch.Slices))
@@ -129,12 +127,11 @@ func TestWriteAndReadBatch(t *testing.T) {
 	}
 
 	b := batch.Batch{
-		ID:              "my-batch",
-		Title:           "My Batch",
-		SourceKind:      batch.SourcePrompt,
-		IntegrationMode: batch.IntegrationBatch,
-		Phases:          []batch.Phase{{Mode: batch.PhaseSerial, Slices: []string{"01"}}},
-		Slices:          []batch.Slice{{ID: "01", Title: "Do stuff", Status: batch.SliceQueued}},
+		ID:         "my-batch",
+		Title:      "My Batch",
+		SourceKind: batch.SourcePrompt,
+		Phases:     []batch.Phase{{Mode: batch.PhaseSerial, Slices: []string{"01"}}},
+		Slices:     []batch.Slice{{ID: "01", Title: "Do stuff", Status: batch.SliceQueued}},
 	}
 
 	if err := batch.WriteBatch(paths, b, "do stuff"); err != nil {
@@ -194,6 +191,105 @@ func TestReadRunMissingFile(t *testing.T) {
 	}
 	if ok {
 		t.Error("expected ok=false for missing run.json")
+	}
+}
+
+func TestCompile_FileSourceCapturesTaskBody(t *testing.T) {
+	source := `# My Plan
+
+## Task 1: Build the thing
+
+Do step A.
+Do step B.
+
+Constraints: must not break X.
+
+## Task 2: Verify
+
+Run the tests.
+`
+	out, err := batch.Compile(batch.CompileInput{
+		Title:  "demo",
+		Source: source,
+		Kind:   batch.SourceFile,
+	})
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if len(out.Batch.Slices) != 2 {
+		t.Fatalf("slice count = %d, want 2", len(out.Batch.Slices))
+	}
+
+	s1 := out.Batch.Slices[0]
+	for _, want := range []string{"Do step A.", "Do step B.", "Constraints: must not break X."} {
+		if !strings.Contains(s1.Summary, want) {
+			t.Errorf("slice 1 Summary missing %q\nGot:\n%s", want, s1.Summary)
+		}
+	}
+	if strings.Contains(s1.Summary, "## Task 2") {
+		t.Errorf("slice 1 Summary leaked next-task header:\n%s", s1.Summary)
+	}
+
+	s2 := out.Batch.Slices[1]
+	if !strings.Contains(s2.Summary, "Run the tests.") {
+		t.Errorf("slice 2 Summary missing body, got:\n%s", s2.Summary)
+	}
+}
+
+func TestCompile_NumberedSubheadingDoesNotSplitSlice(t *testing.T) {
+	source := `# My Plan
+
+## Task 1: Big task
+
+Do the work.
+
+### 1. Acceptance Criteria
+
+- A
+- B
+
+### 2. Notes
+
+Some prose.
+
+## Task 2: Next thing
+
+Other work.
+`
+	out, err := batch.Compile(batch.CompileInput{
+		Title:  "demo",
+		Source: source,
+		Kind:   batch.SourceFile,
+	})
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if len(out.Batch.Slices) != 2 {
+		t.Fatalf("slice count = %d, want 2 (numbered subheadings must not split); slices: %+v", len(out.Batch.Slices), out.Batch.Slices)
+	}
+	if !strings.Contains(out.Batch.Slices[0].Summary, "Acceptance Criteria") {
+		t.Errorf("slice 1 Summary should contain its subheading body, got:\n%s", out.Batch.Slices[0].Summary)
+	}
+}
+
+func TestRunBatchSerialOnly(t *testing.T) {
+	// Verify that a batch with no explicit parallel phases runs all slices in PhaseSerial.
+	out, err := batch.Compile(batch.CompileInput{
+		Title:  "serial batch",
+		Source: "# Plan\n## Task 1: First\n## Task 2: Second\n",
+		Kind:   batch.SourceFile,
+	})
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if len(out.Batch.Phases) != 1 {
+		t.Fatalf("expected 1 phase (serial), got %d", len(out.Batch.Phases))
+	}
+	if out.Batch.Phases[0].Mode != batch.PhaseSerial {
+		t.Errorf("phase mode = %q, want serial", out.Batch.Phases[0].Mode)
+	}
+	if len(out.Batch.Phases[0].Slices) != 2 {
+		t.Errorf("phase slice count = %d, want 2", len(out.Batch.Phases[0].Slices))
 	}
 }
 

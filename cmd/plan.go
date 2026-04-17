@@ -19,7 +19,6 @@ func NewPlanCommand() *cobra.Command {
 	var prompt string
 	var replace bool
 	var appendMode bool
-	var integration string
 
 	cmd := &cobra.Command{
 		Use:   "plan",
@@ -39,11 +38,6 @@ func NewPlanCommand() *cobra.Command {
 			}
 
 			title := deriveTitleFromSource(source, file)
-
-			integrationMode, err := parseIntegrationMode(integration)
-			if err != nil {
-				return err
-			}
 
 			run, hasRun, err := batch.ReadRun(root)
 			if err != nil {
@@ -80,7 +74,6 @@ func NewPlanCommand() *cobra.Command {
 				Title:       title,
 				Source:      source,
 				Kind:        kind,
-				Integration: integrationMode,
 				ExistingIDs: existingIDs,
 			})
 			if err != nil {
@@ -124,7 +117,6 @@ func NewPlanCommand() *cobra.Command {
 			w := cmd.OutOrStdout()
 			fmt.Fprintf(w, "Batch: %s\n", compiled.Batch.ID)
 			fmt.Fprintf(w, "Title: %s\n", compiled.Batch.Title)
-			fmt.Fprintf(w, "Integration: %s\n", compiled.Batch.IntegrationMode)
 			fmt.Fprintf(w, "Slices: %d\n", len(compiled.Batch.Slices))
 			for _, s := range compiled.Batch.Slices {
 				fmt.Fprintf(w, "  %s  %s\n", s.ID, s.Title)
@@ -139,7 +131,6 @@ func NewPlanCommand() *cobra.Command {
 	cmd.Flags().StringVar(&prompt, "prompt", "", "direct work request (used when --file is not provided)")
 	cmd.Flags().BoolVar(&replace, "replace", false, "archive the current active batch and replace it with this one")
 	cmd.Flags().BoolVar(&appendMode, "append", false, "add new slices to the end of the current active batch")
-	cmd.Flags().StringVar(&integration, "integration", "batch", "integration mode: batch, standalone, or main")
 
 	return cmd
 }
@@ -198,17 +189,6 @@ func deriveTitleFromSource(source, file string) string {
 		}
 	}
 	return "Springfield batch"
-}
-
-func parseIntegrationMode(s string) (batch.IntegrationMode, error) {
-	switch batch.IntegrationMode(s) {
-	case batch.IntegrationBatch, batch.IntegrationStandalone, batch.IntegrationMain:
-		return batch.IntegrationMode(s), nil
-	case "":
-		return batch.IntegrationBatch, nil
-	default:
-		return "", fmt.Errorf("unknown integration mode %q: use batch, standalone, or main", s)
-	}
 }
 
 func appendToBatch(root, activeBatchID string, newBatch batch.Batch) error {

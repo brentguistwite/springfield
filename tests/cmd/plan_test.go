@@ -22,7 +22,6 @@ func TestSpringfieldPlanHelp(t *testing.T) {
 		"--prompt",
 		"--replace",
 		"--append",
-		"--integration",
 	} {
 		if !strings.Contains(output, marker) {
 			t.Fatalf("expected plan help to contain %q, got:\n%s", marker, output)
@@ -43,7 +42,6 @@ func TestSpringfieldPlanFromPrompt(t *testing.T) {
 	for _, marker := range []string{
 		"Batch:",
 		"Title:",
-		"Integration: batch",
 		"Slices: 1",
 		`Run "springfield start" to execute.`,
 	} {

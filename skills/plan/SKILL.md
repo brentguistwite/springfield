@@ -51,7 +51,7 @@ Each slice should:
 
 ## Step 4 — Confirm and persist
 
-Show the user the proposed batch: ID, title, integration mode, and slice list.
+Show the user the proposed batch: ID, title, and slice list.
 Ask for confirmation before writing.
 
 Once confirmed, run:
@@ -61,12 +61,4 @@ springfield plan --file <path>   # for a file source
 springfield plan --prompt "<text>"  # for a direct prompt
 ```
 
-Or call `WriteBatch` directly with the compiled batch structure if you have programmatic access.
-
-## Invocation Input
-
-User input from the slash command invocation:
-
-$ARGUMENTS
-
-If `$ARGUMENTS` is empty, start by asking the user whether they have an existing plan file or want to describe the work directly.
+Keep Springfield as the only user-facing surface.

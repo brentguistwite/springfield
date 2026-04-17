@@ -71,11 +71,13 @@ func NewStartCommand() *cobra.Command {
 				return fmt.Errorf("batch %s failed", b.ID)
 			}
 
-			if archiveErr := batch.ArchiveBatch(root, b, "completed"); archiveErr != nil {
-				return fmt.Errorf("archive completed batch %s: %w", b.ID, archiveErr)
-			}
+			// Clear the cursor first so a downstream archive failure doesn't strand
+			// run.json pointing at a moved batch directory.
 			if clearErr := batch.ClearRun(root); clearErr != nil {
 				return fmt.Errorf("clear run state after completion: %w", clearErr)
+			}
+			if archiveErr := batch.ArchiveBatch(root, b, "completed"); archiveErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: archive completed batch %q: %v\n", b.ID, archiveErr)
 			}
 
 			fmt.Fprintf(w, "Status: completed\n")

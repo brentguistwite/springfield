@@ -108,11 +108,6 @@ springfield status
 
 Execution is serial by default. Parallel execution only happens when the batch explicitly marks independent phases — this is rare and must be intentional.
 
-Integration modes (set with `--integration`):
-- `batch` (default): completed slice branches merge into `feature/<batch-id>`
-- `standalone`: each slice keeps its own branch
-- `main`: merge directly to `main` (use with care)
-
 If a batch already exists, use `--replace` to archive it and start fresh, or `--append` to add new slices:
 
 ```bash

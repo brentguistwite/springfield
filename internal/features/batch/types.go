@@ -2,15 +2,6 @@ package batch
 
 import "time"
 
-// IntegrationMode controls how slice branches are merged on completion.
-type IntegrationMode string
-
-const (
-	IntegrationBatch      IntegrationMode = "batch"
-	IntegrationStandalone IntegrationMode = "standalone"
-	IntegrationMain       IntegrationMode = "main"
-)
-
 // PhaseMode controls whether slices in a phase run serially or in parallel.
 type PhaseMode string
 
@@ -44,8 +35,6 @@ type Slice struct {
 	Title   string      `json:"title"`
 	Summary string      `json:"summary,omitempty"`
 	Status  SliceStatus `json:"status"`
-	Branch  string      `json:"branch,omitempty"`
-	Worktree string     `json:"worktree,omitempty"`
 	Error   string      `json:"error,omitempty"`
 }
 
@@ -57,23 +46,20 @@ type Phase struct {
 
 // Batch is the compile-time state for one Springfield work batch.
 type Batch struct {
-	ID              string          `json:"id"`
-	Title           string          `json:"title"`
-	SourceKind      SourceKind      `json:"source_kind"`
-	IntegrationMode IntegrationMode `json:"integration_mode"`
-	Phases          []Phase         `json:"phases"`
-	Slices          []Slice         `json:"slices"`
+	ID         string     `json:"id"`
+	Title      string     `json:"title"`
+	SourceKind SourceKind `json:"source_kind"`
+	Phases     []Phase    `json:"phases"`
+	Slices     []Slice    `json:"slices"`
 }
 
 // Run is the runtime-only cursor state for the active batch.
 type Run struct {
-	ActiveBatchID   string    `json:"active_batch_id"`
-	ActivePhaseIdx  int       `json:"active_phase_idx"`
-	ActiveSliceIDs  []string  `json:"active_slice_ids,omitempty"`
-	LastCheckpoint  time.Time `json:"last_checkpoint,omitempty"`
-	LastBranch      string    `json:"last_branch,omitempty"`
-	LastWorktree    string    `json:"last_worktree,omitempty"`
-	LastError       string    `json:"last_error,omitempty"`
+	ActiveBatchID  string    `json:"active_batch_id"`
+	ActivePhaseIdx int       `json:"active_phase_idx"`
+	ActiveSliceIDs []string  `json:"active_slice_ids,omitempty"`
+	LastCheckpoint time.Time `json:"last_checkpoint,omitempty"`
+	LastError      string    `json:"last_error,omitempty"`
 }
 
 // ArchiveEntry is the compact summary stored after a batch completes or is replaced.

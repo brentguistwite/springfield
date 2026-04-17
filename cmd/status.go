@@ -53,7 +53,6 @@ func NewStatusCommand() *cobra.Command {
 func printBatchStatus(w io.Writer, b batch.Batch, run batch.Run) error {
 	fmt.Fprintf(w, "Batch: %s\n", b.ID)
 	fmt.Fprintf(w, "Title: %s\n", b.Title)
-	fmt.Fprintf(w, "Integration: %s\n", b.IntegrationMode)
 	fmt.Fprintf(w, "Phase: %d of %d\n", run.ActivePhaseIdx+1, len(b.Phases))
 	if run.LastError != "" {
 		fmt.Fprintf(w, "Last error: %s\n", run.LastError)
