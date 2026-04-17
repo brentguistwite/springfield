@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 
 	"springfield/internal/core/config"
@@ -11,7 +12,7 @@ import (
 func TestInitCreatesConfigAndRuntimeDir(t *testing.T) {
 	dir := t.TempDir()
 
-	result, err := config.Init(dir)
+	result, err := config.Init(dir, []string{"codex", "claude"})
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
@@ -32,75 +33,101 @@ func TestInitCreatesConfigAndRuntimeDir(t *testing.T) {
 		t.Fatal(".springfield should be a directory")
 	}
 
-	// Result should report both created
-	if !result.ConfigCreated {
-		t.Error("expected ConfigCreated=true")
-	}
+	// RuntimeDirCreated true, BackupPath empty (no pre-existing config)
 	if !result.RuntimeDirCreated {
 		t.Error("expected RuntimeDirCreated=true")
 	}
+	if result.BackupPath != "" {
+		t.Errorf("expected BackupPath empty, got %q", result.BackupPath)
+	}
 
-	// Created config should be loadable with valid defaults
+	// Created config should be loadable with priority-specific defaults
 	loaded, err := config.LoadFrom(dir)
 	if err != nil {
 		t.Fatalf("created config should be loadable: %v", err)
 	}
-	if loaded.Config.Project.DefaultAgent == "" {
-		t.Error("default agent should be non-empty")
+	if loaded.Config.Project.DefaultAgent != "codex" {
+		t.Errorf("default_agent: want codex, got %q", loaded.Config.Project.DefaultAgent)
 	}
+	priority := loaded.Config.EffectivePriority()
+	if len(priority) != 2 || priority[0] != "codex" || priority[1] != "claude" {
+		t.Errorf("agent_priority: want [codex claude], got %v", priority)
+	}
+
+	// Both agent sections always emitted with recommended defaults
 	if got := loaded.Config.Agents.Claude.PermissionMode; got != "bypassPermissions" {
-		t.Fatalf("claude permission_mode: want bypassPermissions, got %q", got)
+		t.Errorf("claude permission_mode: want bypassPermissions, got %q", got)
 	}
 	if got := loaded.Config.Agents.Codex.SandboxMode; got != "danger-full-access" {
-		t.Fatalf("codex sandbox_mode: want danger-full-access, got %q", got)
+		t.Errorf("codex sandbox_mode: want danger-full-access, got %q", got)
 	}
 	if got := loaded.Config.Agents.Codex.ApprovalPolicy; got != "never" {
-		t.Fatalf("codex approval_policy: want never, got %q", got)
+		t.Errorf("codex approval_policy: want never, got %q", got)
 	}
 }
 
-func TestInitIsIdempotent(t *testing.T) {
+func TestInitBacksUpExistingConfig(t *testing.T) {
 	dir := t.TempDir()
 
-	// First init
-	config.Init(dir)
-
-	// Modify the config to prove re-run doesn't overwrite
+	// Pre-create config with custom content
 	configPath := filepath.Join(dir, config.FileName)
-	custom := []byte("[project]\ndefault_agent = \"custom-agent\"\n")
-	if err := os.WriteFile(configPath, custom, 0644); err != nil {
+	original := []byte("[project]\ndefault_agent = \"custom-agent\"\n")
+	if err := os.WriteFile(configPath, original, 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	// Add a file inside .springfield to prove it's preserved
-	marker := filepath.Join(dir, ".springfield", "marker.json")
-	os.WriteFile(marker, []byte(`{}`), 0644)
-
-	// Re-run init
-	result, err := config.Init(dir)
+	result, err := config.Init(dir, []string{"claude", "codex"})
 	if err != nil {
-		t.Fatalf("re-run Init failed: %v", err)
+		t.Fatalf("re-init failed: %v", err)
 	}
 
-	// Should report nothing created
-	if result.ConfigCreated {
-		t.Error("should not recreate existing config")
-	}
-	if result.RuntimeDirCreated {
-		t.Error("should not recreate existing runtime dir")
+	// BackupPath must be set
+	if result.BackupPath == "" {
+		t.Fatal("expected BackupPath to be set")
 	}
 
-	// Config content should be preserved
+	// Backup file must contain original content
+	backed, err := os.ReadFile(result.BackupPath)
+	if err != nil {
+		t.Fatalf("read backup file: %v", err)
+	}
+	if string(backed) != string(original) {
+		t.Errorf("backup content mismatch\nwant: %q\ngot:  %q", string(original), string(backed))
+	}
+
+	// New config file has fresh content (not the custom agent)
 	loaded, err := config.LoadFrom(dir)
 	if err != nil {
 		t.Fatalf("load after re-init: %v", err)
 	}
-	if loaded.Config.Project.DefaultAgent != "custom-agent" {
-		t.Errorf("config was overwritten: got %q", loaded.Config.Project.DefaultAgent)
+	if loaded.Config.Project.DefaultAgent == "custom-agent" {
+		t.Error("new config still has old default_agent; expected fresh scaffold")
+	}
+	if loaded.Config.Project.DefaultAgent != "claude" {
+		t.Errorf("new default_agent: want claude, got %q", loaded.Config.Project.DefaultAgent)
+	}
+}
+
+func TestInitBackupPathFormat(t *testing.T) {
+	dir := t.TempDir()
+
+	// Pre-create config so a backup will be made
+	configPath := filepath.Join(dir, config.FileName)
+	if err := os.WriteFile(configPath, []byte("[project]\n"), 0644); err != nil {
+		t.Fatal(err)
 	}
 
-	// Marker file should still exist
-	if _, err := os.Stat(marker); err != nil {
-		t.Error("runtime dir contents were destroyed")
+	result, err := config.Init(dir, []string{"claude", "codex"})
+	if err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	if result.BackupPath == "" {
+		t.Fatal("expected BackupPath to be set")
+	}
+
+	base := filepath.Base(result.BackupPath)
+	pattern := regexp.MustCompile(`^springfield\.toml\.bak-\d{8}T\d{6}Z$`)
+	if !pattern.MatchString(base) {
+		t.Errorf("backup filename %q does not match expected pattern springfield.toml.bak-<ISO8601>", base)
 	}
 }
