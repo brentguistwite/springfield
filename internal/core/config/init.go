@@ -98,13 +98,16 @@ func Init(dir string, priority []string, opts InitOptions) (InitResult, error) {
 		}
 
 		// Fill in missing Claude defaults.
+		// The field check alongside isPresent is defensive: isPresent comes from the
+		// TOML decoder metadata, and the extra empty-field test guards against any
+		// future drift where a struct is marked present but fields arrived zeroed.
 		if !loaded.Config.Agents.Claude.isPresent && loaded.Config.Agents.Claude.PermissionMode == "" {
 			loaded.Config.Agents.Claude.PermissionMode = rec.Claude.PermissionMode
 			loaded.Config.Agents.Claude.isPresent = true
 			changed = true
 		}
 
-		// Fill in missing Codex defaults.
+		// Fill in missing Codex defaults. Same defensive pattern as Claude above.
 		if !loaded.Config.Agents.Codex.isPresent && loaded.Config.Agents.Codex.SandboxMode == "" && loaded.Config.Agents.Codex.ApprovalPolicy == "" {
 			loaded.Config.Agents.Codex.SandboxMode = rec.Codex.SandboxMode
 			loaded.Config.Agents.Codex.ApprovalPolicy = rec.Codex.ApprovalPolicy

@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +14,10 @@ import (
 	"springfield/internal/core/agents"
 	"springfield/internal/core/config"
 )
+
+// maxPromptAttempts bounds retries on invalid interactive input so a misconfigured
+// TTY or pasted garbage can't trap the caller in an infinite re-prompt loop.
+const maxPromptAttempts = 4
 
 // isTTY reports whether fd is an interactive terminal.
 func isTTY(fd int) bool {
@@ -89,43 +95,37 @@ func resolvePriority(agentsFlag string, interactive bool, in io.Reader, out io.W
 	return promptForAgents(in, out)
 }
 
-// promptForAgents prompts the user interactively. Allows 4 attempts total.
+// promptForAgents prompts the user interactively. Retries up to maxPromptAttempts
+// on invalid input before giving up.
+//
+// The bufio.Reader is constructed once outside the retry loop so its internal
+// buffer is shared across attempts — constructing it per-attempt would strand
+// any bytes already read past the current line.
 func promptForAgents(in io.Reader, out io.Writer) ([]string, error) {
 	defaults := defaultPriority()
 	defaultStr := strings.Join(defaults, ",")
+	reader := bufio.NewReader(in)
 
-	buf := new(strings.Builder)
-	scratch := make([]byte, 1)
-
-	for attempt := 0; attempt < 4; attempt++ {
+	for attempt := 0; attempt < maxPromptAttempts; attempt++ {
 		fmt.Fprintf(out, "Enter agents in priority order (comma-separated) [%s]: ", defaultStr)
 
-		buf.Reset()
-		for {
-			n, err := in.Read(scratch)
-			if n > 0 {
-				ch := scratch[0]
-				if ch == '\n' {
-					break
-				}
-				buf.WriteByte(ch)
-			}
-			if err != nil {
-				if err == io.EOF {
-					break
-				}
-				return nil, fmt.Errorf("read input: %w", err)
-			}
+		line, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("read input: %w", err)
 		}
 
-		line := strings.TrimSpace(buf.String())
+		line = strings.TrimSpace(line)
 		if line == "" {
 			return defaults, nil
 		}
 
-		priority, err := parseAndValidateAgents(line)
-		if err != nil {
-			fmt.Fprintf(out, "Error: %v\n", err)
+		priority, parseErr := parseAndValidateAgents(line)
+		if parseErr != nil {
+			fmt.Fprintf(out, "Error: %v\n", parseErr)
+			if errors.Is(err, io.EOF) {
+				// Stream exhausted; retrying would reprompt with no input to read.
+				break
+			}
 			continue
 		}
 		return priority, nil
@@ -135,9 +135,11 @@ func promptForAgents(in io.Reader, out io.Writer) ([]string, error) {
 }
 
 // parseAndValidateAgents splits a comma-separated agent string and validates each entry.
+// Duplicate agent IDs are rejected because agent_priority must be a strict ordering.
 func parseAndValidateAgents(raw string) ([]string, error) {
 	parts := strings.Split(raw, ",")
 	priority := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
 	for _, p := range parts {
 		id := strings.TrimSpace(p)
 		if id == "" {
@@ -146,6 +148,10 @@ func parseAndValidateAgents(raw string) ([]string, error) {
 		if !agents.IsExecutionSupported(agents.ID(id)) {
 			return nil, fmt.Errorf("%s is not yet supported for execution", id)
 		}
+		if _, dup := seen[id]; dup {
+			return nil, fmt.Errorf("duplicate agent %q in priority list", id)
+		}
+		seen[id] = struct{}{}
 		priority = append(priority, id)
 	}
 	if len(priority) == 0 {
