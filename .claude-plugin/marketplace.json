@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "springfield",
-      "description": "Springfield plugin for starting, inspecting, and recovering project work",
+      "description": "Springfield plugin for planning, starting, inspecting, and recovering project work.",
       "version": "0.1.0",
       "source": "./",
       "author": {

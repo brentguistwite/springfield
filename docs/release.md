@@ -17,7 +17,7 @@ Plugin metadata is release-critical. Do not cut a tag with pending changes in:
 - [`.claude-plugin/marketplace.json`](../.claude-plugin/marketplace.json)
 - [`.codex-plugin/plugin.json`](../.codex-plugin/plugin.json)
 
-Those manifests and marketplace records must describe Springfield, stay version-aligned, and keep the checked-in `skills/start`, `skills/status`, and `skills/recover` inventory intact.
+Those manifests and marketplace records must describe Springfield, stay version-aligned, and keep the checked-in `skills/plan`, `skills/start`, `skills/status`, and `skills/recover` inventory intact.
 
 ## Cut A Release
 
