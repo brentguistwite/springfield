@@ -89,6 +89,7 @@ func TestRuntimeSingleExecutorRunPassesWorkstreamThroughSharedRuntime(t *testing
 
 func TestRuntimeSingleExecutorRunReturnsFailedReportOnRuntimeFailure(t *testing.T) {
 	registry := testRuntimeRegistry()
+	// NewTestRunner marks non-zero exits as StatusFailed, so ExitCode=1 is enough here.
 	runner := coreruntime.NewTestRunner(registry, fakeRuntimeFailure, time.Now)
 	executor := runtimeSingleExecutor{
 		runner:   runner,
@@ -134,22 +135,8 @@ func TestRuntimeSingleExecutorRejectsMultipleWorkstreams(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected Run to reject multiple workstreams")
 	}
-	if !strings.Contains(err.Error(), "exactly one workstream") {
-		t.Fatalf("error = %q, want exact-one guard", err)
-	}
-}
-
-func TestCollectRuntimeOutputJoinsStdoutAndStderr(t *testing.T) {
-	stdout, stderr := collectRuntimeOutput([]exec.Event{
-		{Type: exec.EventStdout, Data: "line 1"},
-		{Type: exec.EventStderr, Data: "warn"},
-		{Type: exec.EventStdout, Data: "line 2"},
-	})
-
-	if stdout != "line 1\nline 2" {
-		t.Fatalf("stdout = %q, want %q", stdout, "line 1\nline 2")
-	}
-	if stderr != "warn" {
-		t.Fatalf("stderr = %q, want %q", stderr, "warn")
+	want := `work "wave-a1" split "single" requires exactly one workstream, got 2`
+	if err.Error() != want {
+		t.Fatalf("error = %q, want %q", err, want)
 	}
 }

@@ -90,7 +90,7 @@ type runtimeSingleExecutor struct {
 
 func (e runtimeSingleExecutor) Run(root string, work Work) (Report, error) {
 	if len(work.Workstreams) != 1 {
-		return Report{}, fmt.Errorf("single work requires exactly one workstream, got %d", len(work.Workstreams))
+		return Report{}, fmt.Errorf("work %q split %q requires exactly one workstream, got %d", work.ID, work.Split, len(work.Workstreams))
 	}
 
 	workstream := work.Workstreams[0]
@@ -101,20 +101,19 @@ func (e runtimeSingleExecutor) Run(root string, work Work) (Report, error) {
 		OnEvent:           e.onEvent,
 		ExecutionSettings: e.settings,
 	})
-	out := singleRuntimeResultFrom(result)
 
 	outcome := WorkstreamRun{
 		Name:   workstream.Name,
 		Status: statusCompleted,
 	}
-	if out.Err != nil {
+	if err := errorFromResult(result); err != nil {
 		outcome.Status = statusFailed
-		outcome.Error = out.Err.Error()
+		outcome.Error = err.Error()
 		return Report{
 			Status:      statusFailed,
 			Error:       outcome.Error,
 			Workstreams: []WorkstreamRun{outcome},
-		}, out.Err
+		}, err
 	}
 
 	return Report{
@@ -123,51 +122,14 @@ func (e runtimeSingleExecutor) Run(root string, work Work) (Report, error) {
 	}, nil
 }
 
-type singleRuntimeResult struct {
-	Agent    string
-	ExitCode int
-	Err      error
-	Stdout   string
-	Stderr   string
-}
-
-func singleRuntimeResultFrom(result coreruntime.Result) singleRuntimeResult {
-	stdout, stderr := collectRuntimeOutput(result.Events)
-
-	out := singleRuntimeResult{
-		Agent:    string(result.Agent),
-		ExitCode: result.ExitCode,
-		Stdout:   stdout,
-		Stderr:   stderr,
-	}
+func errorFromResult(result coreruntime.Result) error {
 	if result.Status == coreruntime.StatusFailed {
 		if result.Err != nil {
-			out.Err = fmt.Errorf("agent %s failed: %w", result.Agent, result.Err)
-		} else {
-			out.Err = fmt.Errorf("agent %s exited with code %d", result.Agent, result.ExitCode)
+			return fmt.Errorf("agent %s failed: %w", result.Agent, result.Err)
 		}
+		return fmt.Errorf("agent %s exited with code %d", result.Agent, result.ExitCode)
 	}
-
-	return out
-}
-
-func collectRuntimeOutput(events []coreexec.Event) (stdout, stderr string) {
-	var out, err strings.Builder
-	for _, e := range events {
-		switch e.Type {
-		case coreexec.EventStdout:
-			if out.Len() > 0 {
-				out.WriteByte('\n')
-			}
-			out.WriteString(e.Data)
-		case coreexec.EventStderr:
-			if err.Len() > 0 {
-				err.WriteByte('\n')
-			}
-			err.WriteString(e.Data)
-		}
-	}
-	return out.String(), err.String()
+	return nil
 }
 
 type runtimeMultiExecutor struct {
