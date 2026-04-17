@@ -7,9 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"springfield/internal/core/agents"
-	"springfield/internal/core/agents/claude"
-	"springfield/internal/core/agents/codex"
-	"springfield/internal/core/agents/gemini"
+	"springfield/internal/core/agents/catalog"
 	"springfield/internal/features/doctor"
 )
 
@@ -21,11 +19,7 @@ func NewDoctorCommand() *cobra.Command {
 		Long:  "Doctor checks that supported agent CLIs are installed and reachable, providing install guidance for anything missing.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			registry := agents.NewRegistry(
-				claude.New(exec.LookPath),
-				codex.New(exec.LookPath),
-				gemini.New(exec.LookPath),
-			)
+			registry := agents.NewRegistry(catalog.DefaultAdapters(exec.LookPath)...)
 
 			report := doctor.Run(cmd.Context(), registry)
 			w := cmd.OutOrStdout()
