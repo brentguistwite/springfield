@@ -147,6 +147,20 @@ func TestLoadWorkRejectsUnapprovedOrMalformedWork(t *testing.T) {
 			},
 			wantText: "workstream",
 		},
+		{
+			name: "single split with multiple workstreams",
+			fixture: workflowDraftFixture{
+				workID:  "wave-c2",
+				title:   "Unified execution surface",
+				summary: "Single split must stay single.",
+				split:   "single",
+				workstreams: []workflowDraftWorkstream{
+					{name: "01", title: "Execution adapter"},
+					{name: "02", title: "Status surface"},
+				},
+			},
+			wantText: "exactly one workstream",
+		},
 	}
 
 	for _, tt := range tests {

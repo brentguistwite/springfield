@@ -126,7 +126,7 @@ func UpdateConfig(rootDir string, opts SetupOptions) (UpdateResult, error) {
 	// Verify existing config exists
 	var existing Config
 	if err := rt.ReadJSON(configPath, &existing); err != nil {
-		return UpdateResult{}, errors.New("no existing conductor config to update; use Setup for first-run")
+		return UpdateResult{}, errors.New("no existing Springfield execution config to update; use Setup for first-run")
 	}
 
 	sequential := opts.Sequential

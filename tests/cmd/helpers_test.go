@@ -7,24 +7,7 @@ import (
 	"testing"
 
 	"springfield/internal/features/conductor"
-	"springfield/internal/features/ralph"
 )
-
-func writeRalphSpec(t *testing.T, dir string, spec ralph.Spec) string {
-	t.Helper()
-
-	data, err := json.MarshalIndent(spec, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal Ralph spec: %v", err)
-	}
-
-	path := filepath.Join(dir, "ralph-spec.json")
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		t.Fatalf("write Ralph spec: %v", err)
-	}
-
-	return path
-}
 
 func writeSpringfieldConfig(t *testing.T, dir string, agent string) {
 	t.Helper()

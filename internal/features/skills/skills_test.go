@@ -118,6 +118,11 @@ func TestRenderUsesSharedHostNeutralPlaybookPrompt(t *testing.T) {
 			t.Fatalf("expected rendered content to contain %q, got:\n%s", marker, rendered.Content)
 		}
 	}
+	for _, unwanted := range []string{"saved cursor", "current cursor"} {
+		if strings.Contains(rendered.Content, unwanted) {
+			t.Fatalf("expected rendered content to omit %q, got:\n%s", unwanted, rendered.Content)
+		}
+	}
 	for _, unwanted := range []string{"Ralph", "Conductor"} {
 		if strings.Contains(rendered.Content, unwanted) {
 			t.Fatalf("expected rendered content to omit %q, got:\n%s", unwanted, rendered.Content)
@@ -144,8 +149,17 @@ func TestSkillsHaveDistinctTaskBehavior(t *testing.T) {
 	if !strings.Contains(start.Content, "Execute the active Springfield batch for the current project.") {
 		t.Fatalf("expected start prompt boundary to be execution-specific, got:\n%s", start.Content)
 	}
-	if !strings.Contains(status.Content, "Run `springfield status` to get the machine-readable view") {
+	if !strings.Contains(start.Content, "saved progress") {
+		t.Fatalf("expected start prompt to describe saved progress, got:\n%s", start.Content)
+	}
+	if !strings.Contains(start.Content, "independent phases") {
+		t.Fatalf("expected start prompt to describe independent phases, got:\n%s", start.Content)
+	}
+	if !strings.Contains(status.Content, "Run `springfield status` to get the current Springfield batch state") {
 		t.Fatalf("expected status prompt boundary to be status-specific, got:\n%s", status.Content)
+	}
+	if !strings.Contains(status.Content, "Which slices are done, running, blocked, or queued") {
+		t.Fatalf("expected status prompt to describe slice progress, got:\n%s", status.Content)
 	}
 	if !strings.Contains(recover.Content, "Recover a Springfield batch that is stalled, blocked, or has a failed slice.") {
 		t.Fatalf("expected recover prompt boundary to be recovery-specific, got:\n%s", recover.Content)

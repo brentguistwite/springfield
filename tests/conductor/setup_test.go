@@ -246,7 +246,7 @@ func TestUpdateConfig_FailsWhenNoExistingConfig(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when no existing config")
 	}
-	if !strings.Contains(err.Error(), "no existing conductor config") {
+	if !strings.Contains(err.Error(), "no existing Springfield execution config") {
 		t.Errorf("error = %q, want message about no existing config", err.Error())
 	}
 }
