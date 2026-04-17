@@ -177,3 +177,19 @@ func TestDiagnoseReportOmitsEvidenceWhenEmpty(t *testing.T) {
 		t.Fatalf("report should not show evidence line when empty: got %q", report)
 	}
 }
+
+func TestDiagnoseNoPlansUsesSpringfieldExecutionConfigWording(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root)
+	writeConductorConfig(t, root, &conductor.Config{})
+
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("load project: %v", err)
+	}
+
+	diagnosis := conductor.Diagnose(project)
+	if got, want := diagnosis.NextStep, "No plans configured. Add plans to your Springfield execution config."; got != want {
+		t.Fatalf("next step = %q, want %q", got, want)
+	}
+}

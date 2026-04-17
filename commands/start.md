@@ -1,10 +1,10 @@
 ---
-description: Use Springfield start to execute the active batch for the current project from its saved cursor.
+description: Use Springfield start to execute the active batch for the current project from its saved progress.
 ---
 
 # Springfield Start
 
-Use Springfield start to execute the active batch for the current project from its saved cursor.
+Use Springfield start to execute the active batch for the current project from its saved progress.
 
 # Springfield Playbook
 Source: builtin/springfield.md
@@ -25,13 +25,13 @@ Read project guidance from AGENTS.md first, then CLAUDE.md, then GEMINI.md when 
 
 ## Step 1 — Check for active batch
 
-Run `springfield status` to confirm an active batch exists and review its current cursor.
+Run `springfield status` to confirm an active batch exists and review its saved progress.
 
 If no active batch exists, stop and tell the user to run `/springfield:plan` first.
 
 ## Step 2 — Execute
 
-Run `springfield start` to execute from the saved cursor.
+Run `springfield start` to resume execution from the saved progress.
 
 - Execution is serial by default.
 - Parallel execution only happens when the batch explicitly marks independent phases.
@@ -39,7 +39,7 @@ Run `springfield start` to execute from the saved cursor.
 
 ## Step 3 — Report
 
-After execution, report the batch outcome: which slices completed, which failed and why, and what the user should do next.
+After execution, report whether the batch completed or failed, the last blocking slice if any, and what the user should do next.
 
 Keep Springfield as the only user-facing surface.
 

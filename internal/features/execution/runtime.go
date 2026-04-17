@@ -14,7 +14,6 @@ import (
 	coreexec "springfield/internal/core/exec"
 	coreruntime "springfield/internal/core/runtime"
 	"springfield/internal/features/conductor"
-	"springfield/internal/features/ralph"
 )
 
 const (
@@ -45,11 +44,14 @@ func NewRuntimeRunner(root string, lookPath func(string) (string, error), onEven
 	agentIDs := priorityAgentIDs(loaded.Config.EffectivePriority())
 	settings := loaded.Config.ExecutionSettings()
 
-	single := ralph.NewRuntimeExecutor(runtimeRunner, agentIDs, loaded.RootDir, settings)
-	single.OnEvent = onEvent
-
 	return Runner{
-		Single: runtimeSingleExecutor{executor: single},
+		Single: runtimeSingleExecutor{
+			runner:   runtimeRunner,
+			agents:   agentIDs,
+			workDir:  loaded.RootDir,
+			settings: settings,
+			onEvent:  onEvent,
+		},
 		Multi: runtimeMultiExecutor{
 			runner:   runtimeRunner,
 			agents:   agentIDs,
@@ -79,39 +81,55 @@ func (r Runner) Run(root string, work Work) (Report, error) {
 }
 
 type runtimeSingleExecutor struct {
-	executor ralph.RuntimeExecutor
+	runner   coreruntime.Runner
+	agents   []agents.ID
+	workDir  string
+	settings agents.ExecutionSettings
+	onEvent  coreexec.EventHandler
 }
 
 func (e runtimeSingleExecutor) Run(root string, work Work) (Report, error) {
-	if len(work.Workstreams) == 0 {
-		return Report{}, errors.New("single work has no workstreams")
+	if len(work.Workstreams) != 1 {
+		return Report{}, fmt.Errorf("work %q split %q requires exactly one workstream, got %d", work.ID, work.Split, len(work.Workstreams))
 	}
 
 	workstream := work.Workstreams[0]
-	result := e.executor.Execute(ralph.Story{
-		ID:          workstream.Name,
-		Title:       workstream.Title,
-		Description: executionPrompt(work, workstream),
+	result := e.runner.Run(context.Background(), coreruntime.Request{
+		AgentIDs:          e.agents,
+		Prompt:            executionPrompt(work, workstream),
+		WorkDir:           e.workDir,
+		OnEvent:           e.onEvent,
+		ExecutionSettings: e.settings,
 	})
 
 	outcome := WorkstreamRun{
 		Name:   workstream.Name,
 		Status: statusCompleted,
 	}
-	if result.Err != nil {
+	if err := errorFromResult(result); err != nil {
 		outcome.Status = statusFailed
-		outcome.Error = result.Err.Error()
+		outcome.Error = err.Error()
 		return Report{
 			Status:      statusFailed,
 			Error:       outcome.Error,
 			Workstreams: []WorkstreamRun{outcome},
-		}, result.Err
+		}, err
 	}
 
 	return Report{
 		Status:      statusCompleted,
 		Workstreams: []WorkstreamRun{outcome},
 	}, nil
+}
+
+func errorFromResult(result coreruntime.Result) error {
+	if result.Status == coreruntime.StatusFailed {
+		if result.Err != nil {
+			return fmt.Errorf("agent %s failed: %w", result.Agent, result.Err)
+		}
+		return fmt.Errorf("agent %s exited with code %d", result.Agent, result.ExitCode)
+	}
+	return nil
 }
 
 type runtimeMultiExecutor struct {

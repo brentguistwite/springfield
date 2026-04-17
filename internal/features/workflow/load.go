@@ -66,6 +66,9 @@ func LoadWork(root, workID string) (Work, error) {
 	if len(state.Workstreams) == 0 {
 		return Work{}, fmt.Errorf("work %q run-state lists no workstreams", workID)
 	}
+	if state.Split == string(planner.SplitSingle) && len(state.Workstreams) != 1 {
+		return Work{}, fmt.Errorf("work %q split %q requires exactly one workstream, got %d", workID, state.Split, len(state.Workstreams))
+	}
 
 	requestBody := ""
 	if data, err := os.ReadFile(workPaths.RequestPath()); err == nil {

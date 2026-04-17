@@ -114,10 +114,10 @@ Keep Springfield as the only user-facing surface.
 	},
 	{
 		Name:         SkillStart,
-		Summary:      "Execute the active Springfield batch from its saved cursor.",
+		Summary:      "Execute the active Springfield batch for the current project from its saved progress.",
 		Purpose:      playbooks.PurposeStart,
 		Header:       "Springfield Start",
-		Description:  "Use Springfield start to execute the active batch for the current project from its saved cursor.",
+		Description:  "Use Springfield start to execute the active batch for the current project from its saved progress.",
 		RelativePath: "skills/start/SKILL.md",
 		TaskBody: strings.TrimSpace(`
 Execute the active Springfield batch for the current project.
@@ -126,13 +126,13 @@ Read project guidance from AGENTS.md first, then CLAUDE.md, then GEMINI.md when 
 
 ## Step 1 — Check for active batch
 
-Run ` + "`springfield status`" + ` to confirm an active batch exists and review its current cursor.
+Run ` + "`springfield status`" + ` to confirm an active batch exists and review its saved progress.
 
 If no active batch exists, stop and tell the user to run ` + "`/springfield:plan`" + ` first.
 
 ## Step 2 — Execute
 
-Run ` + "`springfield start`" + ` to execute from the saved cursor.
+Run ` + "`springfield start`" + ` to resume execution from the saved progress.
 
 - Execution is serial by default.
 - Parallel execution only happens when the batch explicitly marks independent phases.
@@ -140,7 +140,7 @@ Run ` + "`springfield start`" + ` to execute from the saved cursor.
 
 ## Step 3 — Report
 
-After execution, report the batch outcome: which slices completed, which failed and why, and what the user should do next.
+After execution, report whether the batch completed or failed, the last blocking slice if any, and what the user should do next.
 
 Keep Springfield as the only user-facing surface.
 `),
@@ -157,7 +157,7 @@ Inspect the current Springfield batch for the project and report the current sta
 
 Read project guidance from AGENTS.md first, then CLAUDE.md, then GEMINI.md when present.
 
-Run ` + "`springfield status`" + ` to get the machine-readable view, then summarize:
+Run ` + "`springfield status`" + ` to get the current Springfield batch state, then summarize:
 - The active batch id and title
 - The current phase
 - Which slices are done, running, blocked, or queued

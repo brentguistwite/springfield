@@ -24,7 +24,7 @@ Inspect the current Springfield batch for the project and report the current sta
 
 Read project guidance from AGENTS.md first, then CLAUDE.md, then GEMINI.md when present.
 
-Run `springfield status` to get the machine-readable view, then summarize:
+Run `springfield status` to get the current Springfield batch state, then summarize:
 - The active batch id and title
 - The current phase
 - Which slices are done, running, blocked, or queued

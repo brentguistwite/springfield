@@ -16,7 +16,7 @@ func TestSpringfieldStartHelp(t *testing.T) {
 	}
 
 	for _, marker := range []string{
-		"Execute the active Springfield batch from its saved cursor.",
+		"Execute the active Springfield batch for the current project from its saved progress.",
 		"springfield plan",
 	} {
 		if !strings.Contains(output, marker) {
@@ -224,4 +224,3 @@ func TestSpringfieldStartCompletionWarnsWhenArchiveFails(t *testing.T) {
 		t.Errorf("run.json should be cleared after successful completion")
 	}
 }
-

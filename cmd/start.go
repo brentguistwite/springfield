@@ -13,14 +13,14 @@ import (
 	"springfield/internal/features/workflow"
 )
 
-// NewStartCommand runs the active Springfield batch from its saved cursor.
+// NewStartCommand runs the active Springfield batch from its saved progress.
 func NewStartCommand() *cobra.Command {
 	var dir string
 
 	cmd := &cobra.Command{
 		Use:   "start",
-		Short: "Execute the active Springfield batch from its saved cursor.",
-		Long:  "Execute the active Springfield batch from its saved cursor.\n\nRun \"springfield plan\" first to compile a batch.",
+		Short: "Execute the active Springfield batch for the current project from its saved progress.",
+		Long:  "Execute the active Springfield batch for the current project from its saved progress.\n\nRun \"springfield plan\" first to compile a batch.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			loaded, err := config.LoadFrom(dir)

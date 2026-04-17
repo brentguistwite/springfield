@@ -45,7 +45,7 @@ func Diagnose(project *Project) *Diagnosis {
 	nextStep := "Run: springfield start"
 	switch {
 	case total == 0:
-		nextStep = "No plans configured. Add plans to your conductor config."
+		nextStep = "No plans configured. Add plans to your Springfield execution config."
 	case done:
 		nextStep = "All plans completed successfully."
 	case len(failures) > 0:
