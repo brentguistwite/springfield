@@ -50,7 +50,7 @@ func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "springfield",
 		Short:         "Springfield is plugin-first for agent-native work.",
-		Long:          "Springfield is plugin-first for agent-native work.\n\nPrimary install path: use the Claude marketplace or Codex plugin/catalog entry. Use init to scaffold project state, install to sync local Claude Code and Codex artifacts for bootstrap or fallback workflows, doctor to verify local tooling, and status or resume to manage approved work.",
+		Long:          "Springfield is plugin-first for agent-native work.\n\nPrimary install path: use the Claude marketplace or Codex plugin/catalog entry.\nUse plan to compile a work request into a runnable batch, start to execute it,\nstatus to inspect progress, and doctor to verify local tooling.",
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		CompletionOptions: cobra.CompletionOptions{
@@ -69,8 +69,9 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(
 		NewInitCommand(),
 		NewInstallCommand(),
+		NewPlanCommand(),
+		NewStartCommand(),
 		NewStatusCommand(),
-		NewResumeCommand(),
 		NewDoctorCommand(),
 		NewVersionCommand(),
 	)

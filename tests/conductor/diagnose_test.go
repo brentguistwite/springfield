@@ -27,8 +27,8 @@ func TestDiagnosePendingProject(t *testing.T) {
 	if len(diagnosis.Failures) != 0 {
 		t.Fatalf("failures: got %d want 0", len(diagnosis.Failures))
 	}
-	if diagnosis.NextStep != "Run: springfield resume" {
-		t.Fatalf("next step: got %q want Springfield resume guidance", diagnosis.NextStep)
+	if diagnosis.NextStep != "Run: springfield start" {
+		t.Fatalf("next step: got %q want Springfield start guidance", diagnosis.NextStep)
 	}
 }
 
@@ -52,8 +52,8 @@ func TestDiagnoseFailureIncludesResumeGuidance(t *testing.T) {
 	if diagnosis.Failures[0].Plan != "02-config" {
 		t.Fatalf("failed plan: got %q want 02-config", diagnosis.Failures[0].Plan)
 	}
-	if !strings.Contains(diagnosis.NextStep, "resume") {
-		t.Fatalf("next step: got %q want resume guidance", diagnosis.NextStep)
+	if !strings.Contains(diagnosis.NextStep, "start") {
+		t.Fatalf("next step: got %q want start guidance", diagnosis.NextStep)
 	}
 	if !strings.Contains(diagnosis.Report(), "02-config: exit code 1") {
 		t.Fatalf("report: got %q", diagnosis.Report())

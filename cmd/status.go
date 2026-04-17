@@ -2,82 +2,68 @@ package cmd
 
 import (
 	"fmt"
-	"os/exec"
+	"io"
 
 	"github.com/spf13/cobra"
 
 	"springfield/internal/core/config"
-	"springfield/internal/features/workflow"
+	"springfield/internal/features/batch"
 )
 
-// NewStatusCommand shows Springfield work status from approved work state.
+// NewStatusCommand shows status for the active Springfield batch.
 func NewStatusCommand() *cobra.Command {
 	var dir string
-	var workID string
 
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Show status for the active Springfield work or a specific work id.",
-		Long:  "Show status for the active Springfield work or a specific work id.",
+		Short: "Show status for the active Springfield batch.",
+		Long:  "Show status for the active Springfield batch.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			root, resolvedWorkID, err := resolveWorkflowTarget(dir, workID)
+			loaded, err := config.LoadFrom(dir)
 			if err != nil {
 				return err
 			}
+			root := loaded.RootDir
 
-			runner, err := workflow.NewRuntimeRunner(root, exec.LookPath, nil)
+			run, hasRun, err := batch.ReadRun(root)
 			if err != nil {
 				return err
 			}
+			if !hasRun || run.ActiveBatchID == "" {
+				return fmt.Errorf("no Springfield batch found — run \"springfield plan\" first")
+			}
 
-			status, err := runner.Status(root, resolvedWorkID)
+			paths, err := batch.NewPaths(root, run.ActiveBatchID)
 			if err != nil {
 				return err
 			}
-
-			w := cmd.OutOrStdout()
-			fmt.Fprintf(w, "Work: %s\n", status.WorkID)
-			fmt.Fprintf(w, "Title: %s\n", status.Title)
-			fmt.Fprintf(w, "Split: %s\n", status.Split)
-			fmt.Fprintf(w, "Status: %s\n", status.Status)
-			fmt.Fprintln(w, "")
-			fmt.Fprintln(w, "Workstreams:")
-			for _, workstream := range status.Workstreams {
-				fmt.Fprintf(w, "  %s  %s  %s\n", workstream.Name, workstream.Status, workstream.Title)
-				if workstream.Error != "" {
-					fmt.Fprintf(w, "    Error: %s\n", workstream.Error)
-				}
-				if workstream.EvidencePath != "" {
-					fmt.Fprintf(w, "    Evidence: %s\n", workstream.EvidencePath)
-				}
+			b, err := batch.ReadBatch(paths)
+			if err != nil {
+				return err
 			}
-			return nil
+			return printBatchStatus(cmd.OutOrStdout(), b, run)
 		},
 	}
 
-	bindWorkflowFlags(cmd, &dir, &workID)
+	cmd.Flags().StringVar(&dir, "dir", ".", "project root or nested path inside the Springfield project")
 	return cmd
 }
 
-func bindWorkflowFlags(cmd *cobra.Command, dir *string, workID *string) {
-	cmd.Flags().StringVar(dir, "dir", ".", "project root or nested path inside the Springfield project")
-	cmd.Flags().StringVar(workID, "work", "", "Springfield work id (default: active work)")
-}
-
-func resolveWorkflowTarget(dir, workID string) (string, string, error) {
-	loaded, err := config.LoadFrom(dir)
-	if err != nil {
-		return "", "", err
+func printBatchStatus(w io.Writer, b batch.Batch, run batch.Run) error {
+	fmt.Fprintf(w, "Batch: %s\n", b.ID)
+	fmt.Fprintf(w, "Title: %s\n", b.Title)
+	fmt.Fprintf(w, "Phase: %d of %d\n", run.ActivePhaseIdx+1, len(b.Phases))
+	if run.LastError != "" {
+		fmt.Fprintf(w, "Last error: %s\n", run.LastError)
 	}
-
-	resolvedWorkID := workID
-	if resolvedWorkID == "" {
-		resolvedWorkID, err = workflow.CurrentWorkID(loaded.RootDir)
-		if err != nil {
-			return "", "", err
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Slices:")
+	for _, s := range b.Slices {
+		fmt.Fprintf(w, "  %s  %s  %s\n", s.ID, s.Status, s.Title)
+		if s.Error != "" {
+			fmt.Fprintf(w, "    Error: %s\n", s.Error)
 		}
 	}
-
-	return loaded.RootDir, resolvedWorkID, nil
+	return nil
 }

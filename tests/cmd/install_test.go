@@ -162,6 +162,29 @@ func TestInstallSupportsSingleHostSelection(t *testing.T) {
 	}
 }
 
+func TestSpringfieldInstallEmitsPlanInSpringfieldSkillsList(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeSpringfieldConfig(t, dir, "codex")
+
+	codexDir := filepath.Join(dir, ".codex-install")
+	if _, err := runBinaryIn(t, bin, dir, "install", "--codex-dir", codexDir, "--host", "codex"); err != nil {
+		t.Fatalf("install failed: %v", err)
+	}
+
+	helperPath := filepath.Join(codexDir, "springfield", "SKILL.md")
+	body, err := os.ReadFile(helperPath)
+	if err != nil {
+		t.Fatalf("read installed codex helper %s: %v", helperPath, err)
+	}
+	if !strings.Contains(string(body), "## Springfield Skills") {
+		t.Fatalf("installed codex helper missing 'Springfield Skills' section:\n%s", body)
+	}
+	if !strings.Contains(string(body), "- plan") {
+		t.Fatalf("installed codex helper missing '- plan' under Springfield Skills:\n%s", body)
+	}
+}
+
 func TestInstallDefaultsCodexToAgentsSkillsDir(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
