@@ -172,6 +172,112 @@ func TestSpringfieldPlanReplaceArchivesPrior(t *testing.T) {
 	}
 }
 
+func TestSpringfieldPlanReplaceKeepsPriorWhenNewFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("chmod-based write-failure test does not apply when running as root")
+	}
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeSpringfieldConfig(t, dir, "claude")
+
+	if _, err := runBinaryIn(t, bin, dir, "plan", "--prompt", "first batch"); err != nil {
+		t.Fatalf("first plan failed: %v", err)
+	}
+	firstRun, _, _ := batch.ReadRun(dir)
+	firstID := firstRun.ActiveBatchID
+
+	// Make plans/ read-only so WriteBatch for the new batch fails, but archive/
+	// remains writable (so ArchiveBatch can succeed in the old code path,
+	// revealing the bug: archive written before new batch confirmed).
+	plansDir := filepath.Join(dir, ".springfield", "plans")
+	if err := os.Chmod(plansDir, 0o500); err != nil {
+		t.Fatalf("chmod plans dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(plansDir, 0o755) })
+
+	output, err := runBinaryIn(t, bin, dir, "plan", "--replace", "--prompt", "second batch")
+	if err == nil {
+		t.Fatalf("expected plan --replace to fail with read-only plans dir, got:\n%s", output)
+	}
+
+	// Restore permissions so we can inspect.
+	_ = os.Chmod(plansDir, 0o755)
+
+	// Archive must remain empty — prior batch must still be active.
+	archiveDir := filepath.Join(dir, ".springfield", "archive")
+	if entries, _ := os.ReadDir(archiveDir); len(entries) > 0 {
+		t.Errorf("archive should be empty after failed --replace, found %d entries", len(entries))
+	}
+	gotRun, ok, err := batch.ReadRun(dir)
+	if err != nil || !ok {
+		t.Fatalf("run.json should still exist: ok=%v err=%v", ok, err)
+	}
+	if gotRun.ActiveBatchID != firstID {
+		t.Errorf("ActiveBatchID = %q, want unchanged %q", gotRun.ActiveBatchID, firstID)
+	}
+}
+
+func TestSpringfieldPlanAppendDedupsSliceIDs(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeSpringfieldConfig(t, dir, "claude")
+
+	firstPlan := `# First
+## Task 1: Alpha
+## Task 2: Beta
+`
+	planPath := filepath.Join(dir, "first.md")
+	if err := os.WriteFile(planPath, []byte(firstPlan), 0o644); err != nil {
+		t.Fatalf("write first plan: %v", err)
+	}
+	if _, err := runBinaryIn(t, bin, dir, "plan", "--file", planPath); err != nil {
+		t.Fatalf("first plan: %v", err)
+	}
+
+	secondPlan := `# Second
+## Task 1: Gamma
+## Task 2: Delta
+`
+	secondPath := filepath.Join(dir, "second.md")
+	if err := os.WriteFile(secondPath, []byte(secondPlan), 0o644); err != nil {
+		t.Fatalf("write second plan: %v", err)
+	}
+	if _, err := runBinaryIn(t, bin, dir, "plan", "--append", "--file", secondPath); err != nil {
+		t.Fatalf("append plan: %v", err)
+	}
+
+	run, _, _ := batch.ReadRun(dir)
+	paths, _ := batch.NewPaths(dir, run.ActiveBatchID)
+	b, err := batch.ReadBatch(paths)
+	if err != nil {
+		t.Fatalf("ReadBatch: %v", err)
+	}
+	if len(b.Slices) != 4 {
+		t.Fatalf("slice count = %d, want 4", len(b.Slices))
+	}
+	seen := map[string]int{}
+	for _, s := range b.Slices {
+		seen[s.ID]++
+	}
+	for id, n := range seen {
+		if n > 1 {
+			t.Errorf("slice ID %q appears %d times; want unique", id, n)
+		}
+	}
+	// Phase slice references must match the actual slice IDs.
+	phaseIDs := map[string]struct{}{}
+	for _, p := range b.Phases {
+		for _, id := range p.Slices {
+			phaseIDs[id] = struct{}{}
+		}
+	}
+	for _, s := range b.Slices {
+		if _, ok := phaseIDs[s.ID]; !ok {
+			t.Errorf("slice %q not referenced by any phase", s.ID)
+		}
+	}
+}
+
 func TestSpringfieldPlanUnsafeIDSanitized(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()

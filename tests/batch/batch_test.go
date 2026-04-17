@@ -2,8 +2,6 @@ package batch_test
 
 import (
 	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -233,74 +231,3 @@ func TestArchiveBatch(t *testing.T) {
 	}
 }
 
-// --- legacy detection ---
-
-func writeLegacyIndex(t *testing.T, dir, activeID string, ids []string) {
-	t.Helper()
-	workDir := filepath.Join(dir, ".springfield", "work")
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-
-	works := "["
-	for i, id := range ids {
-		if i > 0 {
-			works += ","
-		}
-		works += `{"id":"` + id + `","title":"` + strings.Title(id) + `"}`
-	}
-	works += "]"
-
-	activeField := ""
-	if activeID != "" {
-		activeField = `"active_work_id":"` + activeID + `",`
-	}
-
-	content := `{` + activeField + `"works":` + works + `}`
-	if err := os.WriteFile(filepath.Join(workDir, "index.json"), []byte(content), 0o644); err != nil {
-		t.Fatalf("write index: %v", err)
-	}
-}
-
-func TestDetectLegacyWork_NoState(t *testing.T) {
-	dir := t.TempDir()
-	summary, err := batch.DetectLegacyWork(dir)
-	if err != nil {
-		t.Fatalf("DetectLegacyWork: %v", err)
-	}
-	if summary != nil {
-		t.Errorf("expected nil summary, got %+v", summary)
-	}
-}
-
-func TestDetectLegacyWork_WithActiveID(t *testing.T) {
-	dir := t.TempDir()
-	writeLegacyIndex(t, dir, "wave-c2", []string{"wave-c1", "wave-c2"})
-
-	summary, err := batch.DetectLegacyWork(dir)
-	if err != nil {
-		t.Fatalf("DetectLegacyWork: %v", err)
-	}
-	if summary == nil {
-		t.Fatal("expected non-nil summary")
-	}
-	if summary.ID != "wave-c2" {
-		t.Errorf("ID = %q, want wave-c2", summary.ID)
-	}
-}
-
-func TestDetectLegacyWork_FallsBackToLast(t *testing.T) {
-	dir := t.TempDir()
-	writeLegacyIndex(t, dir, "", []string{"alpha", "beta", "gamma"})
-
-	summary, err := batch.DetectLegacyWork(dir)
-	if err != nil {
-		t.Fatalf("DetectLegacyWork: %v", err)
-	}
-	if summary == nil {
-		t.Fatal("expected non-nil summary")
-	}
-	if summary.ID != "gamma" {
-		t.Errorf("ID = %q, want gamma", summary.ID)
-	}
-}

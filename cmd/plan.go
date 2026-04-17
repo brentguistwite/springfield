@@ -50,6 +50,7 @@ func NewPlanCommand() *cobra.Command {
 				return err
 			}
 
+			var priorBatch *batch.Batch
 			if hasRun && run.ActiveBatchID != "" {
 				activePaths, pathErr := batch.NewPaths(root, run.ActiveBatchID)
 				if pathErr == nil {
@@ -62,14 +63,9 @@ func NewPlanCommand() *cobra.Command {
 							return fmt.Errorf("active batch %q already exists\nUse --replace to archive it and start fresh, or --append to add slices to it", run.ActiveBatchID)
 						}
 						if replace {
-							if archiveErr := batch.ArchiveBatch(root, activeBatch, "replaced"); archiveErr != nil {
-								return fmt.Errorf("archive active batch: %w", archiveErr)
-							}
-							if clearErr := batch.ClearRun(root); clearErr != nil {
-								return fmt.Errorf("clear active run: %w", clearErr)
-							}
-							run = batch.Run{}
-							hasRun = false
+							// Defer archive until after new batch is fully written.
+							b := activeBatch
+							priorBatch = &b
 						}
 					}
 				}
@@ -108,7 +104,21 @@ func NewPlanCommand() *cobra.Command {
 				ActivePhaseIdx: 0,
 			}
 			if err := batch.WriteRun(root, newRun); err != nil {
+				// Roll back new batch dir so we don't leak an orphan.
+				if rollbackPaths, perr := batch.NewPaths(root, compiled.Batch.ID); perr == nil {
+					if rmErr := os.RemoveAll(rollbackPaths.PlanDir()); rmErr != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to roll back new batch dir %s: %v\n", rollbackPaths.PlanDir(), rmErr)
+					}
+				}
 				return fmt.Errorf("write run state: %w", err)
+			}
+
+			// New batch is committed — now archive the prior one (best-effort is OK;
+			// the invariant we protect is that run.json always points at a real batch).
+			if priorBatch != nil {
+				if archiveErr := batch.ArchiveBatch(root, *priorBatch, "replaced"); archiveErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: archive prior batch %q: %v\n", priorBatch.ID, archiveErr)
+				}
 			}
 
 			w := cmd.OutOrStdout()
@@ -211,18 +221,30 @@ func appendToBatch(root, activeBatchID string, newBatch batch.Batch) error {
 		return err
 	}
 
+	seen := make(map[string]struct{}, len(active.Slices))
+	for _, s := range active.Slices {
+		seen[s.ID] = struct{}{}
+	}
+
+	// Flatten appended slices into the trailing serial phase (creating one if needed).
+	// Compile currently emits only a single serial phase per batch, so preserving the
+	// incoming phase shape is dead code today.
+	appendedIDs := make([]string, 0, len(newBatch.Slices))
 	for _, s := range newBatch.Slices {
+		newID := batch.UniqueID(s.ID, seen)
+		seen[newID] = struct{}{}
+		s.ID = newID
 		active.Slices = append(active.Slices, s)
-		if len(active.Phases) > 0 {
-			last := &active.Phases[len(active.Phases)-1]
-			if last.Mode == batch.PhaseSerial {
-				last.Slices = append(last.Slices, s.ID)
-				continue
-			}
-		}
+		appendedIDs = append(appendedIDs, newID)
+	}
+
+	if len(active.Phases) > 0 && active.Phases[len(active.Phases)-1].Mode == batch.PhaseSerial {
+		last := &active.Phases[len(active.Phases)-1]
+		last.Slices = append(last.Slices, appendedIDs...)
+	} else {
 		active.Phases = append(active.Phases, batch.Phase{
 			Mode:   batch.PhaseSerial,
-			Slices: []string{s.ID},
+			Slices: appendedIDs,
 		})
 	}
 

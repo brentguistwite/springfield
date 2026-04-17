@@ -10,37 +10,16 @@ import (
 )
 
 const (
-	statusReady     = "ready"
 	statusRunning   = "running"
 	statusCompleted = "completed"
 	statusFailed    = "failed"
-	statusDraft     = "draft"
 )
 
-// RunResult is the Springfield-owned summary of one run or resume attempt.
+// RunResult is the Springfield-owned summary of one run attempt.
 type RunResult struct {
 	WorkID string
 	Status string
 	Error  string
-}
-
-// WorkstreamStatus is the public Springfield status projection for one workstream.
-type WorkstreamStatus struct {
-	Name         string
-	Title        string
-	Status       string
-	Error        string
-	EvidencePath string
-}
-
-// Status is the Springfield-owned status view for one persisted work item.
-type Status struct {
-	WorkID      string
-	Title       string
-	Split       string
-	Status      string
-	Approved    bool
-	Workstreams []WorkstreamStatus
 }
 
 // Runner executes Springfield work through the execution adapter boundary.
@@ -51,39 +30,6 @@ type Runner struct {
 // Run executes Springfield work through the Springfield execution adapter.
 func (r Runner) Run(root, workID string) (RunResult, error) {
 	return r.run(root, workID)
-}
-
-// Resume continues Springfield work through the Springfield execution adapter.
-func (r Runner) Resume(root, workID string) (RunResult, error) {
-	return r.run(root, workID)
-}
-
-// Status returns the Springfield-owned status view for one work item.
-func (r Runner) Status(root, workID string) (Status, error) {
-	work, state, err := loadWorkState(root, workID)
-	if err != nil {
-		return Status{}, err
-	}
-
-	status := Status{
-		WorkID:      work.ID,
-		Title:       work.Title,
-		Split:       work.Split,
-		Status:      publicStatus(state.Status, state.Approved),
-		Approved:    state.Approved,
-		Workstreams: make([]WorkstreamStatus, 0, len(work.Workstreams)),
-	}
-	for _, workstream := range work.Workstreams {
-		status.Workstreams = append(status.Workstreams, WorkstreamStatus{
-			Name:         workstream.Name,
-			Title:        workstream.Title,
-			Status:       workstream.Status,
-			Error:        workstream.Error,
-			EvidencePath: workstream.EvidencePath,
-		})
-	}
-
-	return status, nil
 }
 
 func (r Runner) run(root, workID string) (RunResult, error) {
@@ -224,21 +170,6 @@ func defaultWorkstreamStatus(reportStatus string) string {
 		return statusFailed
 	}
 	return statusCompleted
-}
-
-func publicStatus(status string, approved bool) string {
-	switch status {
-	case statusCompleted, statusFailed, statusRunning:
-		return status
-	case statusDraft:
-		if approved {
-			return statusReady
-		}
-	}
-	if approved {
-		return statusReady
-	}
-	return status
 }
 
 func loadWorkState(root, workID string) (Work, runStateFile, error) {

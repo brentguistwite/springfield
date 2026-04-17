@@ -35,14 +35,6 @@ func NewStartCommand() *cobra.Command {
 			}
 
 			if !hasRun || run.ActiveBatchID == "" {
-				// Check for legacy state and surface a clear next step.
-				legacy, legacyErr := batch.DetectLegacyWork(root)
-				if legacyErr == nil && legacy != nil {
-					return fmt.Errorf(
-						"no Springfield batch found — found legacy work %q instead\nRun \"springfield plan\" to create a new batch, or use \"springfield resume\" to run the legacy work",
-						legacy.ID,
-					)
-				}
 				return fmt.Errorf("no Springfield plan found for this repo — run \"springfield plan\" first")
 			}
 
@@ -66,7 +58,11 @@ func NewStartCommand() *cobra.Command {
 			run.LastCheckpoint = time.Now().UTC()
 			if result.Error != "" {
 				run.LastError = result.Error
-				_ = batch.WriteRun(root, run)
+				if writeErr := batch.WriteRun(root, run); writeErr != nil {
+					fmt.Fprintf(w, "Status: failed\n")
+					fmt.Fprintf(w, "Error: %s\n", result.Error)
+					return fmt.Errorf("batch %s failed; additionally failed to persist run state: %w", b.ID, writeErr)
+				}
 				fmt.Fprintf(w, "Status: failed\n")
 				fmt.Fprintf(w, "Error: %s\n", result.Error)
 				if execErr != nil {
@@ -75,8 +71,12 @@ func NewStartCommand() *cobra.Command {
 				return fmt.Errorf("batch %s failed", b.ID)
 			}
 
-			_ = batch.ArchiveBatch(root, b, "completed")
-			_ = batch.ClearRun(root)
+			if archiveErr := batch.ArchiveBatch(root, b, "completed"); archiveErr != nil {
+				return fmt.Errorf("archive completed batch %s: %w", b.ID, archiveErr)
+			}
+			if clearErr := batch.ClearRun(root); clearErr != nil {
+				return fmt.Errorf("clear run state after completion: %w", clearErr)
+			}
 
 			fmt.Fprintf(w, "Status: completed\n")
 			return nil
@@ -119,7 +119,9 @@ func runBatch(root string, run batch.Run, b batch.Batch) (BatchRunResult, error)
 		}
 
 		s.Status = batch.SliceRunning
-		_ = batch.UpdateBatchSlice(batchPaths, s)
+		if err := batch.UpdateBatchSlice(batchPaths, s); err != nil {
+			return BatchRunResult{Error: err.Error()}, err
+		}
 
 		report, runErr := runner.Executor.Run(root, sliceToExecutionWork(b, s))
 		if runErr != nil || report.Status == "failed" {
@@ -128,12 +130,17 @@ func runBatch(root string, run batch.Run, b batch.Batch) (BatchRunResult, error)
 			if runErr != nil && s.Error == "" {
 				s.Error = runErr.Error()
 			}
-			_ = batch.UpdateBatchSlice(batchPaths, s)
+			if err := batch.UpdateBatchSlice(batchPaths, s); err != nil {
+				// Surface both errors; the slice failure is primary.
+				return BatchRunResult{Error: s.Error}, fmt.Errorf("%s; also failed to persist slice status: %w", s.Error, err)
+			}
 			return BatchRunResult{Error: s.Error}, runErr
 		}
 
 		s.Status = batch.SliceDone
-		_ = batch.UpdateBatchSlice(batchPaths, s)
+		if err := batch.UpdateBatchSlice(batchPaths, s); err != nil {
+			return BatchRunResult{Error: err.Error()}, err
+		}
 	}
 
 	return BatchRunResult{Status: "completed"}, nil
