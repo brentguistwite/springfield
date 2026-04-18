@@ -2,7 +2,6 @@ package batch_test
 
 import (
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -24,7 +23,6 @@ func TestSanitizeID(t *testing.T) {
 	}
 	for _, c := range cases {
 		got := batch.SanitizeID(c.in)
-		// collapse consecutive dashes that our regex already handles
 		if got != c.want {
 			t.Errorf("SanitizeID(%q) = %q, want %q", c.in, got, c.want)
 		}
@@ -43,11 +41,14 @@ func TestUniqueID(t *testing.T) {
 
 // --- compile ---
 
-func TestCompilePromptMode(t *testing.T) {
+func TestCompile_BuildsBatchFromSlices(t *testing.T) {
 	out, err := batch.Compile(batch.CompileInput{
 		Title:  "add oauth",
 		Source: "Implement OAuth 2.0 login.",
-		Kind:   batch.SourcePrompt,
+		Slices: []batch.SliceRequest{
+			{ID: "01", Title: "scaffold", Summary: "set up package"},
+			{ID: "02", Title: "wire endpoint", Summary: "hook router"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
@@ -55,58 +56,62 @@ func TestCompilePromptMode(t *testing.T) {
 	if out.Batch.ID != "add-oauth" {
 		t.Errorf("batch ID = %q, want add-oauth", out.Batch.ID)
 	}
-	if len(out.Batch.Slices) != 1 {
-		t.Fatalf("slice count = %d, want 1", len(out.Batch.Slices))
+	if len(out.Batch.Slices) != 2 {
+		t.Fatalf("slice count = %d, want 2", len(out.Batch.Slices))
 	}
 	if out.Batch.Slices[0].Status != batch.SliceQueued {
 		t.Errorf("slice status = %q, want queued", out.Batch.Slices[0].Status)
 	}
-}
-
-func TestCompileFileMode_ParsesTasks(t *testing.T) {
-	plan := `# Springfield Plan
-
-## Task 1: Scaffold the repo
-Set up directory structure.
-
-## Task 2: Add API
-Implement REST endpoints.
-
-## Task 3: UI layer
-Build the frontend.
-`
-	out, err := batch.Compile(batch.CompileInput{
-		Title:  "scaffold",
-		Source: plan,
-		Kind:   batch.SourceFile,
-	})
-	if err != nil {
-		t.Fatalf("Compile: %v", err)
+	if out.Batch.Slices[1].Summary != "hook router" {
+		t.Errorf("slice[1] Summary = %q", out.Batch.Slices[1].Summary)
 	}
-	if len(out.Batch.Slices) != 3 {
-		t.Fatalf("slice count = %d, want 3", len(out.Batch.Slices))
+	if len(out.Batch.Phases) != 1 || out.Batch.Phases[0].Mode != batch.PhaseSerial {
+		t.Errorf("phases wrong: %+v", out.Batch.Phases)
 	}
-	if out.Batch.Slices[0].ID != "01" {
-		t.Errorf("slice[0].ID = %q, want 01", out.Batch.Slices[0].ID)
-	}
-	if out.Batch.Slices[1].Title != "Add API" {
-		t.Errorf("slice[1].Title = %q, want 'Add API'", out.Batch.Slices[1].Title)
+	if out.Source != "Implement OAuth 2.0 login." {
+		t.Errorf("source not preserved: %q", out.Source)
 	}
 }
 
 func TestCompileEmptySourceReturnsError(t *testing.T) {
-	_, err := batch.Compile(batch.CompileInput{Source: "  ", Kind: batch.SourcePrompt})
+	_, err := batch.Compile(batch.CompileInput{
+		Title:  "x",
+		Source: "  ",
+		Slices: []batch.SliceRequest{{ID: "01", Title: "a"}},
+	})
 	if err == nil {
 		t.Fatal("expected error for empty source")
 	}
 }
 
-func TestCompileDeduplicatesID(t *testing.T) {
+func TestCompileMissingTitleReturnsError(t *testing.T) {
+	_, err := batch.Compile(batch.CompileInput{
+		Title:  "",
+		Source: "x",
+		Slices: []batch.SliceRequest{{ID: "01", Title: "a"}},
+	})
+	if err == nil {
+		t.Fatal("expected error for empty title")
+	}
+}
+
+func TestCompileEmptySlicesReturnsError(t *testing.T) {
+	_, err := batch.Compile(batch.CompileInput{
+		Title:  "x",
+		Source: "y",
+		Slices: nil,
+	})
+	if err == nil {
+		t.Fatal("expected error for empty slices")
+	}
+}
+
+func TestCompileDeduplicatesBatchID(t *testing.T) {
 	existing := map[string]struct{}{"scaffold": {}}
 	out, err := batch.Compile(batch.CompileInput{
 		Title:       "scaffold",
 		Source:      "do stuff",
-		Kind:        batch.SourcePrompt,
+		Slices:      []batch.SliceRequest{{ID: "01", Title: "a"}},
 		ExistingIDs: existing,
 	})
 	if err != nil {
@@ -114,6 +119,26 @@ func TestCompileDeduplicatesID(t *testing.T) {
 	}
 	if out.Batch.ID != "scaffold-2" {
 		t.Errorf("batch ID = %q, want scaffold-2", out.Batch.ID)
+	}
+}
+
+func TestCompileDeduplicatesSliceIDs(t *testing.T) {
+	out, err := batch.Compile(batch.CompileInput{
+		Title:  "demo",
+		Source: "body",
+		Slices: []batch.SliceRequest{
+			{ID: "01", Title: "a"},
+			{ID: "01", Title: "b"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if len(out.Batch.Slices) != 2 {
+		t.Fatalf("slice count = %d", len(out.Batch.Slices))
+	}
+	if out.Batch.Slices[0].ID == out.Batch.Slices[1].ID {
+		t.Errorf("slice ids not deduped: %q %q", out.Batch.Slices[0].ID, out.Batch.Slices[1].ID)
 	}
 }
 
@@ -127,11 +152,10 @@ func TestWriteAndReadBatch(t *testing.T) {
 	}
 
 	b := batch.Batch{
-		ID:         "my-batch",
-		Title:      "My Batch",
-		SourceKind: batch.SourcePrompt,
-		Phases:     []batch.Phase{{Mode: batch.PhaseSerial, Slices: []string{"01"}}},
-		Slices:     []batch.Slice{{ID: "01", Title: "Do stuff", Status: batch.SliceQueued}},
+		ID:     "my-batch",
+		Title:  "My Batch",
+		Phases: []batch.Phase{{Mode: batch.PhaseSerial, Slices: []string{"01"}}},
+		Slices: []batch.Slice{{ID: "01", Title: "Do stuff", Status: batch.SliceQueued}},
 	}
 
 	if err := batch.WriteBatch(paths, b, "do stuff"); err != nil {
@@ -194,90 +218,14 @@ func TestReadRunMissingFile(t *testing.T) {
 	}
 }
 
-func TestCompile_FileSourceCapturesTaskBody(t *testing.T) {
-	source := `# My Plan
-
-## Task 1: Build the thing
-
-Do step A.
-Do step B.
-
-Constraints: must not break X.
-
-## Task 2: Verify
-
-Run the tests.
-`
-	out, err := batch.Compile(batch.CompileInput{
-		Title:  "demo",
-		Source: source,
-		Kind:   batch.SourceFile,
-	})
-	if err != nil {
-		t.Fatalf("Compile: %v", err)
-	}
-	if len(out.Batch.Slices) != 2 {
-		t.Fatalf("slice count = %d, want 2", len(out.Batch.Slices))
-	}
-
-	s1 := out.Batch.Slices[0]
-	for _, want := range []string{"Do step A.", "Do step B.", "Constraints: must not break X."} {
-		if !strings.Contains(s1.Summary, want) {
-			t.Errorf("slice 1 Summary missing %q\nGot:\n%s", want, s1.Summary)
-		}
-	}
-	if strings.Contains(s1.Summary, "## Task 2") {
-		t.Errorf("slice 1 Summary leaked next-task header:\n%s", s1.Summary)
-	}
-
-	s2 := out.Batch.Slices[1]
-	if !strings.Contains(s2.Summary, "Run the tests.") {
-		t.Errorf("slice 2 Summary missing body, got:\n%s", s2.Summary)
-	}
-}
-
-func TestCompile_NumberedSubheadingDoesNotSplitSlice(t *testing.T) {
-	source := `# My Plan
-
-## Task 1: Big task
-
-Do the work.
-
-### 1. Acceptance Criteria
-
-- A
-- B
-
-### 2. Notes
-
-Some prose.
-
-## Task 2: Next thing
-
-Other work.
-`
-	out, err := batch.Compile(batch.CompileInput{
-		Title:  "demo",
-		Source: source,
-		Kind:   batch.SourceFile,
-	})
-	if err != nil {
-		t.Fatalf("Compile: %v", err)
-	}
-	if len(out.Batch.Slices) != 2 {
-		t.Fatalf("slice count = %d, want 2 (numbered subheadings must not split); slices: %+v", len(out.Batch.Slices), out.Batch.Slices)
-	}
-	if !strings.Contains(out.Batch.Slices[0].Summary, "Acceptance Criteria") {
-		t.Errorf("slice 1 Summary should contain its subheading body, got:\n%s", out.Batch.Slices[0].Summary)
-	}
-}
-
-func TestRunBatchSerialOnly(t *testing.T) {
-	// Verify that a batch with no explicit parallel phases runs all slices in PhaseSerial.
+func TestCompile_SerialPhaseCoversAllSlices(t *testing.T) {
 	out, err := batch.Compile(batch.CompileInput{
 		Title:  "serial batch",
-		Source: "# Plan\n## Task 1: First\n## Task 2: Second\n",
-		Kind:   batch.SourceFile,
+		Source: "body",
+		Slices: []batch.SliceRequest{
+			{ID: "01", Title: "First"},
+			{ID: "02", Title: "Second"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
@@ -311,12 +259,10 @@ func TestArchiveBatch(t *testing.T) {
 		t.Fatalf("ArchiveBatch: %v", err)
 	}
 
-	// Plan dir should be gone.
 	if _, err := os.Stat(paths.PlanDir()); !os.IsNotExist(err) {
 		t.Error("plan dir should be removed after archive")
 	}
 
-	// Archive entry should exist.
 	archiveDir := batch.ArchiveDir(dir)
 	entries, err := os.ReadDir(archiveDir)
 	if err != nil {
@@ -326,4 +272,3 @@ func TestArchiveBatch(t *testing.T) {
 		t.Error("expected archive entry to exist")
 	}
 }
-

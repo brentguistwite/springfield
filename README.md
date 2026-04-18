@@ -109,14 +109,25 @@ Notes:
 
 ## Runtime Flow
 
-Use `plan` to compile a work request into a runnable batch, then `start` to execute it:
+Use `plan` to compile a work request into a runnable batch, then `start` to execute it.
+
+The `springfield:plan` skill reads your plan (file or prompt), decides slice boundaries, and emits a JSON payload to `springfield plan --slices -`:
 
 ```bash
-# Compile from a plan file
-springfield plan --file path/to/plan.md
+# Skill pipes the payload for you; direct usage looks like:
+springfield plan --slices path/to/payload.json
 
-# Or compile from a direct prompt
-springfield plan --prompt "Implement OAuth 2.0 login"
+# Or via stdin:
+springfield plan --slices - <<'JSON'
+{
+  "title": "Implement OAuth 2.0 login",
+  "source": "<your original plan text>",
+  "slices": [
+    {"id": "01", "title": "scaffold auth package", "summary": "..."},
+    {"id": "02", "title": "wire login endpoint",    "summary": "..."}
+  ]
+}
+JSON
 
 # Execute the compiled batch
 springfield start
@@ -130,8 +141,8 @@ Execution is serial by default. Parallel execution only happens when the batch e
 If a batch already exists, use `--replace` to archive it and start fresh, or `--append` to add new slices:
 
 ```bash
-springfield plan --replace --prompt "New approach"
-springfield plan --append --file extra-work.md
+springfield plan --replace --slices new-payload.json
+springfield plan --append  --slices extra-slices.json
 ```
 
 Use `springfield doctor` whenever local agent tooling looks unhealthy or a host CLI is missing.

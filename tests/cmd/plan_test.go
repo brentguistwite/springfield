@@ -17,9 +17,8 @@ func TestSpringfieldPlanHelp(t *testing.T) {
 	}
 
 	for _, marker := range []string{
-		"Compile a Springfield plan from a markdown file or prompt into a runnable batch.",
-		"--file",
-		"--prompt",
+		"Compile a Springfield plan from a caller-provided slice payload.",
+		"--slices",
 		"--replace",
 		"--append",
 	} {
@@ -29,20 +28,26 @@ func TestSpringfieldPlanHelp(t *testing.T) {
 	}
 }
 
-func TestSpringfieldPlanFromPrompt(t *testing.T) {
+func TestSpringfieldPlanFromSlicesStdin(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
 
-	output, err := runBinaryIn(t, bin, dir, "plan", "--prompt", "Implement OAuth 2.0 login")
+	output, err := planWithSlices(t, bin, dir, "Implement OAuth 2.0 login",
+		"Implement OAuth 2.0 login",
+		[]batch.SliceRequest{
+			{ID: "01", Title: "scaffold auth package", Summary: "Set up dir structure."},
+			{ID: "02", Title: "add JWT signing", Summary: "Sign + verify tokens."},
+			{ID: "03", Title: "wire middleware", Summary: "Hook into router."},
+		})
 	if err != nil {
-		t.Fatalf("springfield plan --prompt failed: %v\n%s", err, output)
+		t.Fatalf("plan --slices failed: %v\n%s", err, output)
 	}
 
 	for _, marker := range []string{
 		"Batch:",
-		"Title:",
-		"Slices: 1",
+		"Title: Implement OAuth 2.0 login",
+		"Slices: 3",
 		`Run "springfield start" to execute.`,
 	} {
 		if !strings.Contains(output, marker) {
@@ -50,7 +55,6 @@ func TestSpringfieldPlanFromPrompt(t *testing.T) {
 		}
 	}
 
-	// Verify run.json was written.
 	runPath := filepath.Join(dir, ".springfield", "run.json")
 	data, err := os.ReadFile(runPath)
 	if err != nil {
@@ -63,80 +67,76 @@ func TestSpringfieldPlanFromPrompt(t *testing.T) {
 	if run.ActiveBatchID == "" {
 		t.Error("expected active_batch_id to be set in run.json")
 	}
-}
 
-func TestSpringfieldPlanFromFile(t *testing.T) {
-	bin := buildBinary(t)
-	dir := t.TempDir()
-	writeSpringfieldConfig(t, dir, "claude")
-
-	planContent := `# Add auth layer
-
-## Task 1: Scaffold auth package
-Set up directory structure.
-
-## Task 2: Implement JWT
-Add JWT signing and verification.
-
-## Task 3: Wire middleware
-Connect middleware to router.
-`
-	planPath := filepath.Join(dir, "plan.md")
-	if err := os.WriteFile(planPath, []byte(planContent), 0o644); err != nil {
-		t.Fatalf("write plan file: %v", err)
-	}
-
-	output, err := runBinaryIn(t, bin, dir, "plan", "--file", planPath)
+	paths, _ := batch.NewPaths(dir, run.ActiveBatchID)
+	b, err := batch.ReadBatch(paths)
 	if err != nil {
-		t.Fatalf("springfield plan --file failed: %v\n%s", err, output)
+		t.Fatalf("ReadBatch: %v", err)
 	}
-
-	if !strings.Contains(output, "Slices: 3") {
-		t.Fatalf("expected 3 slices parsed from plan file, got:\n%s", output)
+	if len(b.Slices) != 3 {
+		t.Fatalf("slices persisted = %d, want 3", len(b.Slices))
 	}
-	for _, marker := range []string{"01", "02", "03"} {
-		if !strings.Contains(output, marker) {
-			t.Fatalf("expected slice id %q in output, got:\n%s", marker, output)
-		}
+	if b.Slices[1].Title != "add JWT signing" {
+		t.Fatalf("slice[1].Title = %q", b.Slices[1].Title)
 	}
 }
 
-func TestSpringfieldPlanFromFileUsesMarkdownH1AsTitle(t *testing.T) {
+func TestSpringfieldPlanFromSlicesFile(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
 
-	planContent := `# Springfield smoke batch
-
-## Task 1: Create smoke doc
-Create docs/SPRINGFIELD_SMOKE.md explaining the smoke run.
-`
-	planPath := filepath.Join(dir, "plan.md")
-	if err := os.WriteFile(planPath, []byte(planContent), 0o644); err != nil {
-		t.Fatalf("write plan file: %v", err)
+	payload := batch.SlicePayload{
+		Title:  "auth layer",
+		Source: "auth layer",
+		Slices: []batch.SliceRequest{{ID: "01", Title: "only slice"}},
 	}
-
-	output, err := runBinaryIn(t, bin, dir, "plan", "--file", planPath)
+	data, err := json.Marshal(payload)
 	if err != nil {
-		t.Fatalf("springfield plan --file failed: %v\n%s", err, output)
+		t.Fatalf("marshal: %v", err)
+	}
+	payloadPath := filepath.Join(dir, "payload.json")
+	if err := os.WriteFile(payloadPath, data, 0o644); err != nil {
+		t.Fatalf("write payload: %v", err)
 	}
 
-	if !strings.Contains(output, "Title: Springfield smoke batch") {
-		t.Fatalf("expected markdown H1 title in output, got:\n%s", output)
+	output, err := runBinaryIn(t, bin, dir, "plan", "--slices", payloadPath)
+	if err != nil {
+		t.Fatalf("plan --slices <file> failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "Slices: 1") {
+		t.Fatalf("expected Slices: 1, got:\n%s", output)
 	}
 }
 
-func TestSpringfieldPlanFilePlusPromptReturnsError(t *testing.T) {
+func TestSpringfieldPlanRequiresSlicesFlag(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
 
-	output, err := runBinaryIn(t, bin, dir, "plan", "--file", "plan.md", "--prompt", "do stuff")
+	output, err := runBinaryIn(t, bin, dir, "plan")
 	if err == nil {
-		t.Fatalf("expected error when --file and --prompt both provided, got:\n%s", output)
+		t.Fatalf("expected error when --slices missing, got:\n%s", output)
 	}
-	if !strings.Contains(output, "not both") {
-		t.Fatalf("expected 'not both' error message, got:\n%s", output)
+	if !strings.Contains(output, "--slices is required") {
+		t.Fatalf("expected '--slices is required' error, got:\n%s", output)
+	}
+}
+
+func TestSpringfieldPlanRejectsInvalidPayload(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeSpringfieldConfig(t, dir, "claude")
+
+	// Empty slices array.
+	output, err := runBinaryInWithInput(t, bin, dir,
+		`{"title":"x","source":"y","slices":[]}`,
+		"plan", "--slices", "-")
+	if err == nil {
+		t.Fatalf("expected error for empty slices, got:\n%s", output)
+	}
+	if !strings.Contains(output, "at least one slice") {
+		t.Fatalf("expected 'at least one slice' error, got:\n%s", output)
 	}
 }
 
@@ -145,14 +145,11 @@ func TestSpringfieldPlanRefusesWithActiveBatch(t *testing.T) {
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
 
-	// Write first batch.
-	_, err := runBinaryIn(t, bin, dir, "plan", "--prompt", "first batch")
-	if err != nil {
+	if _, err := singleSlicePlan(t, bin, dir, "first batch"); err != nil {
 		t.Fatalf("first plan failed: %v", err)
 	}
 
-	// Second plan without --replace should fail.
-	output, err := runBinaryIn(t, bin, dir, "plan", "--prompt", "second batch")
+	output, err := singleSlicePlan(t, bin, dir, "second batch")
 	if err == nil {
 		t.Fatalf("expected error for second plan without --replace, got:\n%s", output)
 	}
@@ -166,9 +163,11 @@ func TestSpringfieldPlanReplaceArchivesPrior(t *testing.T) {
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
 
-	runBinaryIn(t, bin, dir, "plan", "--prompt", "first batch")
+	if _, err := singleSlicePlan(t, bin, dir, "first batch"); err != nil {
+		t.Fatalf("first plan failed: %v", err)
+	}
 
-	output, err := runBinaryIn(t, bin, dir, "plan", "--replace", "--prompt", "second batch")
+	output, err := singleSlicePlan(t, bin, dir, "second batch", "--replace")
 	if err != nil {
 		t.Fatalf("plan --replace failed: %v\n%s", err, output)
 	}
@@ -187,7 +186,6 @@ func TestSpringfieldPlanReplaceArchivesPrior(t *testing.T) {
 	if err := json.Unmarshal(data, &run); err != nil {
 		t.Fatalf("decode run.json: %v", err)
 	}
-	// Active batch should be the new one (not the first).
 	for _, e := range entries {
 		if strings.Contains(e.Name(), run.ActiveBatchID) {
 			t.Errorf("active batch id %q should not appear in archive names", run.ActiveBatchID)
@@ -203,30 +201,25 @@ func TestSpringfieldPlanReplaceKeepsPriorWhenNewFails(t *testing.T) {
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
 
-	if _, err := runBinaryIn(t, bin, dir, "plan", "--prompt", "first batch"); err != nil {
+	if _, err := singleSlicePlan(t, bin, dir, "first batch"); err != nil {
 		t.Fatalf("first plan failed: %v", err)
 	}
 	firstRun, _, _ := batch.ReadRun(dir)
 	firstID := firstRun.ActiveBatchID
 
-	// Make plans/ read-only so WriteBatch for the new batch fails, but archive/
-	// remains writable (so ArchiveBatch can succeed in the old code path,
-	// revealing the bug: archive written before new batch confirmed).
 	plansDir := filepath.Join(dir, ".springfield", "plans")
 	if err := os.Chmod(plansDir, 0o500); err != nil {
 		t.Fatalf("chmod plans dir: %v", err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(plansDir, 0o755) })
 
-	output, err := runBinaryIn(t, bin, dir, "plan", "--replace", "--prompt", "second batch")
+	output, err := singleSlicePlan(t, bin, dir, "second batch", "--replace")
 	if err == nil {
 		t.Fatalf("expected plan --replace to fail with read-only plans dir, got:\n%s", output)
 	}
 
-	// Restore permissions so we can inspect.
 	_ = os.Chmod(plansDir, 0o755)
 
-	// Archive must remain empty — prior batch must still be active.
 	archiveDir := filepath.Join(dir, ".springfield", "archive")
 	if entries, _ := os.ReadDir(archiveDir); len(entries) > 0 {
 		t.Errorf("archive should be empty after failed --replace, found %d entries", len(entries))
@@ -245,27 +238,19 @@ func TestSpringfieldPlanAppendDedupsSliceIDs(t *testing.T) {
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
 
-	firstPlan := `# First
-## Task 1: Alpha
-## Task 2: Beta
-`
-	planPath := filepath.Join(dir, "first.md")
-	if err := os.WriteFile(planPath, []byte(firstPlan), 0o644); err != nil {
-		t.Fatalf("write first plan: %v", err)
+	first := []batch.SliceRequest{
+		{ID: "01", Title: "Alpha"},
+		{ID: "02", Title: "Beta"},
 	}
-	if _, err := runBinaryIn(t, bin, dir, "plan", "--file", planPath); err != nil {
+	if _, err := planWithSlices(t, bin, dir, "first", "first plan", first); err != nil {
 		t.Fatalf("first plan: %v", err)
 	}
 
-	secondPlan := `# Second
-## Task 1: Gamma
-## Task 2: Delta
-`
-	secondPath := filepath.Join(dir, "second.md")
-	if err := os.WriteFile(secondPath, []byte(secondPlan), 0o644); err != nil {
-		t.Fatalf("write second plan: %v", err)
+	second := []batch.SliceRequest{
+		{ID: "01", Title: "Gamma"},
+		{ID: "02", Title: "Delta"},
 	}
-	if _, err := runBinaryIn(t, bin, dir, "plan", "--append", "--file", secondPath); err != nil {
+	if _, err := planWithSlices(t, bin, dir, "second", "second plan", second, "--append"); err != nil {
 		t.Fatalf("append plan: %v", err)
 	}
 
@@ -287,7 +272,6 @@ func TestSpringfieldPlanAppendDedupsSliceIDs(t *testing.T) {
 			t.Errorf("slice ID %q appears %d times; want unique", id, n)
 		}
 	}
-	// Phase slice references must match the actual slice IDs.
 	phaseIDs := map[string]struct{}{}
 	for _, p := range b.Phases {
 		for _, id := range p.Slices {
@@ -306,12 +290,11 @@ func TestSpringfieldPlanUnsafeIDSanitized(t *testing.T) {
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
 
-	output, err := runBinaryIn(t, bin, dir, "plan", "--prompt", "Feat: Add OAuth 2.0 Login!!")
+	output, err := singleSlicePlan(t, bin, dir, "Feat: Add OAuth 2.0 Login!!")
 	if err != nil {
 		t.Fatalf("plan failed: %v\n%s", err, output)
 	}
 
-	// Batch ID should not contain uppercase or special chars.
 	data, _ := os.ReadFile(filepath.Join(dir, ".springfield", "run.json"))
 	var run batch.Run
 	json.Unmarshal(data, &run)

@@ -73,7 +73,7 @@ func TestSpringfieldRecoverOnLiveBatchIsNoop(t *testing.T) {
 	writeSpringfieldConfig(t, dir, "claude")
 
 	// Compile a real batch — batch.json is live.
-	if _, err := runBinaryIn(t, bin, dir, "plan", "--prompt", "Implement login"); err != nil {
+	if _, err := singleSlicePlan(t, bin, dir, "Implement login"); err != nil {
 		t.Fatalf("plan: %v", err)
 	}
 
@@ -103,7 +103,7 @@ func TestSpringfieldRecoverFailsClosedOnStatPermissionError(t *testing.T) {
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
 
-	if _, err := runBinaryIn(t, bin, dir, "plan", "--prompt", "Implement login"); err != nil {
+	if _, err := singleSlicePlan(t, bin, dir, "Implement login"); err != nil {
 		t.Fatalf("plan: %v", err)
 	}
 	// Make the plan dir un-statable (remove execute bit on parent) so

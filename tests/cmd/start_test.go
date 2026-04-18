@@ -45,7 +45,7 @@ func TestSpringfieldStatusShowsBatchState(t *testing.T) {
 	writeSpringfieldConfig(t, dir, "claude")
 
 	// Create a batch via plan command.
-	_, err := runBinaryIn(t, bin, dir, "plan", "--prompt", "Implement login")
+	_, err := singleSlicePlan(t, bin, dir, "Implement login")
 	if err != nil {
 		t.Fatalf("plan failed: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestSpringfieldStartRunsBatchSlices(t *testing.T) {
 	writeSpringfieldConfig(t, dir, "claude")
 
 	// Compile a batch first.
-	_, planErr := runBinaryIn(t, bin, dir, "plan", "--prompt", "Implement login flow")
+	_, planErr := singleSlicePlan(t, bin, dir, "Implement login flow")
 	if planErr != nil {
 		t.Fatalf("plan failed: %v", planErr)
 	}
@@ -135,7 +135,7 @@ func TestSpringfieldStartRecoversFromPostArchiveCrash(t *testing.T) {
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
 
-	if _, err := runBinaryIn(t, bin, dir, "plan", "--prompt", "Implement login flow"); err != nil {
+	if _, err := singleSlicePlan(t, bin, dir, "Implement login flow"); err != nil {
 		t.Fatalf("plan failed: %v", err)
 	}
 	fakeBinDir := filepath.Join(dir, "bin")
@@ -195,7 +195,7 @@ func TestSpringfieldStartCompletionWarnsWhenArchiveFails(t *testing.T) {
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
 
-	if _, err := runBinaryIn(t, bin, dir, "plan", "--prompt", "Implement login flow"); err != nil {
+	if _, err := singleSlicePlan(t, bin, dir, "Implement login flow"); err != nil {
 		t.Fatalf("plan failed: %v", err)
 	}
 

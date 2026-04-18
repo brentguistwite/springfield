@@ -2,6 +2,7 @@ package cmd_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,7 +11,31 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"springfield/internal/features/batch"
 )
+
+// planWithSlices invokes `springfield plan --slices -` with a JSON payload
+// built from the provided title/source/slice list plus any extra CLI args
+// (e.g. --replace, --append).
+func planWithSlices(t *testing.T, bin, dir, title, source string, reqs []batch.SliceRequest, extraArgs ...string) (string, error) {
+	t.Helper()
+	payload := batch.SlicePayload{Title: title, Source: source, Slices: reqs}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal slice payload: %v", err)
+	}
+	args := append([]string{"plan", "--slices", "-"}, extraArgs...)
+	return runBinaryInWithInput(t, bin, dir, string(data), args...)
+}
+
+// singleSlicePlan is the common "one slice, title = source" shape used when a
+// test just needs *some* batch to exist so a downstream command can operate on it.
+func singleSlicePlan(t *testing.T, bin, dir, title string, extraArgs ...string) (string, error) {
+	t.Helper()
+	return planWithSlices(t, bin, dir, title, title,
+		[]batch.SliceRequest{{ID: "01", Title: title, Summary: title}}, extraArgs...)
+}
 
 func repoRoot(t *testing.T) string {
 	t.Helper()

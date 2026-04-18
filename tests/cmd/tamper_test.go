@@ -34,7 +34,7 @@ func TestTamperRule1_AgentDeletesBatchJSON(t *testing.T) {
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
 
-	if _, err := runBinaryIn(t, bin, dir, "plan", "--prompt", "Do the thing"); err != nil {
+	if _, err := singleSlicePlan(t, bin, dir, "Do the thing"); err != nil {
 		t.Fatalf("plan: %v", err)
 	}
 	fakeBinDir := filepath.Join(dir, "bin")
@@ -78,7 +78,7 @@ func TestTamperRule2_AgentWritesGarbageJSON(t *testing.T) {
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
 
-	if _, err := runBinaryIn(t, bin, dir, "plan", "--prompt", "Do the thing"); err != nil {
+	if _, err := singleSlicePlan(t, bin, dir, "Do the thing"); err != nil {
 		t.Fatalf("plan: %v", err)
 	}
 	fakeBinDir := filepath.Join(dir, "bin")
@@ -106,7 +106,7 @@ func TestTamperSliceTitleRewriteDetected(t *testing.T) {
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
 
-	if _, err := runBinaryIn(t, bin, dir, "plan", "--prompt", "Do the thing"); err != nil {
+	if _, err := singleSlicePlan(t, bin, dir, "Do the thing"); err != nil {
 		t.Fatalf("plan: %v", err)
 	}
 	fakeBinDir := filepath.Join(dir, "bin")
@@ -129,7 +129,7 @@ func TestTamperRunJSONDetected(t *testing.T) {
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
 
-	if _, err := runBinaryIn(t, bin, dir, "plan", "--prompt", "Do the thing"); err != nil {
+	if _, err := singleSlicePlan(t, bin, dir, "Do the thing"); err != nil {
 		t.Fatalf("plan: %v", err)
 	}
 	fakeBinDir := filepath.Join(dir, "bin")
@@ -152,7 +152,7 @@ func TestTamperNoopAgentPasses(t *testing.T) {
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
 
-	if _, err := runBinaryIn(t, bin, dir, "plan", "--prompt", "Do the thing"); err != nil {
+	if _, err := singleSlicePlan(t, bin, dir, "Do the thing"); err != nil {
 		t.Fatalf("plan: %v", err)
 	}
 	fakeBinDir := filepath.Join(dir, "bin")
@@ -176,7 +176,7 @@ func TestABInteractionMatrix_RunJSONAloneDeleted(t *testing.T) {
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
 
-	if _, err := runBinaryIn(t, bin, dir, "plan", "--prompt", "Do the thing"); err != nil {
+	if _, err := singleSlicePlan(t, bin, dir, "Do the thing"); err != nil {
 		t.Fatalf("plan: %v", err)
 	}
 

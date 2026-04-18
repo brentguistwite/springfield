@@ -88,26 +88,48 @@ Run ` + "`springfield status`" + ` to check whether an active batch already exis
 - If an active batch exists and any slice is ` + "`running`" + `, tell the user to wait before replacing.
 - If an active batch exists but nothing is running, ask the user: replace it, append to it, or keep it.
 
-## Step 3 — Compile slices
+## Step 3 — Read and slice the plan
 
-Parse the source into small, named implementation slices (like ` + "`01-scaffold`" + `, ` + "`02-api`" + `, ` + "`03-ui`" + `).
+If the user pointed to a file, read it. If prompt-mode, treat the prompt as source.
 
-Each slice should:
-- Have a short ID (` + "`01`" + `, ` + "`02`" + `, ...) and a clear title.
-- Cover a coherent, independently-deliverable chunk of work.
-- Default to serial execution unless the user explicitly confirms independent slices that can run in parallel.
+Decide slice boundaries based on the plan's meaning, not syntax. A slice should:
+
+- Be independently deliverable in one agent run.
+- Map to one coherent outcome (e.g., "scaffold auth package", "wire login endpoint").
+- Not span unrelated subsystems.
+
+Markdown cues to consider (in priority order):
+
+1. Explicit ` + "`## Task N:`" + ` / ` + "`## Step N:`" + ` headers — honor them.
+2. H2/H3 sections that each describe a discrete deliverable.
+3. Numbered lists of implementation steps.
+4. Prose plans — chunk by responsibility.
+
+If the plan is genuinely one step, emit one slice. Don't pad.
 
 ## Step 4 — Confirm and persist
 
-Show the user the proposed batch: ID, title, and slice list.
+Show the user the proposed slice list (title + one-line intent per slice).
 Ask for confirmation before writing.
 
-Once confirmed, run:
+Once confirmed, pipe a JSON payload to ` + "`springfield plan --slices -`" + `:
 
+` + "```" + `bash
+springfield plan --slices - <<'JSON'
+{
+  "title": "<batch title>",
+  "source": "<original plan markdown, verbatim>",
+  "slices": [
+    {"id": "01", "title": "<slice 1 title>", "summary": "<slice 1 body>"},
+    {"id": "02", "title": "<slice 2 title>", "summary": "<slice 2 body>"}
+  ]
+}
+JSON
 ` + "```" + `
-springfield plan --file <path>   # for a file source
-springfield plan --prompt "<text>"  # for a direct prompt
-` + "```" + `
+
+Slice IDs: zero-padded (` + "`01`" + `, ` + "`02`" + `, ...). Title short; summary is the actionable body for the slice.
+
+Use ` + "`--replace`" + ` or ` + "`--append`" + ` if an active batch exists (per Step 2).
 
 Keep Springfield as the only user-facing surface.
 `),
