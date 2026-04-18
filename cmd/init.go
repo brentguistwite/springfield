@@ -2,10 +2,13 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -66,6 +69,12 @@ func NewInitCommand() *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), "Created .springfield/")
 			} else {
 				fmt.Fprintln(cmd.OutOrStdout(), ".springfield/ already exists, skipping")
+			}
+
+			if added, err := ensureGitignoreEntry(dir, ".springfield/"); err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to update .gitignore: %v\n", err)
+			} else if added {
+				fmt.Fprintln(cmd.OutOrStdout(), "Added .springfield/ to .gitignore")
 			}
 
 			fmt.Fprintln(cmd.OutOrStdout())
@@ -158,6 +167,69 @@ func parseAndValidateAgents(raw string) ([]string, error) {
 		return nil, fmt.Errorf("at least one agent is required")
 	}
 	return priority, nil
+}
+
+// gitignoreComment explains the Springfield entry to anyone browsing .gitignore.
+const gitignoreComment = "# Springfield runtime state (batches, run.json, logs, archive) — local only; safe to delete."
+
+// ensureGitignoreEntry adds entry to <dir>/.gitignore if not already listed.
+// Creates the file when missing. Idempotent across path-variant spellings
+// (.springfield, .springfield/, /.springfield, /.springfield/).
+func ensureGitignoreEntry(dir, entry string) (added bool, err error) {
+	path := filepath.Join(dir, ".gitignore")
+
+	data, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return false, fmt.Errorf("read .gitignore: %w", err)
+	}
+
+	if containsGitignoreEntry(data, entry) {
+		return false, nil
+	}
+
+	var out bytes.Buffer
+	out.Write(data)
+	if len(data) > 0 && !bytes.HasSuffix(data, []byte("\n")) {
+		out.WriteByte('\n')
+	}
+	// Blank line before the section so it visually separates from prior entries
+	// in a non-empty file. Skip for fresh files (leading blank line looks odd).
+	if len(data) > 0 {
+		out.WriteByte('\n')
+	}
+	out.WriteString(gitignoreComment)
+	out.WriteByte('\n')
+	out.WriteString(entry)
+	out.WriteByte('\n')
+
+	if err := os.WriteFile(path, out.Bytes(), 0o644); err != nil {
+		return false, fmt.Errorf("write .gitignore: %w", err)
+	}
+	return true, nil
+}
+
+func containsGitignoreEntry(content []byte, entry string) bool {
+	target := normalizeGitignorePattern(entry)
+	for _, raw := range strings.Split(string(content), "\n") {
+		stripped := strings.TrimSpace(raw)
+		if idx := strings.Index(stripped, "#"); idx >= 0 {
+			stripped = strings.TrimSpace(stripped[:idx])
+		}
+		if stripped == "" {
+			continue
+		}
+		if normalizeGitignorePattern(stripped) == target {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeGitignorePattern(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "/")
+	s = strings.TrimSuffix(s, "/")
+	return s
 }
 
 // defaultPriority returns the canonical execution-supported agent list as strings.
