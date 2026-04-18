@@ -71,11 +71,9 @@ func NewRecoverCommand() *cobra.Command {
 			fmt.Fprintf(w, "Archived orphan batch %q and cleared run state.\n", run.ActiveBatchID)
 			sourcePath := paths.SourcePath()
 			if _, err := os.Stat(sourcePath); err == nil {
-				fmt.Fprintf(w, "Source markdown survived at %s — you can re-plan with:\n  springfield plan --file %s\n", sourcePath, sourcePath)
+				fmt.Fprintf(w, "Source markdown survived at %s — invoke the springfield:plan skill to re-slice and re-plan.\n", sourcePath)
 			} else {
-				fmt.Fprintln(w, "Source markdown is also gone. Re-plan from a fresh file or prompt:")
-				fmt.Fprintln(w, "  springfield plan --file <path>")
-				fmt.Fprintln(w, "  springfield plan --prompt \"...\"")
+				fmt.Fprintln(w, "Source markdown is also gone. Invoke the springfield:plan skill to create a new batch.")
 			}
 			return nil
 		},

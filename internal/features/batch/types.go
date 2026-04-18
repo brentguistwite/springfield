@@ -32,14 +32,6 @@ func (s SliceStatus) IsTerminal() bool {
 	return false
 }
 
-// SourceKind identifies how the batch was compiled.
-type SourceKind string
-
-const (
-	SourceFile   SourceKind = "file"
-	SourcePrompt SourceKind = "prompt"
-)
-
 // Slice is one execution unit within a batch phase.
 type Slice struct {
 	ID      string      `json:"id"`
@@ -57,11 +49,10 @@ type Phase struct {
 
 // Batch is the compile-time state for one Springfield work batch.
 type Batch struct {
-	ID         string     `json:"id"`
-	Title      string     `json:"title"`
-	SourceKind SourceKind `json:"source_kind"`
-	Phases     []Phase    `json:"phases"`
-	Slices     []Slice    `json:"slices"`
+	ID     string  `json:"id"`
+	Title  string  `json:"title"`
+	Phases []Phase `json:"phases"`
+	Slices []Slice `json:"slices"`
 }
 
 // Run is the runtime-only cursor state for the active batch.
