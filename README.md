@@ -26,10 +26,29 @@ V1 host targets:
 
 Primary path:
 
-- Claude: install Springfield from the Claude marketplace.
+- Claude Code: install Springfield from the `brentguistwite` marketplace (see below).
 - Codex: install Springfield from the Codex plugin/catalog flow.
 
 Use the local CLI only when you need project bootstrap plus local host sync, development setup, or a fallback path outside plugin/catalog distribution.
+
+### Claude Code Marketplace
+
+Inside Claude Code, add the marketplace once, then install the plugin:
+
+```
+/plugin marketplace add brentguistwite/springfield
+/plugin install springfield@brentguistwite
+```
+
+`/plugin marketplace add` accepts the `owner/repo` GitHub shorthand; use the full `https://github.com/brentguistwite/springfield.git` URL if your environment needs it. After install, the Springfield slash commands (`/springfield:plan`, `/springfield:start`, `/springfield:status`, `/springfield:recover`) become available in Claude Code.
+
+Manage the install with:
+
+```
+/plugin list                               # verify install
+/plugin update springfield@brentguistwite  # pull latest
+/plugin uninstall springfield@brentguistwite
+```
 
 ## Quick Start
 
