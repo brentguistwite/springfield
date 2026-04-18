@@ -166,6 +166,13 @@ func resolvePlanSource(file, prompt string) (string, batch.SourceKind, error) {
 
 func deriveTitleFromSource(source, file string) string {
 	if file != "" {
+		for _, line := range strings.Split(source, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "# ") {
+				return strings.TrimSpace(strings.TrimPrefix(trimmed, "# "))
+			}
+		}
+
 		// Derive from filename slug (strip extension and path).
 		base := file
 		for i := len(base) - 1; i >= 0; i-- {

@@ -101,6 +101,31 @@ Connect middleware to router.
 	}
 }
 
+func TestSpringfieldPlanFromFileUsesMarkdownH1AsTitle(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeSpringfieldConfig(t, dir, "claude")
+
+	planContent := `# Springfield smoke batch
+
+## Task 1: Create smoke doc
+Create docs/SPRINGFIELD_SMOKE.md explaining the smoke run.
+`
+	planPath := filepath.Join(dir, "plan.md")
+	if err := os.WriteFile(planPath, []byte(planContent), 0o644); err != nil {
+		t.Fatalf("write plan file: %v", err)
+	}
+
+	output, err := runBinaryIn(t, bin, dir, "plan", "--file", planPath)
+	if err != nil {
+		t.Fatalf("springfield plan --file failed: %v\n%s", err, output)
+	}
+
+	if !strings.Contains(output, "Title: Springfield smoke batch") {
+		t.Fatalf("expected markdown H1 title in output, got:\n%s", output)
+	}
+}
+
 func TestSpringfieldPlanFilePlusPromptReturnsError(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
