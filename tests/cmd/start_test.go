@@ -125,10 +125,12 @@ func TestSpringfieldStartRunsBatchSlices(t *testing.T) {
 	}
 }
 
-func TestSpringfieldStartCompletionDoesNotStrandCursor(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("chmod-based write-failure test does not apply when running as root")
-	}
+// TestSpringfieldStartRecoversFromPostArchiveCrash verifies the Workstream A
+// invariant: on success the archive is written first, then run.json is cleared.
+// If the process dies after archive + before clear, run.json points at an
+// already-archived batch id; the next springfield start must recover
+// idempotently (archive already exists → skip, clear cursor, exit 0).
+func TestSpringfieldStartRecoversFromPostArchiveCrash(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
@@ -136,47 +138,52 @@ func TestSpringfieldStartCompletionDoesNotStrandCursor(t *testing.T) {
 	if _, err := runBinaryIn(t, bin, dir, "plan", "--prompt", "Implement login flow"); err != nil {
 		t.Fatalf("plan failed: %v", err)
 	}
-
 	fakeBinDir := filepath.Join(dir, "bin")
 	argvPath := filepath.Join(dir, "claude.argv")
 	installFakeAgentBinary(t, fakeBinDir, "claude", argvPath)
 
-	run, ok, err := batch.ReadRun(dir)
-	if err != nil || !ok || run.ActiveBatchID == "" {
-		t.Fatalf("ReadRun: ok=%v err=%v id=%q", ok, err, run.ActiveBatchID)
+	// Run to completion normally.
+	if _, err := runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + fakeBinDir}, "start"); err != nil {
+		t.Fatalf("start failed: %v", err)
 	}
-	activeBatchID := run.ActiveBatchID
-
-	// Pre-create archive/ so ArchiveBatch's MkdirAll wouldn't be the failing call under chmod.
-	if err := os.MkdirAll(filepath.Join(dir, ".springfield", "archive"), 0o755); err != nil {
-		t.Fatalf("mkdir archive: %v", err)
+	// Confirm normal completion state: archive present, no run.json.
+	archiveDir := filepath.Join(dir, ".springfield", "archive")
+	entries, err := os.ReadDir(archiveDir)
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("expected archive entry after completion, got err=%v entries=%d", err, len(entries))
 	}
-	sfDir := filepath.Join(dir, ".springfield")
-	if err := os.Chmod(sfDir, 0o500); err != nil {
-		t.Fatalf("chmod: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(sfDir, 0o755) })
-
-	output, err := runBinaryInWithEnv(
-		t, bin, dir,
-		[]string{"PATH=" + fakeBinDir},
-		"start",
-	)
-	if err == nil {
-		t.Fatalf("expected start to fail when ClearRun fails, got:\n%s", output)
+	if _, err := os.Stat(filepath.Join(dir, ".springfield", "run.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected run.json cleared after completion, err=%v", err)
 	}
 
-	_ = os.Chmod(sfDir, 0o755)
-
-	// Invariant: plan dir must still exist (NOT archived prematurely).
-	planDir := filepath.Join(dir, ".springfield", "plans", activeBatchID)
-	if _, statErr := os.Stat(planDir); os.IsNotExist(statErr) {
-		t.Errorf("plan dir %s was archived before ClearRun succeeded — cursor is now stranded", planDir)
+	// Simulate "crash between archive and ClearRun": restore a run.json
+	// pointing at the archived batch id. Archive filenames are stable:
+	// <batchID>.json (single archive per id — see writeJSONExclusive).
+	archivedID := ""
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasSuffix(name, ".json") {
+			archivedID = strings.TrimSuffix(name, ".json")
+			break
+		}
 	}
-	// Cursor still points at the batch (not corrupted).
-	gotRun, ok, _ := batch.ReadRun(dir)
-	if !ok || gotRun.ActiveBatchID != activeBatchID {
-		t.Errorf("run.json should still point at %q, got ok=%v active=%q", activeBatchID, ok, gotRun.ActiveBatchID)
+	if archivedID == "" {
+		t.Fatalf("could not extract batch id from archive entries: %v", entries)
+	}
+	if err := batch.WriteRun(dir, batch.Run{ActiveBatchID: archivedID}); err != nil {
+		t.Fatalf("restore ghost run.json: %v", err)
+	}
+
+	// Next start: expect orphan recovery path (exits 0, clears run.json).
+	output, err := runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + fakeBinDir}, "start")
+	if err != nil {
+		t.Fatalf("expected orphan recovery to exit 0, got err=%v\n%s", err, output)
+	}
+	if !strings.Contains(output, "orphaned") {
+		t.Errorf("expected orphan message in output, got:\n%s", output)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".springfield", "run.json")); !os.IsNotExist(statErr) {
+		t.Errorf("expected run.json cleared after orphan recovery, got err=%v", statErr)
 	}
 }
 

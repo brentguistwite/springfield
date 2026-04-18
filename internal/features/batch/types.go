@@ -19,7 +19,18 @@ const (
 	SliceBlocked SliceStatus = "blocked"
 	SliceDone    SliceStatus = "done"
 	SliceFailed  SliceStatus = "failed"
+	SliceAborted SliceStatus = "aborted"
 )
+
+// IsTerminal reports whether a slice status represents a settled outcome.
+// Non-terminal statuses get rewritten to SliceAborted during archive normalization.
+func (s SliceStatus) IsTerminal() bool {
+	switch s {
+	case SliceDone, SliceFailed, SliceAborted:
+		return true
+	}
+	return false
+}
 
 // SourceKind identifies how the batch was compiled.
 type SourceKind string
@@ -59,7 +70,24 @@ type Run struct {
 	ActivePhaseIdx int       `json:"active_phase_idx"`
 	ActiveSliceIDs []string  `json:"active_slice_ids,omitempty"`
 	LastCheckpoint time.Time `json:"last_checkpoint,omitempty"`
-	LastError      string    `json:"last_error,omitempty"`
+	// FatalError is set only on terminal failure that requires user intervention.
+	// Recoverable errors (agent retries, transient slice failures that will resume)
+	// are appended to LastRetry instead so FatalError stays a reliable post-mortem signal.
+	FatalError string   `json:"fatal_error,omitempty"`
+	LastRetry  []string `json:"last_retry,omitempty"`
+}
+
+const maxLastRetry = 10
+
+// AppendRetry records a recoverable error onto the retry log (capped).
+func (r *Run) AppendRetry(msg string) {
+	if msg == "" {
+		return
+	}
+	r.LastRetry = append(r.LastRetry, msg)
+	if len(r.LastRetry) > maxLastRetry {
+		r.LastRetry = r.LastRetry[len(r.LastRetry)-maxLastRetry:]
+	}
 }
 
 // ArchiveEntry is the compact summary stored after a batch completes or is replaced.

@@ -251,7 +251,7 @@ func TestSpringfieldHelp(t *testing.T) {
 		t.Fatalf("expected Springfield-first help text, got:\n%s", output)
 	}
 
-	if got, want := availableCommands(output), []string{"doctor", "init", "install", "plan", "start", "status", "version"}; !slices.Equal(got, want) {
+	if got, want := availableCommands(output), []string{"doctor", "init", "install", "plan", "recover", "start", "status", "version"}; !slices.Equal(got, want) {
 		t.Fatalf("available commands = %v, want %v\nfull output:\n%s", got, want, output)
 	}
 }

@@ -72,6 +72,7 @@ func NewRootCommand() *cobra.Command {
 		NewPlanCommand(),
 		NewStartCommand(),
 		NewStatusCommand(),
+		NewRecoverCommand(),
 		NewDoctorCommand(),
 		NewVersionCommand(),
 	)
