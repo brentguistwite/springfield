@@ -40,6 +40,10 @@ func NewStatusCommand() *cobra.Command {
 			}
 			b, err := batch.ReadBatch(paths)
 			if err != nil {
+				if batch.IsMissingBatchError(err) {
+					printOrphanStatus(cmd.OutOrStdout(), run)
+					return nil
+				}
 				return err
 			}
 			return printBatchStatus(cmd.OutOrStdout(), b, run)
@@ -54,8 +58,14 @@ func printBatchStatus(w io.Writer, b batch.Batch, run batch.Run) error {
 	fmt.Fprintf(w, "Batch: %s\n", b.ID)
 	fmt.Fprintf(w, "Title: %s\n", b.Title)
 	fmt.Fprintf(w, "Phase: %d of %d\n", run.ActivePhaseIdx+1, len(b.Phases))
-	if run.LastError != "" {
-		fmt.Fprintf(w, "Last error: %s\n", run.LastError)
+	if run.FatalError != "" {
+		fmt.Fprintf(w, "Fatal error: %s\n", run.FatalError)
+	}
+	if len(run.LastRetry) > 0 {
+		fmt.Fprintln(w, "Recent retries:")
+		for _, r := range run.LastRetry {
+			fmt.Fprintf(w, "  - %s\n", r)
+		}
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Slices:")
@@ -66,4 +76,14 @@ func printBatchStatus(w io.Writer, b batch.Batch, run batch.Run) error {
 		}
 	}
 	return nil
+}
+
+func printOrphanStatus(w io.Writer, run batch.Run) {
+	fmt.Fprintf(w, "Batch: %s (orphaned — batch.json missing)\n", run.ActiveBatchID)
+	if run.FatalError != "" {
+		fmt.Fprintf(w, "Fatal error: %s\n", run.FatalError)
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Run \"springfield recover\" to archive the orphan and clear state,")
+	fmt.Fprintln(w, "then \"springfield plan\" to start fresh.")
 }

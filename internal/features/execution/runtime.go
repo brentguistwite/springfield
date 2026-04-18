@@ -293,5 +293,6 @@ func executionPrompt(work Work, workstream Workstream) string {
 		fmt.Fprintf(&builder, "- Summary: %s\n", workstream.Summary)
 	}
 	builder.WriteString("\nKeep Springfield as the user-facing surface.\n")
+	builder.WriteString("\nDo not read, modify, or remove files under `.springfield/` — it is Springfield's control plane.\n")
 	return builder.String()
 }
