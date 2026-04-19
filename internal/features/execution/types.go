@@ -67,6 +67,11 @@ type Report struct {
 	Status      string
 	Error       string
 	Workstreams []WorkstreamRun
+	// AgentID is the adapter id that executed the work, when known (e.g.
+	// "claude"). Empty on configuration failures before dispatch.
+	AgentID string
+	// ExitCode is the OS exit status reported by the agent process.
+	ExitCode int
 }
 
 // Executor is Springfield's runtime adapter boundary for approved work.

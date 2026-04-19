@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +12,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -79,7 +84,7 @@ func NewStartCommand() *cobra.Command {
 				fmt.Fprintf(w, "Log: %s\n", logPath)
 			}
 
-			result, execErr := runBatch(root, run, b, w)
+			result, execErr := runBatch(root, run, b, w, logPath)
 
 			run.LastCheckpoint = time.Now().UTC()
 			if result.Error != "" {
@@ -129,7 +134,7 @@ type BatchRunResult struct {
 	RunStateCleared bool
 }
 
-func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer) (BatchRunResult, error) {
+func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string) (BatchRunResult, error) {
 	runner, err := workflow.NewRuntimeRunner(root, exec.LookPath, nil)
 	if err != nil {
 		return BatchRunResult{Error: err.Error()}, err
@@ -171,7 +176,14 @@ func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer) (Ba
 
 		report, runErr := runner.Executor.Run(root, sliceToExecutionWork(b, s))
 
-		if tamperErr := detectAndRecoverTamper(root, batchPaths, snap); tamperErr != nil {
+		forensics := tamperForensicsContext{
+			batchID:      b.ID,
+			sliceID:      s.ID,
+			agentID:      report.AgentID,
+			agentLogPath: logPath,
+			exitCode:     report.ExitCode,
+		}
+		if tamperErr := detectAndRecoverTamper(root, batchPaths, snap, forensics); tamperErr != nil {
 			return BatchRunResult{Error: tamperErr.Error(), RunStateCleared: true}, tamperErr
 		}
 
@@ -198,68 +210,151 @@ func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer) (Ba
 	return BatchRunResult{Status: "completed"}, nil
 }
 
-// controlPlaneSnapshot captures the bytes of every Springfield-owned file
-// under .springfield/plans/<id>/ plus run.json, taken between Springfield's
+// controlPlaneSnapshot captures every Springfield-owned file under
+// .springfield/plans/<id>/ plus run.json, taken between Springfield's
 // pre-agent write and the agent's execution. Springfield does not touch any
 // of these files while the agent is running, so any post-agent byte-level
 // difference is tamper.
+//
+// tree keys are plan-dir-relative paths using forward slashes (stable across
+// platforms). Bytes are stored in full so the pre-agent state can be restored
+// wholesale on tamper without a separate read pass.
 type controlPlaneSnapshot struct {
-	batchBytes  []byte
-	runBytes    []byte
-	sourceBytes []byte
+	tree     map[string][]byte
+	runBytes []byte
 }
 
+// Snapshot byte caps: generous enough to never reject a legitimate plan
+// (2 MiB source.md is well below the per-file cap; realistic plan trees
+// stay under a few MiB total), tight enough to catch pathological bloat
+// before the in-memory snapshot OOMs the CLI.
+const (
+	snapshotFileMaxBytes = 10 * 1024 * 1024  // 10 MiB per file
+	snapshotTreeMaxBytes = 100 * 1024 * 1024 // 100 MiB cumulative
+)
+
 func snapshotControlPlane(root string, paths batch.Paths) (controlPlaneSnapshot, error) {
-	batchBytes, err := os.ReadFile(paths.BatchPath())
+	tree, err := snapshotPlanTree(paths.PlanDir())
 	if err != nil {
-		return controlPlaneSnapshot{}, fmt.Errorf("read batch.json: %w", err)
+		return controlPlaneSnapshot{}, fmt.Errorf("snapshot plan dir: %w", err)
 	}
 	runBytes, err := os.ReadFile(batch.RunPath(root))
 	if err != nil {
 		return controlPlaneSnapshot{}, fmt.Errorf("read run.json: %w", err)
 	}
-	sourceBytes, err := readOptional(paths.SourcePath())
-	if err != nil {
-		return controlPlaneSnapshot{}, fmt.Errorf("read source.md: %w", err)
-	}
-	return controlPlaneSnapshot{batchBytes: batchBytes, runBytes: runBytes, sourceBytes: sourceBytes}, nil
+	return controlPlaneSnapshot{tree: tree, runBytes: runBytes}, nil
 }
 
-func readOptional(path string) ([]byte, error) {
-	data, err := os.ReadFile(path)
-	if err != nil && errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
+// snapshotPlanTree walks planDir and returns a relpath->bytes map. Missing
+// planDir is an error (the caller has just written batch.json into it).
+//
+// Non-regular entries (symlinks, devices, fifos, sockets) are rejected:
+// Springfield only writes regular files under the plan dir, so any other
+// node is an integrity violation. Reads use O_NOFOLLOW as defense-in-depth
+// against a symlink being swapped in after the d.Type() check.
+//
+// No basename is excluded: tmp scratch files from writeFileAtomic are always
+// renamed out before snapshot runs, so any ".tmp-*" still present at snapshot
+// or compare time is an agent artifact and must be treated like any other
+// file — captured by snapshot (so byte changes are caught) or flagged as
+// "added" by comparison.
+func snapshotPlanTree(planDir string) (map[string][]byte, error) {
+	out := make(map[string][]byte)
+	var totalBytes int64
+	err := filepath.WalkDir(planDir, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(planDir, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+
+		if d.Type()&(fs.ModeSymlink|fs.ModeDevice|fs.ModeNamedPipe|fs.ModeSocket|fs.ModeIrregular) != 0 {
+			return fmt.Errorf("non-regular entry %q", rel)
+		}
+
+		f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+		if err != nil {
+			return fmt.Errorf("open %s: %w", rel, err)
+		}
+		// Read at most cap+1 bytes so we can detect overflow without
+		// slurping an arbitrarily large file into memory.
+		data, err := io.ReadAll(io.LimitReader(f, snapshotFileMaxBytes+1))
+		closeErr := f.Close()
+		if err != nil {
+			return fmt.Errorf("read %s: %w", rel, err)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close %s: %w", rel, closeErr)
+		}
+		if len(data) > snapshotFileMaxBytes {
+			return fmt.Errorf("%s exceeds per-file cap", rel)
+		}
+		totalBytes += int64(len(data))
+		if totalBytes > snapshotTreeMaxBytes {
+			return fmt.Errorf("plan tree exceeds total cap")
+		}
+		out[rel] = data
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-	return data, err
+	return out, nil
+}
+
+// tamperForensicsContext carries the run-local context used to populate a
+// forensics sidecar when tamper is detected.
+type tamperForensicsContext struct {
+	batchID      string
+	sliceID      string
+	agentID      string
+	agentLogPath string
+	exitCode     int
 }
 
 // detectAndRecoverTamper enforces the Workstream-B invariant that agents must
 // not modify Springfield control-plane state. On any byte-level difference,
 // the snapshot is restored, the batch is archived as "state-tampered", and
-// run.json is cleared.
-func detectAndRecoverTamper(root string, paths batch.Paths, snap controlPlaneSnapshot) error {
+// run.json is cleared. A forensics sidecar is written into the archive dir
+// regardless of whether the archive write itself was a no-op (e.g. already
+// archived from a prior call under the same reason).
+func detectAndRecoverTamper(root string, paths batch.Paths, snap controlPlaneSnapshot, forensics tamperForensicsContext) error {
 	reason := compareControlPlane(root, paths, snap)
 	if reason == "" {
 		return nil
 	}
 
+	// Capture post-tamper bytes before restore overwrites them.
+	postBytes := capturePostBytesForReason(root, paths, reason)
+
 	var restoreErr, archiveErr error
-	if err := batch.RestoreBatchFromSnapshot(paths, snap.batchBytes); err != nil {
+	if err := restoreControlPlane(root, paths, snap); err != nil {
 		restoreErr = err
 	} else {
-		// Restore run.json + source.md too so recover/archive work from a
-		// coherent pre-agent state.
-		_ = os.WriteFile(batch.RunPath(root), snap.runBytes, 0o644)
-		if snap.sourceBytes != nil {
-			_ = os.WriteFile(paths.SourcePath(), snap.sourceBytes, 0o644)
-		}
+		batchBytes := snap.tree["batch.json"]
 		var restored batch.Batch
-		if err := json.Unmarshal(snap.batchBytes, &restored); err == nil {
+		if err := json.Unmarshal(batchBytes, &restored); err == nil {
 			if err := batch.ArchiveBatchNormalized(root, restored, "state-tampered"); err != nil {
 				archiveErr = err
 			}
 		}
 	}
+
+	// Sidecar is best-effort forensic only; don't fail the caller if it
+	// can't land. Write after archive so archive dir exists.
+	preBytes := preBytesForReason(snap, reason)
+	if sidecarErr := writeTamperSidecar(root, forensics, reason, preBytes, postBytes); sidecarErr != nil {
+		// Swallow: a missing sidecar should never escalate past a tamper
+		// message that already tells the operator what happened.
+		_ = sidecarErr
+	}
+
 	_ = batch.ClearRun(root)
 
 	msg := fmt.Sprintf("state tampered by agent (%s)", reason)
@@ -272,29 +367,305 @@ func detectAndRecoverTamper(root string, paths batch.Paths, snap controlPlaneSna
 	return fmt.Errorf("%s", msg)
 }
 
-// compareControlPlane returns "" when on-disk state matches the snapshot
-// byte-for-byte; otherwise a short label naming which file diverged.
-func compareControlPlane(root string, paths batch.Paths, snap controlPlaneSnapshot) string {
-	batchNow, err := os.ReadFile(paths.BatchPath())
-	if err != nil {
-		return "batch.json missing or unreadable"
+// capturePostBytesForReason reads the diverged file's current bytes (agent's
+// mutation) so they can be recorded in the forensics sidecar before restore
+// overwrites them. Returns nil when the divergence is the cursor file
+// itself or when the file no longer exists (agent deleted it).
+func capturePostBytesForReason(root string, paths batch.Paths, reason string) []byte {
+	rel, kind := parseReason(reason)
+	switch kind {
+	case reasonPlanFileChanged, reasonPlanFileAdded:
+		data, err := os.ReadFile(filepath.Join(paths.PlanDir(), filepath.FromSlash(rel)))
+		if err != nil {
+			return nil
+		}
+		return data
+	case reasonRunChanged:
+		data, err := os.ReadFile(batch.RunPath(root))
+		if err != nil {
+			return nil
+		}
+		return data
+	default:
+		return nil
 	}
-	if !bytes.Equal(batchNow, snap.batchBytes) {
-		return "batch.json bytes changed"
+}
+
+// preBytesForReason extracts the pre-agent snapshot bytes matching the
+// divergence reason, or nil when the divergence was an added-by-agent file.
+func preBytesForReason(snap controlPlaneSnapshot, reason string) []byte {
+	rel, kind := parseReason(reason)
+	switch kind {
+	case reasonPlanFileChanged, reasonPlanFileMissing:
+		return snap.tree[rel]
+	case reasonRunChanged, reasonRunMissing:
+		return snap.runBytes
+	default:
+		return nil
+	}
+}
+
+type reasonKind int
+
+const (
+	reasonUnknown reasonKind = iota
+	reasonPlanFileChanged
+	reasonPlanFileAdded
+	reasonPlanFileMissing
+	reasonRunChanged
+	reasonRunMissing
+)
+
+// parseReason splits the compareControlPlane reason string back into a
+// relpath + kind. Reasons are structured ("<rel> changed|added|missing" or
+// "run.json changed|missing") so this is a shallow parser, not a regex.
+func parseReason(reason string) (string, reasonKind) {
+	switch {
+	case strings.HasSuffix(reason, " changed"):
+		rel := strings.TrimSuffix(reason, " changed")
+		if rel == "run.json" {
+			return rel, reasonRunChanged
+		}
+		return rel, reasonPlanFileChanged
+	case strings.HasSuffix(reason, " added"):
+		return strings.TrimSuffix(reason, " added"), reasonPlanFileAdded
+	case strings.HasSuffix(reason, " missing"):
+		rel := strings.TrimSuffix(reason, " missing")
+		if rel == "run.json" {
+			return rel, reasonRunMissing
+		}
+		return rel, reasonPlanFileMissing
+	}
+	return reason, reasonUnknown
+}
+
+// writeTamperSidecar persists a best-effort forensic record to the archive
+// dir. Filename embeds unix-nano so concurrent events never collide.
+func writeTamperSidecar(root string, ctx tamperForensicsContext, reason string, pre, post []byte) error {
+	archiveDir := batch.ArchiveDir(root)
+	if err := os.MkdirAll(archiveDir, 0o755); err != nil {
+		return err
+	}
+	sidecar := map[string]any{
+		"batch_id":       ctx.batchID,
+		"slice_id":       ctx.sliceID,
+		"reason":         reason,
+		"pre_sha256":     sha256Hex(pre),
+		"post_sha256":    sha256Hex(post),
+		"agent_id":       ctx.agentID,
+		"agent_log_path": ctx.agentLogPath,
+		"exit_code":      ctx.exitCode,
+		"detected_at":    time.Now().UTC().Format(time.RFC3339),
+	}
+	data, err := json.MarshalIndent(sidecar, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+
+	name := fmt.Sprintf("%s.%d.tamper.json", ctx.batchID, time.Now().UTC().UnixNano())
+	path := filepath.Join(archiveDir, name)
+
+	tmp, err := os.CreateTemp(archiveDir, ".tmp-"+name+"-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return os.Rename(tmpName, path)
+}
+
+func sha256Hex(data []byte) string {
+	if data == nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// restoreControlPlane rewrites the plan dir tree and run.json back to the
+// pre-agent snapshot. Files absent from the snapshot but present on disk
+// (agent-created) are removed; files absent from disk but present in the
+// snapshot (agent-deleted) are recreated.
+//
+// Writes go through writeFileReplacingNonRegular so a symlink, device, or
+// other non-regular node planted by the agent is unlinked before the new
+// bytes are written. The restore NEVER follows a link out of the control
+// plane.
+func restoreControlPlane(root string, paths batch.Paths, snap controlPlaneSnapshot) error {
+	planDir := paths.PlanDir()
+	if err := os.MkdirAll(planDir, 0o755); err != nil {
+		return fmt.Errorf("recreate plan dir: %w", err)
+	}
+
+	// Enumerate with Lstat so we see symlinks/devices the agent may have
+	// planted — snapshotPlanTree may reject them outright after F2, but the
+	// restore pass still needs to remove stray nodes before rewriting.
+	onDisk, err := enumeratePlanTreeRaw(planDir)
+	if err != nil {
+		return fmt.Errorf("enumerate plan dir: %w", err)
+	}
+	for rel := range onDisk {
+		if _, keep := snap.tree[rel]; !keep {
+			abs := filepath.Join(planDir, filepath.FromSlash(rel))
+			if err := os.Remove(abs); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("remove stray %s: %w", rel, err)
+			}
+		}
+	}
+	for rel, data := range snap.tree {
+		abs := filepath.Join(planDir, filepath.FromSlash(rel))
+		if err := writeFileReplacingNonRegular(abs, data, 0o644); err != nil {
+			return fmt.Errorf("restore %s: %w", rel, err)
+		}
+	}
+	if err := writeFileReplacingNonRegular(batch.RunPath(root), snap.runBytes, 0o644); err != nil {
+		return fmt.Errorf("restore run.json: %w", err)
+	}
+	return nil
+}
+
+// enumeratePlanTreeRaw lists every file under planDir (relpath keys, forward
+// slashes) without reading bytes and without rejecting non-regular entries.
+// Used by restoreControlPlane to find stray nodes — including non-regular
+// ones planted by the agent — so they can be unlinked before restore
+// rewrites. No basename is excluded: any ".tmp-*" entry visible at restore
+// time is an agent artifact and must be cleaned up.
+func enumeratePlanTreeRaw(planDir string) (map[string]struct{}, error) {
+	out := make(map[string]struct{})
+	err := filepath.WalkDir(planDir, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(planDir, path)
+		if err != nil {
+			return err
+		}
+		out[filepath.ToSlash(rel)] = struct{}{}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// writeFileReplacingNonRegular writes data to abs atomically. If abs is an
+// existing symlink/device/fifo/socket, the node is removed first so the write
+// never follows the link. Uses sibling tmp + fsync + rename, with a chmod to
+// the caller's requested mode (os.CreateTemp starts at 0600).
+func writeFileReplacingNonRegular(abs string, data []byte, mode os.FileMode) error {
+	if info, err := os.Lstat(abs); err == nil {
+		if !info.Mode().IsRegular() {
+			if rmErr := os.Remove(abs); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+				return fmt.Errorf("remove non-regular node: %w", rmErr)
+			}
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("lstat: %w", err)
+	}
+
+	dir := filepath.Dir(abs)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("mkdir parent: %w", err)
+	}
+
+	tmp, err := os.CreateTemp(dir, ".tmp-restore-*")
+	if err != nil {
+		return fmt.Errorf("create tmp: %w", err)
+	}
+	tmpName := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpName) }
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		cleanup()
+		return fmt.Errorf("write tmp: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		cleanup()
+		return fmt.Errorf("sync tmp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return fmt.Errorf("close tmp: %w", err)
+	}
+	if err := os.Chmod(tmpName, mode); err != nil {
+		cleanup()
+		return fmt.Errorf("chmod tmp: %w", err)
+	}
+	if err := os.Rename(tmpName, abs); err != nil {
+		cleanup()
+		return fmt.Errorf("rename: %w", err)
+	}
+	return nil
+}
+
+// compareControlPlane returns "" when on-disk state matches the snapshot
+// byte-for-byte; otherwise a plan-dir-relative path naming the first file
+// that diverged (or "run.json" / "run.json missing" for the shared cursor).
+// Divergence is ordered: added/missing/changed files under the plan dir
+// first (stable alpha order), then run.json.
+func compareControlPlane(root string, paths batch.Paths, snap controlPlaneSnapshot) string {
+	current, err := snapshotPlanTree(paths.PlanDir())
+	if err != nil {
+		return "plan dir unreadable"
+	}
+	if reason := firstTreeDivergence(snap.tree, current); reason != "" {
+		return reason
 	}
 	runNow, err := os.ReadFile(batch.RunPath(root))
 	if err != nil {
-		return "run.json missing or unreadable"
+		return "run.json missing"
 	}
 	if !bytes.Equal(runNow, snap.runBytes) {
-		return "run.json bytes changed"
+		return "run.json changed"
 	}
-	sourceNow, err := readOptional(paths.SourcePath())
-	if err != nil {
-		return "source.md unreadable"
+	return ""
+}
+
+// firstTreeDivergence compares two relpath->bytes maps and returns a reason
+// string identifying the first divergent relpath, or "" when they match.
+// Iteration is sorted so the reason is deterministic across runs.
+func firstTreeDivergence(want, got map[string][]byte) string {
+	keys := make([]string, 0, len(want)+len(got))
+	seen := make(map[string]bool, len(want)+len(got))
+	for k := range want {
+		if !seen[k] {
+			seen[k] = true
+			keys = append(keys, k)
+		}
 	}
-	if !bytes.Equal(sourceNow, snap.sourceBytes) {
-		return "source.md bytes changed"
+	for k := range got {
+		if !seen[k] {
+			seen[k] = true
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	for _, rel := range keys {
+		w, okWant := want[rel]
+		g, okGot := got[rel]
+		switch {
+		case okWant && !okGot:
+			return rel + " missing"
+		case !okWant && okGot:
+			return rel + " added"
+		case !bytes.Equal(w, g):
+			return rel + " changed"
+		}
 	}
 	return ""
 }
