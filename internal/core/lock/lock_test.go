@@ -170,6 +170,58 @@ func TestLockReleaseKeepsFile(t *testing.T) {
 	}
 }
 
+func TestLockRejectsSymlinkedLockFile(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	// Create .springfield dir so the symlink can be planted inside it.
+	dir := filepath.Join(root, ".springfield")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// External file that the symlink would clobber.
+	external := filepath.Join(t.TempDir(), "external.txt")
+	if err := os.WriteFile(external, []byte("sensitive"), 0o600); err != nil {
+		t.Fatalf("write external: %v", err)
+	}
+	// Plant .springfield/.lock as a symlink to the external file.
+	lockPath := filepath.Join(dir, ".lock")
+	if err := os.Symlink(external, lockPath); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	_, err := lock.Acquire(root)
+	if err == nil {
+		t.Fatal("Acquire should have rejected symlinked .lock, got nil error")
+	}
+
+	// External file must be untouched.
+	data, readErr := os.ReadFile(external)
+	if readErr != nil {
+		t.Fatalf("read external after Acquire: %v", readErr)
+	}
+	if string(data) != "sensitive" {
+		t.Errorf("external file was modified; got %q, want %q", string(data), "sensitive")
+	}
+}
+
+func TestLockRejectsSymlinkedSpringfieldDir(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	external := t.TempDir()
+	// Plant .springfield as a symlink to an external directory.
+	dir := filepath.Join(root, ".springfield")
+	if err := os.Symlink(external, dir); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	_, err := lock.Acquire(root)
+	if err == nil {
+		t.Fatal("Acquire should have rejected symlinked .springfield dir, got nil error")
+	}
+}
+
 // splitLines splits s by newlines, trimming empty trailing entries.
 func splitLines(s string) []string {
 	var out []string

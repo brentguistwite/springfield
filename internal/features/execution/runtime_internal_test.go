@@ -151,7 +151,10 @@ func TestExecutionPromptIncludesSliceBody(t *testing.T) {
 			{Name: "01", Title: "Slice title", Summary: "implement X"},
 		},
 	}
-	prompt := executionPrompt("", work, work.Workstreams[0])
+	prompt, err := executionPrompt("", work, work.Workstreams[0])
+	if err != nil {
+		t.Fatalf("executionPrompt: %v", err)
+	}
 	if !strings.Contains(prompt, "implement X") {
 		t.Fatalf("expected prompt to contain slice summary %q, got:\n%s", "implement X", prompt)
 	}
@@ -169,7 +172,10 @@ func TestExecutionPromptIncludesAgentsMdWhenPresent(t *testing.T) {
 			{Name: "01", Title: "Slice title", Summary: "do it"},
 		},
 	}
-	prompt := executionPrompt(root, work, work.Workstreams[0])
+	prompt, err := executionPrompt(root, work, work.Workstreams[0])
+	if err != nil {
+		t.Fatalf("executionPrompt: %v", err)
+	}
 	if !strings.Contains(prompt, "foo bar") {
 		t.Fatalf("expected prompt to contain AGENTS.md content, got:\n%s", prompt)
 	}
@@ -194,7 +200,10 @@ func TestExecutionPromptConcatenatesAgentsClaudeGemini(t *testing.T) {
 			{Name: "01", Title: "Slice title", Summary: "do it"},
 		},
 	}
-	prompt := executionPrompt(root, work, work.Workstreams[0])
+	prompt, err := executionPrompt(root, work, work.Workstreams[0])
+	if err != nil {
+		t.Fatalf("executionPrompt: %v", err)
+	}
 	for _, want := range []string{"agents-content", "claude-content", "gemini-content"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("expected prompt to contain %q, got:\n%s", want, prompt)
@@ -227,7 +236,10 @@ func TestExecutionPromptOmitsMissingProjectFiles(t *testing.T) {
 			{Name: "01", Title: "Slice title", Summary: "do it"},
 		},
 	}
-	prompt := executionPrompt(root, work, work.Workstreams[0])
+	prompt, err := executionPrompt(root, work, work.Workstreams[0])
+	if err != nil {
+		t.Fatalf("executionPrompt: %v", err)
+	}
 	if !strings.Contains(prompt, "only-claude") {
 		t.Fatalf("expected prompt to contain CLAUDE.md content, got:\n%s", prompt)
 	}
@@ -248,7 +260,10 @@ func TestExecutionPromptContainsAntiRecursionContract(t *testing.T) {
 			{Name: "01", Title: "Slice title", Summary: "do it"},
 		},
 	}
-	prompt := executionPrompt("", work, work.Workstreams[0])
+	prompt, err := executionPrompt("", work, work.Workstreams[0])
+	if err != nil {
+		t.Fatalf("executionPrompt: %v", err)
+	}
 	for _, want := range []string{
 		"Do NOT invoke",
 		"springfield:*",
@@ -270,16 +285,19 @@ func TestExecutionPromptIncludesBatchRequestBody(t *testing.T) {
 			{Name: "01", Title: "Slice title", Summary: "do it"},
 		},
 	}
-	prompt := executionPrompt("", work, work.Workstreams[0])
+	prompt, err := executionPrompt("", work, work.Workstreams[0])
+	if err != nil {
+		t.Fatalf("executionPrompt: %v", err)
+	}
 	if !strings.Contains(prompt, "Polish status UX") {
 		t.Fatalf("expected prompt to contain RequestBody, got:\n%s", prompt)
 	}
 }
 
-func TestRuntimeSingleExecutorRejectsOversizedPrompt(t *testing.T) {
+func TestRuntimeSingleExecutorRejectsOversizedGuidanceFile(t *testing.T) {
 	root := t.TempDir()
-	// Write a CLAUDE.md that alone exceeds the size budget.
-	huge := strings.Repeat("x", maxExecutionPromptBytes+1)
+	// File exceeds the per-file 64 KB cap; error fires at read time, not after assembly.
+	huge := strings.Repeat("x", maxGuidanceFileBytes+1)
 	if err := os.WriteFile(filepath.Join(root, "CLAUDE.md"), []byte(huge), 0o644); err != nil {
 		t.Fatalf("write CLAUDE.md: %v", err)
 	}
@@ -296,16 +314,16 @@ func TestRuntimeSingleExecutorRejectsOversizedPrompt(t *testing.T) {
 		Workstreams: []Workstream{{Name: "01", Title: "T"}},
 	})
 	if err == nil {
-		t.Fatal("expected error for oversized prompt, got nil")
+		t.Fatal("expected error for oversized guidance file, got nil")
 	}
-	if !strings.Contains(err.Error(), "prompt too large") {
-		t.Fatalf("error = %q, want it to contain 'prompt too large'", err)
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("error = %q, want it to mention 'exceeds'", err)
 	}
 }
 
-func TestRuntimeMultiExecutorRejectsOversizedPrompt(t *testing.T) {
+func TestRuntimeMultiExecutorRejectsOversizedGuidanceFile(t *testing.T) {
 	root := t.TempDir()
-	huge := strings.Repeat("x", maxExecutionPromptBytes+1)
+	huge := strings.Repeat("x", maxGuidanceFileBytes+1)
 	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte(huge), 0o644); err != nil {
 		t.Fatalf("write AGENTS.md: %v", err)
 	}
@@ -322,12 +340,68 @@ func TestRuntimeMultiExecutorRejectsOversizedPrompt(t *testing.T) {
 		Workstreams: []Workstream{{Name: "01", Title: "T"}},
 	})
 	if err == nil {
-		t.Fatal("expected error for oversized prompt, got nil")
+		t.Fatal("expected error for oversized guidance file, got nil")
 	}
-	if !strings.Contains(err.Error(), "prompt too large") {
-		t.Fatalf("error = %q, want it to contain 'prompt too large'", err)
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("error = %q, want it to mention 'exceeds'", err)
 	}
 	if report.Workstreams[0].Status != statusFailed {
 		t.Fatalf("workstream status = %q, want %q", report.Workstreams[0].Status, statusFailed)
+	}
+}
+
+func TestRuntimeSingleExecutorRejectsUnreadableGuidanceFile(t *testing.T) {
+	root := t.TempDir()
+	// Create a guidance file then make it unreadable (non-ENOENT error).
+	guidancePath := filepath.Join(root, "AGENTS.md")
+	if err := os.WriteFile(guidancePath, []byte("content"), 0o644); err != nil {
+		t.Fatalf("write AGENTS.md: %v", err)
+	}
+	if err := os.Chmod(guidancePath, 0o000); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { os.Chmod(guidancePath, 0o644) })
+
+	executor := runtimeSingleExecutor{
+		runner:  coreruntime.NewTestRunner(testRuntimeRegistry(), fakeRuntimeSuccess, time.Now),
+		agents:  []agents.ID{agents.AgentClaude},
+		workDir: t.TempDir(),
+	}
+	_, err := executor.Run(root, Work{
+		ID:    "x",
+		Title: "x",
+		Split: "single",
+		Workstreams: []Workstream{{Name: "01", Title: "T"}},
+	})
+	if err == nil {
+		t.Fatal("expected error for unreadable guidance file, got nil")
+	}
+	if !strings.Contains(err.Error(), "project guidance") {
+		t.Fatalf("error = %q, want it to mention 'project guidance'", err)
+	}
+}
+
+// TestRuntimeSingleExecutorPromptSizeCap verifies the total-prompt guard fires
+// when the assembled prompt exceeds maxExecutionPromptBytes. The per-file cap
+// (64 KB × 3 = 192 KB) cannot by itself reach 200 KB, so we trigger it via
+// a large RequestBody (source.md content), which has no per-file cap.
+func TestRuntimeSingleExecutorPromptSizeCap(t *testing.T) {
+	executor := runtimeSingleExecutor{
+		runner:  coreruntime.NewTestRunner(testRuntimeRegistry(), fakeRuntimeSuccess, time.Now),
+		agents:  []agents.ID{agents.AgentClaude},
+		workDir: t.TempDir(),
+	}
+	_, err := executor.Run("", Work{
+		ID:          "x",
+		Title:       "x",
+		Split:       "single",
+		RequestBody: strings.Repeat("x", maxExecutionPromptBytes),
+		Workstreams: []Workstream{{Name: "01", Title: "T"}},
+	})
+	if err == nil {
+		t.Fatal("expected error for oversized total prompt, got nil")
+	}
+	if !strings.Contains(err.Error(), "prompt too large") {
+		t.Fatalf("error = %q, want it to contain 'prompt too large'", err)
 	}
 }

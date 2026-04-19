@@ -49,6 +49,11 @@ func lockPath(root string) string {
 // the held Lock. On conflict it returns *ErrLockHeld populated from the file
 // contents (or zero-valued when the file is unreadable).
 //
+// Symlink hardening: Acquire rejects symlinks at both the .springfield directory
+// and the .lock file path. A symlinked control-plane path would let the lock
+// silently operate on an external inode, breaking isolation guarantees and
+// potentially overwriting unrelated files.
+//
 // TOCTOU: after a successful flock we verify that the path still points to the
 // same inode we locked (another process may have unlinked+recreated the file
 // between our open and flock). If the inode changed we unlock and return
@@ -59,10 +64,32 @@ func Acquire(root string) (*Lock, error) {
 		return nil, fmt.Errorf("create .springfield dir: %w", err)
 	}
 
+	// Reject .springfield if it resolved to a symlink (MkdirAll follows links).
+	dirStat, err := os.Lstat(dir)
+	if err != nil {
+		return nil, fmt.Errorf("stat .springfield dir: %w", err)
+	}
+	if dirStat.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf(".springfield is a symlink; remove it before running springfield start")
+	}
+
 	path := lockPath(root)
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	// O_NOFOLLOW causes ELOOP if .lock itself is a symlink, rejecting symlink injection.
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open lock file: %w", err)
+	}
+
+	// Belt-and-suspenders: verify the open fd is a regular file. Catches devices
+	// or named pipes that slipped through O_NOFOLLOW on unusual filesystems.
+	fdStat, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, fmt.Errorf("stat lock file fd: %w", err)
+	}
+	if !fdStat.Mode().IsRegular() {
+		f.Close()
+		return nil, fmt.Errorf(".springfield/.lock is not a regular file (mode %s); remove it before running springfield start", fdStat.Mode())
 	}
 
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {

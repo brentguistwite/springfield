@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +29,11 @@ const (
 	// by OS (~256 KB on macOS, ~2 MB on Linux). 200 KB is a conservative budget
 	// that catches runaway AGENTS.md / source.md content before process launch.
 	maxExecutionPromptBytes = 200 * 1024
+
+	// maxGuidanceFileBytes caps each project guidance file read (AGENTS.md,
+	// CLAUDE.md, GEMINI.md). Three files at this limit = 192 KB, safely under
+	// maxExecutionPromptBytes when combined with the rest of the prompt.
+	maxGuidanceFileBytes = 64 * 1024
 )
 
 // Runner routes Springfield work to the correct internal execution engine.
@@ -102,7 +108,10 @@ func (e runtimeSingleExecutor) Run(root string, work Work) (Report, error) {
 	}
 
 	workstream := work.Workstreams[0]
-	prompt := executionPrompt(root, work, workstream)
+	prompt, err := executionPrompt(root, work, workstream)
+	if err != nil {
+		return Report{}, err
+	}
 	if len(prompt) > maxExecutionPromptBytes {
 		return Report{}, fmt.Errorf("execution prompt too large (%d bytes > %d byte limit): reduce AGENTS.md/CLAUDE.md/GEMINI.md or source.md size", len(prompt), maxExecutionPromptBytes)
 	}
@@ -230,7 +239,10 @@ func (e runtimeMultiExecutor) Run(root string, work Work) (Report, error) {
 }
 
 func (e runtimeMultiExecutor) executeWorkstream(root string, work Work, workstream Workstream) (WorkstreamRun, error) {
-	prompt := executionPrompt(root, work, workstream)
+	prompt, err := executionPrompt(root, work, workstream)
+	if err != nil {
+		return WorkstreamRun{Name: workstream.Name, Status: statusFailed}, err
+	}
 	if len(prompt) > maxExecutionPromptBytes {
 		return WorkstreamRun{Name: workstream.Name, Status: statusFailed}, fmt.Errorf("execution prompt too large (%d bytes > %d byte limit): reduce AGENTS.md/CLAUDE.md/GEMINI.md or source.md size", len(prompt), maxExecutionPromptBytes)
 	}
@@ -296,7 +308,7 @@ func findWorkstream(work Work, name string) (Workstream, bool) {
 	return Workstream{}, false
 }
 
-func executionPrompt(root string, work Work, workstream Workstream) string {
+func executionPrompt(root string, work Work, workstream Workstream) (string, error) {
 	var b strings.Builder
 	b.WriteString("You are executing one slice of an approved Springfield batch.\n")
 	b.WriteString("\n# Slice\n")
@@ -314,7 +326,10 @@ func executionPrompt(root string, work Work, workstream Workstream) string {
 		b.WriteString(strings.TrimSpace(work.RequestBody))
 		b.WriteString("\n")
 	}
-	guidance := readProjectGuidance(root)
+	guidance, err := readProjectGuidance(root)
+	if err != nil {
+		return "", err
+	}
 	if guidance != "" {
 		b.WriteString("\n# Project context\n")
 		b.WriteString(guidance)
@@ -325,21 +340,34 @@ func executionPrompt(root string, work Work, workstream Workstream) string {
 	b.WriteString("- Do NOT run `springfield start`, `springfield plan`, `springfield recover` from Bash. You are already inside a springfield-managed run.\n")
 	b.WriteString("- Do NOT read, write, edit, or delete files under `.springfield/` — that is springfield's control plane.\n")
 	b.WriteString("- When the slice is done, exit without asking for confirmation.\n")
-	return b.String()
+	return b.String(), nil
 }
 
 // readProjectGuidance reads AGENTS.md, CLAUDE.md, GEMINI.md from root in that
-// priority order. Present files are concatenated with section headers.
-// Missing files are silently skipped. Returns empty string if none present.
-func readProjectGuidance(root string) string {
+// priority order, capped at maxGuidanceFileBytes each. Missing files (ENOENT)
+// are silently skipped. Any other read error fails loudly — silently dropping
+// guardrail instructions would let the subagent run unconstrained.
+func readProjectGuidance(root string) (string, error) {
 	files := []string{"AGENTS.md", "CLAUDE.md", "GEMINI.md"}
 	var b strings.Builder
 	for _, name := range files {
-		data, err := os.ReadFile(filepath.Join(root, name))
-		if err != nil {
+		f, err := os.Open(filepath.Join(root, name))
+		if os.IsNotExist(err) {
 			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("read project guidance %s: %w", name, err)
+		}
+		// Read one byte beyond the cap to detect truncation.
+		data, readErr := io.ReadAll(io.LimitReader(f, int64(maxGuidanceFileBytes)+1))
+		f.Close()
+		if readErr != nil {
+			return "", fmt.Errorf("read project guidance %s: %w", name, readErr)
+		}
+		if len(data) > maxGuidanceFileBytes {
+			return "", fmt.Errorf("project guidance file %s exceeds %d byte limit (%d bytes); reduce file size or remove it", name, maxGuidanceFileBytes, len(data))
 		}
 		fmt.Fprintf(&b, "## %s\n%s\n", name, string(data))
 	}
-	return b.String()
+	return b.String(), nil
 }
