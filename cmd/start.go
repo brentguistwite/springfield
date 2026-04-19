@@ -195,7 +195,7 @@ func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, log
 			return BatchRunResult{Error: fmt.Sprintf("snapshot control plane: %v", snapErr)}, snapErr
 		}
 
-		report, runErr := runner.Executor.Run(root, sliceToExecutionWork(b, s))
+		report, runErr := runner.Executor.Run(root, sliceToExecutionWork(root, b, s))
 
 		forensics := tamperForensicsContext{
 			batchID:      b.ID,
@@ -756,11 +756,18 @@ func openAgentTrace(root, batchID string) (coreexec.EventHandler, func()) {
 }
 
 // sliceToExecutionWork converts a batch slice into an execution.Work for the runtime adapter.
-func sliceToExecutionWork(b batch.Batch, s batch.Slice) execution.Work {
+// It reads source.md from the batch plan directory best-effort; missing file yields empty RequestBody.
+func sliceToExecutionWork(root string, b batch.Batch, s batch.Slice) execution.Work {
+	var requestBody string
+	if paths, err := batch.NewPaths(root, b.ID); err == nil {
+		data, _ := os.ReadFile(paths.SourcePath())
+		requestBody = string(data)
+	}
 	return execution.Work{
-		ID:    b.ID + "-" + s.ID,
-		Title: s.Title,
-		Split: "single",
+		ID:          b.ID + "-" + s.ID,
+		Title:       s.Title,
+		RequestBody: requestBody,
+		Split:       "single",
 		Workstreams: []execution.Workstream{
 			{
 				Name:    s.ID,

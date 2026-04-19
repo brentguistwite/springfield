@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"springfield/internal/core/agents"
@@ -96,7 +98,7 @@ func (e runtimeSingleExecutor) Run(root string, work Work) (Report, error) {
 	workstream := work.Workstreams[0]
 	result := e.runner.Run(context.Background(), coreruntime.Request{
 		AgentIDs:          e.agents,
-		Prompt:            executionPrompt(work, workstream),
+		Prompt:            executionPrompt(root, work, workstream),
 		WorkDir:           e.workDir,
 		OnEvent:           e.onEvent,
 		ExecutionSettings: e.settings,
@@ -169,7 +171,7 @@ func (e runtimeMultiExecutor) Run(root string, work Work) (Report, error) {
 			continue
 		}
 
-		outcome, err := e.executeWorkstream(work, workstream)
+		outcome, err := e.executeWorkstream(root, work, workstream)
 		results[name] = outcome
 		if err != nil {
 			if runErr == nil {
@@ -217,10 +219,10 @@ func (e runtimeMultiExecutor) Run(root string, work Work) (Report, error) {
 	}, runErr
 }
 
-func (e runtimeMultiExecutor) executeWorkstream(work Work, workstream Workstream) (WorkstreamRun, error) {
+func (e runtimeMultiExecutor) executeWorkstream(root string, work Work, workstream Workstream) (WorkstreamRun, error) {
 	result := e.runner.Run(context.Background(), coreruntime.Request{
 		AgentIDs:          e.agents,
-		Prompt:            executionPrompt(work, workstream),
+		Prompt:            executionPrompt(root, work, workstream),
 		WorkDir:           e.workDir,
 		OnEvent:           e.onEvent,
 		ExecutionSettings: e.settings,
@@ -280,23 +282,50 @@ func findWorkstream(work Work, name string) (Workstream, bool) {
 	return Workstream{}, false
 }
 
-func executionPrompt(work Work, workstream Workstream) string {
-	var builder strings.Builder
-	builder.WriteString("Springfield approved work\n\n")
-	fmt.Fprintf(&builder, "Work ID: %s\n", work.ID)
-	fmt.Fprintf(&builder, "Title: %s\n", work.Title)
-	if strings.TrimSpace(work.RequestBody) != "" {
-		builder.WriteString("\nOriginal request:\n")
-		builder.WriteString(strings.TrimSpace(work.RequestBody))
-		builder.WriteString("\n")
-	}
-	builder.WriteString("\nExecute this workstream:\n")
-	fmt.Fprintf(&builder, "- Name: %s\n", workstream.Name)
-	fmt.Fprintf(&builder, "- Title: %s\n", workstream.Title)
+func executionPrompt(root string, work Work, workstream Workstream) string {
+	var b strings.Builder
+	b.WriteString("You are executing one slice of an approved Springfield batch.\n")
+	b.WriteString("\n# Slice\n")
+	fmt.Fprintf(&b, "- ID: %s\n", workstream.Name)
+	fmt.Fprintf(&b, "- Title: %s\n", workstream.Title)
 	if strings.TrimSpace(workstream.Summary) != "" {
-		fmt.Fprintf(&builder, "- Summary: %s\n", workstream.Summary)
+		b.WriteString("- Body:\n")
+		b.WriteString(strings.TrimSpace(workstream.Summary))
+		b.WriteString("\n")
 	}
-	builder.WriteString("\nKeep Springfield as the user-facing surface.\n")
-	builder.WriteString("\nDo not read, modify, or remove files under `.springfield/` — it is Springfield's control plane.\n")
-	return builder.String()
+	b.WriteString("\n# Batch context\n")
+	fmt.Fprintf(&b, "Title: %s\n", work.Title)
+	if strings.TrimSpace(work.RequestBody) != "" {
+		b.WriteString("Original request:\n")
+		b.WriteString(strings.TrimSpace(work.RequestBody))
+		b.WriteString("\n")
+	}
+	guidance := readProjectGuidance(root)
+	if guidance != "" {
+		b.WriteString("\n# Project context\n")
+		b.WriteString(guidance)
+	}
+	b.WriteString("\n# Contract\n")
+	b.WriteString("- Implement the slice end-to-end: code, tests, commit when green.\n")
+	b.WriteString("- Do NOT invoke `Skill(springfield:*)` — those are user-facing surfaces, not for you.\n")
+	b.WriteString("- Do NOT run `springfield start`, `springfield plan`, `springfield recover` from Bash. You are already inside a springfield-managed run.\n")
+	b.WriteString("- Do NOT read, write, edit, or delete files under `.springfield/` — that is springfield's control plane.\n")
+	b.WriteString("- When the slice is done, exit without asking for confirmation.\n")
+	return b.String()
+}
+
+// readProjectGuidance reads AGENTS.md, CLAUDE.md, GEMINI.md from root in that
+// priority order. Present files are concatenated with section headers.
+// Missing files are silently skipped. Returns empty string if none present.
+func readProjectGuidance(root string) string {
+	files := []string{"AGENTS.md", "CLAUDE.md", "GEMINI.md"}
+	var b strings.Builder
+	for _, name := range files {
+		data, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(&b, "## %s\n%s\n", name, string(data))
+	}
+	return b.String()
 }
