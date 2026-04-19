@@ -71,11 +71,45 @@ func (a adapter) Command(input agents.CommandInput) coreexec.Command {
 		args = append(args, "--permission-mode", permissionMode)
 	}
 
+	// Hard-block agent writes to Springfield's control plane. Deny rules
+	// outrank bypassPermissions in Claude Code, so they stand even when the
+	// user opted into bypass for everything else.
+	args = append(args, "--settings", springfieldDenySettingsJSON())
+
 	return coreexec.Command{
 		Name: "claude",
 		Args: args,
 		Dir:  input.WorkDir,
 	}
+}
+
+// springfieldDenySettingsJSON returns the inline --settings payload that
+// denies any tool call targeting .springfield/.
+func springfieldDenySettingsJSON() string {
+	payload := claudeSettings{
+		Permissions: claudePermissions{
+			Deny: []string{
+				"Write(.springfield/**)",
+				"Edit(.springfield/**)",
+				"Bash(* .springfield/**)",
+			},
+		},
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		// payload is static — marshal errors are impossible in practice,
+		// but fall back to a hand-built string rather than panic.
+		return `{"permissions":{"deny":["Write(.springfield/**)","Edit(.springfield/**)","Bash(* .springfield/**)"]}}`
+	}
+	return string(data)
+}
+
+type claudeSettings struct {
+	Permissions claudePermissions `json:"permissions"`
+}
+
+type claudePermissions struct {
+	Deny []string `json:"deny"`
 }
 
 // ValidateResult checks Claude's stream-json output for rejected tool calls,
