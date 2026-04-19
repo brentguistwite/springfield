@@ -31,7 +31,8 @@ func NewStatusCommand() *cobra.Command {
 				return err
 			}
 			if !hasRun || run.ActiveBatchID == "" {
-				return fmt.Errorf("no Springfield batch found — run \"springfield plan\" first")
+				fmt.Fprintln(cmd.OutOrStdout(), "No active Springfield batch. Run \"springfield plan\" to create one.")
+				return nil
 			}
 
 			paths, err := batch.NewPaths(root, run.ActiveBatchID)

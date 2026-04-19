@@ -66,17 +66,20 @@ func TestSpringfieldStatusShowsBatchState(t *testing.T) {
 	}
 }
 
-func TestSpringfieldStatusNoStateReturnsError(t *testing.T) {
+func TestSpringfieldStatusNoStateReportsCleanly(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
 
 	output, err := runBinaryIn(t, bin, dir, "status")
-	if err == nil {
-		t.Fatalf("expected status to fail with no state, got:\n%s", output)
+	if err != nil {
+		t.Fatalf("status with no batch should exit 0, got err=%v\n%s", err, output)
+	}
+	if !strings.Contains(output, "No active Springfield batch") {
+		t.Errorf("expected no-batch informational message, got:\n%s", output)
 	}
 	if !strings.Contains(output, "springfield plan") {
-		t.Fatalf("expected error to mention 'springfield plan', got:\n%s", output)
+		t.Errorf("expected next-step hint, got:\n%s", output)
 	}
 }
 
