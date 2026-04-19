@@ -461,13 +461,21 @@ func sha256Hex(data []byte) string {
 // pre-agent snapshot. Files absent from the snapshot but present on disk
 // (agent-created) are removed; files absent from disk but present in the
 // snapshot (agent-deleted) are recreated.
+//
+// Writes go through writeFileReplacingNonRegular so a symlink, device, or
+// other non-regular node planted by the agent is unlinked before the new
+// bytes are written. The restore NEVER follows a link out of the control
+// plane.
 func restoreControlPlane(root string, paths batch.Paths, snap controlPlaneSnapshot) error {
 	planDir := paths.PlanDir()
 	if err := os.MkdirAll(planDir, 0o755); err != nil {
 		return fmt.Errorf("recreate plan dir: %w", err)
 	}
 
-	onDisk, err := snapshotPlanTree(planDir)
+	// Enumerate with Lstat so we see symlinks/devices the agent may have
+	// planted — snapshotPlanTree may reject them outright after F2, but the
+	// restore pass still needs to remove stray nodes before rewriting.
+	onDisk, err := enumeratePlanTreeRaw(planDir)
 	if err != nil {
 		return fmt.Errorf("enumerate plan dir: %w", err)
 	}
@@ -481,14 +489,96 @@ func restoreControlPlane(root string, paths batch.Paths, snap controlPlaneSnapsh
 	}
 	for rel, data := range snap.tree {
 		abs := filepath.Join(planDir, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-			return fmt.Errorf("recreate parent for %s: %w", rel, err)
-		}
-		if err := os.WriteFile(abs, data, 0o644); err != nil {
+		if err := writeFileReplacingNonRegular(abs, data, 0o644); err != nil {
 			return fmt.Errorf("restore %s: %w", rel, err)
 		}
 	}
-	_ = os.WriteFile(batch.RunPath(root), snap.runBytes, 0o644)
+	if err := writeFileReplacingNonRegular(batch.RunPath(root), snap.runBytes, 0o644); err != nil {
+		return fmt.Errorf("restore run.json: %w", err)
+	}
+	return nil
+}
+
+// enumeratePlanTreeRaw lists every file under planDir (relpath keys, forward
+// slashes) without reading bytes and without rejecting non-regular entries.
+// Tmp scratch files are skipped. Used by restoreControlPlane to find stray
+// nodes — including non-regular ones planted by the agent — so they can be
+// unlinked before restore rewrites.
+func enumeratePlanTreeRaw(planDir string) (map[string]struct{}, error) {
+	out := make(map[string]struct{})
+	err := filepath.WalkDir(planDir, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		name := d.Name()
+		if strings.HasPrefix(name, snapshotTmpPrefix) {
+			return nil
+		}
+		rel, err := filepath.Rel(planDir, path)
+		if err != nil {
+			return err
+		}
+		out[filepath.ToSlash(rel)] = struct{}{}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// writeFileReplacingNonRegular writes data to abs atomically. If abs is an
+// existing symlink/device/fifo/socket, the node is removed first so the write
+// never follows the link. Uses sibling tmp + fsync + rename, with a chmod to
+// the caller's requested mode (os.CreateTemp starts at 0600).
+func writeFileReplacingNonRegular(abs string, data []byte, mode os.FileMode) error {
+	if info, err := os.Lstat(abs); err == nil {
+		if !info.Mode().IsRegular() {
+			if rmErr := os.Remove(abs); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+				return fmt.Errorf("remove non-regular node: %w", rmErr)
+			}
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("lstat: %w", err)
+	}
+
+	dir := filepath.Dir(abs)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("mkdir parent: %w", err)
+	}
+
+	tmp, err := os.CreateTemp(dir, ".tmp-restore-*")
+	if err != nil {
+		return fmt.Errorf("create tmp: %w", err)
+	}
+	tmpName := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpName) }
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		cleanup()
+		return fmt.Errorf("write tmp: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		cleanup()
+		return fmt.Errorf("sync tmp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return fmt.Errorf("close tmp: %w", err)
+	}
+	if err := os.Chmod(tmpName, mode); err != nil {
+		cleanup()
+		return fmt.Errorf("chmod tmp: %w", err)
+	}
+	if err := os.Rename(tmpName, abs); err != nil {
+		cleanup()
+		return fmt.Errorf("rename: %w", err)
+	}
 	return nil
 }
 
