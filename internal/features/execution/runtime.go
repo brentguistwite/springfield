@@ -113,12 +113,16 @@ func (e runtimeSingleExecutor) Run(root string, work Work) (Report, error) {
 			Status:      statusFailed,
 			Error:       outcome.Error,
 			Workstreams: []WorkstreamRun{outcome},
+			AgentID:     string(result.Agent),
+			ExitCode:    result.ExitCode,
 		}, err
 	}
 
 	return Report{
 		Status:      statusCompleted,
 		Workstreams: []WorkstreamRun{outcome},
+		AgentID:     string(result.Agent),
+		ExitCode:    result.ExitCode,
 	}, nil
 }
 

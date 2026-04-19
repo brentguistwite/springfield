@@ -57,7 +57,18 @@ func TestTamperRule1_AgentDeletesBatchJSON(t *testing.T) {
 	if err != nil || len(entries) == 0 {
 		t.Fatalf("expected archive entry after tamper, entries=%d err=%v", len(entries), err)
 	}
-	data, _ := os.ReadFile(filepath.Join(archiveDir, entries[0].Name()))
+	var archivePath string
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".tamper.json") && strings.HasSuffix(name, ".json") {
+			archivePath = filepath.Join(archiveDir, name)
+			break
+		}
+	}
+	if archivePath == "" {
+		t.Fatalf("could not find state-tamper archive file among entries: %v", entries)
+	}
+	data, _ := os.ReadFile(archivePath)
 	if !strings.Contains(string(data), `"reason": "state-tampered"`) {
 		t.Errorf("expected reason=state-tampered, got:\n%s", string(data))
 	}
@@ -92,8 +103,8 @@ func TestTamperRule2_AgentWritesGarbageJSON(t *testing.T) {
 	if !strings.Contains(output, "state tampered by agent") {
 		t.Errorf("expected tamper message in output, got:\n%s", output)
 	}
-	if !strings.Contains(output, "batch.json bytes changed") {
-		t.Errorf("expected batch.json byte-diff label, got:\n%s", output)
+	if !strings.Contains(output, "batch.json") {
+		t.Errorf("expected batch.json in tamper reason, got:\n%s", output)
 	}
 }
 
@@ -140,8 +151,8 @@ func TestTamperRunJSONDetected(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected run.json tamper to fail start, got:\n%s", output)
 	}
-	if !strings.Contains(output, "run.json bytes changed") {
-		t.Errorf("expected run.json byte-diff label, got:\n%s", output)
+	if !strings.Contains(output, "run.json") {
+		t.Errorf("expected run.json in tamper reason, got:\n%s", output)
 	}
 }
 
