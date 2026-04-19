@@ -2,6 +2,8 @@ package execution
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -138,5 +140,138 @@ func TestRuntimeSingleExecutorRejectsMultipleWorkstreams(t *testing.T) {
 	want := `work "wave-a1" split "single" requires exactly one workstream, got 2`
 	if err.Error() != want {
 		t.Fatalf("error = %q, want %q", err, want)
+	}
+}
+
+func TestExecutionPromptIncludesSliceBody(t *testing.T) {
+	work := Work{
+		ID:    "batch-01",
+		Title: "Batch title",
+		Workstreams: []Workstream{
+			{Name: "01", Title: "Slice title", Summary: "implement X"},
+		},
+	}
+	prompt := executionPrompt("", work, work.Workstreams[0])
+	if !strings.Contains(prompt, "implement X") {
+		t.Fatalf("expected prompt to contain slice summary %q, got:\n%s", "implement X", prompt)
+	}
+}
+
+func TestExecutionPromptIncludesAgentsMdWhenPresent(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("foo bar"), 0o644); err != nil {
+		t.Fatalf("write AGENTS.md: %v", err)
+	}
+	work := Work{
+		ID:    "batch-01",
+		Title: "Batch title",
+		Workstreams: []Workstream{
+			{Name: "01", Title: "Slice title", Summary: "do it"},
+		},
+	}
+	prompt := executionPrompt(root, work, work.Workstreams[0])
+	if !strings.Contains(prompt, "foo bar") {
+		t.Fatalf("expected prompt to contain AGENTS.md content, got:\n%s", prompt)
+	}
+}
+
+func TestExecutionPromptConcatenatesAgentsClaudeGemini(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"AGENTS.md": "agents-content",
+		"CLAUDE.md": "claude-content",
+		"GEMINI.md": "gemini-content",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	work := Work{
+		ID:    "batch-01",
+		Title: "Batch title",
+		Workstreams: []Workstream{
+			{Name: "01", Title: "Slice title", Summary: "do it"},
+		},
+	}
+	prompt := executionPrompt(root, work, work.Workstreams[0])
+	for _, want := range []string{"agents-content", "claude-content", "gemini-content"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("expected prompt to contain %q, got:\n%s", want, prompt)
+		}
+	}
+	// Check section headers appear
+	for _, header := range []string{"## AGENTS.md", "## CLAUDE.md", "## GEMINI.md"} {
+		if !strings.Contains(prompt, header) {
+			t.Fatalf("expected prompt to contain section header %q, got:\n%s", header, prompt)
+		}
+	}
+	// Check order: AGENTS before CLAUDE before GEMINI
+	agentsIdx := strings.Index(prompt, "agents-content")
+	claudeIdx := strings.Index(prompt, "claude-content")
+	geminiIdx := strings.Index(prompt, "gemini-content")
+	if !(agentsIdx < claudeIdx && claudeIdx < geminiIdx) {
+		t.Fatalf("expected AGENTS.md before CLAUDE.md before GEMINI.md in prompt, got indices %d %d %d", agentsIdx, claudeIdx, geminiIdx)
+	}
+}
+
+func TestExecutionPromptOmitsMissingProjectFiles(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "CLAUDE.md"), []byte("only-claude"), 0o644); err != nil {
+		t.Fatalf("write CLAUDE.md: %v", err)
+	}
+	work := Work{
+		ID:    "batch-01",
+		Title: "Batch title",
+		Workstreams: []Workstream{
+			{Name: "01", Title: "Slice title", Summary: "do it"},
+		},
+	}
+	prompt := executionPrompt(root, work, work.Workstreams[0])
+	if !strings.Contains(prompt, "only-claude") {
+		t.Fatalf("expected prompt to contain CLAUDE.md content, got:\n%s", prompt)
+	}
+	// No AGENTS.md or GEMINI.md headers
+	if strings.Contains(prompt, "## AGENTS.md") {
+		t.Fatalf("expected prompt NOT to contain AGENTS.md header, got:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "## GEMINI.md") {
+		t.Fatalf("expected prompt NOT to contain GEMINI.md header, got:\n%s", prompt)
+	}
+}
+
+func TestExecutionPromptContainsAntiRecursionContract(t *testing.T) {
+	work := Work{
+		ID:    "batch-01",
+		Title: "Batch title",
+		Workstreams: []Workstream{
+			{Name: "01", Title: "Slice title", Summary: "do it"},
+		},
+	}
+	prompt := executionPrompt("", work, work.Workstreams[0])
+	for _, want := range []string{
+		"Do NOT invoke",
+		"springfield:*",
+		"Do NOT run `springfield start`",
+		".springfield/",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("expected anti-recursion contract to contain %q, got:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestExecutionPromptIncludesBatchRequestBody(t *testing.T) {
+	work := Work{
+		ID:          "batch-01",
+		Title:       "Batch title",
+		RequestBody: "Polish status UX",
+		Workstreams: []Workstream{
+			{Name: "01", Title: "Slice title", Summary: "do it"},
+		},
+	}
+	prompt := executionPrompt("", work, work.Workstreams[0])
+	if !strings.Contains(prompt, "Polish status UX") {
+		t.Fatalf("expected prompt to contain RequestBody, got:\n%s", prompt)
 	}
 }
