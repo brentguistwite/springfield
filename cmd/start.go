@@ -229,6 +229,15 @@ type controlPlaneSnapshot struct {
 // duration of an atomic rename and must not be captured by the snapshot.
 const snapshotTmpPrefix = ".tmp-"
 
+// Snapshot byte caps: generous enough to never reject a legitimate plan
+// (2 MiB source.md is well below the per-file cap; realistic plan trees
+// stay under a few MiB total), tight enough to catch pathological bloat
+// before the in-memory snapshot OOMs the CLI.
+const (
+	snapshotFileMaxBytes = 10 * 1024 * 1024  // 10 MiB per file
+	snapshotTreeMaxBytes = 100 * 1024 * 1024 // 100 MiB cumulative
+)
+
 func snapshotControlPlane(root string, paths batch.Paths) (controlPlaneSnapshot, error) {
 	tree, err := snapshotPlanTree(paths.PlanDir())
 	if err != nil {
@@ -251,6 +260,7 @@ func snapshotControlPlane(root string, paths batch.Paths) (controlPlaneSnapshot,
 // against a symlink being swapped in after the d.Type() check.
 func snapshotPlanTree(planDir string) (map[string][]byte, error) {
 	out := make(map[string][]byte)
+	var totalBytes int64
 	err := filepath.WalkDir(planDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -276,13 +286,22 @@ func snapshotPlanTree(planDir string) (map[string][]byte, error) {
 		if err != nil {
 			return fmt.Errorf("open %s: %w", rel, err)
 		}
-		data, err := io.ReadAll(f)
+		// Read at most cap+1 bytes so we can detect overflow without
+		// slurping an arbitrarily large file into memory.
+		data, err := io.ReadAll(io.LimitReader(f, snapshotFileMaxBytes+1))
 		closeErr := f.Close()
 		if err != nil {
 			return fmt.Errorf("read %s: %w", rel, err)
 		}
 		if closeErr != nil {
 			return fmt.Errorf("close %s: %w", rel, closeErr)
+		}
+		if len(data) > snapshotFileMaxBytes {
+			return fmt.Errorf("%s exceeds per-file cap", rel)
+		}
+		totalBytes += int64(len(data))
+		if totalBytes > snapshotTreeMaxBytes {
+			return fmt.Errorf("plan tree exceeds total cap")
 		}
 		out[rel] = data
 		return nil

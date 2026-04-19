@@ -3,6 +3,7 @@ package cmd_test
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -63,11 +64,9 @@ func TestSnapshotRejectsSymlink(t *testing.T) {
 	}
 }
 
-// TestSnapshotAcceptsLargePlanFile — the snapshot must NOT enforce a per-file
-// cap. A plan with a large source.md (e.g. real-world plan docs past 256 KiB)
-// should start successfully. Regression test for previous behavior where
-// snapshotPlanTree rejected files past 256 KiB, bricking any plan with a
-// large source.md.
+// TestSnapshotAcceptsLargePlanFile — the snapshot must accept generously
+// sized plan docs. 2 MiB is well above any realistic source.md but below
+// the per-file cap, proving the cap doesn't reject legitimate plans.
 func TestSnapshotAcceptsLargePlanFile(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
@@ -78,8 +77,8 @@ func TestSnapshotAcceptsLargePlanFile(t *testing.T) {
 	}
 
 	planDir := findPlanDir(t, dir)
-	// 400 KiB > old 256 KiB per-file cap.
-	big := make([]byte, 400*1024)
+	// 2 MiB — comfortably above real plan docs, well below the 10 MiB per-file cap.
+	big := make([]byte, 2*1024*1024)
 	for i := range big {
 		big[i] = 'A'
 	}
@@ -99,6 +98,80 @@ func TestSnapshotAcceptsLargePlanFile(t *testing.T) {
 		t.Errorf("expected completed, got:\n%s", output)
 	}
 }
+
+// TestSnapshotRejectsOversizeFile — a single file past the 10 MiB per-file
+// cap must cause the snapshot to fail. Guards against pathological/OOM
+// inputs (accidental gigabyte blob in the plan dir) without rejecting any
+// real plan doc.
+func TestSnapshotRejectsOversizeFile(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeSpringfieldConfig(t, dir, "claude")
+
+	if _, err := singleSlicePlan(t, bin, dir, "Do the thing"); err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+
+	planDir := findPlanDir(t, dir)
+	// 11 MiB > 10 MiB per-file cap.
+	big := make([]byte, 11*1024*1024)
+	for i := range big {
+		big[i] = 'A'
+	}
+	if err := os.WriteFile(filepath.Join(planDir, "oversize.bin"), big, 0o644); err != nil {
+		t.Fatalf("write oversize: %v", err)
+	}
+
+	fakeBinDir := filepath.Join(dir, "bin")
+	argvPath := filepath.Join(dir, "claude.argv")
+	installFakeAgentBinary(t, fakeBinDir, "claude", argvPath)
+
+	output, err := runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + fakeBinDir + ":" + os.Getenv("PATH")}, "start")
+	if err == nil {
+		t.Fatalf("expected snapshot failure on oversize file, got:\n%s", output)
+	}
+	if !strings.Contains(output, "per-file cap") {
+		t.Errorf("expected 'per-file cap' in output, got:\n%s", output)
+	}
+}
+
+// TestSnapshotRejectsOversizeTree — plan dir whose files sum past the
+// 100 MiB total cap must cause the snapshot to fail, even when each
+// individual file is under the per-file cap. 120 × 1 MiB = 120 MiB.
+func TestSnapshotRejectsOversizeTree(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeSpringfieldConfig(t, dir, "claude")
+
+	if _, err := singleSlicePlan(t, bin, dir, "Do the thing"); err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+
+	planDir := findPlanDir(t, dir)
+	chunk := make([]byte, 1024*1024)
+	for i := range chunk {
+		chunk[i] = 'B'
+	}
+	for i := 0; i < 120; i++ {
+		name := filepath.Join(planDir, "bulk-"+strconv.Itoa(i)+".bin")
+		if err := os.WriteFile(name, chunk, 0o644); err != nil {
+			t.Fatalf("write bulk %d: %v", i, err)
+		}
+	}
+
+	fakeBinDir := filepath.Join(dir, "bin")
+	argvPath := filepath.Join(dir, "claude.argv")
+	installFakeAgentBinary(t, fakeBinDir, "claude", argvPath)
+
+	output, err := runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + fakeBinDir + ":" + os.Getenv("PATH")}, "start")
+	if err == nil {
+		t.Fatalf("expected snapshot failure on oversize tree, got:\n%s", output)
+	}
+	if !strings.Contains(output, "total cap") {
+		t.Errorf("expected 'total cap' in output, got:\n%s", output)
+	}
+}
+
 
 // TestSnapshotAcceptsNormalTree — the happy path: plan dir contains only
 // batch.json + source.md at sane sizes, noop agent passes.
