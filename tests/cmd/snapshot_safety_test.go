@@ -1,7 +1,6 @@
 package cmd_test
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,9 +63,12 @@ func TestSnapshotRejectsSymlink(t *testing.T) {
 	}
 }
 
-// TestSnapshotRejectsOversizeFile — a single plan-dir file exceeding the
-// per-file cap must cause the snapshot to fail.
-func TestSnapshotRejectsOversizeFile(t *testing.T) {
+// TestSnapshotAcceptsLargePlanFile — the snapshot must NOT enforce a per-file
+// cap. A plan with a large source.md (e.g. real-world plan docs past 256 KiB)
+// should start successfully. Regression test for previous behavior where
+// snapshotPlanTree rejected files past 256 KiB, bricking any plan with a
+// large source.md.
+func TestSnapshotAcceptsLargePlanFile(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
@@ -76,8 +78,8 @@ func TestSnapshotRejectsOversizeFile(t *testing.T) {
 	}
 
 	planDir := findPlanDir(t, dir)
-	// 300 KiB > 256 KiB cap.
-	big := make([]byte, 300*1024)
+	// 400 KiB > old 256 KiB per-file cap.
+	big := make([]byte, 400*1024)
 	for i := range big {
 		big[i] = 'A'
 	}
@@ -90,49 +92,11 @@ func TestSnapshotRejectsOversizeFile(t *testing.T) {
 	installFakeAgentBinary(t, fakeBinDir, "claude", argvPath)
 
 	output, err := runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + fakeBinDir + ":" + os.Getenv("PATH")}, "start")
-	if err == nil {
-		t.Fatalf("expected snapshot failure on oversize file, got:\n%s", output)
+	if err != nil {
+		t.Fatalf("start with large plan file should succeed, got err=%v\n%s", err, output)
 	}
-	if !strings.Contains(output, "per-file cap") {
-		t.Errorf("expected 'per-file cap' in output, got:\n%s", output)
-	}
-}
-
-// TestSnapshotRejectsOversizeTree — many small files summing above the tree
-// cap must cause the snapshot to fail.
-func TestSnapshotRejectsOversizeTree(t *testing.T) {
-	bin := buildBinary(t)
-	dir := t.TempDir()
-	writeSpringfieldConfig(t, dir, "claude")
-
-	if _, err := singleSlicePlan(t, bin, dir, "Do the thing"); err != nil {
-		t.Fatalf("plan: %v", err)
-	}
-
-	planDir := findPlanDir(t, dir)
-	// Plant 20 files at 200 KiB each = ~4 MiB, well over the 2 MiB total
-	// cap but under the 256 KiB per-file cap.
-	chunk := make([]byte, 200*1024)
-	for i := range chunk {
-		chunk[i] = 'B'
-	}
-	for i := 0; i < 20; i++ {
-		name := fmt.Sprintf("filler-%02d.bin", i)
-		if err := os.WriteFile(filepath.Join(planDir, name), chunk, 0o644); err != nil {
-			t.Fatalf("write filler %d: %v", i, err)
-		}
-	}
-
-	fakeBinDir := filepath.Join(dir, "bin")
-	argvPath := filepath.Join(dir, "claude.argv")
-	installFakeAgentBinary(t, fakeBinDir, "claude", argvPath)
-
-	output, err := runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + fakeBinDir + ":" + os.Getenv("PATH")}, "start")
-	if err == nil {
-		t.Fatalf("expected snapshot failure on oversize tree, got:\n%s", output)
-	}
-	if !strings.Contains(output, "total cap") {
-		t.Errorf("expected 'total cap' in output, got:\n%s", output)
+	if !strings.Contains(output, "Status: completed") {
+		t.Errorf("expected completed, got:\n%s", output)
 	}
 }
 

@@ -229,15 +229,6 @@ type controlPlaneSnapshot struct {
 // duration of an atomic rename and must not be captured by the snapshot.
 const snapshotTmpPrefix = ".tmp-"
 
-// Snapshot size caps bound how much plan-dir content Springfield is willing
-// to hold in memory between the pre-agent snapshot and post-agent compare.
-// These cap the attack surface for a malicious agent that could otherwise
-// wedge the process by planting multi-gigabyte files in the plan dir.
-const (
-	snapshotFileMaxBytes = 256 * 1024
-	snapshotTreeMaxBytes = 2 * 1024 * 1024
-)
-
 func snapshotControlPlane(root string, paths batch.Paths) (controlPlaneSnapshot, error) {
 	tree, err := snapshotPlanTree(paths.PlanDir())
 	if err != nil {
@@ -258,12 +249,8 @@ func snapshotControlPlane(root string, paths batch.Paths) (controlPlaneSnapshot,
 // Springfield only writes regular files under the plan dir, so any other
 // node is an integrity violation. Reads use O_NOFOLLOW as defense-in-depth
 // against a symlink being swapped in after the d.Type() check.
-//
-// Per-file reads are bounded by snapshotFileMaxBytes and the running total
-// by snapshotTreeMaxBytes. Exceeding either bound is an error.
 func snapshotPlanTree(planDir string) (map[string][]byte, error) {
 	out := make(map[string][]byte)
-	var total int64
 	err := filepath.WalkDir(planDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -289,20 +276,13 @@ func snapshotPlanTree(planDir string) (map[string][]byte, error) {
 		if err != nil {
 			return fmt.Errorf("open %s: %w", rel, err)
 		}
-		data, err := io.ReadAll(io.LimitReader(f, snapshotFileMaxBytes+1))
+		data, err := io.ReadAll(f)
 		closeErr := f.Close()
 		if err != nil {
 			return fmt.Errorf("read %s: %w", rel, err)
 		}
 		if closeErr != nil {
 			return fmt.Errorf("close %s: %w", rel, closeErr)
-		}
-		if len(data) > snapshotFileMaxBytes {
-			return fmt.Errorf("%s exceeds per-file cap", rel)
-		}
-		total += int64(len(data))
-		if total > snapshotTreeMaxBytes {
-			return fmt.Errorf("plan tree exceeds total cap")
 		}
 		out[rel] = data
 		return nil
