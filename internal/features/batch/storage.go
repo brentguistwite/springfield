@@ -114,11 +114,19 @@ func ArchiveBatchNormalized(rootDir string, b Batch, reason string) error {
 		Slices:     slices,
 	}
 
-	wrote, err := writeJSONExclusive(archivePath, entry)
+	existed, err := writeJSONExclusive(archivePath, entry)
 	if err != nil {
 		return err
 	}
-	_ = wrote // idempotent either way — continue to plan dir cleanup
+	// On collision, compare reasons. A distinct reason (e.g. an earlier
+	// "replaced" stub vs. a subsequent "state-tampered" entry) is forensically
+	// valuable and must not be dropped on the floor; write a timestamped
+	// sibling so both records survive.
+	if existed {
+		if err := maybeWriteArchiveSibling(archivePath, entry); err != nil {
+			return err
+		}
+	}
 
 	paths, err := NewPaths(rootDir, b.ID)
 	if err != nil {
@@ -186,6 +194,74 @@ func RestoreBatchFromSnapshot(paths Paths, snapshot []byte) error {
 		return fmt.Errorf("recreate plan dir: %w", err)
 	}
 	return writeFileAtomic(paths.BatchPath(), snapshot, 0o644)
+}
+
+// maybeWriteArchiveSibling handles a stable-path archive collision. If the
+// pre-existing entry carries the same reason, the call is a pure no-op (the
+// existing historical idempotence). When the reasons differ, a sibling
+// <id>.<unixNano>.<reason>.json is written via atomic tmp+rename so the new
+// archive's forensic info is preserved alongside the original.
+func maybeWriteArchiveSibling(stablePath string, incoming ArchiveEntry) error {
+	existing, err := os.ReadFile(stablePath)
+	if err != nil {
+		// Archive is expected to exist — but if it vanished racey, a no-op is
+		// the safer answer than aborting the caller mid-cleanup.
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read existing archive %s: %w", stablePath, err)
+	}
+	var prior ArchiveEntry
+	if err := json.Unmarshal(existing, &prior); err != nil {
+		// Prior file exists but isn't yet finalized JSON (likely because
+		// writeJSONExclusive just created the exclusive lock file and is mid
+		// rename). Treat as "match in progress" and no-op rather than writing
+		// a spurious sibling; the rename will land soon.
+		return nil
+	}
+	if prior.Reason == incoming.Reason {
+		return nil
+	}
+
+	reasonSlug := sanitizeArchiveReason(incoming.Reason)
+	if reasonSlug == "" {
+		reasonSlug = "unknown"
+	}
+	siblingName := fmt.Sprintf("%s.%d.%s.json", incoming.BatchID, time.Now().UTC().UnixNano(), reasonSlug)
+	siblingPath := filepath.Join(filepath.Dir(stablePath), siblingName)
+	data, err := marshalJSONLine(incoming, siblingPath)
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(siblingPath, data, 0o644)
+}
+
+// sanitizeArchiveReason returns a filename-safe slug for the reason field.
+// Only ASCII letters, digits, `-`, and `_` are preserved; everything else
+// collapses to `-`.
+func sanitizeArchiveReason(reason string) string {
+	var b []byte
+	lastDash := false
+	for _, r := range reason {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_':
+			b = append(b, byte(r))
+			lastDash = false
+		default:
+			if !lastDash {
+				b = append(b, '-')
+				lastDash = true
+			}
+		}
+	}
+	// Trim leading/trailing dashes without pulling in strings just for this.
+	for len(b) > 0 && b[0] == '-' {
+		b = b[1:]
+	}
+	for len(b) > 0 && b[len(b)-1] == '-' {
+		b = b[:len(b)-1]
+	}
+	return string(b)
 }
 
 func writeJSON(path string, value any) error {
