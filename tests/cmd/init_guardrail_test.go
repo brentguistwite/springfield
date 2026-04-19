@@ -75,6 +75,72 @@ func TestInitGuardrailIdempotent(t *testing.T) {
 	}
 }
 
+// TestInitGuardrailPreservesMode verifies that when CLAUDE.md exists with a
+// non-default mode (e.g. 0o600), init preserves that mode after appending the
+// guardrail block. Regression guard for the atomic-write pattern: naive
+// os.CreateTemp + rename would otherwise land a 0o644 or 0o600-default file
+// regardless of the caller's existing mode.
+func TestInitGuardrailPreservesMode(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	claudePath := filepath.Join(dir, "CLAUDE.md")
+	existing := "# My Project\n\nProject notes.\n"
+	if err := os.WriteFile(claudePath, []byte(existing), 0o600); err != nil {
+		t.Fatalf("seed CLAUDE.md: %v", err)
+	}
+	// os.WriteFile honours process umask; ensure mode is exactly 0o600.
+	if err := os.Chmod(claudePath, 0o600); err != nil {
+		t.Fatalf("chmod seed: %v", err)
+	}
+
+	if _, err := runBinaryIn(t, bin, dir, "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	info, err := os.Stat(claudePath)
+	if err != nil {
+		t.Fatalf("stat CLAUDE.md: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("CLAUDE.md mode = %o, want 0600", got)
+	}
+
+	data, err := os.ReadFile(claudePath)
+	if err != nil {
+		t.Fatalf("read CLAUDE.md: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "Project notes.") {
+		t.Errorf("pre-existing content lost, got:\n%s", content)
+	}
+	if !strings.Contains(content, guardrailMarker) {
+		t.Errorf("guardrail not appended, got:\n%s", content)
+	}
+}
+
+// TestInitGuardrailFreshFileDefaultMode verifies a fresh CLAUDE.md lands with
+// mode 0o644 (the standard default when no existing file dictates otherwise).
+func TestInitGuardrailFreshFileDefaultMode(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	if _, err := runBinaryIn(t, bin, dir, "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	info, err := os.Stat(filepath.Join(dir, "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("stat CLAUDE.md: %v", err)
+	}
+	// Fresh-file baseline: 0o644 (umask may strip group/other write on some
+	// systems; we tolerate the permissive case since the real regression is
+	// "mode was dropped to 0o600 because tmp file carried over").
+	if got := info.Mode().Perm(); got != 0o644 {
+		t.Errorf("fresh CLAUDE.md mode = %o, want 0644", got)
+	}
+}
+
 // TestInitGuardrailPreservesExistingContent verifies pre-existing content in
 // CLAUDE.md is preserved and the guardrail lands appended at the end.
 func TestInitGuardrailPreservesExistingContent(t *testing.T) {

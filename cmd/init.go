@@ -261,6 +261,11 @@ Never read, write, edit, or delete files under ` + "`.springfield/`" + `. That d
 // agent-instruction file when the idempotency marker is absent. Creates the
 // file (with a simple header) when missing. Returns (added, err) where
 // added==true means the block was just written.
+//
+// The write uses writeFileReplacingNonRegular (temp + fsync + rename) so a
+// crash mid-write cannot leave CLAUDE.md / AGENTS.md truncated or empty —
+// the rename is atomic. The existing file's mode is preserved; fresh files
+// default to 0o644.
 func ensureGuardrailBlock(path string) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -285,7 +290,12 @@ func ensureGuardrailBlock(path string) (bool, error) {
 	}
 	buf.WriteString(guardrailBlock)
 
-	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+	mode := os.FileMode(0o644)
+	if info, statErr := os.Stat(path); statErr == nil {
+		mode = info.Mode().Perm()
+	}
+
+	if err := writeFileReplacingNonRegular(path, buf.Bytes(), mode); err != nil {
 		return false, fmt.Errorf("write %s: %w", filepath.Base(path), err)
 	}
 	return true, nil
