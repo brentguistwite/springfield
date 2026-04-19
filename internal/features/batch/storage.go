@@ -187,15 +187,6 @@ func UpdateBatchSlice(paths Paths, updated Slice) error {
 	return writeJSON(paths.BatchPath(), b)
 }
 
-// RestoreBatchFromSnapshot re-creates the plan directory (if missing) and
-// writes the snapshot bytes back to batch.json atomically.
-func RestoreBatchFromSnapshot(paths Paths, snapshot []byte) error {
-	if err := os.MkdirAll(paths.PlanDir(), 0o755); err != nil {
-		return fmt.Errorf("recreate plan dir: %w", err)
-	}
-	return writeFileAtomic(paths.BatchPath(), snapshot, 0o644)
-}
-
 // maybeWriteArchiveSibling handles a stable-path archive collision. If the
 // pre-existing entry carries the same reason, the call is a pure no-op (the
 // existing historical idempotence). When the reasons differ, a sibling
