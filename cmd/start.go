@@ -21,6 +21,7 @@ import (
 
 	"springfield/internal/core/config"
 	coreexec "springfield/internal/core/exec"
+	"springfield/internal/core/lock"
 	"springfield/internal/features/batch"
 	"springfield/internal/features/execution"
 	"springfield/internal/features/workflow"
@@ -41,6 +42,19 @@ func NewStartCommand() *cobra.Command {
 				return err
 			}
 			root := loaded.RootDir
+
+			lk, err := lock.Acquire(root)
+			if err != nil {
+				var held *lock.ErrLockHeld
+				if errors.As(err, &held) {
+					if held.PID != 0 {
+						return fmt.Errorf("another springfield start is already running (pid %d since %s)", held.PID, held.Since.Format(time.RFC3339))
+					}
+					return errors.New("another springfield start is already running (holder PID unknown — may have just exited; retry if expected)")
+				}
+				return fmt.Errorf("acquire springfield lock: %w", err)
+			}
+			defer lk.Release()
 
 			run, hasRun, err := batch.ReadRun(root)
 			if err != nil {
