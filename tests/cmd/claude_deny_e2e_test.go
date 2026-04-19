@@ -16,7 +16,7 @@ func TestSpringfieldStartPlumbsControlPlaneHookToClaude(t *testing.T) {
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
 
-	if _, err := runBinaryIn(t, bin, dir, "plan", "--prompt", "Do the thing"); err != nil {
+	if _, err := singleSlicePlan(t, bin, dir, "Do the thing"); err != nil {
 		t.Fatalf("plan: %v", err)
 	}
 
