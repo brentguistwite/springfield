@@ -621,14 +621,14 @@ func writeFileReplacingNonRegular(abs string, data []byte, mode os.FileMode) err
 func compareControlPlane(root string, paths batch.Paths, snap controlPlaneSnapshot) string {
 	current, err := snapshotPlanTree(paths.PlanDir())
 	if err != nil {
-		return "plan dir unreadable"
+		return fmt.Sprintf("plan dir unreadable: %v", err)
 	}
 	if reason := firstTreeDivergence(snap.tree, current); reason != "" {
 		return reason
 	}
 	runNow, err := os.ReadFile(batch.RunPath(root))
 	if err != nil {
-		return "run.json missing"
+		return fmt.Sprintf("run.json missing: %v", err)
 	}
 	if !bytes.Equal(runNow, snap.runBytes) {
 		return "run.json changed"
