@@ -333,36 +333,26 @@ func detectAndRecoverTamper(root string, paths batch.Paths, snap controlPlaneSna
 	// Capture post-tamper bytes before restore overwrites them.
 	postBytes := capturePostBytesForReason(root, paths, reason)
 
-	var restoreErr, archiveErr error
+	var restoreErr error
 	if err := restoreControlPlane(root, paths, snap); err != nil {
 		restoreErr = err
-	} else {
-		batchBytes := snap.tree["batch.json"]
-		var restored batch.Batch
-		if err := json.Unmarshal(batchBytes, &restored); err == nil {
-			if err := batch.ArchiveBatchNormalized(root, restored, "state-tampered"); err != nil {
-				archiveErr = err
-			}
-		}
 	}
 
-	// Sidecar is best-effort forensic only; don't fail the caller if it
-	// can't land. Write after archive so archive dir exists.
+	// Forensics sidecar captures the what/where/why of the tamper.
+	// Best-effort: a missing sidecar must never escalate past the tamper
+	// message that already tells the operator what happened.
 	preBytes := preBytesForReason(snap, reason)
-	if sidecarErr := writeTamperSidecar(root, forensics, reason, preBytes, postBytes); sidecarErr != nil {
-		// Swallow: a missing sidecar should never escalate past a tamper
-		// message that already tells the operator what happened.
-		_ = sidecarErr
-	}
+	_ = writeTamperSidecar(root, forensics, reason, preBytes, postBytes)
 
-	_ = batch.ClearRun(root)
+	// Note: we intentionally do NOT archive the batch on tamper. The snapshot
+	// has been restored; the batch is coherent again. The current slice is
+	// marked failed by the caller, but the batch itself stays active so the
+	// user can retry without recompiling all slices. The forensics sidecar
+	// records what happened for post-mortem.
 
 	msg := fmt.Sprintf("state tampered by agent (%s)", reason)
 	if restoreErr != nil {
 		msg += fmt.Sprintf("; restore failed: %v", restoreErr)
-	}
-	if archiveErr != nil {
-		msg += fmt.Sprintf("; archive failed: %v", archiveErr)
 	}
 	return fmt.Errorf("%s", msg)
 }

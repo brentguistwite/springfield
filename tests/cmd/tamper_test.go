@@ -26,9 +26,9 @@ func installTamperingAgent(t *testing.T, binDir, name, tamperCmd string) {
 }
 
 // TestTamperRule1_AgentDeletesBatchJSON reproduces the squibby incident:
-// agent removes .springfield/plans/<id>/batch.json mid-run. Predicate rule 1
-// must fire, snapshot must restore, archive must land with reason
-// "state-tampered", next start must see a clean state.
+// agent removes .springfield/plans/<id>/batch.json mid-run. Tamper must
+// fire, snapshot must restore, forensics sidecar must land. The batch
+// stays active (not archived) so the user can retry without recompiling.
 func TestTamperRule1_AgentDeletesBatchJSON(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
@@ -48,38 +48,37 @@ func TestTamperRule1_AgentDeletesBatchJSON(t *testing.T) {
 		t.Errorf("expected 'state tampered' in output, got:\n%s", output)
 	}
 
-	// run.json cleared, archive entry written with reason=state-tampered.
-	if _, ok, _ := batch.ReadRun(dir); ok {
-		t.Error("run.json should be cleared after tamper detection")
+	// Batch stays active: run.json is preserved, plan dir is restored from
+	// snapshot, forensics sidecar is written.
+	run, ok, _ := batch.ReadRun(dir)
+	if !ok {
+		t.Error("run.json should persist after tamper detection (batch stays retryable)")
 	}
+	if run.ActiveBatchID == "" {
+		t.Error("run.json should retain ActiveBatchID after tamper")
+	}
+
+	// Forensics sidecar present.
 	archiveDir := filepath.Join(dir, ".springfield", "archive")
 	entries, err := os.ReadDir(archiveDir)
-	if err != nil || len(entries) == 0 {
-		t.Fatalf("expected archive entry after tamper, entries=%d err=%v", len(entries), err)
+	if err != nil {
+		t.Fatalf("read archive dir: %v", err)
 	}
-	var archivePath string
+	foundSidecar := false
 	for _, e := range entries {
-		name := e.Name()
-		if !strings.HasSuffix(name, ".tamper.json") && strings.HasSuffix(name, ".json") {
-			archivePath = filepath.Join(archiveDir, name)
+		if strings.HasSuffix(e.Name(), ".tamper.json") {
+			foundSidecar = true
 			break
 		}
 	}
-	if archivePath == "" {
-		t.Fatalf("could not find state-tamper archive file among entries: %v", entries)
-	}
-	data, _ := os.ReadFile(archivePath)
-	if !strings.Contains(string(data), `"reason": "state-tampered"`) {
-		t.Errorf("expected reason=state-tampered, got:\n%s", string(data))
+	if !foundSidecar {
+		t.Errorf("expected forensics sidecar (*.tamper.json) after tamper, got entries=%v", entries)
 	}
 
-	// Next start: no active batch → existing error path fires.
-	next, err := runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + fakeBinDir}, "start")
-	if err == nil {
-		t.Fatalf("expected 'no plan' error after cleanup, got:\n%s", next)
-	}
-	if !strings.Contains(next, "springfield plan") {
-		t.Errorf("expected 'springfield plan' hint, got:\n%s", next)
+	// Plan dir restored: batch.json exists again.
+	matches, _ := filepath.Glob(filepath.Join(dir, ".springfield", "plans", "*", "batch.json"))
+	if len(matches) == 0 {
+		t.Error("expected batch.json restored under plans/<id>/ after tamper")
 	}
 }
 
