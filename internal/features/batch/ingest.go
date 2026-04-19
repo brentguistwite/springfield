@@ -2,6 +2,7 @@ package batch
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -30,6 +31,15 @@ func ParseSlicePayload(r io.Reader) (SlicePayload, error) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&p); err != nil {
 		return SlicePayload{}, fmt.Errorf("decode slice payload: %w", err)
+	}
+	// Reject anything after the first JSON value — concatenated payloads or
+	// trailing garbage would silently be ignored otherwise, and we'd compile
+	// a wrong-but-plausible batch from just the first object.
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		if err != nil {
+			return SlicePayload{}, fmt.Errorf("slice payload: unexpected trailing data: %w", err)
+		}
+		return SlicePayload{}, fmt.Errorf("slice payload: unexpected trailing data after first object")
 	}
 	if strings.TrimSpace(p.Title) == "" {
 		return SlicePayload{}, fmt.Errorf("slice payload: title required")

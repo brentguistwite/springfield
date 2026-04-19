@@ -44,11 +44,19 @@ func Compile(in CompileInput) (CompileOutput, error) {
 	}
 	batchID := UniqueID(rawID, existingIDs)
 
+	// Slice IDs arrive from a caller (skill/tool) and are persisted + echoed in
+	// operator-facing output AND embedded into downstream work IDs. Never trust
+	// them raw: canonicalize via SanitizeID, fall back to a positional ID if
+	// nothing survives, then dedupe.
 	seen := map[string]struct{}{}
 	slices := make([]Slice, 0, len(in.Slices))
 	ids := make([]string, 0, len(in.Slices))
-	for _, r := range in.Slices {
-		id := UniqueID(r.ID, seen)
+	for i, r := range in.Slices {
+		id := SanitizeID(r.ID)
+		if id == "" {
+			id = fmt.Sprintf("%02d", i+1)
+		}
+		id = UniqueID(id, seen)
 		seen[id] = struct{}{}
 		slices = append(slices, Slice{
 			ID:      id,

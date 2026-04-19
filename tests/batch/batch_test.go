@@ -122,6 +122,45 @@ func TestCompileDeduplicatesBatchID(t *testing.T) {
 	}
 }
 
+func TestCompileSanitizesSliceIDs(t *testing.T) {
+	out, err := batch.Compile(batch.CompileInput{
+		Title:  "demo",
+		Source: "body",
+		Slices: []batch.SliceRequest{
+			{ID: " 01  with  space\t", Title: "a"},
+			{ID: "Phase:ONE!!", Title: "b"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	for _, s := range out.Batch.Slices {
+		for _, ch := range s.ID {
+			if !((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-') {
+				t.Errorf("slice ID %q contains unsafe char %q", s.ID, string(ch))
+			}
+		}
+	}
+}
+
+func TestCompileSynthesizesIDWhenSanitizeEmpties(t *testing.T) {
+	out, err := batch.Compile(batch.CompileInput{
+		Title:  "demo",
+		Source: "body",
+		Slices: []batch.SliceRequest{
+			{ID: "!!!", Title: "a"},
+			{ID: "???", Title: "b"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if out.Batch.Slices[0].ID != "01" || out.Batch.Slices[1].ID != "02" {
+		t.Errorf("expected positional fallback 01/02, got %q / %q",
+			out.Batch.Slices[0].ID, out.Batch.Slices[1].ID)
+	}
+}
+
 func TestCompileDeduplicatesSliceIDs(t *testing.T) {
 	out, err := batch.Compile(batch.CompileInput{
 		Title:  "demo",

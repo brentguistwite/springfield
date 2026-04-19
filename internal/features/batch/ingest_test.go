@@ -63,3 +63,25 @@ func TestParseSlicePayload_RejectsUnknownFields(t *testing.T) {
 		t.Fatal("expected error for unknown field")
 	}
 }
+
+func TestParseSlicePayload_RejectsConcatenatedObjects(t *testing.T) {
+	j := `{"title":"x","source":"y","slices":[{"id":"01","title":"a"}]}` +
+		`{"title":"stale","source":"stale","slices":[{"id":"99","title":"b"}]}`
+	if _, err := ParseSlicePayload(strings.NewReader(j)); err == nil {
+		t.Fatal("expected error for concatenated payloads")
+	}
+}
+
+func TestParseSlicePayload_RejectsTrailingGarbage(t *testing.T) {
+	j := `{"title":"x","source":"y","slices":[{"id":"01","title":"a"}]} garbage`
+	if _, err := ParseSlicePayload(strings.NewReader(j)); err == nil {
+		t.Fatal("expected error for trailing garbage")
+	}
+}
+
+func TestParseSlicePayload_AllowsTrailingWhitespace(t *testing.T) {
+	j := `{"title":"x","source":"y","slices":[{"id":"01","title":"a"}]}` + "\n  \n"
+	if _, err := ParseSlicePayload(strings.NewReader(j)); err != nil {
+		t.Fatalf("trailing whitespace should be accepted, got: %v", err)
+	}
+}
