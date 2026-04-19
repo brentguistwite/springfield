@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -18,6 +19,10 @@ const hookGuardToken = ".springfield"
 // hookGuardBlockMessage is written to stderr when the guard blocks a call.
 // Claude's PreToolUse contract treats stderr + exit 2 as a deny with reason.
 const hookGuardBlockMessage = "Springfield control plane is off-limits"
+
+// hookGuardRecursionMessage is written to stderr when the guard blocks a
+// nested springfield CLI invocation in a subagent Bash tool call.
+const hookGuardRecursionMessage = "Nested springfield CLI invocation blocked. Subagents must not re-enter springfield."
 
 // NewHookGuardCommand returns the hidden `springfield hook-guard` subcommand
 // used by the Claude PreToolUse hook. It reads a Claude tool-input JSON
@@ -67,6 +72,10 @@ func runHookGuard(stdin io.Reader, stderr io.Writer) error {
 		// the usage/err message to stderr AND exit 1.
 		os.Exit(2)
 	}
+	if hookGuardShouldBlockRecursion(payload.ToolInput) {
+		fmt.Fprintln(stderr, hookGuardRecursionMessage)
+		os.Exit(2)
+	}
 	return nil
 }
 
@@ -95,4 +104,16 @@ func hookGuardShouldBlock(toolInput map[string]any) bool {
 		}
 	}
 	return false
+}
+
+// hookGuardShouldBlockRecursion returns true when the tool_input's "command"
+// field matches a springfield start/plan/recover invocation. This prevents
+// subagents from re-entering the Springfield control plane via Bash tool calls.
+//
+// The regex intentionally matches "springfield start" anywhere in the command
+// string, including inside quotes (accepted false positive — no subagent Bash
+// line should contain these strings even in quotes; shell-parsing is costlier).
+func hookGuardShouldBlockRecursion(toolInput map[string]any) bool {
+	cmd, _ := toolInput["command"].(string)
+	return regexp.MustCompile(`springfield\s+(start|plan|recover)\b`).MatchString(cmd)
 }

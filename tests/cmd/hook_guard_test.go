@@ -124,6 +124,108 @@ func TestHookGuardPathAwareness(t *testing.T) {
 	}
 }
 
+// TestHookGuardRecursionGuard verifies that nested springfield CLI invocations
+// are blocked when issued as Bash tool calls. The guard uses a simple regex and
+// intentionally blocks "springfield start" even inside quotes (accepted false
+// positive — no agent Bash line should contain this string in practice).
+func TestHookGuardRecursionGuard(t *testing.T) {
+	bin := buildBinary(t)
+
+	cases := []struct {
+		name     string
+		stdin    string
+		wantExit int
+		wantErr  string
+	}{
+		{
+			name:     "TestHookGuardBlocksBashSpringfieldStart",
+			stdin:    `{"tool_input":{"command":"springfield start"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "TestHookGuardBlocksBashSpringfieldPlan",
+			stdin:    `{"tool_input":{"command":"springfield plan"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "TestHookGuardBlocksBashSpringfieldRecover",
+			stdin:    `{"tool_input":{"command":"springfield recover"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "TestHookGuardAllowsBashSpringfieldStatus",
+			stdin:    `{"tool_input":{"command":"springfield status"}}`,
+			wantExit: 0,
+		},
+		{
+			name:     "TestHookGuardAllowsNonSpringfieldBash",
+			stdin:    `{"tool_input":{"command":"echo hi"}}`,
+			wantExit: 0,
+		},
+		{
+			name:     "TestHookGuardMatchesLeadingWhitespace",
+			stdin:    `{"tool_input":{"command":"  springfield start"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "TestHookGuardMatchesTrailingArgs",
+			stdin:    `{"tool_input":{"command":"springfield start --dir ."}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			// ACCEPTED FALSE POSITIVE: the regex matches "springfield start"
+			// anywhere in the command string, including inside quotes.
+			// Invariant: no subagent Bash command line should contain the
+			// string "springfield start" (or plan/recover) even in quotes.
+			// Shell-parsing the command to avoid this is more expensive.
+			name:     "TestHookGuardKnownSubstringFalsePositive",
+			stdin:    `{"tool_input":{"command":"echo 'springfield start'"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command(bin, "hook-guard")
+			cmd.Stdin = strings.NewReader(tc.stdin)
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+
+			err := cmd.Run()
+			exit := 0
+			if err != nil {
+				ee, ok := err.(*exec.ExitError)
+				if !ok {
+					t.Fatalf("run: %v (stderr=%q)", err, stderr.String())
+				}
+				exit = ee.ExitCode()
+			}
+
+			if exit != tc.wantExit {
+				t.Fatalf("exit = %d, want %d (stderr=%q stdout=%q)", exit, tc.wantExit, stderr.String(), stdout.String())
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("expected empty stdout, got %q", stdout.String())
+			}
+
+			stderrStr := stderr.String()
+			if tc.wantErr != "" {
+				if !strings.Contains(stderrStr, tc.wantErr) {
+					t.Fatalf("stderr = %q, want substring %q", stderrStr, tc.wantErr)
+				}
+			}
+		})
+	}
+}
+
 // TestHookGuardIsHiddenFromHelp ensures the subcommand exists but is not
 // listed in the primary help output.
 func TestHookGuardIsHiddenFromHelp(t *testing.T) {
