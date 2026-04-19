@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"springfield/internal/core/config"
+	coreexec "springfield/internal/core/exec"
 	"springfield/internal/features/batch"
 	"springfield/internal/features/execution"
 	"springfield/internal/features/workflow"
@@ -135,7 +136,13 @@ type BatchRunResult struct {
 }
 
 func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string) (BatchRunResult, error) {
-	runner, err := workflow.NewRuntimeRunner(root, exec.LookPath, nil)
+	// Agent trace sink: every stream-json event from claude/codex/gemini
+	// gets appended to a per-batch trace file so we can post-mortem exactly
+	// which tool calls ran (and which got blocked by hooks).
+	traceSink, traceCloser := openAgentTrace(root, b.ID)
+	defer traceCloser()
+
+	runner, err := workflow.NewRuntimeRunner(root, exec.LookPath, traceSink)
 	if err != nil {
 		return BatchRunResult{Error: err.Error()}, err
 	}
@@ -343,6 +350,9 @@ func detectAndRecoverTamper(root string, paths batch.Paths, snap controlPlaneSna
 	// message that already tells the operator what happened.
 	preBytes := preBytesForReason(snap, reason)
 	_ = writeTamperSidecar(root, forensics, reason, preBytes, postBytes)
+	// Raw byte blobs for diff: caller can `diff <pre> <post>` to see the
+	// exact mutation. Best-effort, unconditional on tamper.
+	_ = writeTamperBlobs(root, forensics, preBytes, postBytes)
 
 	// Note: we intentionally do NOT archive the batch on tamper. The snapshot
 	// has been restored; the batch is coherent again. The current slice is
@@ -677,6 +687,58 @@ func openBatchLog(cmd *cobra.Command, root, batchID string) (string, func(), err
 	cmd.SetErr(io.MultiWriter(cmd.ErrOrStderr(), f))
 	closer := func() { _ = f.Close() }
 	return logPath, closer, nil
+}
+
+// writeTamperBlobs writes the pre-agent snapshot bytes and post-agent
+// bytes of the diverged file to the archive dir, so operators can run
+// `diff` between them to see exactly what changed. Filenames share the
+// sidecar's unix-nano prefix when possible (but collisions are fine —
+// we add our own timestamp). Best-effort forensic.
+func writeTamperBlobs(root string, ctx tamperForensicsContext, pre, post []byte) error {
+	archiveDir := batch.ArchiveDir(root)
+	if err := os.MkdirAll(archiveDir, 0o755); err != nil {
+		return err
+	}
+	ns := time.Now().UTC().UnixNano()
+	base := fmt.Sprintf("%s.%d", ctx.batchID, ns)
+	if pre != nil {
+		_ = os.WriteFile(filepath.Join(archiveDir, base+".tamper.pre"), pre, 0o644)
+	}
+	if post != nil {
+		_ = os.WriteFile(filepath.Join(archiveDir, base+".tamper.post"), post, 0o644)
+	}
+	return nil
+}
+
+// openAgentTrace opens a per-batch JSONL file that captures every exec
+// event (stdout, stderr, lifecycle) from the agent. Returns a handler that
+// appends events as JSON lines and a closer. On open failure returns nil
+// handler (events discarded) and a noop closer — trace is best-effort
+// diagnostic, not load-bearing.
+func openAgentTrace(root, batchID string) (coreexec.EventHandler, func()) {
+	logsDir := filepath.Join(root, ".springfield", "logs")
+	if err := os.MkdirAll(logsDir, 0o755); err != nil {
+		return nil, func() {}
+	}
+	name := fmt.Sprintf("%s-%s.agent-trace.jsonl", batchID, time.Now().UTC().Format("20060102T150405Z"))
+	path := filepath.Join(logsDir, name)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return nil, func() {}
+	}
+	closer := func() { _ = f.Close() }
+	handler := func(e coreexec.Event) {
+		data, err := json.Marshal(map[string]any{
+			"type": string(e.Type),
+			"time": e.Time.UTC().Format(time.RFC3339Nano),
+			"data": e.Data,
+		})
+		if err != nil {
+			return
+		}
+		_, _ = f.Write(append(data, '\n'))
+	}
+	return handler, closer
 }
 
 // sliceToExecutionWork converts a batch slice into an execution.Work for the runtime adapter.
