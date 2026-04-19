@@ -12,7 +12,6 @@ type Name string
 
 const (
 	SkillPlan    Name = "plan"
-	SkillStart   Name = "start"
 	SkillStatus  Name = "status"
 	SkillRecover Name = "recover"
 )
@@ -130,39 +129,6 @@ JSON
 Slice IDs: zero-padded (` + "`01`" + `, ` + "`02`" + `, ...). Title short; summary is the actionable body for the slice.
 
 Use ` + "`--replace`" + ` or ` + "`--append`" + ` if an active batch exists (per Step 2).
-
-Keep Springfield as the only user-facing surface.
-`),
-	},
-	{
-		Name:         SkillStart,
-		Summary:      "Execute the active Springfield batch for the current project from its saved progress.",
-		Purpose:      playbooks.PurposeStart,
-		Header:       "Springfield Start",
-		Description:  "Use Springfield start to execute the active batch for the current project from its saved progress.",
-		RelativePath: "skills/start/SKILL.md",
-		TaskBody: strings.TrimSpace(`
-Execute the active Springfield batch for the current project.
-
-Read project guidance from AGENTS.md first, then CLAUDE.md, then GEMINI.md when present.
-
-## Step 1 — Check for active batch
-
-Run ` + "`springfield status`" + ` to confirm an active batch exists and review its saved progress.
-
-If no active batch exists, stop and tell the user to run ` + "`/springfield:plan`" + ` first.
-
-## Step 2 — Execute
-
-Run ` + "`springfield start`" + ` to resume execution from the saved progress.
-
-- Execution is serial by default.
-- Parallel execution only happens when the batch explicitly marks independent phases.
-- If a slice fails, report the blocker clearly and do not proceed to the next slice.
-
-## Step 3 — Report
-
-After execution, report whether the batch completed or failed, the last blocking slice if any, and what the user should do next.
 
 Keep Springfield as the only user-facing surface.
 `),

@@ -14,17 +14,16 @@ func TestCatalogShapeLockedToSpringfieldSkills(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 4 {
-		t.Fatalf("catalog len = %d, want 4", len(catalog))
+	if len(catalog) != 3 {
+		t.Fatalf("catalog len = %d, want 3", len(catalog))
 	}
 
 	got := []string{
 		string(catalog[0].Name),
 		string(catalog[1].Name),
 		string(catalog[2].Name),
-		string(catalog[3].Name),
 	}
-	want := []string{"plan", "start", "status", "recover"}
+	want := []string{"plan", "status", "recover"}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("catalog[%d] = %q, want %q", i, got[i], want[i])
@@ -91,36 +90,31 @@ func TestRenderCommand_Plan(t *testing.T) {
 func TestRenderUsesSharedHostNeutralPlaybookPrompt(t *testing.T) {
 	t.Parallel()
 
-	def, err := Lookup("start")
+	def, err := Lookup("plan")
 	if err != nil {
-		t.Fatalf("lookup start: %v", err)
+		t.Fatalf("lookup plan: %v", err)
 	}
 
 	rendered, err := Render(string(def.Name))
 	if err != nil {
-		t.Fatalf("render start: %v", err)
+		t.Fatalf("render plan: %v", err)
 	}
 
 	out, err := playbooks.Build(playbooks.Input{
-		Purpose:               playbooks.PurposeStart,
+		Purpose:               playbooks.PurposePlan,
 		IncludeProjectContext: false,
 		TaskBody:              def.TaskBody,
 	})
 	if err != nil {
-		t.Fatalf("build start playbook: %v", err)
+		t.Fatalf("build plan playbook: %v", err)
 	}
 
 	if rendered.Prompt != out.Prompt {
 		t.Fatalf("expected prompt to come from shared playbook builder")
 	}
-	for _, marker := range []string{"Springfield", "Built-in Springfield playbook.", "Execute the active Springfield batch for the current project."} {
+	for _, marker := range []string{"Springfield", "Built-in Springfield playbook.", "Compile a Springfield batch from the user's work request."} {
 		if !strings.Contains(rendered.Content, marker) {
 			t.Fatalf("expected rendered content to contain %q, got:\n%s", marker, rendered.Content)
-		}
-	}
-	for _, unwanted := range []string{"saved cursor", "current cursor"} {
-		if strings.Contains(rendered.Content, unwanted) {
-			t.Fatalf("expected rendered content to omit %q, got:\n%s", unwanted, rendered.Content)
 		}
 	}
 	for _, unwanted := range []string{"Ralph", "Conductor"} {
@@ -133,9 +127,9 @@ func TestRenderUsesSharedHostNeutralPlaybookPrompt(t *testing.T) {
 func TestSkillsHaveDistinctTaskBehavior(t *testing.T) {
 	t.Parallel()
 
-	start, err := Render("start")
+	plan, err := Render("plan")
 	if err != nil {
-		t.Fatalf("render start: %v", err)
+		t.Fatalf("render plan: %v", err)
 	}
 	status, err := Render("status")
 	if err != nil {
@@ -146,14 +140,11 @@ func TestSkillsHaveDistinctTaskBehavior(t *testing.T) {
 		t.Fatalf("render recover: %v", err)
 	}
 
-	if !strings.Contains(start.Content, "Execute the active Springfield batch for the current project.") {
-		t.Fatalf("expected start prompt boundary to be execution-specific, got:\n%s", start.Content)
+	if !strings.Contains(plan.Content, "Compile a Springfield batch from the user's work request.") {
+		t.Fatalf("expected plan prompt boundary to be planning-specific, got:\n%s", plan.Content)
 	}
-	if !strings.Contains(start.Content, "saved progress") {
-		t.Fatalf("expected start prompt to describe saved progress, got:\n%s", start.Content)
-	}
-	if !strings.Contains(start.Content, "independent phases") {
-		t.Fatalf("expected start prompt to describe independent phases, got:\n%s", start.Content)
+	if !strings.Contains(plan.Content, "slice boundaries") {
+		t.Fatalf("expected plan prompt to describe slice boundaries, got:\n%s", plan.Content)
 	}
 	if !strings.Contains(status.Content, "Run `springfield status` to get the current Springfield batch state") {
 		t.Fatalf("expected status prompt boundary to be status-specific, got:\n%s", status.Content)
@@ -170,7 +161,7 @@ func TestCanonicalCheckedInSkillsMatchRenderedContent(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
-	for _, name := range []string{"plan", "start", "status", "recover"} {
+	for _, name := range []string{"plan", "status", "recover"} {
 		rendered, err := Render(name)
 		if err != nil {
 			t.Fatalf("render %s: %v", name, err)
@@ -190,7 +181,7 @@ func TestCanonicalCheckedInCommandsMatchRenderedContent(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
-	for _, name := range []string{"plan", "start", "status", "recover"} {
+	for _, name := range []string{"plan", "status", "recover"} {
 		rendered, err := RenderCommand(name)
 		if err != nil {
 			t.Fatalf("render command %s: %v", name, err)
@@ -209,7 +200,7 @@ func TestCanonicalCheckedInCommandsMatchRenderedContent(t *testing.T) {
 func TestRenderedSkillsIncludeFrontmatter(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"plan", "start", "status", "recover"} {
+	for _, name := range []string{"plan", "status", "recover"} {
 		rendered, err := Render(name)
 		if err != nil {
 			t.Fatalf("render %s: %v", name, err)
@@ -254,10 +245,13 @@ func TestInstallWritesSelectedHostArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read installed codex artifact: %v", err)
 	}
-	for _, marker := range []string{"Springfield", "plan", "start", "status", "recover"} {
+	for _, marker := range []string{"Springfield", "plan", "status", "recover"} {
 		if !strings.Contains(string(data), marker) {
 			t.Fatalf("expected installed codex artifact to contain %q, got:\n%s", marker, string(data))
 		}
+	}
+	if strings.Contains(string(data), "start") {
+		t.Fatalf("installed codex artifact must not reference start skill, got:\n%s", string(data))
 	}
 	// Lock plan-first ordering of the user-visible Springfield Skills bullet list.
 	body := string(data)
@@ -266,7 +260,7 @@ func TestInstallWritesSelectedHostArtifacts(t *testing.T) {
 		t.Fatalf("installed codex helper missing '## Springfield Skills' section:\n%s", body)
 	}
 	section := body[sectionIdx:]
-	wantOrder := []string{"- plan", "- start", "- status", "- recover"}
+	wantOrder := []string{"- plan", "- status", "- recover"}
 	last := -1
 	for _, marker := range wantOrder {
 		idx := strings.Index(section, marker)
@@ -371,6 +365,57 @@ func TestInstallDoesNotMutateUserSettings(t *testing.T) {
 	}
 	if string(after) != string(original) {
 		t.Fatalf("install mutated $HOME/.claude/settings.json\nbefore: %s\nafter:  %s", original, after)
+	}
+}
+
+func TestLookupRejectsRemovedStartSkill(t *testing.T) {
+	t.Parallel()
+
+	_, err := Lookup("start")
+	if err == nil {
+		t.Fatal("Lookup(start) should return error, got nil")
+	}
+	if !strings.Contains(err.Error(), `unknown Springfield skill "start"`) {
+		t.Fatalf("Lookup(start) error = %q, want to contain %q", err.Error(), `unknown Springfield skill "start"`)
+	}
+}
+
+func TestSkillsCatalogOmitsStart(t *testing.T) {
+	t.Parallel()
+
+	for _, s := range Catalog() {
+		if string(s.Name) == "start" {
+			t.Fatalf("catalog must not contain start skill, but found entry: %+v", s)
+		}
+	}
+}
+
+func TestInstalledPluginCatalogOmitsStart(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	claudeDir := filepath.Join(root, ".claude", "commands")
+	codexDir := filepath.Join(root, ".codex", "skills")
+
+	_, err := Install(root, InstallOptions{
+		Hosts:     []string{"claude-code"},
+		ClaudeDir: claudeDir,
+		CodexDir:  codexDir,
+	})
+	if err != nil {
+		t.Fatalf("install claude-code: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(claudeDir, "springfield.md"))
+	if err != nil {
+		t.Fatalf("read installed claude-code artifact: %v", err)
+	}
+	body := string(data)
+	if strings.Contains(body, "Springfield Start") {
+		t.Fatalf("installed claude-code artifact must not contain 'Springfield Start', got:\n%s", body)
+	}
+	if strings.Contains(body, "springfield:start") {
+		t.Fatalf("installed claude-code artifact must not contain 'springfield:start', got:\n%s", body)
 	}
 }
 
