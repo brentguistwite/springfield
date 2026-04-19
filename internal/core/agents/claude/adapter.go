@@ -71,10 +71,10 @@ func (a adapter) Command(input agents.CommandInput) coreexec.Command {
 		args = append(args, "--permission-mode", permissionMode)
 	}
 
-	// Hard-block agent writes to Springfield's control plane. Deny rules
-	// outrank bypassPermissions in Claude Code, so they stand even when the
-	// user opted into bypass for everything else.
-	args = append(args, "--settings", springfieldDenySettingsJSON())
+	// Hard-block agent writes to Springfield's control plane with a
+	// PreToolUse hook. A lexical deny list is bypassed by absolute paths,
+	// cd, and shell redirects; a substring grep catches all those forms.
+	args = append(args, "--settings", springfieldControlPlaneSettingsJSON())
 
 	return coreexec.Command{
 		Name: "claude",
@@ -83,33 +83,41 @@ func (a adapter) Command(input agents.CommandInput) coreexec.Command {
 	}
 }
 
-// springfieldDenySettingsJSON returns the inline --settings payload that
-// denies any tool call targeting .springfield/.
-func springfieldDenySettingsJSON() string {
-	payload := claudeSettings{
-		Permissions: claudePermissions{
-			Deny: []string{
-				"Write(.springfield/**)",
-				"Edit(.springfield/**)",
-				"Bash(* .springfield/**)",
-			},
+// springfieldControlPlaneHookCommand is the shell one-liner executed by
+// Claude's PreToolUse hook. It reads the tool-input JSON from stdin and
+// exits 2 (blocking the tool call) if any substring of it references
+// .springfield. Exit 0 allows the call through.
+const springfieldControlPlaneHookCommand = `grep -q '\.springfield' && { echo 'Springfield control plane is off-limits' >&2; exit 2; } || exit 0`
+
+// SpringfieldControlPlaneHookCommand returns the hook command string used
+// in the --settings JSON. Exported for tests pinning the shell-level
+// behavior of the hook.
+func SpringfieldControlPlaneHookCommand() string {
+	return springfieldControlPlaneHookCommand
+}
+
+// springfieldControlPlaneSettingsJSON returns the inline --settings payload
+// registering the PreToolUse hook that protects .springfield/ from agent
+// writes.
+func springfieldControlPlaneSettingsJSON() string {
+	payload := map[string]any{
+		"hooks": map[string]any{
+			"PreToolUse": []map[string]any{{
+				"matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
+				"hooks": []map[string]any{{
+					"type":    "command",
+					"command": springfieldControlPlaneHookCommand,
+				}},
+			}},
 		},
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
 		// payload is static — marshal errors are impossible in practice,
 		// but fall back to a hand-built string rather than panic.
-		return `{"permissions":{"deny":["Write(.springfield/**)","Edit(.springfield/**)","Bash(* .springfield/**)"]}}`
+		return `{"hooks":{"PreToolUse":[{"matcher":"Write|Edit|MultiEdit|NotebookEdit|Bash","hooks":[{"type":"command","command":"` + springfieldControlPlaneHookCommand + `"}]}]}}`
 	}
 	return string(data)
-}
-
-type claudeSettings struct {
-	Permissions claudePermissions `json:"permissions"`
-}
-
-type claudePermissions struct {
-	Deny []string `json:"deny"`
 }
 
 // ValidateResult checks Claude's stream-json output for rejected tool calls,

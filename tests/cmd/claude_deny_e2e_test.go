@@ -3,13 +3,15 @@ package cmd_test
 import (
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-// TestSpringfieldStartPlumbsDenySettingsToClaude verifies the deny-rules JSON
-// reaches the invoked `claude` binary's argv at runtime (not just the adapter
-// unit path), so regressions in the runtime request plumbing are caught too.
-func TestSpringfieldStartPlumbsDenySettingsToClaude(t *testing.T) {
+// TestSpringfieldStartPlumbsControlPlaneHookToClaude verifies the PreToolUse
+// hook JSON reaches the invoked `claude` binary's argv at runtime (not just
+// the adapter unit path), so regressions in the runtime request plumbing are
+// caught too.
+func TestSpringfieldStartPlumbsControlPlaneHookToClaude(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
@@ -39,28 +41,49 @@ func TestSpringfieldStartPlumbsDenySettingsToClaude(t *testing.T) {
 		t.Fatalf("expected --settings arg in recorded argv, got %v", argv)
 	}
 
-	var parsed struct {
-		Permissions struct {
-			Deny []string `json:"deny"`
-		} `json:"permissions"`
-	}
-	if err := json.Unmarshal([]byte(settings), &parsed); err != nil {
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(settings), &raw); err != nil {
 		t.Fatalf("parse --settings JSON: %v (raw=%q)", err, settings)
 	}
-	for _, rule := range []string{
-		"Write(.springfield/**)",
-		"Edit(.springfield/**)",
-		"Bash(* .springfield/**)",
-	} {
-		found := false
-		for _, d := range parsed.Permissions.Deny {
-			if d == rule {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("expected deny rule %q in %v", rule, parsed.Permissions.Deny)
-		}
+
+	if _, ok := raw["permissions"]; ok {
+		t.Fatalf("expected no permissions block in settings, got %q", settings)
+	}
+
+	hooks, ok := raw["hooks"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected hooks block in settings, got %q", settings)
+	}
+	preList, ok := hooks["PreToolUse"].([]any)
+	if !ok || len(preList) == 0 {
+		t.Fatalf("expected PreToolUse list, got %v", hooks)
+	}
+	first, ok := preList[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected PreToolUse[0] map, got %T", preList[0])
+	}
+	if got, want := first["matcher"], "Write|Edit|MultiEdit|NotebookEdit|Bash"; got != want {
+		t.Fatalf("matcher = %v, want %q", got, want)
+	}
+	inner, ok := first["hooks"].([]any)
+	if !ok || len(inner) == 0 {
+		t.Fatalf("expected inner hooks list, got %v", first)
+	}
+	innerFirst, ok := inner[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected inner hooks[0] map, got %T", inner[0])
+	}
+	if got, want := innerFirst["type"], "command"; got != want {
+		t.Fatalf("hook type = %v, want %q", got, want)
+	}
+	cmdStr, ok := innerFirst["command"].(string)
+	if !ok {
+		t.Fatalf("expected hook command string, got %T", innerFirst["command"])
+	}
+	if !strings.Contains(cmdStr, ".springfield") {
+		t.Fatalf("hook command missing .springfield substring check: %q", cmdStr)
+	}
+	if !strings.Contains(cmdStr, "off-limits") {
+		t.Fatalf("hook command missing off-limits message: %q", cmdStr)
 	}
 }

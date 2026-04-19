@@ -9,10 +9,12 @@ import (
 	"springfield/internal/core/agents/claude"
 )
 
-// TestClaudeAdapterInjectsSpringfieldDenySettings verifies the adapter
-// appends a --settings JSON blob carrying the Springfield control-plane deny
-// rules on every command, regardless of permission_mode.
-func TestClaudeAdapterInjectsSpringfieldDenySettings(t *testing.T) {
+// TestClaudeAdapterInjectsControlPlaneHookSettings verifies the adapter
+// appends a --settings JSON blob carrying a PreToolUse hook that blocks
+// writes to Springfield's control plane (.springfield/). The hook is a
+// substring grep that catches bypass forms (absolute paths, cd, redirects)
+// that a lexical deny list would miss.
+func TestClaudeAdapterInjectsControlPlaneHookSettings(t *testing.T) {
 	adapter := claude.New(exec.LookPath)
 	commander := adapter.(agents.Commander)
 
@@ -23,29 +25,53 @@ func TestClaudeAdapterInjectsSpringfieldDenySettings(t *testing.T) {
 
 	jsonVal := extractSettingsJSON(t, cmd.Args)
 
-	var parsed struct {
-		Permissions struct {
-			Deny []string `json:"deny"`
-		} `json:"permissions"`
-	}
-	if err := json.Unmarshal([]byte(jsonVal), &parsed); err != nil {
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(jsonVal), &raw); err != nil {
 		t.Fatalf("parse --settings JSON %q: %v", jsonVal, err)
 	}
 
-	wantDeny := []string{
-		"Write(.springfield/**)",
-		"Edit(.springfield/**)",
-		"Bash(* .springfield/**)",
+	if _, ok := raw["permissions"]; ok {
+		t.Fatalf("expected no permissions key in settings, got %v", raw)
 	}
-	if !stringSlicesEqual(parsed.Permissions.Deny, wantDeny) {
-		t.Fatalf("deny list = %v, want %v", parsed.Permissions.Deny, wantDeny)
+
+	hooks, ok := raw["hooks"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected hooks map in settings, got %v", raw)
+	}
+	preList, ok := hooks["PreToolUse"].([]any)
+	if !ok || len(preList) == 0 {
+		t.Fatalf("expected PreToolUse list, got %v", hooks)
+	}
+	first, ok := preList[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected PreToolUse[0] to be a map, got %T", preList[0])
+	}
+
+	if got, want := first["matcher"], "Write|Edit|MultiEdit|NotebookEdit|Bash"; got != want {
+		t.Fatalf("matcher = %v, want %q", got, want)
+	}
+
+	inner, ok := first["hooks"].([]any)
+	if !ok || len(inner) == 0 {
+		t.Fatalf("expected inner hooks list, got %v", first)
+	}
+	innerFirst, ok := inner[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected inner hooks[0] map, got %T", inner[0])
+	}
+	if got, want := innerFirst["type"], "command"; got != want {
+		t.Fatalf("hook type = %v, want %q", got, want)
+	}
+	if got, want := innerFirst["command"], claude.SpringfieldControlPlaneHookCommand(); got != want {
+		t.Fatalf("hook command = %q, want %q", got, want)
 	}
 }
 
-// TestClaudeAdapterDenyRulesCoexistWithBypassPermissions verifies deny rules
-// are injected even when the user opts into bypassPermissions — Claude CLI
-// treats deny as higher-precedence than bypass, so both must be present.
-func TestClaudeAdapterDenyRulesCoexistWithBypassPermissions(t *testing.T) {
+// TestClaudeAdapterHookSettingsCoexistWithBypassPermissions verifies the
+// hook settings are injected even when the user opts into bypassPermissions.
+// The hook blocks tool calls before Claude's permission system sees them, so
+// it enforces protection regardless of permission mode.
+func TestClaudeAdapterHookSettingsCoexistWithBypassPermissions(t *testing.T) {
 	adapter := claude.New(exec.LookPath)
 	commander := adapter.(agents.Commander)
 
@@ -62,6 +88,13 @@ func TestClaudeAdapterDenyRulesCoexistWithBypassPermissions(t *testing.T) {
 	if jsonVal == "" {
 		t.Fatalf("expected --settings JSON when bypassPermissions is set, got args=%v", cmd.Args)
 	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(jsonVal), &raw); err != nil {
+		t.Fatalf("parse --settings JSON: %v", err)
+	}
+	if _, ok := raw["hooks"]; !ok {
+		t.Fatalf("expected hooks key in settings even with bypassPermissions, got %v", raw)
+	}
 }
 
 func extractSettingsJSON(t *testing.T, args []string) string {
@@ -76,16 +109,4 @@ func extractSettingsJSON(t *testing.T, args []string) string {
 	}
 	t.Fatalf("expected --settings flag in args, got %v", args)
 	return ""
-}
-
-func stringSlicesEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
