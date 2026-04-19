@@ -32,8 +32,11 @@ func TestClaudeAdapterProducesRunnableCommandSpec(t *testing.T) {
 		t.Fatalf("expected dir %q, got %q", "/tmp/project", cmd.Dir)
 	}
 
-	// Must include -p flag with the prompt and --output-format stream-json
-	assertArgsContain(t, cmd.Args, "-p", "implement the login feature")
+	// -p enables print mode; prompt arrives via stdin, not as positional arg
+	assertArgsContain(t, cmd.Args, "-p", "")
+	if cmd.Stdin != "implement the login feature" {
+		t.Fatalf("expected Stdin = %q, got %q", "implement the login feature", cmd.Stdin)
+	}
 	assertArgsContain(t, cmd.Args, "--output-format", "stream-json")
 	assertArgsContain(t, cmd.Args, "--verbose", "")
 }

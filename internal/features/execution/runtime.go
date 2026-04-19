@@ -24,10 +24,9 @@ const (
 	statusCompleted = "completed"
 	statusFailed    = "failed"
 
-	// maxExecutionPromptBytes guards against OS argv size limits. The prompt is
-	// passed via the agent CLI's -p flag; individual argument size limits vary
-	// by OS (~256 KB on macOS, ~2 MB on Linux). 200 KB is a conservative budget
-	// that catches runaway AGENTS.md / source.md content before process launch.
+	// maxExecutionPromptBytes caps the assembled execution prompt delivered via
+	// stdin. 200 KB is a conservative budget that catches runaway AGENTS.md /
+	// source.md content before process launch.
 	maxExecutionPromptBytes = 200 * 1024
 
 	// maxGuidanceFileBytes caps each project guidance file read (AGENTS.md,

@@ -9,6 +9,7 @@ import (
 type Command struct {
 	Name    string
 	Args    []string
+	Stdin   string // written to the process's stdin when non-empty
 	Dir     string
 	Env     []string
 	Timeout time.Duration // zero means no timeout

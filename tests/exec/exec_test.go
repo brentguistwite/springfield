@@ -121,6 +121,39 @@ func TestRunStreamsEventsToHandler(t *testing.T) {
 	}
 }
 
+func TestRunDeliversStdinToProcess(t *testing.T) {
+	result := exec.Run(context.Background(), exec.Command{
+		Name:  "cat",
+		Stdin: "hello from stdin",
+	}, nil)
+
+	if result.Err != nil {
+		t.Fatalf("unexpected error: %v", result.Err)
+	}
+	stdout := filterEvents(result.Events, exec.EventStdout)
+	if len(stdout) == 0 {
+		t.Fatal("expected stdout from cat")
+	}
+	if stdout[0].Data != "hello from stdin" {
+		t.Errorf("expected %q, got %q", "hello from stdin", stdout[0].Data)
+	}
+}
+
+func TestRunEmptyStdinDoesNotHang(t *testing.T) {
+	result := exec.Run(context.Background(), exec.Command{
+		Name: "cat",
+	}, nil)
+
+	if result.Err != nil {
+		t.Fatalf("unexpected error: %v", result.Err)
+	}
+	// cat with no stdin reads EOF immediately and produces no output
+	stdout := filterEvents(result.Events, exec.EventStdout)
+	if len(stdout) != 0 {
+		t.Errorf("expected no stdout for cat with empty stdin, got %v", stdout)
+	}
+}
+
 func filterEvents(events []exec.Event, typ exec.EventType) []exec.Event {
 	var filtered []exec.Event
 	for _, e := range events {

@@ -81,10 +81,9 @@ func TestRuntimeSingleExecutorRunPassesWorkstreamThroughSharedRuntime(t *testing
 		t.Fatalf("runtime calls = %d, want 1", len(calls))
 	}
 
-	cmdLine := strings.Join(append([]string{calls[0].Name}, calls[0].Args...), " ")
 	for _, want := range []string{"Implement the runtime seam.", "Adapter", "Route one workstream."} {
-		if !strings.Contains(cmdLine, want) {
-			t.Fatalf("expected command to contain %q, got %s", want, cmdLine)
+		if !strings.Contains(calls[0].Stdin, want) {
+			t.Fatalf("expected stdin to contain %q, got %s", want, calls[0].Stdin)
 		}
 	}
 }

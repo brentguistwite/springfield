@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 )
@@ -20,6 +21,9 @@ func Run(ctx context.Context, cmd Command, handler EventHandler) Result {
 	}
 
 	proc := exec.CommandContext(ctx, cmd.Name, cmd.Args...)
+	if cmd.Stdin != "" {
+		proc.Stdin = strings.NewReader(cmd.Stdin)
+	}
 	if cmd.Dir != "" {
 		proc.Dir = cmd.Dir
 	}

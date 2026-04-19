@@ -112,8 +112,11 @@ func (a *adapter) Detect(context.Context) agents.Detection {
 }
 
 func (a *adapter) Command(input agents.CommandInput) coreexec.Command {
+	// -p enables non-interactive print mode; prompt is delivered via stdin
+	// rather than as a positional arg so it is not visible in `ps aux`.
+	// --output-format and --verbose only work with -p.
 	args := []string{
-		"-p", input.Prompt,
+		"-p",
 		"--output-format", "stream-json",
 		"--verbose",
 	}
@@ -130,9 +133,10 @@ func (a *adapter) Command(input agents.CommandInput) coreexec.Command {
 	args = append(args, "--settings", a.springfieldControlPlaneSettingsJSON())
 
 	return coreexec.Command{
-		Name: "claude",
-		Args: args,
-		Dir:  input.WorkDir,
+		Name:  "claude",
+		Args:  args,
+		Stdin: input.Prompt,
+		Dir:   input.WorkDir,
 	}
 }
 
