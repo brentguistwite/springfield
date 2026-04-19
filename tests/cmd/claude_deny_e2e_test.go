@@ -80,10 +80,10 @@ func TestSpringfieldStartPlumbsControlPlaneHookToClaude(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected hook command string, got %T", innerFirst["command"])
 	}
-	if !strings.Contains(cmdStr, ".springfield") {
-		t.Fatalf("hook command missing .springfield substring check: %q", cmdStr)
+	if !strings.Contains(cmdStr, "hook-guard") {
+		t.Fatalf("hook command should invoke `hook-guard` subcommand, got: %q", cmdStr)
 	}
-	if !strings.Contains(cmdStr, "off-limits") {
-		t.Fatalf("hook command missing off-limits message: %q", cmdStr)
+	if strings.Contains(cmdStr, "grep") {
+		t.Fatalf("hook command should no longer shell out to grep, got: %q", cmdStr)
 	}
 }

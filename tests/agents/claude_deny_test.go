@@ -3,6 +3,7 @@ package agents_test
 import (
 	"encoding/json"
 	"os/exec"
+	"strings"
 	"testing"
 
 	"springfield/internal/core/agents"
@@ -15,8 +16,8 @@ import (
 // substring grep that catches bypass forms (absolute paths, cd, redirects)
 // that a lexical deny list would miss.
 func TestClaudeAdapterInjectsControlPlaneHookSettings(t *testing.T) {
-	adapter := claude.New(exec.LookPath)
-	commander := adapter.(agents.Commander)
+	a := claude.New(exec.LookPath)
+	commander := a.(agents.Commander)
 
 	cmd := commander.Command(agents.CommandInput{
 		Prompt:  "do work",
@@ -62,8 +63,18 @@ func TestClaudeAdapterInjectsControlPlaneHookSettings(t *testing.T) {
 	if got, want := innerFirst["type"], "command"; got != want {
 		t.Fatalf("hook type = %v, want %q", got, want)
 	}
-	if got, want := innerFirst["command"], claude.SpringfieldControlPlaneHookCommand(); got != want {
-		t.Fatalf("hook command = %q, want %q", got, want)
+	cmdStr, ok := innerFirst["command"].(string)
+	if !ok {
+		t.Fatalf("expected hook command string, got %T", innerFirst["command"])
+	}
+	if want := a.(interface{ SpringfieldControlPlaneHookCommand() string }).SpringfieldControlPlaneHookCommand(); cmdStr != want {
+		t.Fatalf("hook command = %q, want %q", cmdStr, want)
+	}
+	if !strings.Contains(cmdStr, "hook-guard") {
+		t.Fatalf("hook command should invoke hook-guard subcommand, got %q", cmdStr)
+	}
+	if strings.Contains(cmdStr, "grep") {
+		t.Fatalf("hook command should no longer shell out to grep, got %q", cmdStr)
 	}
 }
 

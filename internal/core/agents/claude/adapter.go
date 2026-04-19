@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -14,6 +15,12 @@ import (
 
 type adapter struct {
 	lookPath agents.LookPathFunc
+	// hookBin is the absolute path to the springfield binary used by the
+	// PreToolUse hook. Resolved at construction via os.Executable() so the
+	// hook always invokes the same binary the user launched, regardless of
+	// PATH shuffles in child processes. If resolution fails, falls back to
+	// the bare name "springfield" for PATH lookup at hook time.
+	hookBin string
 }
 
 func New(lookPath agents.LookPathFunc) agents.Commander {
@@ -21,7 +28,13 @@ func New(lookPath agents.LookPathFunc) agents.Commander {
 		lookPath = exec.LookPath
 	}
 
-	return adapter{lookPath: lookPath}
+	hookBin, err := os.Executable()
+	if err != nil || hookBin == "" {
+		// Fallback: trust PATH at hook-run time. Non-fatal.
+		hookBin = "springfield"
+	}
+
+	return adapter{lookPath: lookPath, hookBin: hookBin}
 }
 
 func (a adapter) ID() agents.ID {
@@ -72,9 +85,12 @@ func (a adapter) Command(input agents.CommandInput) coreexec.Command {
 	}
 
 	// Hard-block agent writes to Springfield's control plane with a
-	// PreToolUse hook. A lexical deny list is bypassed by absolute paths,
-	// cd, and shell redirects; a substring grep catches all those forms.
-	args = append(args, "--settings", springfieldControlPlaneSettingsJSON())
+	// PreToolUse hook. The hook command invokes `springfield hook-guard`,
+	// which inspects path-bearing fields of the tool_input JSON on stdin
+	// and exits 2 when any of them target .springfield/. Path-aware (vs.
+	// substring grep) so legitimate edits whose *content* merely mentions
+	// .springfield are allowed through.
+	args = append(args, "--settings", a.springfieldControlPlaneSettingsJSON())
 
 	return coreexec.Command{
 		Name: "claude",
@@ -83,30 +99,35 @@ func (a adapter) Command(input agents.CommandInput) coreexec.Command {
 	}
 }
 
-// springfieldControlPlaneHookCommand is the shell one-liner executed by
-// Claude's PreToolUse hook. It reads the tool-input JSON from stdin and
-// exits 2 (blocking the tool call) if any substring of it references
-// .springfield. Exit 0 allows the call through.
-const springfieldControlPlaneHookCommand = `grep -q '\.springfield' && { echo 'Springfield control plane is off-limits' >&2; exit 2; } || exit 0`
-
 // SpringfieldControlPlaneHookCommand returns the hook command string used
-// in the --settings JSON. Exported for tests pinning the shell-level
-// behavior of the hook.
-func SpringfieldControlPlaneHookCommand() string {
-	return springfieldControlPlaneHookCommand
+// in the --settings JSON. Exposed as an instance method because the command
+// embeds the resolved springfield binary path (see adapter.hookBin).
+func (a adapter) SpringfieldControlPlaneHookCommand() string {
+	// Quote the binary path so paths with spaces survive shell parsing.
+	// The hook-guard subcommand never touches the shell itself; the quoting
+	// matters for Claude's shell-based hook runner.
+	return shellQuote(a.hookBin) + " hook-guard"
+}
+
+// shellQuote wraps s in single quotes, escaping any embedded single quotes.
+// Used for the PreToolUse hook command string so paths with spaces/quotes
+// survive the shell layer.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // springfieldControlPlaneSettingsJSON returns the inline --settings payload
 // registering the PreToolUse hook that protects .springfield/ from agent
 // writes.
-func springfieldControlPlaneSettingsJSON() string {
+func (a adapter) springfieldControlPlaneSettingsJSON() string {
+	hookCommand := a.SpringfieldControlPlaneHookCommand()
 	payload := map[string]any{
 		"hooks": map[string]any{
 			"PreToolUse": []map[string]any{{
 				"matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
 				"hooks": []map[string]any{{
 					"type":    "command",
-					"command": springfieldControlPlaneHookCommand,
+					"command": hookCommand,
 				}},
 			}},
 		},
@@ -115,7 +136,7 @@ func springfieldControlPlaneSettingsJSON() string {
 	if err != nil {
 		// payload is static — marshal errors are impossible in practice,
 		// but fall back to a hand-built string rather than panic.
-		return `{"hooks":{"PreToolUse":[{"matcher":"Write|Edit|MultiEdit|NotebookEdit|Bash","hooks":[{"type":"command","command":"` + springfieldControlPlaneHookCommand + `"}]}]}}`
+		return `{"hooks":{"PreToolUse":[{"matcher":"Write|Edit|MultiEdit|NotebookEdit|Bash","hooks":[{"type":"command","command":"` + hookCommand + `"}]}]}}`
 	}
 	return string(data)
 }

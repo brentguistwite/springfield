@@ -75,6 +75,7 @@ func NewRootCommand() *cobra.Command {
 		NewRecoverCommand(),
 		NewDoctorCommand(),
 		NewVersionCommand(),
+		NewHookGuardCommand(),
 	)
 
 	root.SetHelpCommand(&cobra.Command{
