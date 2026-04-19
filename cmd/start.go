@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -228,6 +229,15 @@ type controlPlaneSnapshot struct {
 // duration of an atomic rename and must not be captured by the snapshot.
 const snapshotTmpPrefix = ".tmp-"
 
+// Snapshot size caps bound how much plan-dir content Springfield is willing
+// to hold in memory between the pre-agent snapshot and post-agent compare.
+// These cap the attack surface for a malicious agent that could otherwise
+// wedge the process by planting multi-gigabyte files in the plan dir.
+const (
+	snapshotFileMaxBytes = 256 * 1024
+	snapshotTreeMaxBytes = 2 * 1024 * 1024
+)
+
 func snapshotControlPlane(root string, paths batch.Paths) (controlPlaneSnapshot, error) {
 	tree, err := snapshotPlanTree(paths.PlanDir())
 	if err != nil {
@@ -243,8 +253,17 @@ func snapshotControlPlane(root string, paths batch.Paths) (controlPlaneSnapshot,
 // snapshotPlanTree walks planDir and returns a relpath->bytes map. Tmp
 // scratch files are skipped. Missing planDir is an error (the caller has
 // just written batch.json into it).
+//
+// Non-regular entries (symlinks, devices, fifos, sockets) are rejected:
+// Springfield only writes regular files under the plan dir, so any other
+// node is an integrity violation. Reads use O_NOFOLLOW as defense-in-depth
+// against a symlink being swapped in after the d.Type() check.
+//
+// Per-file reads are bounded by snapshotFileMaxBytes and the running total
+// by snapshotTreeMaxBytes. Exceeding either bound is an error.
 func snapshotPlanTree(planDir string) (map[string][]byte, error) {
 	out := make(map[string][]byte)
+	var total int64
 	err := filepath.WalkDir(planDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -261,9 +280,29 @@ func snapshotPlanTree(planDir string) (map[string][]byte, error) {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		data, err := os.ReadFile(path)
+
+		if d.Type()&(fs.ModeSymlink|fs.ModeDevice|fs.ModeNamedPipe|fs.ModeSocket|fs.ModeIrregular) != 0 {
+			return fmt.Errorf("non-regular entry %q", rel)
+		}
+
+		f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+		if err != nil {
+			return fmt.Errorf("open %s: %w", rel, err)
+		}
+		data, err := io.ReadAll(io.LimitReader(f, snapshotFileMaxBytes+1))
+		closeErr := f.Close()
 		if err != nil {
 			return fmt.Errorf("read %s: %w", rel, err)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close %s: %w", rel, closeErr)
+		}
+		if len(data) > snapshotFileMaxBytes {
+			return fmt.Errorf("%s exceeds per-file cap", rel)
+		}
+		total += int64(len(data))
+		if total > snapshotTreeMaxBytes {
+			return fmt.Errorf("plan tree exceeds total cap")
 		}
 		out[rel] = data
 		return nil
