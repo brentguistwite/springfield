@@ -16,7 +16,9 @@ import (
 )
 
 // Lock represents a held flock on .springfield/.lock. Release must be called
-// to unlock and remove the file.
+// to unlock and close the file descriptor. The lock file itself is never
+// removed — keeping a stable inode prevents a TOCTOU race where two processes
+// could each acquire an "exclusive" flock on different inodes of the same path.
 type Lock struct {
 	f    *os.File
 	path string
@@ -113,8 +115,11 @@ func Acquire(root string) (*Lock, error) {
 	return &Lock{f: f, path: path}, nil
 }
 
-// Release unlocks the flock, closes the file descriptor, and removes the lock
-// file from disk.
+// Release unlocks the flock and closes the file descriptor. The lock file is
+// intentionally NOT removed: removing it after unlock opens an inode-split race
+// where a second process acquires the old inode while a third creates a new one,
+// leaving two "exclusive" holders at once. Keeping the inode permanent collapses
+// all contenders onto a single inode, preserving the kernel's exclusion guarantee.
 func (l *Lock) Release() error {
 	var firstErr error
 	if err := syscall.Flock(int(l.f.Fd()), syscall.LOCK_UN); err != nil {
@@ -122,9 +127,6 @@ func (l *Lock) Release() error {
 	}
 	if err := l.f.Close(); err != nil && firstErr == nil {
 		firstErr = fmt.Errorf("close lock file: %w", err)
-	}
-	if err := os.Remove(l.path); err != nil && !os.IsNotExist(err) && firstErr == nil {
-		firstErr = fmt.Errorf("remove lock file: %w", err)
 	}
 	return firstErr
 }

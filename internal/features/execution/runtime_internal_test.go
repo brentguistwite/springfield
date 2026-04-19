@@ -275,3 +275,59 @@ func TestExecutionPromptIncludesBatchRequestBody(t *testing.T) {
 		t.Fatalf("expected prompt to contain RequestBody, got:\n%s", prompt)
 	}
 }
+
+func TestRuntimeSingleExecutorRejectsOversizedPrompt(t *testing.T) {
+	root := t.TempDir()
+	// Write a CLAUDE.md that alone exceeds the size budget.
+	huge := strings.Repeat("x", maxExecutionPromptBytes+1)
+	if err := os.WriteFile(filepath.Join(root, "CLAUDE.md"), []byte(huge), 0o644); err != nil {
+		t.Fatalf("write CLAUDE.md: %v", err)
+	}
+
+	executor := runtimeSingleExecutor{
+		runner:  coreruntime.NewTestRunner(testRuntimeRegistry(), fakeRuntimeSuccess, time.Now),
+		agents:  []agents.ID{agents.AgentClaude},
+		workDir: t.TempDir(),
+	}
+	_, err := executor.Run(root, Work{
+		ID:    "x",
+		Title: "x",
+		Split: "single",
+		Workstreams: []Workstream{{Name: "01", Title: "T"}},
+	})
+	if err == nil {
+		t.Fatal("expected error for oversized prompt, got nil")
+	}
+	if !strings.Contains(err.Error(), "prompt too large") {
+		t.Fatalf("error = %q, want it to contain 'prompt too large'", err)
+	}
+}
+
+func TestRuntimeMultiExecutorRejectsOversizedPrompt(t *testing.T) {
+	root := t.TempDir()
+	huge := strings.Repeat("x", maxExecutionPromptBytes+1)
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte(huge), 0o644); err != nil {
+		t.Fatalf("write AGENTS.md: %v", err)
+	}
+
+	executor := runtimeMultiExecutor{
+		runner:  coreruntime.NewTestRunner(testRuntimeRegistry(), fakeRuntimeSuccess, time.Now),
+		agents:  []agents.ID{agents.AgentClaude},
+		workDir: t.TempDir(),
+	}
+	report, err := executor.Run(root, Work{
+		ID:    "x",
+		Title: "x",
+		Split: "parallel",
+		Workstreams: []Workstream{{Name: "01", Title: "T"}},
+	})
+	if err == nil {
+		t.Fatal("expected error for oversized prompt, got nil")
+	}
+	if !strings.Contains(err.Error(), "prompt too large") {
+		t.Fatalf("error = %q, want it to contain 'prompt too large'", err)
+	}
+	if report.Workstreams[0].Status != statusFailed {
+		t.Fatalf("workstream status = %q, want %q", report.Workstreams[0].Status, statusFailed)
+	}
+}

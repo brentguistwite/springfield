@@ -22,6 +22,12 @@ const (
 	statusReady     = "ready"
 	statusCompleted = "completed"
 	statusFailed    = "failed"
+
+	// maxExecutionPromptBytes guards against OS argv size limits. The prompt is
+	// passed via the agent CLI's -p flag; individual argument size limits vary
+	// by OS (~256 KB on macOS, ~2 MB on Linux). 200 KB is a conservative budget
+	// that catches runaway AGENTS.md / source.md content before process launch.
+	maxExecutionPromptBytes = 200 * 1024
 )
 
 // Runner routes Springfield work to the correct internal execution engine.
@@ -96,9 +102,13 @@ func (e runtimeSingleExecutor) Run(root string, work Work) (Report, error) {
 	}
 
 	workstream := work.Workstreams[0]
+	prompt := executionPrompt(root, work, workstream)
+	if len(prompt) > maxExecutionPromptBytes {
+		return Report{}, fmt.Errorf("execution prompt too large (%d bytes > %d byte limit): reduce AGENTS.md/CLAUDE.md/GEMINI.md or source.md size", len(prompt), maxExecutionPromptBytes)
+	}
 	result := e.runner.Run(context.Background(), coreruntime.Request{
 		AgentIDs:          e.agents,
-		Prompt:            executionPrompt(root, work, workstream),
+		Prompt:            prompt,
 		WorkDir:           e.workDir,
 		OnEvent:           e.onEvent,
 		ExecutionSettings: e.settings,
@@ -220,9 +230,13 @@ func (e runtimeMultiExecutor) Run(root string, work Work) (Report, error) {
 }
 
 func (e runtimeMultiExecutor) executeWorkstream(root string, work Work, workstream Workstream) (WorkstreamRun, error) {
+	prompt := executionPrompt(root, work, workstream)
+	if len(prompt) > maxExecutionPromptBytes {
+		return WorkstreamRun{Name: workstream.Name, Status: statusFailed}, fmt.Errorf("execution prompt too large (%d bytes > %d byte limit): reduce AGENTS.md/CLAUDE.md/GEMINI.md or source.md size", len(prompt), maxExecutionPromptBytes)
+	}
 	result := e.runner.Run(context.Background(), coreruntime.Request{
 		AgentIDs:          e.agents,
-		Prompt:            executionPrompt(root, work, workstream),
+		Prompt:            prompt,
 		WorkDir:           e.workDir,
 		OnEvent:           e.onEvent,
 		ExecutionSettings: e.settings,

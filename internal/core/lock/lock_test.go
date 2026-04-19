@@ -144,7 +144,11 @@ func TestLockFileContainsPidAndTimestamp(t *testing.T) {
 	}
 }
 
-func TestLockReleaseRemovesFile(t *testing.T) {
+// TestLockReleaseKeepsFile asserts that Release does NOT remove the lock file.
+// Removing it would open an inode-split race: process B can flock the old inode
+// after A unlocks but before A removes, then C creates a new inode and flocks
+// that — two "exclusive" holders simultaneously. The file must stay permanent.
+func TestLockReleaseKeepsFile(t *testing.T) {
 	root := t.TempDir()
 
 	lk, err := lock.Acquire(root)
@@ -161,8 +165,8 @@ func TestLockReleaseRemovesFile(t *testing.T) {
 		t.Fatalf("Release: %v", err)
 	}
 
-	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
-		t.Errorf("expected lock file removed after Release, Stat err=%v", err)
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Errorf("lock file must still exist after Release (permanent inode invariant): %v", err)
 	}
 }
 
