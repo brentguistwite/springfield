@@ -3,8 +3,11 @@ package cmd_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"springfield/internal/features/batch"
 )
@@ -232,5 +235,68 @@ func TestSpringfieldStartCompletionWarnsWhenArchiveFails(t *testing.T) {
 	// Cursor was cleared (run.json gone) — that's the success signal.
 	if _, ok, _ := batch.ReadRun(dir); ok {
 		t.Errorf("run.json should be cleared after successful completion")
+	}
+}
+
+// TestStartCommandRejectsSecondInvocationWithPid spawns two concurrent
+// springfield start processes against the same root. The second one must exit
+// nonzero with an error message matching:
+//
+//	another springfield start is already running (pid <N> since <ts>)
+func TestStartCommandRejectsSecondInvocationWithPid(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeSpringfieldConfig(t, dir, "claude")
+
+	if _, err := singleSlicePlan(t, bin, dir, "Concurrent lock test"); err != nil {
+		t.Fatalf("plan failed: %v", err)
+	}
+
+	// Install a fake claude that sleeps long enough to ensure the race.
+	fakeBinDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(fakeBinDir, 0o755); err != nil {
+		t.Fatalf("mkdir fake bin: %v", err)
+	}
+	// Use /bin/sleep (absolute path) because PATH may only contain fakeBinDir
+	// when the fake claude is executed, so relative `sleep` won't resolve.
+	slowAgent := "#!/bin/sh\n/bin/sleep 5\necho 'agent-output'\n"
+	if err := os.WriteFile(filepath.Join(fakeBinDir, "claude"), []byte(slowAgent), 0o755); err != nil {
+		t.Fatalf("write slow fake claude: %v", err)
+	}
+
+	type result struct {
+		out string
+		err error
+	}
+
+	results := make([]result, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	startOne := func(i int) {
+		defer wg.Done()
+		out, err := runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + fakeBinDir}, "start")
+		results[i] = result{out: out, err: err}
+	}
+
+	go startOne(0)
+	// Wait long enough for process 0 to start, load config, and acquire the lock
+	// before process 1 attempts. 500ms is generous on any CI machine.
+	time.Sleep(500 * time.Millisecond)
+	go startOne(1)
+
+	wg.Wait()
+
+	// Exactly one should fail with lock-held message.
+	lockErrRe := regexp.MustCompile(`another springfield start is already running \(pid \d+ since .+\)`)
+	var lockFailIdx int = -1
+	for i, r := range results {
+		if r.err != nil && lockErrRe.MatchString(r.out) {
+			lockFailIdx = i
+		}
+	}
+	if lockFailIdx == -1 {
+		t.Errorf("expected one start to fail with lock-held message, got:\n  results[0]: err=%v out=%q\n  results[1]: err=%v out=%q",
+			results[0].err, results[0].out, results[1].err, results[1].out)
 	}
 }
