@@ -224,11 +224,6 @@ type controlPlaneSnapshot struct {
 	runBytes []byte
 }
 
-// snapshotTmpPrefix matches scratch files produced by writeFileAtomic's
-// os.CreateTemp pattern ("tmp-<base>-*"). Those files exist only for the
-// duration of an atomic rename and must not be captured by the snapshot.
-const snapshotTmpPrefix = ".tmp-"
-
 // Snapshot byte caps: generous enough to never reject a legitimate plan
 // (2 MiB source.md is well below the per-file cap; realistic plan trees
 // stay under a few MiB total), tight enough to catch pathological bloat
@@ -250,14 +245,19 @@ func snapshotControlPlane(root string, paths batch.Paths) (controlPlaneSnapshot,
 	return controlPlaneSnapshot{tree: tree, runBytes: runBytes}, nil
 }
 
-// snapshotPlanTree walks planDir and returns a relpath->bytes map. Tmp
-// scratch files are skipped. Missing planDir is an error (the caller has
-// just written batch.json into it).
+// snapshotPlanTree walks planDir and returns a relpath->bytes map. Missing
+// planDir is an error (the caller has just written batch.json into it).
 //
 // Non-regular entries (symlinks, devices, fifos, sockets) are rejected:
 // Springfield only writes regular files under the plan dir, so any other
 // node is an integrity violation. Reads use O_NOFOLLOW as defense-in-depth
 // against a symlink being swapped in after the d.Type() check.
+//
+// No basename is excluded: tmp scratch files from writeFileAtomic are always
+// renamed out before snapshot runs, so any ".tmp-*" still present at snapshot
+// or compare time is an agent artifact and must be treated like any other
+// file — captured by snapshot (so byte changes are caught) or flagged as
+// "added" by comparison.
 func snapshotPlanTree(planDir string) (map[string][]byte, error) {
 	out := make(map[string][]byte)
 	var totalBytes int64
@@ -266,10 +266,6 @@ func snapshotPlanTree(planDir string) (map[string][]byte, error) {
 			return walkErr
 		}
 		if d.IsDir() {
-			return nil
-		}
-		name := d.Name()
-		if strings.HasPrefix(name, snapshotTmpPrefix) {
 			return nil
 		}
 		rel, err := filepath.Rel(planDir, path)
@@ -539,9 +535,10 @@ func restoreControlPlane(root string, paths batch.Paths, snap controlPlaneSnapsh
 
 // enumeratePlanTreeRaw lists every file under planDir (relpath keys, forward
 // slashes) without reading bytes and without rejecting non-regular entries.
-// Tmp scratch files are skipped. Used by restoreControlPlane to find stray
-// nodes — including non-regular ones planted by the agent — so they can be
-// unlinked before restore rewrites.
+// Used by restoreControlPlane to find stray nodes — including non-regular
+// ones planted by the agent — so they can be unlinked before restore
+// rewrites. No basename is excluded: any ".tmp-*" entry visible at restore
+// time is an agent artifact and must be cleaned up.
 func enumeratePlanTreeRaw(planDir string) (map[string]struct{}, error) {
 	out := make(map[string]struct{})
 	err := filepath.WalkDir(planDir, func(path string, d fs.DirEntry, walkErr error) error {
@@ -549,10 +546,6 @@ func enumeratePlanTreeRaw(planDir string) (map[string]struct{}, error) {
 			return walkErr
 		}
 		if d.IsDir() {
-			return nil
-		}
-		name := d.Name()
-		if strings.HasPrefix(name, snapshotTmpPrefix) {
 			return nil
 		}
 		rel, err := filepath.Rel(planDir, path)

@@ -62,6 +62,35 @@ func TestTamperDetectsDeletedSourceMd(t *testing.T) {
 	}
 }
 
+// TestTamperDetectsTmpFilePlantedByAgent verifies that an agent cannot use a
+// ".tmp-*" basename as a hidden write channel. Any file present at compare
+// time — including tmp-prefixed names — must be visible to tamper detection.
+func TestTamperDetectsTmpFilePlantedByAgent(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeSpringfieldConfig(t, dir, "claude")
+
+	if _, err := singleSlicePlan(t, bin, dir, "Do the thing"); err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+
+	plansRoot := filepath.Join(dir, ".springfield", "plans")
+	fakeBinDir := filepath.Join(dir, "bin")
+	installTamperingAgent(t, fakeBinDir, "claude",
+		fmt.Sprintf("for d in %s/*; do echo 'evil' > \"$d/.tmp-evil.dat\"; done", plansRoot))
+
+	output, err := runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + fakeBinDir + ":" + os.Getenv("PATH")}, "start")
+	if err == nil {
+		t.Fatalf("expected tamper on planted .tmp-evil.dat, got:\n%s", output)
+	}
+	if !strings.Contains(output, "state tampered") {
+		t.Errorf("expected 'state tampered' in output, got:\n%s", output)
+	}
+	if !strings.Contains(output, ".tmp-evil.dat") {
+		t.Errorf("expected reason to name .tmp-evil.dat, got:\n%s", output)
+	}
+}
+
 // TestTamperReasonMentionsBatchJson ensures the existing squibby reproduction
 // still surfaces batch.json in the reason string (relpath-based now).
 func TestTamperReasonMentionsBatchJson(t *testing.T) {
