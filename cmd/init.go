@@ -77,6 +77,17 @@ func NewInitCommand() *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), "Added .springfield/ to .gitignore")
 			}
 
+			for _, name := range []string{"CLAUDE.md", "AGENTS.md"} {
+				added, err := ensureGuardrailBlock(filepath.Join(dir, name))
+				if err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to update %s: %v\n", name, err)
+					continue
+				}
+				if added {
+					fmt.Fprintf(cmd.OutOrStdout(), "Added Springfield guardrail to %s\n", name)
+				}
+			}
+
 			fmt.Fprintln(cmd.OutOrStdout())
 			fmt.Fprintln(cmd.OutOrStdout(), "Next: install Springfield from the Claude marketplace or Codex plugin/catalog. Use \"springfield install\" only for local host sync, bootstrap, or fallback workflows.")
 
@@ -230,6 +241,54 @@ func normalizeGitignorePattern(s string) string {
 	s = strings.TrimPrefix(s, "/")
 	s = strings.TrimSuffix(s, "/")
 	return s
+}
+
+// guardrailMarker is the idempotency sentinel for the Springfield agent
+// guardrail block. Its presence means the block is already installed and
+// Springfield will not re-append.
+const guardrailMarker = "<!-- springfield:guardrail -->"
+
+// guardrailBlock is the exact text appended (with trailing newline) to
+// CLAUDE.md / AGENTS.md. Deliberately minimal so it coexists with whatever
+// project-specific guidance the host repo maintains.
+const guardrailBlock = guardrailMarker + `
+## Springfield control plane
+
+Never read, write, edit, or delete files under ` + "`.springfield/`" + `. That directory is Springfield's internal state. Writing to it will abort the current run.
+`
+
+// ensureGuardrailBlock appends the Springfield guardrail block to the given
+// agent-instruction file when the idempotency marker is absent. Creates the
+// file (with a simple header) when missing. Returns (added, err) where
+// added==true means the block was just written.
+func ensureGuardrailBlock(path string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return false, fmt.Errorf("read %s: %w", filepath.Base(path), err)
+	}
+
+	if bytes.Contains(data, []byte(guardrailMarker)) {
+		return false, nil
+	}
+
+	var buf bytes.Buffer
+	if len(data) == 0 {
+		// Fresh file: lead with a minimal project header so the guardrail
+		// isn't the very first line with nothing above it.
+		buf.WriteString("# Agent Instructions\n\n")
+	} else {
+		buf.Write(data)
+		if !bytes.HasSuffix(data, []byte("\n")) {
+			buf.WriteByte('\n')
+		}
+		buf.WriteByte('\n')
+	}
+	buf.WriteString(guardrailBlock)
+
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		return false, fmt.Errorf("write %s: %w", filepath.Base(path), err)
+	}
+	return true, nil
 }
 
 // defaultPriority returns the canonical execution-supported agent list as strings.
