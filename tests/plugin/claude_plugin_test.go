@@ -86,7 +86,6 @@ func assertRequiredSkillsExist(t *testing.T, root string) {
 
 	for _, rel := range []string{
 		"skills/plan/SKILL.md",
-		"skills/start/SKILL.md",
 		"skills/status/SKILL.md",
 		"skills/recover/SKILL.md",
 	} {
@@ -121,7 +120,6 @@ func assertRequiredCommandsExist(t *testing.T, root string) {
 
 	for _, rel := range []string{
 		"commands/plan.md",
-		"commands/start.md",
 		"commands/status.md",
 		"commands/recover.md",
 	} {
@@ -143,6 +141,25 @@ func assertRequiredCommandsExist(t *testing.T, root string) {
 				t.Fatalf("%s should contain %q, got:\n%s", rel, marker, text)
 			}
 		}
+	}
+}
+
+func TestRegenLoopOmitsStart(t *testing.T) {
+	root := repoRoot(t)
+
+	src, err := os.ReadFile(filepath.Join(root, "cmd", "regen", "main.go"))
+	if err != nil {
+		t.Fatalf("read cmd/regen/main.go: %v", err)
+	}
+	body := string(src)
+
+	for _, want := range []string{`"plan"`, `"status"`, `"recover"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("cmd/regen/main.go must include %s in loop slice", want)
+		}
+	}
+	if strings.Contains(body, `"start"`) {
+		t.Fatal("cmd/regen/main.go must not include \"start\" in loop slice")
 	}
 }
 
@@ -185,4 +202,12 @@ func TestClaudePluginStructure(t *testing.T) {
 
 	assertRequiredSkillsExist(t, root)
 	assertRequiredCommandsExist(t, root)
+
+	// start skill and command must be absent (removed to prevent subagent recursion)
+	if _, err := os.Stat(filepath.Join(root, "skills", "start")); !os.IsNotExist(err) {
+		t.Fatalf("skills/start/ must be absent after removal, stat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "commands", "start.md")); !os.IsNotExist(err) {
+		t.Fatalf("commands/start.md must be absent after removal, stat err=%v", err)
+	}
 }
