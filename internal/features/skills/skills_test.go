@@ -324,6 +324,56 @@ func TestInstallDefaultsCodexToAgentsSkillsDir(t *testing.T) {
 	}
 }
 
+// TestInstallDoesNotMutateUserSettings verifies that Install never touches
+// $HOME/.claude/settings.json. The hook-guard is wired per-subagent via the
+// spawned agent's --settings flag; it must never pollute the user's global
+// Claude settings.
+func TestInstallDoesNotMutateUserSettings(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	projectRoot := t.TempDir()
+
+	claudeHome := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(claudeHome, 0o755); err != nil {
+		t.Fatalf("mkdir .claude: %v", err)
+	}
+	settingsPath := filepath.Join(claudeHome, "settings.json")
+	original := []byte(`{"some":"user","setting":42}`)
+	if err := os.WriteFile(settingsPath, original, 0o644); err != nil {
+		t.Fatalf("write stub settings.json: %v", err)
+	}
+
+	oldHome := os.Getenv("HOME")
+	t.Cleanup(func() {
+		if oldHome == "" {
+			_ = os.Unsetenv("HOME")
+			return
+		}
+		_ = os.Setenv("HOME", oldHome)
+	})
+	if err := os.Setenv("HOME", home); err != nil {
+		t.Fatalf("set HOME: %v", err)
+	}
+
+	claudeDir := filepath.Join(home, ".claude", "commands")
+	codexDir := filepath.Join(home, ".agents", "skills")
+	if _, err := Install(projectRoot, InstallOptions{
+		ClaudeDir: claudeDir,
+		CodexDir:  codexDir,
+	}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	after, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read settings.json after install: %v", err)
+	}
+	if string(after) != string(original) {
+		t.Fatalf("install mutated $HOME/.claude/settings.json\nbefore: %s\nafter:  %s", original, after)
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 
