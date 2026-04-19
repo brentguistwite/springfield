@@ -187,36 +187,65 @@ func UpdateBatchSlice(paths Paths, updated Slice) error {
 	return writeJSON(paths.BatchPath(), b)
 }
 
+// archiveSiblingRetryAttempts / archiveSiblingRetryDelay govern the
+// stale-read retry loop in maybeWriteArchiveSibling. 20 × 50ms = 1s budget
+// — long enough to outlast any in-flight atomic rename, short enough that
+// a truly stuck file doesn't wedge the caller.
+const (
+	archiveSiblingRetryAttempts = 20
+	archiveSiblingRetryDelay    = 50 * time.Millisecond
+)
+
 // maybeWriteArchiveSibling handles a stable-path archive collision. If the
 // pre-existing entry carries the same reason, the call is a pure no-op (the
 // existing historical idempotence). When the reasons differ, a sibling
 // <id>.<unixNano>.<reason>.json is written via atomic tmp+rename so the new
 // archive's forensic info is preserved alongside the original.
+//
+// Stale-read retry: writeJSONExclusive creates the stable path empty via
+// O_EXCL before renaming the finalized bytes into place, so a loser racing
+// in immediately after the create sees 0 bytes / undecodable JSON. Rather
+// than silently dropping the incoming reason, retry for up to
+// archiveSiblingRetryAttempts × archiveSiblingRetryDelay. If the stable
+// file still can't be decoded after the budget, write the sibling with a
+// `collision` marker so the distinct reason is preserved on disk.
 func maybeWriteArchiveSibling(stablePath string, incoming ArchiveEntry) error {
-	existing, err := os.ReadFile(stablePath)
-	if err != nil {
-		// Archive is expected to exist — but if it vanished racey, a no-op is
-		// the safer answer than aborting the caller mid-cleanup.
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		return fmt.Errorf("read existing archive %s: %w", stablePath, err)
-	}
 	var prior ArchiveEntry
-	if err := json.Unmarshal(existing, &prior); err != nil {
-		// Prior file exists but isn't yet finalized JSON (likely because
-		// writeJSONExclusive just created the exclusive lock file and is mid
-		// rename). Treat as "match in progress" and no-op rather than writing
-		// a spurious sibling; the rename will land soon.
-		return nil
+	decoded := false
+	for attempt := 0; attempt < archiveSiblingRetryAttempts; attempt++ {
+		existing, err := os.ReadFile(stablePath)
+		if err != nil {
+			// Archive is expected to exist — but if it vanished racey, a no-op is
+			// the safer answer than aborting the caller mid-cleanup.
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return fmt.Errorf("read existing archive %s: %w", stablePath, err)
+		}
+		if len(existing) > 0 {
+			if err := json.Unmarshal(existing, &prior); err == nil {
+				decoded = true
+				break
+			}
+		}
+		// Empty file or undecodable JSON — writer is mid-rename. Back off.
+		time.Sleep(archiveSiblingRetryDelay)
 	}
-	if prior.Reason == incoming.Reason {
+
+	if decoded && prior.Reason == incoming.Reason {
 		return nil
 	}
 
+	// Either decoded with a distinct reason, or budget exhausted on stale
+	// reads: write a sibling so no forensic info is dropped.
 	reasonSlug := sanitizeArchiveReason(incoming.Reason)
 	if reasonSlug == "" {
 		reasonSlug = "unknown"
+	}
+	if !decoded {
+		// Flag the filename so operators can spot races and distinguish a
+		// budget-exhausted sibling from a cleanly-decoded mismatch.
+		reasonSlug = reasonSlug + "-collision"
 	}
 	siblingName := fmt.Sprintf("%s.%d.%s.json", incoming.BatchID, time.Now().UTC().UnixNano(), reasonSlug)
 	siblingPath := filepath.Join(filepath.Dir(stablePath), siblingName)
