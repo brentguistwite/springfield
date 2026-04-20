@@ -310,3 +310,45 @@ func TestExecutionModesCustom(t *testing.T) {
 		t.Fatalf("codex mode: want %q, got %q", config.ExecutionModeCustom, got.Codex)
 	}
 }
+
+func TestKeepAwakeEnabledDefaultsTrue(t *testing.T) {
+	cfg := config.Config{}
+	if !cfg.KeepAwakeEnabled() {
+		t.Fatal("KeepAwakeEnabled should be true when [start] is absent")
+	}
+}
+
+func TestKeepAwakeEnabledOptOut(t *testing.T) {
+	f := false
+	cfg := config.Config{Start: config.StartConfig{KeepAwake: &f}}
+	if cfg.KeepAwakeEnabled() {
+		t.Fatal("KeepAwakeEnabled should be false when keep_awake = false")
+	}
+}
+
+func TestKeepAwakeEnabledExplicitTrue(t *testing.T) {
+	tr := true
+	cfg := config.Config{Start: config.StartConfig{KeepAwake: &tr}}
+	if !cfg.KeepAwakeEnabled() {
+		t.Fatal("KeepAwakeEnabled should be true when keep_awake = true")
+	}
+}
+
+func TestLoadParsesStartKeepAwake(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+[project]
+default_agent = "claude"
+
+[start]
+keep_awake = false
+`)
+
+	loaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if loaded.Config.KeepAwakeEnabled() {
+		t.Fatal("expected KeepAwakeEnabled false when keep_awake = false in toml")
+	}
+}

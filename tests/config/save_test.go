@@ -282,6 +282,60 @@ approval_policy = "never"
 	}
 }
 
+func TestSaveRoundTripsStartKeepAwakeFalse(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+[project]
+default_agent = "claude"
+
+[start]
+keep_awake = false
+`)
+
+	loaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := config.Save(loaded); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	reloaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.Config.KeepAwakeEnabled() {
+		t.Fatal("keep_awake = false lost after Save round-trip")
+	}
+}
+
+func TestInitMergePreservesStartKeepAwakeFalse(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+[project]
+default_agent = "claude"
+
+[start]
+keep_awake = false
+`)
+	if err := os.MkdirAll(filepath.Join(root, ".springfield"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	_, err := config.Init(root, []string{"claude"}, config.InitOptions{})
+	if err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	reloaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if reloaded.Config.KeepAwakeEnabled() {
+		t.Fatal("keep_awake = false lost after Init merge")
+	}
+}
+
 func TestSaveRoundTripsExplicitOffExecutionConfig(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `

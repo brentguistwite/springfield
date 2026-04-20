@@ -20,6 +20,22 @@ type Config struct {
 	Project ProjectConfig         `toml:"project"`
 	Agents  AgentsConfig          `toml:"agents"`
 	Plans   map[string]PlanConfig `toml:"plans"`
+	Start   StartConfig           `toml:"start"`
+}
+
+// StartConfig holds settings for the start command.
+type StartConfig struct {
+	// KeepAwake nil means default (true); false opts out of sleep prevention.
+	KeepAwake *bool `toml:"keep_awake,omitempty"`
+}
+
+// KeepAwakeEnabled reports whether sleep prevention is active.
+// Defaults to true; set keep_awake = false in [start] to disable.
+func (c Config) KeepAwakeEnabled() bool {
+	if c.Start.KeepAwake == nil {
+		return true
+	}
+	return *c.Start.KeepAwake
 }
 
 // AgentForPlan resolves the effective agent for a plan, falling back to the

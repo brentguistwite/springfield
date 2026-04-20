@@ -10,11 +10,16 @@ type saveConfig struct {
 	Project ProjectConfig         `toml:"project"`
 	Agents  *saveAgentsConfig     `toml:"agents,omitempty"`
 	Plans   map[string]PlanConfig `toml:"plans"`
+	Start   *saveStartConfig      `toml:"start,omitempty"`
 }
 
 type saveAgentsConfig struct {
 	Claude *ClaudeAgentConfig `toml:"claude,omitempty"`
 	Codex  *CodexAgentConfig  `toml:"codex,omitempty"`
+}
+
+type saveStartConfig struct {
+	KeepAwake *bool `toml:"keep_awake,omitempty"`
 }
 
 // Save writes the config back to disk. When AgentPriority is set, it syncs
@@ -58,6 +63,10 @@ func newSaveConfig(cfg Config) saveConfig {
 		}
 	}
 	out.Agents = agentsCfg
+
+	if cfg.Start.KeepAwake != nil {
+		out.Start = &saveStartConfig{KeepAwake: cfg.Start.KeepAwake}
+	}
 
 	return out
 }
