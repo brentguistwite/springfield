@@ -17,10 +17,11 @@ springfield status     # Inspect the active batch or work
 springfield version    # Print build version
 ```
 
-V1 host targets:
+Supported agents (all fully executable):
 
 - Claude Code
-- Codex
+- Codex CLI
+- Gemini CLI (opt-in via `--agents ...,gemini` or by adding `"gemini"` to `agent_priority`; set `GEMINI_API_KEY` or sign in to the Gemini CLI before running headless)
 
 ## End-User Install
 
@@ -97,11 +98,17 @@ permission_mode = "bypassPermissions"
 [agents.codex]
 sandbox_mode = "danger-full-access"
 approval_policy = "never"
+
+# Opt in to Gemini by adding "gemini" to agent_priority; scaffold below.
+# [agents.gemini]
+# approval_mode = "yolo"
+# sandbox_mode = "sandbox-exec"
 ```
 
 Notes:
 
 - `springfield init` asks for the agent priority order (default `claude,codex`) and scaffolds `springfield.toml` + `.springfield/` with recommended execution settings for Claude and Codex. Use `--agents codex,claude` to skip the prompt, or pipe input to run non-interactively.
+- Gemini is execution-supported but opt-in. Pass `--agents claude,codex,gemini` (or edit `agent_priority`) to include it. See [`docs/release.md`](docs/release.md#2026-04-gemini-cli-execution-support) for the migration note.
 - Primary end-user install is the Claude marketplace or Codex plugin/catalog flow.
 - `springfield install` is the local sync/bootstrap/fallback path after `init`.
 - Re-running `init` preserves existing config, only filling in missing recommended defaults and agent priority. Use `springfield init --reset` to back up the current config and rewrite it from scratch.
