@@ -20,5 +20,11 @@ permission_mode = "bypassPermissions"
 sandbox_mode = "danger-full-access"
 approval_policy = "never"
 
+# Gemini execution settings are opt-in: add "gemini" to agent_priority and
+# uncomment this block to use Gemini CLI for plan execution.
+# [agents.gemini]
+# approval_mode = "yolo"
+# sandbox_mode = "sandbox-exec"
+
 # [plans.release]
 # agent = "codex"

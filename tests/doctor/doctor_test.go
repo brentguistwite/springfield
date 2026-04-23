@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"strings"
 	"testing"
 
 	"springfield/internal/core/agents"
@@ -38,16 +39,48 @@ func TestRunReportsAllHealthyWhenAllAvailable(t *testing.T) {
 		if check.Status != doctor.StatusHealthy {
 			t.Fatalf("expected healthy status for %q, got %q", check.AgentID, check.Status)
 		}
-		// Gemini is detection-only, so it gets a capability note even when healthy.
-		if check.AgentID == agents.AgentGemini {
-			if check.Guidance == "" {
-				t.Fatal("expected detection-only guidance for gemini")
-			}
-			continue
-		}
+		// All three agents are executable as of 2026-04. No healthy-state
+		// guidance string is expected for any of them.
 		if check.Guidance != "" {
 			t.Fatalf("expected no guidance for healthy agent %q, got %q", check.AgentID, check.Guidance)
 		}
+	}
+}
+
+// TestRunGeminiHealthyHasNoDetectionOnlyNote locks the migration: Gemini
+// has execution support, so doctor must not emit the legacy
+// "Detection only — execution support not yet available." note.
+func TestRunGeminiHealthyHasNoDetectionOnlyNote(t *testing.T) {
+	lookPath := func(binary string) (string, error) {
+		return "/usr/local/bin/" + binary, nil
+	}
+	registry := agents.NewRegistry(gemini.New(lookPath))
+	report := doctor.Run(context.Background(), registry)
+	if len(report.Checks) != 1 {
+		t.Fatalf("expected 1 check, got %d", len(report.Checks))
+	}
+	if report.Checks[0].Guidance != "" {
+		t.Fatalf("expected no guidance for healthy gemini, got %q", report.Checks[0].Guidance)
+	}
+}
+
+// TestRunGeminiMissingGuidanceHasNoDetectionOnlyNote locks the migration:
+// missing-Gemini guidance is install-only, no detection-only caveat.
+func TestRunGeminiMissingGuidanceHasNoDetectionOnlyNote(t *testing.T) {
+	lookPath := func(binary string) (string, error) {
+		return "", exec.ErrNotFound
+	}
+	registry := agents.NewRegistry(gemini.New(lookPath))
+	report := doctor.Run(context.Background(), registry)
+	if len(report.Checks) != 1 {
+		t.Fatalf("expected 1 check, got %d", len(report.Checks))
+	}
+	guidance := report.Checks[0].Guidance
+	if guidance == "" {
+		t.Fatal("expected install guidance for missing gemini")
+	}
+	if strings.Contains(guidance, "Detection only") {
+		t.Fatalf("expected no 'Detection only' note, got %q", guidance)
 	}
 }
 

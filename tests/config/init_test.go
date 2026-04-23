@@ -284,6 +284,124 @@ func TestInitMergeIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestInitMergeBackfillsGeminiDefaults(t *testing.T) {
+	dir := t.TempDir()
+
+	configPath := filepath.Join(dir, config.FileName)
+	original := `[project]
+default_agent = "claude"
+agent_priority = ["claude", "codex", "gemini"]
+
+[agents.claude]
+permission_mode = "bypassPermissions"
+
+[agents.codex]
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+`
+	if err := os.WriteFile(configPath, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := config.Init(dir, []string{"claude", "codex", "gemini"}, config.InitOptions{})
+	if err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	loaded, err := config.LoadFrom(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if loaded.Config.Agents.Gemini.ApprovalMode != "yolo" {
+		t.Errorf("gemini approval_mode: want yolo, got %q", loaded.Config.Agents.Gemini.ApprovalMode)
+	}
+	if loaded.Config.Agents.Gemini.SandboxMode != "sandbox-exec" {
+		t.Errorf("gemini sandbox_mode: want sandbox-exec, got %q", loaded.Config.Agents.Gemini.SandboxMode)
+	}
+}
+
+func TestInitFreshScaffoldIncludesGeminiWhenInPriority(t *testing.T) {
+	dir := t.TempDir()
+
+	_, err := config.Init(dir, []string{"claude", "codex", "gemini"}, config.InitOptions{})
+	if err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, config.FileName))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "[agents.gemini]") {
+		t.Fatalf("expected [agents.gemini] section, got:\n%s", text)
+	}
+	if !strings.Contains(text, "approval_mode = \"yolo\"") {
+		t.Fatalf("expected approval_mode yolo, got:\n%s", text)
+	}
+}
+
+func TestInitFreshScaffoldOmitsGeminiWhenNotInPriority(t *testing.T) {
+	dir := t.TempDir()
+
+	_, err := config.Init(dir, []string{"claude", "codex"}, config.InitOptions{})
+	if err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, config.FileName))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	text := string(data)
+	if strings.Contains(text, "[agents.gemini]") {
+		t.Fatalf("unexpected [agents.gemini] section, got:\n%s", text)
+	}
+}
+
+func TestInitMergeDoesNotBackfillGeminiWhenNotInPriority(t *testing.T) {
+	dir := t.TempDir()
+
+	configPath := filepath.Join(dir, config.FileName)
+	original := `[project]
+default_agent = "claude"
+agent_priority = ["claude", "codex"]
+
+[agents.claude]
+permission_mode = "bypassPermissions"
+
+[agents.codex]
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+`
+	if err := os.WriteFile(configPath, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := config.Init(dir, []string{"claude", "codex"}, config.InitOptions{})
+	if err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	loaded, err := config.LoadFrom(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if loaded.Config.Agents.Gemini.ApprovalMode != "" || loaded.Config.Agents.Gemini.SandboxMode != "" {
+		t.Errorf("expected gemini fields empty, got approval_mode=%q sandbox_mode=%q",
+			loaded.Config.Agents.Gemini.ApprovalMode, loaded.Config.Agents.Gemini.SandboxMode)
+	}
+
+	// Also confirm the TOML on disk doesn't have a [agents.gemini] section.
+	data, err := os.ReadFile(filepath.Join(dir, config.FileName))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if strings.Contains(string(data), "[agents.gemini]") {
+		t.Errorf("unexpected [agents.gemini] section in TOML:\n%s", string(data))
+	}
+}
+
 func TestInitResetBacksUpAndWritesFresh(t *testing.T) {
 	dir := t.TempDir()
 

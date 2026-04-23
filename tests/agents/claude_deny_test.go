@@ -19,10 +19,13 @@ func TestClaudeAdapterInjectsControlPlaneHookSettings(t *testing.T) {
 	a := claude.New(exec.LookPath)
 	commander := a.(agents.Commander)
 
-	cmd := commander.Command(agents.CommandInput{
+	cmd, err := commander.Command(agents.CommandInput{
 		Prompt:  "do work",
 		WorkDir: "/tmp/project",
 	})
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
 
 	jsonVal := extractSettingsJSON(t, cmd.Args)
 
@@ -86,13 +89,16 @@ func TestClaudeAdapterHookSettingsCoexistWithBypassPermissions(t *testing.T) {
 	adapter := claude.New(exec.LookPath)
 	commander := adapter.(agents.Commander)
 
-	cmd := commander.Command(agents.CommandInput{
+	cmd, err := commander.Command(agents.CommandInput{
 		Prompt:  "do work",
 		WorkDir: "/tmp/project",
 		ExecutionSettings: agents.ExecutionSettings{
 			Claude: agents.ClaudeExecutionSettings{PermissionMode: "bypassPermissions"},
 		},
 	})
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
 
 	assertArgsContain(t, cmd.Args, "--permission-mode", "bypassPermissions")
 	jsonVal := extractSettingsJSON(t, cmd.Args)

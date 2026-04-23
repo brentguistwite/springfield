@@ -15,14 +15,13 @@ func guidance(d agents.Detection) string {
 	}
 }
 
-// capabilityNote returns a note for agents that are detected but have limited capabilities.
+// capabilityNote returns a note for agents that are detected but have limited
+// capabilities. All built-in agents are execution-supported as of 2026-04, so
+// this returns an empty string today; kept as an extension point for future
+// detection-only adapters.
 func capabilityNote(id agents.ID) string {
-	switch id {
-	case agents.AgentGemini:
-		return "Detection only — execution support not yet available."
-	default:
-		return ""
-	}
+	_ = id
+	return ""
 }
 
 func installGuidance(id agents.ID) string {
@@ -32,7 +31,7 @@ func installGuidance(id agents.ID) string {
 	case agents.AgentCodex:
 		return "Install Codex CLI: npm install -g @openai/codex"
 	case agents.AgentGemini:
-		return "Install Gemini CLI: see https://github.com/google-gemini/gemini-cli. Note: detection only — execution support not yet available."
+		return "Install Gemini CLI: see https://github.com/google-gemini/gemini-cli"
 	default:
 		return "Agent binary not found. Check installation docs."
 	}

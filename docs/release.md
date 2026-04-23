@@ -52,3 +52,31 @@ brew install --formula https://github.com/<owner>/<repo>/releases/download/v0.1.
 ```
 
 The checked-in [`Formula/springfield.rb`](../Formula/springfield.rb) file is only a template/reference copy. The release asset is the installable one with real URLs and checksums.
+
+## Migration notes
+
+### 2026-04 — Gemini CLI execution support
+
+Gemini CLI joins Claude Code and Codex CLI as a fully executable agent. Existing projects stay valid without changes — Gemini is opt-in.
+
+To enable Gemini on an existing project:
+
+```bash
+springfield init --agents claude,codex,gemini
+```
+
+That backfills an `[agents.gemini]` block with the recommended defaults (`approval_mode = "yolo"`, `sandbox_mode = "sandbox-exec"`) and adds `"gemini"` to `agent_priority`. Alternatively, edit `springfield.toml` by hand:
+
+```toml
+[project]
+agent_priority = ["claude", "codex", "gemini"]
+
+[agents.gemini]
+approval_mode = "yolo"
+sandbox_mode = "sandbox-exec"
+# model = "pro"   # optional; empty delegates to Gemini's default
+```
+
+Headless runs require either `GEMINI_API_KEY` in the environment or a cached OAuth token at `~/.gemini/oauth_token`. On Linux, `sandbox_mode = "sandbox-exec"` is macOS-only — set it to `"docker"`/`"podman"`/`"runsc"` or leave it empty on other platforms.
+
+Springfield injects its control-plane hook via `GEMINI_CLI_SYSTEM_SETTINGS_PATH`, pointing Gemini at a per-invocation override at `.springfield/gemini-system-settings.json`. The installer never mutates your `~/.gemini/settings.json`.

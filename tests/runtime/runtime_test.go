@@ -348,6 +348,48 @@ func TestRunnerSkipsValidatorOnNonZeroExit(t *testing.T) {
 	}
 }
 
+func TestRunnerPropagatesCommanderError(t *testing.T) {
+	buildErr := errors.New("sentinel build failure")
+	stub := &erroringCommander{id: agents.AgentGemini, buildErr: buildErr}
+	registry := agents.NewRegistry(stub)
+	clock := newFakeClock(time.Date(2026, 4, 20, 10, 0, 0, 0, time.UTC))
+
+	fakeRun := func(_ context.Context, _ exec.Command, _ exec.EventHandler) exec.Result {
+		t.Fatal("run should not be called when Command returns error")
+		return exec.Result{}
+	}
+
+	runner := runtime.NewTestRunner(registry, fakeRun, clock.now)
+	result := runner.Run(context.Background(), runtime.Request{
+		AgentIDs: []agents.ID{agents.AgentGemini},
+		Prompt:   "test",
+		WorkDir:  "/tmp",
+	})
+
+	if result.Status != runtime.StatusFailed {
+		t.Fatalf("expected failed, got %q", result.Status)
+	}
+	if result.Err == nil || !errors.Is(result.Err, buildErr) {
+		t.Fatalf("expected err wrapping sentinel, got %v", result.Err)
+	}
+}
+
+type erroringCommander struct {
+	id       agents.ID
+	buildErr error
+}
+
+func (c *erroringCommander) ID() agents.ID { return c.id }
+func (c *erroringCommander) Metadata() agents.Metadata {
+	return agents.Metadata{ID: c.id, Name: string(c.id), Binary: string(c.id)}
+}
+func (c *erroringCommander) Detect(context.Context) agents.Detection {
+	return agents.Detection{ID: c.id, Status: agents.DetectionStatusAvailable}
+}
+func (c *erroringCommander) Command(_ agents.CommandInput) (exec.Command, error) {
+	return exec.Command{}, c.buildErr
+}
+
 type validatingCommander struct {
 	id             agents.ID
 	validateError  error
@@ -361,8 +403,8 @@ func (c *validatingCommander) Metadata() agents.Metadata {
 func (c *validatingCommander) Detect(context.Context) agents.Detection {
 	return agents.Detection{ID: c.id, Status: agents.DetectionStatusAvailable}
 }
-func (c *validatingCommander) Command(input agents.CommandInput) exec.Command {
-	return exec.Command{Name: string(c.id), Dir: input.WorkDir}
+func (c *validatingCommander) Command(input agents.CommandInput) (exec.Command, error) {
+	return exec.Command{Name: string(c.id), Dir: input.WorkDir}, nil
 }
 func (c *validatingCommander) ValidateResult(result exec.Result) error {
 	c.validateCalled = true
@@ -404,7 +446,7 @@ func (c *recordingCommander) Detect(context.Context) agents.Detection {
 	return agents.Detection{ID: c.id, Status: agents.DetectionStatusAvailable}
 }
 
-func (c *recordingCommander) Command(input agents.CommandInput) exec.Command {
+func (c *recordingCommander) Command(input agents.CommandInput) (exec.Command, error) {
 	c.lastInput = input
-	return exec.Command{Name: string(c.id), Dir: input.WorkDir}
+	return exec.Command{Name: string(c.id), Dir: input.WorkDir}, nil
 }

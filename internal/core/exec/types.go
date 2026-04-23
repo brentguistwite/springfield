@@ -6,12 +6,16 @@ import (
 )
 
 // Command describes a subprocess to run.
+//
+// Env contains environment variable overrides. Entries are MERGED over
+// os.Environ() so the adapter need only specify the keys it wants to add
+// or override, inheriting PATH/HOME/auth-related vars unchanged.
 type Command struct {
 	Name    string
 	Args    []string
 	Stdin   string // written to the process's stdin when non-empty
 	Dir     string
-	Env     []string
+	Env     map[string]string
 	Timeout time.Duration // zero means no timeout
 }
 

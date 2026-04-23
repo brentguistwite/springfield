@@ -61,7 +61,7 @@ func (a adapter) Detect(context.Context) agents.Detection {
 	return result
 }
 
-func (a adapter) Command(input agents.CommandInput) coreexec.Command {
+func (a adapter) Command(input agents.CommandInput) (coreexec.Command, error) {
 	args := []string{"exec", "--json"}
 	if sandboxMode := strings.TrimSpace(input.ExecutionSettings.Codex.SandboxMode); sandboxMode != "" {
 		args = append(args, "-s", sandboxMode)
@@ -75,7 +75,7 @@ func (a adapter) Command(input agents.CommandInput) coreexec.Command {
 		Name: "codex",
 		Args: args,
 		Dir:  input.WorkDir,
-	}
+	}, nil
 }
 
 // ValidateResult checks Codex stderr for fatal errors that indicate the session

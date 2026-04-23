@@ -31,8 +31,8 @@ func (f *fakeAdapter) Metadata() agents.Metadata {
 	return agents.Metadata{ID: f.id, Name: string(f.id)}
 }
 func (f *fakeAdapter) Detect(_ context.Context) agents.Detection { return agents.Detection{ID: f.id} }
-func (f *fakeAdapter) Command(input agents.CommandInput) exec.Command {
-	return exec.Command{Name: string(f.id), Args: []string{input.Prompt}, Dir: input.WorkDir}
+func (f *fakeAdapter) Command(input agents.CommandInput) (exec.Command, error) {
+	return exec.Command{Name: string(f.id), Args: []string{input.Prompt}, Dir: input.WorkDir}, nil
 }
 
 func newTestRuntime(agent agents.ID, runFn exec.CommandFunc) runtime.Runner {

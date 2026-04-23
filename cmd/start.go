@@ -24,12 +24,14 @@ import (
 	"springfield/internal/core/lock"
 	"springfield/internal/features/batch"
 	"springfield/internal/features/execution"
+	"springfield/internal/features/wakelock"
 	"springfield/internal/features/workflow"
 )
 
 // NewStartCommand runs the active Springfield batch from its saved progress.
 func NewStartCommand() *cobra.Command {
 	var dir string
+	var noKeepAwake bool
 
 	cmd := &cobra.Command{
 		Use:   "start",
@@ -99,6 +101,16 @@ func NewStartCommand() *cobra.Command {
 				fmt.Fprintf(w, "Log: %s\n", logPath)
 			}
 
+			if !noKeepAwake && loaded.Config.KeepAwakeEnabled() {
+				releaseWakelock, wlErr := wakelock.Acquire()
+				if wlErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: sleep prevention unavailable: %v\n", wlErr)
+				} else {
+					fmt.Fprintf(w, "Sleep prevention: active\n")
+					defer releaseWakelock()
+				}
+			}
+
 			result, execErr := runBatch(root, run, b, w, logPath)
 
 			run.LastCheckpoint = time.Now().UTC()
@@ -136,6 +148,7 @@ func NewStartCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&dir, "dir", ".", "project root or nested path inside the Springfield project")
+	cmd.Flags().BoolVar(&noKeepAwake, "no-keep-awake", false, "disable sleep prevention for this run")
 	return cmd
 }
 

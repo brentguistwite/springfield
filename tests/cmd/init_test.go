@@ -39,17 +39,52 @@ func TestInitAgentsFlagSetsDefaultAgent(t *testing.T) {
 	}
 }
 
-// TestInitGeminiRejected verifies gemini is rejected with exit code != 0.
-func TestInitGeminiRejected(t *testing.T) {
+// TestInitAcceptsGeminiInAgentsFlag verifies gemini is accepted when passed
+// via --agents (execution support flipped on in 2026-04).
+func TestInitAcceptsGeminiInAgentsFlag(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 
 	output, err := runBinaryIn(t, bin, dir, "init", "--agents", "gemini")
-	if err == nil {
-		t.Fatalf("expected error for --agents gemini, got success:\n%s", output)
+	if err != nil {
+		t.Fatalf("init --agents gemini failed: %v\n%s", err, output)
 	}
-	if !strings.Contains(output, "gemini is not yet supported for execution") {
-		t.Errorf("expected rejection message, got:\n%s", output)
+
+	content, err := os.ReadFile(filepath.Join(dir, "springfield.toml"))
+	if err != nil {
+		t.Fatalf("read springfield.toml: %v", err)
+	}
+	toml := string(content)
+	if !strings.Contains(toml, `default_agent = "gemini"`) {
+		t.Errorf("expected default_agent=gemini in config:\n%s", toml)
+	}
+	if !strings.Contains(toml, `agent_priority = ["gemini"]`) {
+		t.Errorf("expected agent_priority=[gemini], got:\n%s", toml)
+	}
+	if !strings.Contains(toml, "[agents.gemini]") {
+		t.Errorf("expected [agents.gemini] section:\n%s", toml)
+	}
+}
+
+// TestInitNonTTYDefaultPriorityExcludesGemini locks the roadmap rule:
+// without --agents, Gemini is NOT auto-added to priority even though it
+// is execution-supported.
+func TestInitNonTTYDefaultPriorityExcludesGemini(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	output, err := runBinaryInWithInput(t, bin, dir, "", "init")
+	if err != nil {
+		t.Fatalf("init: %v\n%s", err, output)
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, "springfield.toml"))
+	if err != nil {
+		t.Fatalf("read springfield.toml: %v", err)
+	}
+	toml := string(content)
+	if strings.Contains(toml, "gemini") {
+		t.Fatalf("expected default init to exclude gemini, got:\n%s", toml)
 	}
 }
 

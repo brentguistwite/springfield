@@ -154,6 +154,45 @@ func TestRunEmptyStdinDoesNotHang(t *testing.T) {
 	}
 }
 
+func TestRunMergesCommandEnvOverOsEnviron(t *testing.T) {
+	t.Setenv("SPRINGFIELD_TEST_INHERITED", "from_parent")
+	result := exec.Run(context.Background(), exec.Command{
+		Name: "sh",
+		Args: []string{"-c", "echo $SPRINGFIELD_TEST_INHERITED $SPRINGFIELD_TEST_OVERRIDE"},
+		Env: map[string]string{
+			"SPRINGFIELD_TEST_OVERRIDE": "from_cmd",
+		},
+	}, nil)
+	if result.Err != nil {
+		t.Fatalf("unexpected error: %v", result.Err)
+	}
+	stdout := filterEvents(result.Events, exec.EventStdout)
+	if len(stdout) == 0 {
+		t.Fatal("expected stdout")
+	}
+	if stdout[0].Data != "from_parent from_cmd" {
+		t.Fatalf("env merge: want %q, got %q", "from_parent from_cmd", stdout[0].Data)
+	}
+}
+
+func TestRunCommandEnvOverridesParent(t *testing.T) {
+	t.Setenv("SPRINGFIELD_TEST_KEY", "parent_val")
+	result := exec.Run(context.Background(), exec.Command{
+		Name: "sh",
+		Args: []string{"-c", "echo $SPRINGFIELD_TEST_KEY"},
+		Env: map[string]string{
+			"SPRINGFIELD_TEST_KEY": "override_val",
+		},
+	}, nil)
+	if result.Err != nil {
+		t.Fatalf("unexpected error: %v", result.Err)
+	}
+	stdout := filterEvents(result.Events, exec.EventStdout)
+	if len(stdout) == 0 || stdout[0].Data != "override_val" {
+		t.Fatalf("env override: want override_val, got %v", stdout)
+	}
+}
+
 func filterEvents(events []exec.Event, typ exec.EventType) []exec.Event {
 	var filtered []exec.Event
 	for _, e := range events {

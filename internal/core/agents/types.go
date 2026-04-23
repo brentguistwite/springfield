@@ -73,6 +73,7 @@ type Resolved struct {
 type ExecutionSettings struct {
 	Claude ClaudeExecutionSettings
 	Codex  CodexExecutionSettings
+	Gemini GeminiExecutionSettings
 }
 
 type ClaudeExecutionSettings struct {
@@ -84,6 +85,19 @@ type CodexExecutionSettings struct {
 	ApprovalPolicy string
 }
 
+// GeminiExecutionSettings carries Gemini CLI execution settings.
+//
+//   - ApprovalMode maps to --approval-mode (default|auto_edit|yolo|plan).
+//   - SandboxMode maps to --sandbox (empty to omit; true|docker|podman|
+//     sandbox-exec|runsc|lxc per Gemini CLI docs).
+//   - Model maps to --model (empty delegates to Gemini's default; alias
+//     pro|flash|flash-lite|auto or a concrete model ID also valid).
+type GeminiExecutionSettings struct {
+	ApprovalMode string
+	SandboxMode  string
+	Model        string
+}
+
 // CommandInput provides the parameters needed to build an agent CLI invocation.
 type CommandInput struct {
 	Prompt            string
@@ -92,9 +106,14 @@ type CommandInput struct {
 }
 
 // Commander extends Adapter with the ability to produce a runnable command spec.
+//
+// Returns a non-nil error when the adapter cannot safely build a runnable
+// command (e.g. Gemini refuses to spawn when its control-plane hook file
+// can't be written). The runtime surfaces this as a failed run rather than
+// executing an unprotected subprocess.
 type Commander interface {
 	Adapter
-	Command(input CommandInput) exec.Command
+	Command(input CommandInput) (exec.Command, error)
 }
 
 // ResultValidator optionally validates whether exit code 0 truly means task success.
