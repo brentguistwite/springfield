@@ -243,6 +243,7 @@ type geminiStreamEvent struct {
 	Content  json.RawMessage `json:"content"`
 	Text     string          `json:"text"`
 	ToolName string          `json:"tool_name"`
+	ExitCode int             `json:"exit_code"`
 }
 
 func inspectGeminiStreamLine(data string, hasWork *bool, sawError *string, sawDenied *bool, onlyClarifyingQuestion *bool) {
@@ -255,6 +256,13 @@ func inspectGeminiStreamLine(data string, hasWork *bool, sawError *string, sawDe
 	case "error":
 		if event.Message != "" && *sawError == "" {
 			*sawError = event.Message
+		}
+	case "result":
+		// Gemini sometimes reports a non-zero exit_code in the result event
+		// body before the OS exit code surfaces. Treat as fatal so a clean
+		// OS exit 0 with an in-band failure still fails the run.
+		if event.ExitCode != 0 && *sawError == "" {
+			*sawError = fmt.Sprintf("gemini reported non-zero exit_code=%d in result event", event.ExitCode)
 		}
 	case "tool_use":
 		*hasWork = true
@@ -288,13 +296,18 @@ func agentMessageText(ev geminiStreamEvent) string {
 	return ""
 }
 
+// isGeminiDeniedContent reports whether an is_error=true tool_result's
+// content payload explicitly signals a denial/rejection. Mirrors Claude's
+// narrow heuristic: only an explicit "denied"/"rejected" substring counts.
+// Empty content or unparseable content is treated as a recoverable tool
+// failure — let exit code decide rather than synthesize a denial.
 func isGeminiDeniedContent(raw json.RawMessage) bool {
 	if len(raw) == 0 {
-		return true
+		return false
 	}
 	var any_ any
 	if err := json.Unmarshal(raw, &any_); err != nil {
-		return true
+		return false
 	}
 	text := strings.ToLower(agents.FlattenJSONText(any_))
 	return strings.Contains(text, "denied") || strings.Contains(text, "rejected")

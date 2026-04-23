@@ -103,3 +103,40 @@ func TestGeminiValidateResultExit1NoWorkReturnsError(t *testing.T) {
 		t.Fatalf("expected exit-1 error, got %v", err)
 	}
 }
+
+func TestGeminiValidateResultDetectsNonZeroResultExitCode(t *testing.T) {
+	v := geminiValidator(t)
+	events := []coreexec.Event{
+		{Type: coreexec.EventStdout, Data: `{"type":"tool_use","tool_name":"write_file"}`, Time: time.Now()},
+		{Type: coreexec.EventStdout, Data: `{"type":"result","exit_code":2,"summary":"stopped early"}`, Time: time.Now()},
+	}
+	err := v.ValidateResult(coreexec.Result{ExitCode: 0, Events: events})
+	if err == nil || !strings.Contains(err.Error(), "exit_code=2") {
+		t.Fatalf("expected result-event exit_code error, got %v", err)
+	}
+}
+
+func TestGeminiValidateResultIgnoresEmptyIsErrorToolResult(t *testing.T) {
+	v := geminiValidator(t)
+	events := []coreexec.Event{
+		{Type: coreexec.EventStdout, Data: `{"type":"tool_use","tool_name":"read_file"}`, Time: time.Now()},
+		{Type: coreexec.EventStdout, Data: `{"type":"tool_result","is_error":true,"content":""}`, Time: time.Now()},
+	}
+	if err := v.ValidateResult(coreexec.Result{ExitCode: 0, Events: events}); err != nil {
+		t.Fatalf("expected nil for empty is_error content, got %v", err)
+	}
+}
+
+func TestGeminiValidateResultIgnoresGenericIsErrorToolResult(t *testing.T) {
+	v := geminiValidator(t)
+	// A generic is_error=true content (no explicit "denied"/"rejected"
+	// text) must not be classified as denial — treat as recoverable tool
+	// failure and let OS exit code decide.
+	events := []coreexec.Event{
+		{Type: coreexec.EventStdout, Data: `{"type":"tool_use","tool_name":"read_file"}`, Time: time.Now()},
+		{Type: coreexec.EventStdout, Data: `{"type":"tool_result","is_error":true,"content":"file not found"}`, Time: time.Now()},
+	}
+	if err := v.ValidateResult(coreexec.Result{ExitCode: 0, Events: events}); err != nil {
+		t.Fatalf("expected nil for generic is_error content, got %v", err)
+	}
+}
