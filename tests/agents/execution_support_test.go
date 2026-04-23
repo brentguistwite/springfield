@@ -13,6 +13,7 @@ func TestSupportedForExecutionReturnsSupportedIDs(t *testing.T) {
 	}{
 		{0, agents.AgentClaude},
 		{1, agents.AgentCodex},
+		{2, agents.AgentGemini},
 	}
 
 	result := agents.SupportedForExecution()
@@ -37,7 +38,7 @@ func TestIsExecutionSupported(t *testing.T) {
 	}{
 		{agents.AgentClaude, true},
 		{agents.AgentCodex, true},
-		{agents.AgentGemini, false},
+		{agents.AgentGemini, true},
 		{agents.ID("unknown"), false},
 	}
 
@@ -48,5 +49,18 @@ func TestIsExecutionSupported(t *testing.T) {
 				t.Fatalf("IsExecutionSupported(%q) = %v, want %v", tc.id, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestDefaultInitPriorityExcludesGemini locks the roadmap rule that Gemini
+// is execution-supported but opt-in only. Fresh init without --agents must
+// not silently insert gemini.
+func TestDefaultInitPriorityExcludesGemini(t *testing.T) {
+	priority := agents.DefaultInitPriority()
+	if len(priority) != 2 {
+		t.Fatalf("expected 2 default agents, got %d: %v", len(priority), priority)
+	}
+	if priority[0] != agents.AgentClaude || priority[1] != agents.AgentCodex {
+		t.Fatalf("default priority: want [claude codex], got %v", priority)
 	}
 }

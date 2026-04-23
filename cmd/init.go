@@ -301,9 +301,11 @@ func ensureGuardrailBlock(path string) (bool, error) {
 	return true, nil
 }
 
-// defaultPriority returns the canonical execution-supported agent list as strings.
+// defaultPriority returns the default init priority as strings. Intentionally
+// narrower than SupportedForExecution: Gemini is execution-supported but must
+// be opted in via --agents to avoid clobbering existing user priority.
 func defaultPriority() []string {
-	ids := agents.SupportedForExecution()
+	ids := agents.DefaultInitPriority()
 	out := make([]string, len(ids))
 	for i, id := range ids {
 		out[i] = string(id)

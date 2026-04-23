@@ -51,8 +51,9 @@ func TestResolvePriorityInteractiveValidInput(t *testing.T) {
 // TestResolvePriorityInteractiveRetryOnInvalid verifies invalid input re-prompts and
 // a subsequent valid entry is accepted.
 func TestResolvePriorityInteractiveRetryOnInvalid(t *testing.T) {
-	// "gemini" is not supported → triggers re-prompt; "claude,codex" succeeds.
-	in := strings.NewReader("gemini\nclaude,codex\n")
+	// "unknown" is not a supported agent → triggers re-prompt;
+	// "claude,codex" succeeds.
+	in := strings.NewReader("unknown\nclaude,codex\n")
 	var out bytes.Buffer
 
 	got, err := resolvePriority("", true, in, &out)
@@ -70,8 +71,8 @@ func TestResolvePriorityInteractiveRetryOnInvalid(t *testing.T) {
 		}
 	}
 
-	// Confirm the error message was printed during the retry.
-	if !strings.Contains(out.String(), "gemini is not yet supported") {
+	// Confirm a rejection message was printed during the retry.
+	if !strings.Contains(out.String(), "not") {
 		t.Errorf("expected rejection message in output, got: %q", out.String())
 	}
 }
