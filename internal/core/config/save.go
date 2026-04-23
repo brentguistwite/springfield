@@ -23,10 +23,6 @@ type saveStartConfig struct {
 	KeepAwake *bool `toml:"keep_awake,omitempty"`
 }
 
-type saveStartConfig struct {
-	KeepAwake *bool `toml:"keep_awake,omitempty"`
-}
-
 // Save writes the config back to disk. When AgentPriority is set, it syncs
 // DefaultAgent to priority[0] for backwards compatibility.
 // The sync modifies a local copy; callers should reload via LoadFrom if they
