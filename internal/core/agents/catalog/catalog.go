@@ -11,8 +11,8 @@ import (
 )
 
 // DefaultAdapters returns all detectable agent adapters in canonical order:
-// claude, codex, gemini. All three are included for detection purposes (e.g.
-// doctor). See agents.SupportedForExecution for which agents are executable.
+// claude, codex, gemini. All three adapters are executable — gemini joined
+// in 2026-04.
 func DefaultAdapters(lookPath agents.LookPathFunc) []agents.Adapter {
 	return []agents.Adapter{
 		claude.New(lookPath),

@@ -19,10 +19,13 @@ func TestClaudeAdapterProducesRunnableCommandSpec(t *testing.T) {
 		t.Fatal("claude adapter does not implement Commander")
 	}
 
-	cmd := commander.Command(agents.CommandInput{
+	cmd, err := commander.Command(agents.CommandInput{
 		Prompt:  "implement the login feature",
 		WorkDir: "/tmp/project",
 	})
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
 
 	if cmd.Name != "claude" {
 		t.Fatalf("expected binary %q, got %q", "claude", cmd.Name)
@@ -49,10 +52,13 @@ func TestCodexAdapterProducesRunnableCommandSpec(t *testing.T) {
 		t.Fatal("codex adapter does not implement Commander")
 	}
 
-	cmd := commander.Command(agents.CommandInput{
+	cmd, err := commander.Command(agents.CommandInput{
 		Prompt:  "fix the auth bug",
 		WorkDir: "/tmp/project",
 	})
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
 
 	if cmd.Name != "codex" {
 		t.Fatalf("expected binary %q, got %q", "codex", cmd.Name)
@@ -83,10 +89,13 @@ func TestRegistryResolvesCommander(t *testing.T) {
 		t.Fatal("resolved adapter does not implement Commander")
 	}
 
-	cmd := commander.Command(agents.CommandInput{
+	cmd, err := commander.Command(agents.CommandInput{
 		Prompt:  "test prompt",
 		WorkDir: "/tmp",
 	})
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
 
 	if cmd.Name != "claude" {
 		t.Fatalf("expected binary %q, got %q", "claude", cmd.Name)
@@ -118,10 +127,13 @@ func TestClaudeAdapterOmitsPermissionModeByDefault(t *testing.T) {
 	adapter := claude.New(exec.LookPath)
 	commander := adapter.(agents.Commander)
 
-	cmd := commander.Command(agents.CommandInput{
+	cmd, err := commander.Command(agents.CommandInput{
 		Prompt:  "implement the login feature",
 		WorkDir: "/tmp/project",
 	})
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
 
 	assertArgsDoNotContain(t, cmd.Args, "--permission-mode")
 }
@@ -130,13 +142,16 @@ func TestClaudeAdapterAppendsPermissionModeWhenConfigured(t *testing.T) {
 	adapter := claude.New(exec.LookPath)
 	commander := adapter.(agents.Commander)
 
-	cmd := commander.Command(agents.CommandInput{
+	cmd, err := commander.Command(agents.CommandInput{
 		Prompt:  "implement the login feature",
 		WorkDir: "/tmp/project",
 		ExecutionSettings: agents.ExecutionSettings{
 			Claude: agents.ClaudeExecutionSettings{PermissionMode: "bypassPermissions"},
 		},
 	})
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
 
 	assertArgsContain(t, cmd.Args, "--permission-mode", "bypassPermissions")
 }
@@ -145,10 +160,13 @@ func TestCodexAdapterUsesExecJsonByDefault(t *testing.T) {
 	adapter := codex.New(exec.LookPath)
 	commander := adapter.(agents.Commander)
 
-	cmd := commander.Command(agents.CommandInput{
+	cmd, err := commander.Command(agents.CommandInput{
 		Prompt:  "fix the auth bug",
 		WorkDir: "/tmp/project",
 	})
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
 
 	assertArgsContain(t, cmd.Args, "exec", "")
 	assertArgsContain(t, cmd.Args, "--json", "")
@@ -160,7 +178,7 @@ func TestCodexAdapterAppendsSandboxAndApprovalWhenConfigured(t *testing.T) {
 	adapter := codex.New(exec.LookPath)
 	commander := adapter.(agents.Commander)
 
-	cmd := commander.Command(agents.CommandInput{
+	cmd, err := commander.Command(agents.CommandInput{
 		Prompt:  "fix the auth bug",
 		WorkDir: "/tmp/project",
 		ExecutionSettings: agents.ExecutionSettings{
@@ -170,6 +188,9 @@ func TestCodexAdapterAppendsSandboxAndApprovalWhenConfigured(t *testing.T) {
 			},
 		},
 	})
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
 
 	assertArgsContain(t, cmd.Args, "-s", "workspace-write")
 	assertArgsContain(t, cmd.Args, "-a", "on-request")

@@ -71,11 +71,20 @@ func (r Runner) Run(ctx context.Context, req Request) Result {
 			}
 		}
 
-		cmd := commander.Command(agents.CommandInput{
+		cmd, err := commander.Command(agents.CommandInput{
 			Prompt:            req.Prompt,
 			WorkDir:           req.WorkDir,
 			ExecutionSettings: req.ExecutionSettings,
 		})
+		if err != nil {
+			return Result{
+				Agent:     agentID,
+				Status:    StatusFailed,
+				Err:       fmt.Errorf("build command for %s: %w", agentID, err),
+				StartedAt: start,
+				EndedAt:   r.now(),
+			}
+		}
 		cmd.Timeout = req.Timeout
 
 		execResult := r.run(ctx, cmd, req.OnEvent)

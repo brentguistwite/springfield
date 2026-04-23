@@ -106,9 +106,14 @@ type CommandInput struct {
 }
 
 // Commander extends Adapter with the ability to produce a runnable command spec.
+//
+// Returns a non-nil error when the adapter cannot safely build a runnable
+// command (e.g. Gemini refuses to spawn when its control-plane hook file
+// can't be written). The runtime surfaces this as a failed run rather than
+// executing an unprotected subprocess.
 type Commander interface {
 	Adapter
-	Command(input CommandInput) exec.Command
+	Command(input CommandInput) (exec.Command, error)
 }
 
 // ResultValidator optionally validates whether exit code 0 truly means task success.

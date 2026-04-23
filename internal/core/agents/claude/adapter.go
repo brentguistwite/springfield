@@ -111,7 +111,7 @@ func (a *adapter) Detect(context.Context) agents.Detection {
 	return result
 }
 
-func (a *adapter) Command(input agents.CommandInput) coreexec.Command {
+func (a *adapter) Command(input agents.CommandInput) (coreexec.Command, error) {
 	// -p enables non-interactive print mode; prompt is delivered via stdin
 	// rather than as a positional arg so it is not visible in `ps aux`.
 	// --output-format and --verbose only work with -p.
@@ -137,7 +137,7 @@ func (a *adapter) Command(input agents.CommandInput) coreexec.Command {
 		Args:  args,
 		Stdin: input.Prompt,
 		Dir:   input.WorkDir,
-	}
+	}, nil
 }
 
 // SpringfieldControlPlaneHookCommand returns the hook command string used

@@ -3,6 +3,7 @@ package exec
 import (
 	"bufio"
 	"context"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -28,7 +29,7 @@ func Run(ctx context.Context, cmd Command, handler EventHandler) Result {
 		proc.Dir = cmd.Dir
 	}
 	if len(cmd.Env) > 0 {
-		proc.Env = cmd.Env
+		proc.Env = mergeEnv(os.Environ(), cmd.Env)
 	}
 
 	stdout, err := proc.StdoutPipe()
@@ -85,4 +86,33 @@ func Run(ctx context.Context, cmd Command, handler EventHandler) Result {
 	}
 
 	return Result{ExitCode: exitCode, Events: events, Err: waitErr}
+}
+
+// mergeEnv produces a key=value slice from base plus overrides, with
+// overrides winning on duplicate keys. Used so adapters can inject a small
+// number of environment overrides without clobbering the parent env.
+func mergeEnv(base []string, overrides map[string]string) []string {
+	seen := make(map[string]bool, len(overrides))
+	merged := make([]string, 0, len(base)+len(overrides))
+	for _, entry := range base {
+		eq := strings.IndexByte(entry, '=')
+		if eq < 0 {
+			merged = append(merged, entry)
+			continue
+		}
+		key := entry[:eq]
+		if override, ok := overrides[key]; ok {
+			merged = append(merged, key+"="+override)
+			seen[key] = true
+			continue
+		}
+		merged = append(merged, entry)
+	}
+	for k, v := range overrides {
+		if seen[k] {
+			continue
+		}
+		merged = append(merged, k+"="+v)
+	}
+	return merged
 }
