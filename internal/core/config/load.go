@@ -133,6 +133,22 @@ func validate(cfg Config) error {
 		return err
 	}
 
+	if err := validateEnum(
+		"agents.gemini.approval_mode",
+		cfg.Agents.Gemini.ApprovalMode,
+		[]string{"default", "auto_edit", "yolo", "plan"},
+	); err != nil {
+		return err
+	}
+
+	if err := validateEnum(
+		"agents.gemini.sandbox_mode",
+		cfg.Agents.Gemini.SandboxMode,
+		[]string{"true", "docker", "podman", "sandbox-exec", "runsc", "lxc"},
+	); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -151,9 +167,13 @@ func normalize(cfg *Config) {
 	cfg.Agents.Claude.PermissionMode = strings.TrimSpace(cfg.Agents.Claude.PermissionMode)
 	cfg.Agents.Codex.SandboxMode = strings.TrimSpace(cfg.Agents.Codex.SandboxMode)
 	cfg.Agents.Codex.ApprovalPolicy = strings.TrimSpace(cfg.Agents.Codex.ApprovalPolicy)
+	cfg.Agents.Gemini.ApprovalMode = strings.TrimSpace(cfg.Agents.Gemini.ApprovalMode)
+	cfg.Agents.Gemini.SandboxMode = strings.TrimSpace(cfg.Agents.Gemini.SandboxMode)
+	cfg.Agents.Gemini.Model = strings.TrimSpace(cfg.Agents.Gemini.Model)
 }
 
 func setPresence(cfg *Config, metadata toml.MetaData) {
 	cfg.Agents.Claude.isPresent = metadata.IsDefined("agents", "claude")
 	cfg.Agents.Codex.isPresent = metadata.IsDefined("agents", "codex")
+	cfg.Agents.Gemini.isPresent = metadata.IsDefined("agents", "gemini")
 }

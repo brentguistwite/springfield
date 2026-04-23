@@ -13,6 +13,7 @@ const (
 type AgentExecutionModes struct {
 	Claude ExecutionMode
 	Codex  ExecutionMode
+	Gemini ExecutionMode
 }
 
 // Config is the shared project configuration loaded from springfield.toml.
@@ -76,6 +77,10 @@ func (c Config) ExecutionSettingsForAgent(agentID string) agents.ExecutionSettin
 		return agents.ExecutionSettings{
 			Codex: settings.Codex,
 		}
+	case string(agents.AgentGemini):
+		return agents.ExecutionSettings{
+			Gemini: settings.Gemini,
+		}
 	default:
 		return agents.ExecutionSettings{}
 	}
@@ -91,6 +96,11 @@ func (c Config) ExecutionSettings() agents.ExecutionSettings {
 			SandboxMode:    c.Agents.Codex.SandboxMode,
 			ApprovalPolicy: c.Agents.Codex.ApprovalPolicy,
 		},
+		Gemini: agents.GeminiExecutionSettings{
+			ApprovalMode: c.Agents.Gemini.ApprovalMode,
+			SandboxMode:  c.Agents.Gemini.SandboxMode,
+			Model:        c.Agents.Gemini.Model,
+		},
 	}
 }
 
@@ -103,6 +113,11 @@ func RecommendedExecutionSettings() agents.ExecutionSettings {
 			SandboxMode:    "danger-full-access",
 			ApprovalPolicy: "never",
 		},
+		Gemini: agents.GeminiExecutionSettings{
+			ApprovalMode: "yolo",
+			SandboxMode:  "sandbox-exec",
+			Model:        "",
+		},
 	}
 }
 
@@ -110,15 +125,20 @@ func (c Config) ExecutionModes() AgentExecutionModes {
 	return AgentExecutionModes{
 		Claude: executionModeForClaude(c.Agents.Claude),
 		Codex:  executionModeForCodex(c.Agents.Codex),
+		Gemini: executionModeForGemini(c.Agents.Gemini),
 	}
 }
 
 func (c Config) HasAnyExecutionSettings() bool {
 	return c.Agents.Claude.isPresent ||
 		c.Agents.Codex.isPresent ||
+		c.Agents.Gemini.isPresent ||
 		c.Agents.Claude.PermissionMode != "" ||
 		c.Agents.Codex.SandboxMode != "" ||
-		c.Agents.Codex.ApprovalPolicy != ""
+		c.Agents.Codex.ApprovalPolicy != "" ||
+		c.Agents.Gemini.ApprovalMode != "" ||
+		c.Agents.Gemini.SandboxMode != "" ||
+		c.Agents.Gemini.Model != ""
 }
 
 func (c *Config) ApplyRecommendedExecutionDefaults() {
@@ -126,6 +146,9 @@ func (c *Config) ApplyRecommendedExecutionDefaults() {
 	c.Agents.Claude.PermissionMode = recommended.Claude.PermissionMode
 	c.Agents.Codex.SandboxMode = recommended.Codex.SandboxMode
 	c.Agents.Codex.ApprovalPolicy = recommended.Codex.ApprovalPolicy
+	c.Agents.Gemini.ApprovalMode = recommended.Gemini.ApprovalMode
+	c.Agents.Gemini.SandboxMode = recommended.Gemini.SandboxMode
+	c.Agents.Gemini.Model = recommended.Gemini.Model
 }
 
 func (c *Config) ApplyExecutionMode(agentID string, mode ExecutionMode) {
@@ -151,6 +174,20 @@ func (c *Config) ApplyExecutionMode(agentID string, mode ExecutionMode) {
 			c.Agents.Codex.SandboxMode = ""
 			c.Agents.Codex.ApprovalPolicy = ""
 		}
+	case string(agents.AgentGemini):
+		switch mode {
+		case ExecutionModeRecommended:
+			c.Agents.Gemini.isPresent = true
+			recommended := RecommendedExecutionSettings().Gemini
+			c.Agents.Gemini.ApprovalMode = recommended.ApprovalMode
+			c.Agents.Gemini.SandboxMode = recommended.SandboxMode
+			c.Agents.Gemini.Model = recommended.Model
+		case ExecutionModeOff:
+			c.Agents.Gemini.isPresent = true
+			c.Agents.Gemini.ApprovalMode = ""
+			c.Agents.Gemini.SandboxMode = ""
+			c.Agents.Gemini.Model = ""
+		}
 	}
 }
 
@@ -175,6 +212,16 @@ func executionModeForCodex(cfg CodexAgentConfig) ExecutionMode {
 	return ExecutionModeCustom
 }
 
+func executionModeForGemini(cfg GeminiAgentConfig) ExecutionMode {
+	if cfg.ApprovalMode == "yolo" && cfg.SandboxMode == "sandbox-exec" && cfg.Model == "" {
+		return ExecutionModeRecommended
+	}
+	if cfg.ApprovalMode == "" && cfg.SandboxMode == "" && cfg.Model == "" {
+		return ExecutionModeOff
+	}
+	return ExecutionModeCustom
+}
+
 // PlanConfig stores per-plan overrides.
 type PlanConfig struct {
 	Agent string `toml:"agent"`
@@ -184,6 +231,7 @@ type PlanConfig struct {
 type AgentsConfig struct {
 	Claude ClaudeAgentConfig `toml:"claude"`
 	Codex  CodexAgentConfig  `toml:"codex"`
+	Gemini GeminiAgentConfig `toml:"gemini"`
 }
 
 // ClaudeAgentConfig stores supported Claude execution settings.
@@ -197,6 +245,14 @@ type CodexAgentConfig struct {
 	SandboxMode    string `toml:"sandbox_mode,omitempty"`
 	ApprovalPolicy string `toml:"approval_policy,omitempty"`
 	isPresent      bool   `toml:"-"`
+}
+
+// GeminiAgentConfig stores supported Gemini execution settings.
+type GeminiAgentConfig struct {
+	ApprovalMode string `toml:"approval_mode,omitempty"`
+	SandboxMode  string `toml:"sandbox_mode,omitempty"`
+	Model        string `toml:"model,omitempty"`
+	isPresent    bool   `toml:"-"`
 }
 
 // Loaded is the stable public result of a config load.

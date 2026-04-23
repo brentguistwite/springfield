@@ -180,6 +180,40 @@ agent = "codex"
 	}
 }
 
+func TestSaveRoundTripsGeminiExecutionConfig(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+[project]
+default_agent = "gemini"
+`)
+
+	loaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	loaded.Config.Agents.Gemini.ApprovalMode = "yolo"
+	loaded.Config.Agents.Gemini.SandboxMode = "sandbox-exec"
+	loaded.Config.Agents.Gemini.Model = "pro"
+	if err := config.Save(loaded); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	reloaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := reloaded.Config.Agents.Gemini.ApprovalMode; got != "yolo" {
+		t.Fatalf("approval_mode: got %q", got)
+	}
+	if got := reloaded.Config.Agents.Gemini.SandboxMode; got != "sandbox-exec" {
+		t.Fatalf("sandbox_mode: got %q", got)
+	}
+	if got := reloaded.Config.Agents.Gemini.Model; got != "pro" {
+		t.Fatalf("model: got %q", got)
+	}
+}
+
 func TestSaveRoundTripsAgentExecutionConfig(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `

@@ -73,6 +73,7 @@ type Resolved struct {
 type ExecutionSettings struct {
 	Claude ClaudeExecutionSettings
 	Codex  CodexExecutionSettings
+	Gemini GeminiExecutionSettings
 }
 
 type ClaudeExecutionSettings struct {
@@ -82,6 +83,19 @@ type ClaudeExecutionSettings struct {
 type CodexExecutionSettings struct {
 	SandboxMode    string
 	ApprovalPolicy string
+}
+
+// GeminiExecutionSettings carries Gemini CLI execution settings.
+//
+//   - ApprovalMode maps to --approval-mode (default|auto_edit|yolo|plan).
+//   - SandboxMode maps to --sandbox (empty to omit; true|docker|podman|
+//     sandbox-exec|runsc|lxc per Gemini CLI docs).
+//   - Model maps to --model (empty delegates to Gemini's default; alias
+//     pro|flash|flash-lite|auto or a concrete model ID also valid).
+type GeminiExecutionSettings struct {
+	ApprovalMode string
+	SandboxMode  string
+	Model        string
 }
 
 // CommandInput provides the parameters needed to build an agent CLI invocation.

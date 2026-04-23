@@ -209,6 +209,175 @@ sandbox_mode = "invalid"
 	}
 }
 
+func TestLoadParsesGeminiSection(t *testing.T) {
+	dir := t.TempDir()
+	tomlContent := `[project]
+default_agent = "claude"
+agent_priority = ["claude","codex","gemini"]
+[agents.gemini]
+approval_mode = "yolo"
+sandbox_mode = "sandbox-exec"
+model = "pro"
+`
+	if err := os.WriteFile(filepath.Join(dir, "springfield.toml"), []byte(tomlContent), 0o644); err != nil {
+		t.Fatalf("write toml: %v", err)
+	}
+	loaded, err := config.LoadFrom(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := loaded.Config.Agents.Gemini.ApprovalMode; got != "yolo" {
+		t.Fatalf("approval_mode: want yolo, got %q", got)
+	}
+	if got := loaded.Config.Agents.Gemini.SandboxMode; got != "sandbox-exec" {
+		t.Fatalf("sandbox_mode: want sandbox-exec, got %q", got)
+	}
+	if got := loaded.Config.Agents.Gemini.Model; got != "pro" {
+		t.Fatalf("model: want pro, got %q", got)
+	}
+	settings := loaded.Config.ExecutionSettingsForAgent(string(agents.AgentGemini))
+	if settings.Gemini.ApprovalMode != "yolo" {
+		t.Fatalf("resolved gemini approval_mode: want yolo, got %q", settings.Gemini.ApprovalMode)
+	}
+	if settings.Gemini.SandboxMode != "sandbox-exec" {
+		t.Fatalf("resolved gemini sandbox_mode: want sandbox-exec, got %q", settings.Gemini.SandboxMode)
+	}
+	if settings.Gemini.Model != "pro" {
+		t.Fatalf("resolved gemini model: want pro, got %q", settings.Gemini.Model)
+	}
+}
+
+func TestLoadRejectsUnknownGeminiApprovalMode(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "springfield.toml"), []byte(
+		"[project]\ndefault_agent = \"gemini\"\n[agents.gemini]\napproval_mode = \"invalid\"\n",
+	), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, err := config.LoadFrom(dir)
+	if err == nil || !strings.Contains(err.Error(), "agents.gemini.approval_mode must be one of") {
+		t.Fatalf("expected actionable gemini approval_mode error, got %v", err)
+	}
+}
+
+func TestLoadRejectsUnknownGeminiSandboxMode(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "springfield.toml"), []byte(
+		"[project]\ndefault_agent = \"gemini\"\n[agents.gemini]\nsandbox_mode = \"invalid\"\n",
+	), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, err := config.LoadFrom(dir)
+	if err == nil || !strings.Contains(err.Error(), "agents.gemini.sandbox_mode must be one of") {
+		t.Fatalf("expected actionable gemini sandbox_mode error, got %v", err)
+	}
+}
+
+func TestLoadTrimsGeminiExecutionConfigWhitespace(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+[project]
+default_agent = "gemini"
+
+[agents.gemini]
+approval_mode = "  yolo  "
+sandbox_mode = "  sandbox-exec  "
+model = "  pro  "
+`)
+	loaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := loaded.Config.Agents.Gemini.ApprovalMode; got != "yolo" {
+		t.Fatalf("trimmed approval_mode: got %q", got)
+	}
+	if got := loaded.Config.Agents.Gemini.SandboxMode; got != "sandbox-exec" {
+		t.Fatalf("trimmed sandbox_mode: got %q", got)
+	}
+	if got := loaded.Config.Agents.Gemini.Model; got != "pro" {
+		t.Fatalf("trimmed model: got %q", got)
+	}
+}
+
+func TestExecutionModesReturnsRecommendedForGeminiYoloSandboxExec(t *testing.T) {
+	cfg := config.Config{
+		Agents: config.AgentsConfig{
+			Gemini: config.GeminiAgentConfig{
+				ApprovalMode: "yolo",
+				SandboxMode:  "sandbox-exec",
+			},
+		},
+	}
+	if got := cfg.ExecutionModes().Gemini; got != config.ExecutionModeRecommended {
+		t.Fatalf("gemini mode: want %q, got %q", config.ExecutionModeRecommended, got)
+	}
+}
+
+func TestExecutionModesReturnsOffForEmptyGemini(t *testing.T) {
+	cfg := config.Config{}
+	if got := cfg.ExecutionModes().Gemini; got != config.ExecutionModeOff {
+		t.Fatalf("gemini mode: want %q, got %q", config.ExecutionModeOff, got)
+	}
+}
+
+func TestExecutionModesReturnsCustomForGeminiPartial(t *testing.T) {
+	cfg := config.Config{
+		Agents: config.AgentsConfig{
+			Gemini: config.GeminiAgentConfig{
+				ApprovalMode: "plan",
+			},
+		},
+	}
+	if got := cfg.ExecutionModes().Gemini; got != config.ExecutionModeCustom {
+		t.Fatalf("gemini mode: want %q, got %q", config.ExecutionModeCustom, got)
+	}
+}
+
+func TestHasAnyExecutionSettingsTrueWhenGeminiSet(t *testing.T) {
+	cfg := config.Config{
+		Agents: config.AgentsConfig{
+			Gemini: config.GeminiAgentConfig{ApprovalMode: "yolo"},
+		},
+	}
+	if !cfg.HasAnyExecutionSettings() {
+		t.Fatal("expected HasAnyExecutionSettings true when gemini approval_mode set")
+	}
+}
+
+func TestApplyExecutionModeRecommendedGemini(t *testing.T) {
+	cfg := config.Config{}
+	cfg.ApplyExecutionMode("gemini", config.ExecutionModeRecommended)
+	if cfg.Agents.Gemini.ApprovalMode != "yolo" {
+		t.Fatalf("approval_mode: got %q", cfg.Agents.Gemini.ApprovalMode)
+	}
+	if cfg.Agents.Gemini.SandboxMode != "sandbox-exec" {
+		t.Fatalf("sandbox_mode: got %q", cfg.Agents.Gemini.SandboxMode)
+	}
+}
+
+func TestApplyExecutionModeOffGemini(t *testing.T) {
+	cfg := config.Config{
+		Agents: config.AgentsConfig{
+			Gemini: config.GeminiAgentConfig{ApprovalMode: "yolo", SandboxMode: "sandbox-exec", Model: "pro"},
+		},
+	}
+	cfg.ApplyExecutionMode("gemini", config.ExecutionModeOff)
+	if cfg.Agents.Gemini.ApprovalMode != "" || cfg.Agents.Gemini.SandboxMode != "" || cfg.Agents.Gemini.Model != "" {
+		t.Fatalf("expected gemini fields cleared, got %+v", cfg.Agents.Gemini)
+	}
+}
+
+func TestApplyRecommendedDefaultsSetsGemini(t *testing.T) {
+	cfg := config.Config{}
+	cfg.ApplyRecommendedExecutionDefaults()
+	if cfg.Agents.Gemini.ApprovalMode != "yolo" {
+		t.Fatalf("approval_mode: got %q", cfg.Agents.Gemini.ApprovalMode)
+	}
+	if cfg.Agents.Gemini.SandboxMode != "sandbox-exec" {
+		t.Fatalf("sandbox_mode: got %q", cfg.Agents.Gemini.SandboxMode)
+	}
+}
+
 func TestLoadRejectsUnknownCodexApprovalPolicy(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `

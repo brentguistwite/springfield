@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"springfield/internal/core/agents"
 )
 
 // InitOptions controls Init behavior.
@@ -115,6 +117,22 @@ func Init(dir string, priority []string, opts InitOptions) (InitResult, error) {
 			changed = true
 		}
 
+		// Fill in missing Gemini defaults, but only when Gemini is in the
+		// user's priority. Gemini is execution-supported but stays opt-in —
+		// we must not silently add [agents.gemini] to users who never asked
+		// for Gemini.
+		if slices.Contains(priority, string(agents.AgentGemini)) &&
+			!loaded.Config.Agents.Gemini.isPresent &&
+			loaded.Config.Agents.Gemini.ApprovalMode == "" &&
+			loaded.Config.Agents.Gemini.SandboxMode == "" &&
+			loaded.Config.Agents.Gemini.Model == "" {
+			loaded.Config.Agents.Gemini.ApprovalMode = rec.Gemini.ApprovalMode
+			loaded.Config.Agents.Gemini.SandboxMode = rec.Gemini.SandboxMode
+			loaded.Config.Agents.Gemini.Model = rec.Gemini.Model
+			loaded.Config.Agents.Gemini.isPresent = true
+			changed = true
+		}
+
 		if changed {
 			if err := Save(loaded); err != nil {
 				return result, fmt.Errorf("save merged config: %w", err)
@@ -136,8 +154,9 @@ func Init(dir string, priority []string, opts InitOptions) (InitResult, error) {
 	return result, nil
 }
 
-// buildScaffold returns the initial TOML content. Both agent sections are always
-// emitted so users have recommended defaults ready to edit without hand-crafting them.
+// buildScaffold returns the initial TOML content. Claude and Codex sections are
+// always emitted; Gemini's [agents.gemini] is only emitted when "gemini" appears
+// in priority, keeping Gemini opt-in for existing projects.
 func buildScaffold(priority []string) string {
 	defaultAgent := ""
 	if len(priority) > 0 {
@@ -153,7 +172,7 @@ func buildScaffold(priority []string) string {
 
 	rec := RecommendedExecutionSettings()
 
-	return fmt.Sprintf(`[project]
+	base := fmt.Sprintf(`[project]
 default_agent = %q
 agent_priority = %s
 
@@ -164,5 +183,15 @@ permission_mode = %q
 sandbox_mode = %q
 approval_policy = %q
 `, defaultAgent, agentPriority, rec.Claude.PermissionMode, rec.Codex.SandboxMode, rec.Codex.ApprovalPolicy)
+
+	if slices.Contains(priority, string(agents.AgentGemini)) {
+		base += fmt.Sprintf(`
+[agents.gemini]
+approval_mode = %q
+sandbox_mode = %q
+`, rec.Gemini.ApprovalMode, rec.Gemini.SandboxMode)
+	}
+
+	return base
 }
 
