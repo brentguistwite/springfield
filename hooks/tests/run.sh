@@ -253,11 +253,13 @@ if [[ "$got" != "$final" ]]; then
 fi
 rm -rf "$tmp5"
 
-# ---------- Test 6: failed upgrade must NOT leave stale symlink in place ----------
+# ---------- Test 6: failed upgrade keeps existing symlink + warns loudly ----------
 # User was on v4.4.4 (cached + symlinked). Plugin upgrades to v5.5.5. Fetch
-# fails and v5.5.5 isn't cached. The hook must REMOVE the stale symlink rather
-# than quietly keep routing to v4.4.4, because the plugin's skills/commands
-# will now expect v5.5.5 CLI semantics.
+# fails and v5.5.5 isn't cached (e.g. release assets haven't propagated yet
+# after a plugin.json bump). The hook MUST keep v4.4.4 on PATH so commands
+# still work during the rollout window, and MUST emit a VERSION MISMATCH
+# warning so the user knows about the skew. Deleting the symlink would brick
+# every teammate who updates before the release lands — worse than skew.
 tmp6="$(mktemp -d)"
 export HOME="$tmp6"
 export CLAUDE_PLUGIN_ROOT="$tmp6/plugin"
@@ -266,7 +268,8 @@ mkdir -p "$tmp6/plugin/.claude-plugin" "$tmp6/bin" \
 printf '{"version":"5.5.5"}\n' > "$tmp6/plugin/.claude-plugin/plugin.json"
 printf '#!/bin/sh\necho v4.4.4\n' > "$tmp6/.cache/springfield/4.4.4/springfield"
 chmod +x "$tmp6/.cache/springfield/4.4.4/springfield"
-ln -sfn "$tmp6/.cache/springfield/4.4.4/springfield" "$tmp6/.local/bin/springfield"
+old_target="$tmp6/.cache/springfield/4.4.4/springfield"
+ln -sfn "$old_target" "$tmp6/.local/bin/springfield"
 
 cat > "$tmp6/bin/curl" <<'STUB'
 #!/bin/sh
@@ -274,10 +277,14 @@ exit 22
 STUB
 chmod +x "$tmp6/bin/curl"
 
-PATH="$tmp6/bin:$PATH" bash "$hook" || true
-if [[ -L "$tmp6/.local/bin/springfield" || -e "$tmp6/.local/bin/springfield" ]]; then
-  target="$(readlink "$tmp6/.local/bin/springfield" 2>/dev/null || echo EXISTS)"
-  echo "FAIL test6: stale symlink not removed after failed upgrade: $target" >&2
+err6="$(PATH="$tmp6/bin:$PATH" bash "$hook" 2>&1 >/dev/null || true)"
+got="$(readlink "$tmp6/.local/bin/springfield" 2>/dev/null || true)"
+if [[ "$got" != "$old_target" ]]; then
+  echo "FAIL test6: existing symlink was removed or altered (got=$got want=$old_target)" >&2
+  fail=1
+fi
+if [[ "$err6" != *"VERSION MISMATCH"* ]]; then
+  echo "FAIL test6: missing VERSION MISMATCH warning in stderr: $err6" >&2
   fail=1
 fi
 rm -rf "$tmp6"
@@ -352,5 +359,58 @@ if [[ "$got" != "$want" ]]; then
   fail=1
 fi
 rm -rf "$tmp7"
+
+# ---------- Test 8: stalled fetch must bound wall-clock and fall back ----------
+# GitHub / DNS / proxy hangs. SessionStart runs synchronously before any
+# interactive command, so an unbounded curl blocks the user out of Claude
+# for minutes. The hook MUST bound the download via --max-time and treat a
+# timeout identically to a network error — fall through to fallback_symlink,
+# do not hang.
+tmp8="$(mktemp -d)"
+export HOME="$tmp8"
+export CLAUDE_PLUGIN_ROOT="$tmp8/plugin"
+mkdir -p "$tmp8/plugin/.claude-plugin" "$tmp8/bin" "$tmp8/.local/bin"
+printf '{"version":"2.2.2"}\n' > "$tmp8/plugin/.claude-plugin/plugin.json"
+
+# Curl stub that sleeps 10s — longer than the hook's max-time budget for this
+# test (set via SPRINGFIELD_CURL_MAX_TIME=2 below).
+cat > "$tmp8/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+# Emulate --max-time by honoring it ourselves: if passed, sleep min(N, stall).
+STALL=10
+MAX_TIME=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --max-time) MAX_TIME="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$MAX_TIME" ]; then
+  sleep_for="$MAX_TIME"
+  # Sleep the max-time, then exit with curl's timeout code (28)
+  sleep "$sleep_for"
+  exit 28
+fi
+sleep "$STALL"
+exit 28
+STUB
+chmod +x "$tmp8/bin/curl"
+
+t_start=$(date +%s)
+err8="$(PATH="$tmp8/bin:$PATH" SPRINGFIELD_CURL_CONNECT_TIMEOUT=1 \
+  SPRINGFIELD_CURL_MAX_TIME=2 bash "$hook" 2>&1 >/dev/null || true)"
+t_end=$(date +%s)
+elapsed=$((t_end - t_start))
+# Budget: max-time 2s + fallback overhead. Generous cap 8s — well under the
+# minutes-long hang that would happen with no --max-time.
+if (( elapsed > 8 )); then
+  echo "FAIL test8: hook did not bound stalled fetch: elapsed=${elapsed}s" >&2
+  fail=1
+fi
+if [[ "$err8" != *"timeout or error"* ]]; then
+  echo "FAIL test8: stalled fetch did not route through fallback path: $err8" >&2
+  fail=1
+fi
+rm -rf "$tmp8"
 
 exit $fail

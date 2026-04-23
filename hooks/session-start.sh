@@ -3,6 +3,20 @@ set -euo pipefail
 
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:?CLAUDE_PLUGIN_ROOT not set}"
 
+# Bound network calls so a stalled GitHub/DNS/proxy cannot lock the user out
+# at SessionStart. SESSION_START fires synchronously before any interactive
+# command; blocking for minutes on curl is worse than failing fast and
+# falling back. Env-overridable for tests.
+SPRINGFIELD_CURL_CONNECT_TIMEOUT="${SPRINGFIELD_CURL_CONNECT_TIMEOUT:-5}"
+SPRINGFIELD_CURL_MAX_TIME="${SPRINGFIELD_CURL_MAX_TIME:-30}"
+
+curl_bounded() {
+  curl --fail --silent --show-error --location \
+    --connect-timeout "$SPRINGFIELD_CURL_CONNECT_TIMEOUT" \
+    --max-time "$SPRINGFIELD_CURL_MAX_TIME" \
+    "$@"
+}
+
 sha256() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1" | awk '{print $1}'
@@ -32,11 +46,16 @@ plugin_version() {
     "$PLUGIN_ROOT/.claude-plugin/plugin.json"
 }
 
-# fallback_symlink only reuses the EXACT pinned version from cache. If the
-# pinned version isn't cached, REMOVE any pre-existing symlink so the user
-# doesn't silently keep running a stale CLI version under a newer plugin.
-# Visible breakage (`springfield: command not found`) beats invisible version
-# skew (new slash commands driving an old CLI with different flags/schema).
+# fallback_symlink resolves the "fetch failed or binary missing" path with a
+# tradeoff between two bad outcomes:
+#   A) silently keep running an older CLI under a newer plugin (version skew)
+#   B) remove the last-known-good CLI and break all commands (command-not-found)
+# Plugin version bumps can be visible before the matching release assets land
+# (pushing plugin without tagging, GitHub outage mid-release, replica lag, CI
+# still running). In those windows option B would brick every teammate who
+# updates, so we choose option A — keep the existing symlink — but emit a
+# loud, repeatable VERSION MISMATCH warning on every session until it
+# resolves. Visible over silent; keep-working over brick.
 fallback_symlink() {
   local dest="$1"
   local version="$2"
@@ -46,11 +65,13 @@ fallback_symlink() {
     echo "springfield: using cached v$version (fetch failed)" >&2
     return 0
   fi
-  if [[ -e "$dest" || -L "$dest" ]]; then
-    rm -f "$dest"
-    echo "springfield: removed stale CLI symlink — plugin pinned v$version but no matching binary is cached and fetch failed" >&2
+  if [[ -L "$dest" || -e "$dest" ]]; then
+    local current
+    current="$(readlink "$dest" 2>/dev/null || echo "$dest")"
+    echo "springfield: VERSION MISMATCH — plugin pinned v$version but no matching binary is cached and fetch failed; keeping existing $current on PATH. Run \`springfield version\` to inspect; install v$version manually from https://github.com/brentguistwite/springfield/releases if skew persists." >&2
+    return 0
   fi
-  echo "springfield: install manually from https://github.com/brentguistwite/springfield/releases" >&2
+  echo "springfield: no cached binary for v$version and fetch failed; install manually from https://github.com/brentguistwite/springfield/releases" >&2
 }
 
 # stat_mtime portably prints the epoch mtime of $1 (BSD stat on macOS vs
@@ -179,13 +200,13 @@ main() {
   tmp="$(mktemp -d)"
   export _SPRINGFIELD_TMP="$tmp"
 
-  if ! curl -fsSL -o "$tmp/$asset" "$asset_url"; then
-    echo "springfield: failed to download $asset_url" >&2
+  if ! curl_bounded -o "$tmp/$asset" "$asset_url"; then
+    echo "springfield: failed to download $asset_url (timeout or error)" >&2
     fallback_symlink "$dest" "$version"
     exit 0
   fi
-  if ! curl -fsSL "$sums_url" > "$tmp/checksums.txt"; then
-    echo "springfield: failed to download checksums.txt" >&2
+  if ! curl_bounded "$sums_url" > "$tmp/checksums.txt"; then
+    echo "springfield: failed to download checksums.txt (timeout or error)" >&2
     fallback_symlink "$dest" "$version"
     exit 0
   fi
