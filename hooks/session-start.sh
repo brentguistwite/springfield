@@ -32,6 +32,20 @@ plugin_version() {
     "$PLUGIN_ROOT/.claude-plugin/plugin.json"
 }
 
+fallback_symlink() {
+  local dest="$1"
+  local latest=""
+  if [[ -d "$HOME/.cache/springfield" ]]; then
+    latest="$(ls -1 "$HOME/.cache/springfield" 2>/dev/null | sort -V | tail -n 1 || true)"
+  fi
+  if [[ -n "$latest" && -x "$HOME/.cache/springfield/$latest/springfield" ]]; then
+    ln -sfn "$HOME/.cache/springfield/$latest/springfield" "$dest"
+    echo "springfield: using cached $latest (fetch failed)" >&2
+  else
+    echo "springfield: no cached binary available and fetch failed; install manually from https://github.com/brentguistwite/springfield/releases" >&2
+  fi
+}
+
 main() {
   local os arch version cache_dir bin dest
   if ! read -r os arch < <(detect_platform); then
@@ -52,10 +66,53 @@ main() {
     exit 0
   fi
 
-  if [[ -x "$bin" ]]; then
-    ln -sfn "$bin" "$dest"
+  local repo="brentguistwite/springfield"
+  local base="https://github.com/$repo/releases/download/v$version"
+  local asset="springfield_${version}_${os}_${arch}.tar.gz"
+  local asset_url="$base/$asset"
+  local sums_url="$base/checksums.txt"
+
+  mkdir -p "$cache_dir"
+  local tmp
+  tmp="$(mktemp -d)"
+  # Export so the EXIT trap can see it after main()'s local scope unwinds.
+  export _SPRINGFIELD_TMP="$tmp"
+  trap 'rm -rf "${_SPRINGFIELD_TMP:-}"' EXIT
+
+  if ! curl -fsSL -o "$tmp/$asset" "$asset_url"; then
+    echo "springfield: failed to download $asset_url" >&2
+    fallback_symlink "$dest"
+    exit 0
   fi
-  exit 0
+  if ! curl -fsSL "$sums_url" > "$tmp/checksums.txt"; then
+    echo "springfield: failed to download checksums.txt" >&2
+    fallback_symlink "$dest"
+    exit 0
+  fi
+
+  local expected
+  expected="$(awk -v a="$asset" '$2 == a || $2 == "./"a { print $1; exit }' "$tmp/checksums.txt")"
+  if [[ -z "$expected" ]]; then
+    echo "springfield: checksum entry missing for $asset" >&2
+    fallback_symlink "$dest"
+    exit 0
+  fi
+  local got_sum
+  got_sum="$(sha256 "$tmp/$asset")"
+  if [[ "$got_sum" != "$expected" ]]; then
+    echo "springfield: checksum mismatch for $asset ($got_sum != $expected)" >&2
+    fallback_symlink "$dest"
+    exit 0
+  fi
+
+  tar -C "$cache_dir" -xzf "$tmp/$asset" springfield
+  chmod +x "$bin"
+  ln -sfn "$bin" "$dest"
+
+  case ":$PATH:" in
+    *":$HOME/.local/bin:"*) ;;
+    *) echo "springfield: add '$HOME/.local/bin' to PATH to use 'springfield' directly" >&2 ;;
+  esac
 }
 
 main "$@"
