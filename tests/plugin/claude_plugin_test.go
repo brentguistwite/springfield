@@ -144,6 +144,24 @@ func assertRequiredCommandsExist(t *testing.T, root string) {
 	}
 }
 
+func TestPluginJSONVersionMatchesTagEnv(t *testing.T) {
+	tag := os.Getenv("SPRINGFIELD_RELEASE_TAG")
+	if tag == "" {
+		t.Skip("SPRINGFIELD_RELEASE_TAG not set; release-time only")
+	}
+	want := strings.TrimPrefix(tag, "v")
+	manifest := readJSON[pluginManifest](t, repoRoot(t), ".claude-plugin/plugin.json")
+	if manifest.Version != want {
+		t.Fatalf("plugin.json version = %q, want %q (from tag %q)", manifest.Version, want, tag)
+	}
+	marketplace := readJSON[marketplaceManifest](t, repoRoot(t), ".claude-plugin/marketplace.json")
+	for _, p := range marketplace.Plugins {
+		if p.Name == "springfield" && p.Version != want {
+			t.Fatalf("marketplace.json springfield version = %q, want %q (from tag %q)", p.Version, want, tag)
+		}
+	}
+}
+
 func TestRegenLoopOmitsStart(t *testing.T) {
 	root := repoRoot(t)
 

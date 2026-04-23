@@ -31,6 +31,8 @@ jobs:
           go-version-file: go.mod
 
       - name: Validate plugin metadata
+        env:
+          SPRINGFIELD_RELEASE_TAG: ${{ github.ref_name }}
         run: go test ./tests/plugin/...
 
       - name: Build release archive
