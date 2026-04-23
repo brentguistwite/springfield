@@ -717,4 +717,88 @@ if [[ "$got14" != "$want14" ]]; then
 fi
 rm -rf "$tmp14"
 
+# ---------- Test 15: successful install leaves NO stale lock behind ----------
+# release_install_lock used to call rmdir, which fails silently on non-empty
+# dirs. With a pid sentinel inside, every successful install leaked the lock
+# forever, forcing later sessions through stale-reap heuristics.
+tmp15="$(mktemp -d)"
+export HOME="$tmp15"
+export CLAUDE_PLUGIN_ROOT="$tmp15/plugin"
+mkdir -p "$tmp15/plugin/.claude-plugin" "$tmp15/bin" "$tmp15/fake-release" \
+  "$tmp15/.local/bin"
+printf '{"version":"1.5.0"}\n' > "$tmp15/plugin/.claude-plugin/plugin.json"
+
+stage15="$(mktemp -d)"
+printf '#!/bin/sh\necho v1.5.0\n' > "$stage15/springfield"
+chmod +x "$stage15/springfield"
+tarball15="$tmp15/fake-release/springfield_1.5.0_${os}_${arch}.tar.gz"
+tar -C "$stage15" -czf "$tarball15" springfield
+if command -v sha256sum >/dev/null 2>&1; then
+  sum15="$(sha256sum "$tarball15" | awk '{print $1}')"
+else
+  sum15="$(shasum -a 256 "$tarball15" | awk '{print $1}')"
+fi
+printf '%s  ./springfield_1.5.0_%s_%s.tar.gz\n' "$sum15" "$os" "$arch" \
+  > "$tmp15/fake-release/checksums.txt"
+
+cat > "$tmp15/bin/curl" <<STUB
+#!/usr/bin/env bash
+url=""; out="-"
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -o) out="\$2"; shift 2 ;;
+    --fail|--silent|--show-error|--location|-fsSL|-fL|-sL|-s|-L|-f) shift ;;
+    --connect-timeout|--max-time) shift 2 ;;
+    http*) url="\$1"; shift ;;
+    *) shift ;;
+  esac
+done
+case "\$url" in
+  *checksums.txt) src="$tmp15/fake-release/checksums.txt" ;;
+  *springfield_1.5.0_${os}_${arch}.tar.gz) src="$tarball15" ;;
+  *) exit 22 ;;
+esac
+if [ "\$out" = "-" ]; then cat "\$src"; else cp "\$src" "\$out"; fi
+STUB
+chmod +x "$tmp15/bin/curl"
+
+PATH="$tmp15/bin:$PATH" bash "$hook" >/dev/null 2>/dev/null || { echo "FAIL test15: hook errored" >&2; fail=1; }
+# Lock dir must NOT exist after successful install.
+if [[ -e "$tmp15/.cache/springfield/.locks/1.5.0" ]]; then
+  echo "FAIL test15: stale lock leaked after successful install: $(ls -la "$tmp15/.cache/springfield/.locks/1.5.0")" >&2
+  fail=1
+fi
+rm -rf "$tmp15"
+
+# ---------- Test 16: symlink failure in cache-hit fast path does not crash ----------
+# ~/.local/bin is read-only, so `ln -sfn` cannot create the symlink there.
+# Under raw `set -e` this would exit non-zero and crash the synchronous
+# SessionStart. safe_symlink must catch the failure, warn, and exit 0.
+tmp16="$(mktemp -d)"
+export HOME="$tmp16"
+export CLAUDE_PLUGIN_ROOT="$tmp16/plugin"
+mkdir -p "$tmp16/plugin/.claude-plugin" \
+  "$tmp16/.cache/springfield/0.6.3" \
+  "$tmp16/.local/bin"
+printf '{"version":"0.6.3"}\n' > "$tmp16/plugin/.claude-plugin/plugin.json"
+printf '#!/bin/sh\necho v0.6.3\n' > "$tmp16/.cache/springfield/0.6.3/springfield"
+chmod +x "$tmp16/.cache/springfield/0.6.3/springfield"
+# Deny write on the parent so ln fails.
+chmod 555 "$tmp16/.local/bin"
+
+set +e
+PATH="/usr/bin:/bin" bash "$hook" >/dev/null 2>"$tmp16/err16.log"
+rc16=$?
+set -e
+chmod 755 "$tmp16/.local/bin"  # so rm can clean up
+if (( rc16 != 0 )); then
+  echo "FAIL test16: symlink failure crashed hook with rc=$rc16" >&2
+  fail=1
+fi
+if ! grep -q "failed to update" "$tmp16/err16.log" 2>/dev/null; then
+  echo "FAIL test16: expected diagnostic not emitted: $(cat "$tmp16/err16.log")" >&2
+  fail=1
+fi
+rm -rf "$tmp16"
+
 exit $fail

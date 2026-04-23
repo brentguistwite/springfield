@@ -64,7 +64,7 @@ fallback_symlink() {
   local version="$2"
   local exact="$HOME/.cache/springfield/$version/springfield"
   if [[ -x "$exact" ]]; then
-    ln -sfn "$exact" "$dest"
+    safe_symlink "$exact" "$dest" || true
     echo "springfield: using cached v$version (fetch failed)" >&2
     return 0
   fi
@@ -182,9 +182,26 @@ release_install_lock() {
   rm -rf "${_SPRINGFIELD_TMP:-}" 2>/dev/null || true
   unset _SPRINGFIELD_TMP
   if [[ -n "${_SPRINGFIELD_LOCK:-}" ]]; then
-    rmdir "$_SPRINGFIELD_LOCK" 2>/dev/null || true
+    # rm -rf (not rmdir) because the lock dir contains a `pid` sentinel.
+    # rmdir fails on non-empty dirs → would leak the lock forever, forcing
+    # later sessions through the stale-reap heuristics for no good reason.
+    rm -rf "$_SPRINGFIELD_LOCK" 2>/dev/null || true
     unset _SPRINGFIELD_LOCK
   fi
+}
+
+# safe_symlink routes every `ln -sfn` through one place. SessionStart is
+# synchronous and `set -e` is on; a raw `ln` failure (read-only ~/.local/bin,
+# a directory sitting at $dest, etc.) would crash the session. Callers use
+# this helper so every branch handles the same failure mode the same way.
+safe_symlink() {
+  local target="$1"
+  local link="$2"
+  if ln -sfn "$target" "$link" 2>/dev/null; then
+    return 0
+  fi
+  echo "springfield: failed to update $link -> $target (permission? directory collision?)" >&2
+  return 1
 }
 
 main() {
@@ -216,7 +233,7 @@ main() {
   local lock_rc=0
   acquire_install_lock "$version" || lock_rc=$?
   if (( lock_rc == 2 )); then
-    ln -sfn "$bin" "$dest"
+    safe_symlink "$bin" "$dest" || true
     exit 0
   fi
   if (( lock_rc != 0 )); then
@@ -228,7 +245,7 @@ main() {
   # Re-check fast path inside the lock (another process may have published
   # between our initial check and lock acquisition)
   if [[ -x "$bin" ]]; then
-    ln -sfn "$bin" "$dest"
+    safe_symlink "$bin" "$dest" || true
     exit 0
   fi
 
@@ -281,10 +298,7 @@ main() {
     exit 0
   fi
 
-  if ! ln -sfn "$bin" "$dest" 2>/dev/null; then
-    echo "springfield: failed to symlink $dest (permission?)" >&2
-    exit 0
-  fi
+  safe_symlink "$bin" "$dest" || exit 0
 
   case ":$PATH:" in
     *":$HOME/.local/bin:"*) ;;
