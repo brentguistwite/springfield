@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:?CLAUDE_PLUGIN_ROOT not set}"
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-}"
+if [[ -z "$PLUGIN_ROOT" ]]; then
+  echo "springfield: CLAUDE_PLUGIN_ROOT not set" >&2
+  exit 0
+fi
 
 # Bound network calls so a stalled GitHub/DNS/proxy cannot lock the user out
 # at SessionStart. SESSION_START fires synchronously before any interactive
@@ -9,6 +13,8 @@ PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:?CLAUDE_PLUGIN_ROOT not set}"
 # falling back. Env-overridable for tests.
 SPRINGFIELD_CURL_CONNECT_TIMEOUT="${SPRINGFIELD_CURL_CONNECT_TIMEOUT:-5}"
 SPRINGFIELD_CURL_MAX_TIME="${SPRINGFIELD_CURL_MAX_TIME:-30}"
+_SPRINGFIELD_LOCK=""
+_SPRINGFIELD_TMP=""
 
 curl_bounded() {
   curl --fail --silent --show-error --location \
@@ -20,9 +26,25 @@ curl_bounded() {
 sha256() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1" | awk '{print $1}'
-  else
+  elif command -v shasum >/dev/null 2>&1; then
     shasum -a 256 "$1" | awk '{print $1}'
+  else
+    echo "springfield: no sha256 tool available" >&2
+    return 1
   fi
+}
+
+cached_binary_ready() {
+  local bin="$1"
+  [[ -f "$bin" && -x "$bin" ]]
+}
+
+make_temp_dir() {
+  local tmp
+  if ! tmp="$(mktemp -d 2>/dev/null)"; then
+    return 1
+  fi
+  printf '%s\n' "$tmp"
 }
 
 detect_platform() {
@@ -63,7 +85,7 @@ fallback_symlink() {
   local dest="$1"
   local version="$2"
   local exact="$HOME/.cache/springfield/$version/springfield"
-  if [[ -x "$exact" ]]; then
+  if cached_binary_ready "$exact"; then
     safe_symlink "$exact" "$dest" || true
     echo "springfield: using cached v$version (fetch failed)" >&2
     return 0
@@ -96,6 +118,7 @@ acquire_install_lock() {
   local version="$1"
   local locks_dir="$HOME/.cache/springfield/.locks"
   local lock="$locks_dir/$version"
+  local bin="$HOME/.cache/springfield/$version/springfield"
   if ! mkdir -p "$locks_dir" 2>/dev/null; then
     return 1
   fi
@@ -105,7 +128,7 @@ acquire_install_lock() {
   local stale_age_seconds=60
   while ! mkdir "$lock" 2>/dev/null; do
     # Fast path re-check: maybe another process just finished.
-    if [[ -x "$HOME/.cache/springfield/$version/springfield" ]]; then
+    if cached_binary_ready "$bin"; then
       return 2
     fi
     # Pid-based stale reap: owning process gone?
@@ -137,9 +160,13 @@ acquire_install_lock() {
       return 1
     fi
   done
-  printf '%d\n' "$$" > "$lock/pid"
-  export _SPRINGFIELD_LOCK="$lock"
+  _SPRINGFIELD_LOCK="$lock"
   trap 'release_install_lock' EXIT INT TERM
+  if ! printf '%d\n' "$$" > "$lock/pid"; then
+    echo "springfield: failed to write install lock for v$version" >&2
+    release_install_lock
+    return 1
+  fi
   return 0
 }
 
@@ -168,6 +195,10 @@ install_binary() {
     rm -rf "$staging" 2>/dev/null || true
     return 1
   fi
+  if [[ -e "$bin" && ! -f "$bin" ]]; then
+    rm -rf "$staging" 2>/dev/null || true
+    return 1
+  fi
   # Atomic rename within same filesystem. On failure (ENOSPC mid-extract,
   # cross-device rename, etc), bail without leaving a half-written $bin.
   if ! mv "$staging/springfield" "$bin" 2>/dev/null; then
@@ -180,26 +211,39 @@ install_binary() {
 
 release_install_lock() {
   rm -rf "${_SPRINGFIELD_TMP:-}" 2>/dev/null || true
-  unset _SPRINGFIELD_TMP
+  _SPRINGFIELD_TMP=""
   if [[ -n "${_SPRINGFIELD_LOCK:-}" ]]; then
     # rm -rf (not rmdir) because the lock dir contains a `pid` sentinel.
     # rmdir fails on non-empty dirs → would leak the lock forever, forcing
     # later sessions through the stale-reap heuristics for no good reason.
     rm -rf "$_SPRINGFIELD_LOCK" 2>/dev/null || true
-    unset _SPRINGFIELD_LOCK
+    _SPRINGFIELD_LOCK=""
   fi
 }
 
-# safe_symlink routes every `ln -sfn` through one place. SessionStart is
-# synchronous and `set -e` is on; a raw `ln` failure (read-only ~/.local/bin,
-# a directory sitting at $dest, etc.) would crash the session. Callers use
-# this helper so every branch handles the same failure mode the same way.
+# safe_symlink swaps the public link atomically via a temporary sibling symlink
+# + rename. This avoids the `ln -sfn` unlink/recreate gap, and behaves
+# consistently on macOS/Linux when $link already exists as a file or symlink.
+# A real directory at $link is treated as a collision and left untouched.
 safe_symlink() {
   local target="$1"
   local link="$2"
-  if ln -sfn "$target" "$link" 2>/dev/null; then
+  local link_dir tmp_link
+  link_dir="$(dirname "$link")"
+  tmp_link="$link_dir/.springfield-link.$$"
+  if [[ -d "$link" && ! -L "$link" ]]; then
+    echo "springfield: failed to update $link -> $target (permission? directory collision?)" >&2
+    return 1
+  fi
+  rm -f "$tmp_link" 2>/dev/null || true
+  if ! ln -s "$target" "$tmp_link" 2>/dev/null; then
+    echo "springfield: failed to update $link -> $target (permission? directory collision?)" >&2
+    return 1
+  fi
+  if mv -f "$tmp_link" "$link" 2>/dev/null; then
     return 0
   fi
+  rm -f "$tmp_link" 2>/dev/null || true
   echo "springfield: failed to update $link -> $target (permission? directory collision?)" >&2
   return 1
 }
@@ -224,7 +268,7 @@ main() {
   fi
 
   # Fast path: pinned-version binary already cached + symlink correct
-  if [[ -x "$bin" && -L "$dest" && "$(readlink "$dest")" == "$bin" ]]; then
+  if cached_binary_ready "$bin" && [[ -L "$dest" && "$(readlink "$dest")" == "$bin" ]]; then
     exit 0
   fi
 
@@ -244,7 +288,7 @@ main() {
 
   # Re-check fast path inside the lock (another process may have published
   # between our initial check and lock acquisition)
-  if [[ -x "$bin" ]]; then
+  if cached_binary_ready "$bin"; then
     safe_symlink "$bin" "$dest" || true
     exit 0
   fi
@@ -257,8 +301,12 @@ main() {
   local sums_url="$base/checksums.txt"
 
   local tmp
-  tmp="$(mktemp -d)"
-  export _SPRINGFIELD_TMP="$tmp"
+  if ! tmp="$(make_temp_dir)"; then
+    echo "springfield: failed to create temp dir; falling back" >&2
+    fallback_symlink "$dest" "$version"
+    exit 0
+  fi
+  _SPRINGFIELD_TMP="$tmp"
 
   if ! curl_bounded -o "$tmp/$asset" "$asset_url"; then
     echo "springfield: failed to download $asset_url (timeout or error)" >&2
@@ -279,7 +327,10 @@ main() {
     exit 0
   fi
   local got_sum
-  got_sum="$(sha256 "$tmp/$asset")"
+  if ! got_sum="$(sha256 "$tmp/$asset")"; then
+    fallback_symlink "$dest" "$version"
+    exit 0
+  fi
   if [[ "$got_sum" != "$expected" ]]; then
     echo "springfield: checksum mismatch for $asset ($got_sum != $expected)" >&2
     fallback_symlink "$dest" "$version"

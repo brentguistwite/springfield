@@ -600,7 +600,7 @@ t11_end=$(date +%s)
 # Each session has 2 curl calls × ~0.2s sleep = ~0.4s. Run in parallel → ~0.4s
 # total. If serialized (bug), would be ~0.8s+. Loose bound at 3s for CI noise.
 if (( t11_end - t11_start > 3 )); then
-  echo "FAIL test11: concurrent different-version installs did not run in parallel: ${$((t11_end - t11_start))}s" >&2
+  echo "FAIL test11: concurrent different-version installs did not run in parallel: $((t11_end - t11_start))s" >&2
   fail=1
 fi
 [[ -x "$tmp11/homeA/.cache/springfield/1.0.0/springfield" ]] || { echo "FAIL test11: v1 not installed" >&2; fail=1; }
@@ -624,7 +624,7 @@ chmod +x "$tmp12/.local/bin/springfield"
 
 PATH="/usr/bin:/bin" bash "$hook" >/dev/null 2>/dev/null || { echo "FAIL test12: hook errored on regular-file dest" >&2; fail=1; }
 if [[ ! -L "$tmp12/.local/bin/springfield" ]]; then
-  echo "FAIL test12: $dest is not a symlink after hook" >&2
+  echo "FAIL test12: ~/.local/bin/springfield is not a symlink after hook" >&2
   fail=1
 fi
 got12="$(readlink "$tmp12/.local/bin/springfield" 2>/dev/null || true)"
@@ -800,5 +800,284 @@ if ! grep -q "failed to update" "$tmp16/err16.log" 2>/dev/null; then
   fail=1
 fi
 rm -rf "$tmp16"
+
+# ---------- Test 17: disk-full mid-extract falls back and leaves no partial ----------
+# Simulate tar failing after creating a partial staging file. The hook must
+# clean staging, keep rc 0, and avoid publishing any partial cache binary.
+tmp17="$(mktemp -d)"
+export HOME="$tmp17"
+export CLAUDE_PLUGIN_ROOT="$tmp17/plugin"
+mkdir -p "$tmp17/plugin/.claude-plugin" "$tmp17/bin" "$tmp17/fake-release" \
+  "$tmp17/.local/bin"
+printf '{"version":"0.8.8"}\n' > "$tmp17/plugin/.claude-plugin/plugin.json"
+
+stage17="$(mktemp -d)"
+printf '#!/bin/sh\necho v0.8.8\n' > "$stage17/springfield"
+chmod +x "$stage17/springfield"
+tarball17="$tmp17/fake-release/springfield_0.8.8_${os}_${arch}.tar.gz"
+tar -C "$stage17" -czf "$tarball17" springfield
+if command -v sha256sum >/dev/null 2>&1; then
+  sum17="$(sha256sum "$tarball17" | awk '{print $1}')"
+else
+  sum17="$(shasum -a 256 "$tarball17" | awk '{print $1}')"
+fi
+printf '%s  ./springfield_0.8.8_%s_%s.tar.gz\n' "$sum17" "$os" "$arch" \
+  > "$tmp17/fake-release/checksums.txt"
+
+real_tar="$(command -v tar)"
+cat > "$tmp17/bin/curl" <<STUB
+#!/usr/bin/env bash
+url=""; out="-"
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -o) out="\$2"; shift 2 ;;
+    --fail|--silent|--show-error|--location|-fsSL|-fL|-sL|-s|-L|-f) shift ;;
+    --connect-timeout|--max-time) shift 2 ;;
+    http*) url="\$1"; shift ;;
+    *) shift ;;
+  esac
+done
+case "\$url" in
+  *checksums.txt) src="$tmp17/fake-release/checksums.txt" ;;
+  *springfield_0.8.8_${os}_${arch}.tar.gz) src="$tarball17" ;;
+  *) exit 22 ;;
+esac
+if [ "\$out" = "-" ]; then cat "\$src"; else cp "\$src" "\$out"; fi
+STUB
+cat > "$tmp17/bin/tar" <<STUB
+#!/usr/bin/env bash
+set -euo pipefail
+args=("\$@")
+dest=""
+extract=0
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -C) dest="\$2"; shift 2 ;;
+    -xzf) extract=1; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ "\$extract" -eq 1 ]; then
+  mkdir -p "\$dest"
+  printf 'partial\n' > "\$dest/springfield"
+  exit 1
+fi
+exec "$real_tar" "\${args[@]}"
+STUB
+chmod +x "$tmp17/bin/curl" "$tmp17/bin/tar"
+
+set +e
+PATH="$tmp17/bin:$PATH" bash "$hook" >/dev/null 2>"$tmp17/err17.log"
+rc17=$?
+set -e
+if (( rc17 != 0 )); then
+  echo "FAIL test17: disk-full simulation crashed hook with rc=$rc17" >&2
+  fail=1
+fi
+if [[ -e "$tmp17/.cache/springfield/0.8.8/springfield" ]]; then
+  echo "FAIL test17: partial binary survived disk-full simulation" >&2
+  fail=1
+fi
+if compgen -G "$tmp17/.cache/springfield/0.8.8/.staging.*" >/dev/null; then
+  echo "FAIL test17: staging dir leaked after disk-full simulation" >&2
+  fail=1
+fi
+if ! grep -q "install failed" "$tmp17/err17.log" 2>/dev/null; then
+  echo "FAIL test17: disk-full simulation did not route through fallback: $(cat "$tmp17/err17.log")" >&2
+  fail=1
+fi
+rm -rf "$tmp17"
+
+# ---------- Test 18: concurrent cache-hit relinks never leave link absent ----------
+# Two same-version cache-hit sessions race to refresh the public symlink.
+# safe_symlink must swap atomically; an unlink/create implementation leaves a
+# command-not-found window. The ln stub below only widens that window when the
+# final public path itself is the ln destination.
+tmp18="$(mktemp -d)"
+export HOME="$tmp18"
+export CLAUDE_PLUGIN_ROOT="$tmp18/plugin"
+mkdir -p "$tmp18/plugin/.claude-plugin" "$tmp18/bin" \
+  "$tmp18/.cache/springfield/0.8.9" "$tmp18/.cache/springfield/old" "$tmp18/.local/bin"
+printf '{"version":"0.8.9"}\n' > "$tmp18/plugin/.claude-plugin/plugin.json"
+printf '#!/bin/sh\necho v0.8.9\n' > "$tmp18/.cache/springfield/0.8.9/springfield"
+printf '#!/bin/sh\necho old\n' > "$tmp18/.cache/springfield/old/springfield"
+chmod +x "$tmp18/.cache/springfield/0.8.9/springfield" "$tmp18/.cache/springfield/old/springfield"
+ln -sfn "$tmp18/.cache/springfield/old/springfield" "$tmp18/.local/bin/springfield"
+
+real_ln="$(command -v ln)"
+cat > "$tmp18/bin/ln" <<STUB
+#!/usr/bin/env bash
+set -euo pipefail
+dest=""
+for arg in "\$@"; do
+  dest="\$arg"
+done
+if [ "\$dest" = "$tmp18/.local/bin/springfield" ]; then
+  rm -f "\$dest"
+  sleep 0.1
+fi
+exec "$real_ln" "\$@"
+STUB
+chmod +x "$tmp18/bin/ln"
+
+PATH="$tmp18/bin:$PATH" bash "$hook" >/dev/null 2>"$tmp18/err18a.log" &
+p18a=$!
+PATH="$tmp18/bin:$PATH" bash "$hook" >/dev/null 2>"$tmp18/err18b.log" &
+p18b=$!
+
+missing18=0
+while kill -0 "$p18a" 2>/dev/null || kill -0 "$p18b" 2>/dev/null; do
+  if [[ ! -L "$tmp18/.local/bin/springfield" ]]; then
+    missing18=1
+    break
+  fi
+  sleep 0.01
+done
+wait "$p18a" || { echo "FAIL test18: hook A exited non-zero" >&2; fail=1; }
+wait "$p18b" || { echo "FAIL test18: hook B exited non-zero" >&2; fail=1; }
+if (( missing18 != 0 )); then
+  echo "FAIL test18: public symlink disappeared during concurrent relink" >&2
+  fail=1
+fi
+got18="$(readlink "$tmp18/.local/bin/springfield" 2>/dev/null || true)"
+want18="$tmp18/.cache/springfield/0.8.9/springfield"
+if [[ "$got18" != "$want18" ]]; then
+  echo "FAIL test18: concurrent relink ended at wrong target: got=$got18 want=$want18" >&2
+  fail=1
+fi
+rm -rf "$tmp18"
+
+# ---------- Test 19: hostile checksums filename text does not match asset ----------
+# A malicious checksums.txt line with shell-ish suffix text must not be treated
+# as the asset entry. The exact asset line should still win and install cleanly.
+tmp19="$(mktemp -d)"
+export HOME="$tmp19"
+export CLAUDE_PLUGIN_ROOT="$tmp19/plugin"
+mkdir -p "$tmp19/plugin/.claude-plugin" "$tmp19/bin" "$tmp19/fake-release" \
+  "$tmp19/.local/bin"
+printf '{"version":"0.9.1"}\n' > "$tmp19/plugin/.claude-plugin/plugin.json"
+
+stage19="$(mktemp -d)"
+printf '#!/bin/sh\necho v0.9.1\n' > "$stage19/springfield"
+chmod +x "$stage19/springfield"
+tarball19="$tmp19/fake-release/springfield_0.9.1_${os}_${arch}.tar.gz"
+tar -C "$stage19" -czf "$tarball19" springfield
+if command -v sha256sum >/dev/null 2>&1; then
+  sum19="$(sha256sum "$tarball19" | awk '{print $1}')"
+else
+  sum19="$(shasum -a 256 "$tarball19" | awk '{print $1}')"
+fi
+cat > "$tmp19/fake-release/checksums.txt" <<EOF
+0000000000000000000000000000000000000000000000000000000000000000  ./springfield_0.9.1_${os}_${arch}.tar.gz; touch "$tmp19/pwned"
+$sum19  ./springfield_0.9.1_${os}_${arch}.tar.gz
+EOF
+
+cat > "$tmp19/bin/curl" <<STUB
+#!/usr/bin/env bash
+url=""; out="-"
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -o) out="\$2"; shift 2 ;;
+    --fail|--silent|--show-error|--location|-fsSL|-fL|-sL|-s|-L|-f) shift ;;
+    --connect-timeout|--max-time) shift 2 ;;
+    http*) url="\$1"; shift ;;
+    *) shift ;;
+  esac
+done
+case "\$url" in
+  *checksums.txt) src="$tmp19/fake-release/checksums.txt" ;;
+  *springfield_0.9.1_${os}_${arch}.tar.gz) src="$tarball19" ;;
+  *) exit 22 ;;
+esac
+if [ "\$out" = "-" ]; then cat "\$src"; else cp "\$src" "\$out"; fi
+STUB
+chmod +x "$tmp19/bin/curl"
+
+PATH="$tmp19/bin:$PATH" bash "$hook" >/dev/null 2>"$tmp19/err19.log" || { echo "FAIL test19: hook errored on hostile checksums.txt" >&2; fail=1; }
+[[ -x "$tmp19/.cache/springfield/0.9.1/springfield" ]] || { echo "FAIL test19: hostile checksums.txt blocked valid install" >&2; fail=1; }
+if [[ -e "$tmp19/pwned" ]]; then
+  echo "FAIL test19: hostile checksums content executed" >&2
+  fail=1
+fi
+rm -rf "$tmp19"
+
+# ---------- Test 20: HOME with spaces still installs and relinks correctly ----------
+tmp20_root="$(mktemp -d)"
+tmp20="$tmp20_root/home with spaces"
+export HOME="$tmp20"
+export CLAUDE_PLUGIN_ROOT="$tmp20/plugin root"
+mkdir -p "$tmp20/plugin root/.claude-plugin" "$tmp20/bin dir" "$tmp20/fake release" "$tmp20/.local/bin"
+printf '{"version":"0.9.2"}\n' > "$tmp20/plugin root/.claude-plugin/plugin.json"
+
+stage20="$(mktemp -d)"
+printf '#!/bin/sh\necho v0.9.2\n' > "$stage20/springfield"
+chmod +x "$stage20/springfield"
+tarball20="$tmp20/fake release/springfield_0.9.2_${os}_${arch}.tar.gz"
+tar -C "$stage20" -czf "$tarball20" springfield
+if command -v sha256sum >/dev/null 2>&1; then
+  sum20="$(sha256sum "$tarball20" | awk '{print $1}')"
+else
+  sum20="$(shasum -a 256 "$tarball20" | awk '{print $1}')"
+fi
+printf '%s  ./springfield_0.9.2_%s_%s.tar.gz\n' "$sum20" "$os" "$arch" \
+  > "$tmp20/fake release/checksums.txt"
+
+cat > "$tmp20/bin dir/curl" <<STUB
+#!/usr/bin/env bash
+url=""; out="-"
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -o) out="\$2"; shift 2 ;;
+    --fail|--silent|--show-error|--location|-fsSL|-fL|-sL|-s|-L|-f) shift ;;
+    --connect-timeout|--max-time) shift 2 ;;
+    http*) url="\$1"; shift ;;
+    *) shift ;;
+  esac
+done
+case "\$url" in
+  *checksums.txt) src="$tmp20/fake release/checksums.txt" ;;
+  *springfield_0.9.2_${os}_${arch}.tar.gz) src="$tarball20" ;;
+  *) exit 22 ;;
+esac
+if [ "\$out" = "-" ]; then cat "\$src"; else cp "\$src" "\$out"; fi
+STUB
+chmod +x "$tmp20/bin dir/curl"
+
+PATH="$tmp20/bin dir:$PATH" bash "$hook" >/dev/null 2>"$tmp20/err20.log" || { echo "FAIL test20: hook errored with spaces in HOME: $(cat "$tmp20/err20.log")" >&2; fail=1; }
+got20="$(readlink "$tmp20/.local/bin/springfield" 2>/dev/null || true)"
+want20="$tmp20/.cache/springfield/0.9.2/springfield"
+if [[ "$got20" != "$want20" ]]; then
+  echo "FAIL test20: symlink wrong with spaces in HOME: got=$got20 want=$want20" >&2
+  fail=1
+fi
+rm -rf "$tmp20_root"
+
+# ---------- Test 21: real directory collision at dest warns instead of mutating ----------
+tmp21="$(mktemp -d)"
+export HOME="$tmp21"
+export CLAUDE_PLUGIN_ROOT="$tmp21/plugin"
+mkdir -p "$tmp21/plugin/.claude-plugin" "$tmp21/.cache/springfield/0.9.3" \
+  "$tmp21/.local/bin/springfield"
+printf '{"version":"0.9.3"}\n' > "$tmp21/plugin/.claude-plugin/plugin.json"
+printf '#!/bin/sh\necho v0.9.3\n' > "$tmp21/.cache/springfield/0.9.3/springfield"
+chmod +x "$tmp21/.cache/springfield/0.9.3/springfield"
+
+set +e
+PATH="/usr/bin:/bin" bash "$hook" >/dev/null 2>"$tmp21/err21.log"
+rc21=$?
+set -e
+if (( rc21 != 0 )); then
+  echo "FAIL test21: directory collision crashed hook with rc=$rc21" >&2
+  fail=1
+fi
+if [[ ! -d "$tmp21/.local/bin/springfield" ]]; then
+  echo "FAIL test21: directory collision path was unexpectedly replaced" >&2
+  fail=1
+fi
+if ! grep -q "failed to update" "$tmp21/err21.log" 2>/dev/null; then
+  echo "FAIL test21: directory collision did not emit diagnostic: $(cat "$tmp21/err21.log")" >&2
+  fail=1
+fi
+rm -rf "$tmp21"
 
 exit $fail

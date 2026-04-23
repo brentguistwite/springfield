@@ -70,7 +70,12 @@ func TestSessionStartShellcheck(t *testing.T) {
 		t.Skip("shellcheck not installed")
 	}
 	root := repoRoot(t)
-	cmd := exec.Command("shellcheck", "--severity=warning", filepath.Join(root, "hooks", "session-start.sh"))
+	cmd := exec.Command(
+		"shellcheck",
+		"--severity=warning",
+		filepath.Join(root, "hooks", "session-start.sh"),
+		filepath.Join(root, "hooks", "tests", "run.sh"),
+	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("shellcheck failed: %s", out)
