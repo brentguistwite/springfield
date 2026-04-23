@@ -3,9 +3,6 @@
   "interface": {
     "displayName": "Brent Guistwite"
   },
-  "owner": {
-    "name": "Brent Guistwite"
-  },
   "plugins": [
     {
       "name": "springfield",

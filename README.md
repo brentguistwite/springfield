@@ -51,6 +51,37 @@ Manage the install with:
 /plugin uninstall springfield@brentguistwite
 ```
 
+### Codex Plugin Directory
+
+Inside Codex, add the GitHub-backed marketplace, then install Springfield from the plugin directory:
+
+```bash
+codex plugin marketplace add brentguistwite/springfield
+codex
+```
+
+Then inside Codex:
+
+```text
+/plugins
+```
+
+Choose the `Brent Guistwite` marketplace, then install `springfield`.
+
+Manage the marketplace with:
+
+```bash
+codex plugin marketplace upgrade
+codex plugin marketplace upgrade brentguistwite
+codex plugin marketplace remove brentguistwite
+```
+
+Notes:
+
+- `codex plugin marketplace add` accepts GitHub shorthand (`owner/repo`), Git URLs, SSH Git URLs, and local marketplace roots.
+- This repo ships both `.agents/plugins/marketplace.json` and `.claude-plugin/marketplace.json` so Codex can discover the marketplace from GitHub or local checkouts.
+- If the marketplace or plugin does not appear immediately, restart Codex once and reopen `/plugins`.
+
 ## Quick Start
 
 Build from source:

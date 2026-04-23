@@ -8,11 +8,24 @@
   "homepage": "https://github.com/brentguistwite/springfield",
   "repository": "https://github.com/brentguistwite/springfield",
   "license": "UNLICENSED",
+  "skills": "./skills/",
   "keywords": [
     "springfield",
     "workflow",
     "skills",
     "plugin",
     "codex"
-  ]
+  ],
+  "interface": {
+    "displayName": "Springfield",
+    "shortDescription": "Plan, start, inspect, and recover project work.",
+    "longDescription": "Springfield packages reusable workflows for planning batches, starting execution, inspecting status, and recovering stalled work.",
+    "developerName": "Brent Guistwite",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/brentguistwite/springfield"
+  }
 }
