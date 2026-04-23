@@ -42,8 +42,11 @@ detect_platform() {
 }
 
 plugin_version() {
-  awk -F'"' '/"version"[[:space:]]*:/ { print $4; exit }' \
-    "$PLUGIN_ROOT/.claude-plugin/plugin.json"
+  local manifest="$PLUGIN_ROOT/.claude-plugin/plugin.json"
+  if [[ ! -f "$manifest" ]]; then
+    return 0
+  fi
+  awk -F'"' '/"version"[[:space:]]*:/ { print $4; exit }' "$manifest" 2>/dev/null
 }
 
 # fallback_symlink resolves the "fetch failed or binary missing" path with a
@@ -93,7 +96,9 @@ acquire_install_lock() {
   local version="$1"
   local locks_dir="$HOME/.cache/springfield/.locks"
   local lock="$locks_dir/$version"
-  mkdir -p "$locks_dir"
+  if ! mkdir -p "$locks_dir" 2>/dev/null; then
+    return 1
+  fi
 
   local waited=0
   local max_wait_tenths=300  # 30 seconds
@@ -138,6 +143,41 @@ acquire_install_lock() {
   return 0
 }
 
+install_binary() {
+  local cache_dir="$1"
+  local bin="$2"
+  local archive="$3"
+
+  if ! mkdir -p "$cache_dir" 2>/dev/null; then
+    return 1
+  fi
+  local staging="$cache_dir/.staging.$$"
+  rm -rf "$staging" 2>/dev/null || true
+  if ! mkdir -p "$staging" 2>/dev/null; then
+    return 1
+  fi
+  if ! tar -C "$staging" -xzf "$archive" springfield 2>/dev/null; then
+    rm -rf "$staging" 2>/dev/null || true
+    return 1
+  fi
+  if [[ ! -f "$staging/springfield" ]]; then
+    rm -rf "$staging" 2>/dev/null || true
+    return 1
+  fi
+  if ! chmod +x "$staging/springfield" 2>/dev/null; then
+    rm -rf "$staging" 2>/dev/null || true
+    return 1
+  fi
+  # Atomic rename within same filesystem. On failure (ENOSPC mid-extract,
+  # cross-device rename, etc), bail without leaving a half-written $bin.
+  if ! mv "$staging/springfield" "$bin" 2>/dev/null; then
+    rm -rf "$staging" 2>/dev/null || true
+    return 1
+  fi
+  rmdir "$staging" 2>/dev/null || true
+  return 0
+}
+
 release_install_lock() {
   rm -rf "${_SPRINGFIELD_TMP:-}" 2>/dev/null || true
   unset _SPRINGFIELD_TMP
@@ -161,7 +201,10 @@ main() {
   cache_dir="$HOME/.cache/springfield/$version"
   bin="$cache_dir/springfield"
   dest="$HOME/.local/bin/springfield"
-  mkdir -p "$HOME/.local/bin"
+  if ! mkdir -p "$HOME/.local/bin" 2>/dev/null; then
+    echo "springfield: cannot create $HOME/.local/bin (permission?)" >&2
+    exit 0
+  fi
 
   # Fast path: pinned-version binary already cached + symlink correct
   if [[ -x "$bin" && -L "$dest" && "$(readlink "$dest")" == "$bin" ]]; then
@@ -227,18 +270,21 @@ main() {
   fi
 
   # Extract to staging inside cache_dir, then atomic-rename into place.
-  # rename(2) within the same filesystem is atomic on POSIX, which prevents
-  # a concurrent reader from observing a partially-written binary.
-  mkdir -p "$cache_dir"
-  local staging="$cache_dir/.staging.$$"
-  rm -rf "$staging"
-  mkdir -p "$staging"
-  tar -C "$staging" -xzf "$tmp/$asset" springfield
-  chmod +x "$staging/springfield"
-  mv "$staging/springfield" "$bin"
-  rmdir "$staging" 2>/dev/null || true
+  # rename(2) within the same filesystem is atomic on POSIX, preventing a
+  # concurrent reader from observing a partially-written binary. Every I/O
+  # step returns an error code instead of crashing via `set -e` so we can
+  # route install failures (disk full, permission denied, corrupt tarball)
+  # through fallback_symlink rather than erroring the session.
+  if ! install_binary "$cache_dir" "$bin" "$tmp/$asset"; then
+    echo "springfield: install failed (disk, permissions, or corrupt archive); falling back" >&2
+    fallback_symlink "$dest" "$version"
+    exit 0
+  fi
 
-  ln -sfn "$bin" "$dest"
+  if ! ln -sfn "$bin" "$dest" 2>/dev/null; then
+    echo "springfield: failed to symlink $dest (permission?)" >&2
+    exit 0
+  fi
 
   case ":$PATH:" in
     *":$HOME/.local/bin:"*) ;;

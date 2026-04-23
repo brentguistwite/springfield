@@ -413,4 +413,308 @@ if [[ "$err8" != *"timeout or error"* ]]; then
 fi
 rm -rf "$tmp8"
 
+# ---------- Test 9: checksum mismatch must fall back, not install ----------
+# Release was tampered with / retransmission corrupted. The script MUST NOT
+# install a binary whose sha256 doesn't match the published checksums.txt.
+tmp9="$(mktemp -d)"
+export HOME="$tmp9"
+export CLAUDE_PLUGIN_ROOT="$tmp9/plugin"
+mkdir -p "$tmp9/plugin/.claude-plugin" "$tmp9/bin" "$tmp9/fake-release" \
+  "$tmp9/.local/bin"
+printf '{"version":"2.9.9"}\n' > "$tmp9/plugin/.claude-plugin/plugin.json"
+
+os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+arch="$(uname -m)"
+case "$arch" in x86_64) arch=amd64;; aarch64|arm64) arch=arm64;; esac
+
+stage9="$(mktemp -d)"
+printf '#!/bin/sh\necho actual\n' > "$stage9/springfield"
+chmod +x "$stage9/springfield"
+tarball9="$tmp9/fake-release/springfield_2.9.9_${os}_${arch}.tar.gz"
+tar -C "$stage9" -czf "$tarball9" springfield
+
+# Deliberate wrong checksum
+printf '%s  ./springfield_2.9.9_%s_%s.tar.gz\n' \
+  '0000000000000000000000000000000000000000000000000000000000000000' "$os" "$arch" \
+  > "$tmp9/fake-release/checksums.txt"
+
+cat > "$tmp9/bin/curl" <<STUB
+#!/usr/bin/env bash
+url=""; out="-"
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -o) out="\$2"; shift 2 ;;
+    --fail|--silent|--show-error|--location|-fsSL|-fL|-sL|-s|-L|-f) shift ;;
+    --connect-timeout|--max-time) shift 2 ;;
+    http*) url="\$1"; shift ;;
+    *) shift ;;
+  esac
+done
+case "\$url" in
+  *checksums.txt) src="$tmp9/fake-release/checksums.txt" ;;
+  *springfield_2.9.9_${os}_${arch}.tar.gz) src="$tarball9" ;;
+  *) exit 22 ;;
+esac
+if [ "\$out" = "-" ]; then cat "\$src"; else cp "\$src" "\$out"; fi
+STUB
+chmod +x "$tmp9/bin/curl"
+
+err9="$(PATH="$tmp9/bin:$PATH" bash "$hook" 2>&1 >/dev/null || true)"
+if [[ "$err9" != *"checksum mismatch"* ]]; then
+  echo "FAIL test9: checksum mismatch not detected: $err9" >&2
+  fail=1
+fi
+if [[ -e "$tmp9/.cache/springfield/2.9.9/springfield" ]]; then
+  echo "FAIL test9: tampered binary was installed despite checksum failure" >&2
+  fail=1
+fi
+rm -rf "$tmp9"
+
+# ---------- Test 10: corrupt tarball fails install cleanly (fallback, no crash) ----------
+# Download completes, checksum matches a corrupt file (we lie about the sum so
+# the tar extract fails instead of the checksum check). The script MUST route
+# through fallback_symlink, not crash the session with a non-zero exit from
+# `set -e` on the `tar` command.
+tmp10="$(mktemp -d)"
+export HOME="$tmp10"
+export CLAUDE_PLUGIN_ROOT="$tmp10/plugin"
+mkdir -p "$tmp10/plugin/.claude-plugin" "$tmp10/bin" "$tmp10/fake-release" \
+  "$tmp10/.local/bin"
+printf '{"version":"1.1.1"}\n' > "$tmp10/plugin/.claude-plugin/plugin.json"
+
+# "Tarball" is random garbage — tar -xzf will fail.
+bad_tarball="$tmp10/fake-release/springfield_1.1.1_${os}_${arch}.tar.gz"
+head -c 4096 /dev/urandom > "$bad_tarball"
+if command -v sha256sum >/dev/null 2>&1; then
+  bad_sum="$(sha256sum "$bad_tarball" | awk '{print $1}')"
+else
+  bad_sum="$(shasum -a 256 "$bad_tarball" | awk '{print $1}')"
+fi
+printf '%s  ./springfield_1.1.1_%s_%s.tar.gz\n' "$bad_sum" "$os" "$arch" \
+  > "$tmp10/fake-release/checksums.txt"
+
+cat > "$tmp10/bin/curl" <<STUB
+#!/usr/bin/env bash
+url=""; out="-"
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -o) out="\$2"; shift 2 ;;
+    --fail|--silent|--show-error|--location|-fsSL|-fL|-sL|-s|-L|-f) shift ;;
+    --connect-timeout|--max-time) shift 2 ;;
+    http*) url="\$1"; shift ;;
+    *) shift ;;
+  esac
+done
+case "\$url" in
+  *checksums.txt) src="$tmp10/fake-release/checksums.txt" ;;
+  *springfield_1.1.1_${os}_${arch}.tar.gz) src="$bad_tarball" ;;
+  *) exit 22 ;;
+esac
+if [ "\$out" = "-" ]; then cat "\$src"; else cp "\$src" "\$out"; fi
+STUB
+chmod +x "$tmp10/bin/curl"
+
+# Must exit 0 (non-crash) and must NOT have installed a binary
+set +e
+PATH="$tmp10/bin:$PATH" bash "$hook" >/dev/null 2>"$tmp10/err10.log"
+rc10=$?
+set -e
+if (( rc10 != 0 )); then
+  echo "FAIL test10: corrupt tarball crashed hook with rc=$rc10" >&2
+  fail=1
+fi
+if [[ -e "$tmp10/.cache/springfield/1.1.1/springfield" ]]; then
+  echo "FAIL test10: partial/bad binary ended up in cache" >&2
+  fail=1
+fi
+if ! grep -q "install failed" "$tmp10/err10.log" 2>/dev/null; then
+  echo "FAIL test10: corrupt tarball did not route through fallback: $(cat "$tmp10/err10.log")" >&2
+  fail=1
+fi
+rm -rf "$tmp10"
+
+# ---------- Test 11: concurrent installs of DIFFERENT versions don't block ----------
+# Two sessions, one targeting v1 and one targeting v2. They use separate lock
+# dirs and separate cache paths. They must both succeed without one starving
+# the other. Wall-clock budget is tight; if they serialize on a shared lock
+# the second finishes only after the first's curl delay completes.
+tmp11="$(mktemp -d)"
+export CLAUDE_PLUGIN_ROOT_A="$tmp11/pluginA"
+export CLAUDE_PLUGIN_ROOT_B="$tmp11/pluginB"
+mkdir -p "$CLAUDE_PLUGIN_ROOT_A/.claude-plugin" "$CLAUDE_PLUGIN_ROOT_B/.claude-plugin" \
+  "$tmp11/bin" "$tmp11/fake-release" "$tmp11/homeA/.local/bin" "$tmp11/homeB/.local/bin"
+printf '{"version":"1.0.0"}\n' > "$CLAUDE_PLUGIN_ROOT_A/.claude-plugin/plugin.json"
+printf '{"version":"2.0.0"}\n' > "$CLAUDE_PLUGIN_ROOT_B/.claude-plugin/plugin.json"
+
+build_tarball() {
+  local ver="$1" stage tarball
+  stage="$(mktemp -d)"
+  printf '#!/bin/sh\necho v%s\n' "$ver" > "$stage/springfield"
+  chmod +x "$stage/springfield"
+  tarball="$tmp11/fake-release/springfield_${ver}_${os}_${arch}.tar.gz"
+  tar -C "$stage" -czf "$tarball" springfield
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$tarball" | awk -v a="./springfield_${ver}_${os}_${arch}.tar.gz" '{print $1"  "a}'
+  else
+    shasum -a 256 "$tarball" | awk -v a="./springfield_${ver}_${os}_${arch}.tar.gz" '{print $1"  "a}'
+  fi
+}
+{
+  build_tarball 1.0.0
+  build_tarball 2.0.0
+} > "$tmp11/fake-release/checksums.txt"
+
+cat > "$tmp11/bin/curl" <<STUB
+#!/usr/bin/env bash
+url=""; out="-"
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -o) out="\$2"; shift 2 ;;
+    --fail|--silent|--show-error|--location|-fsSL|-fL|-sL|-s|-L|-f) shift ;;
+    --connect-timeout|--max-time) shift 2 ;;
+    http*) url="\$1"; shift ;;
+    *) shift ;;
+  esac
+done
+case "\$url" in
+  *checksums.txt) src="$tmp11/fake-release/checksums.txt" ;;
+  *springfield_1.0.0_${os}_${arch}.tar.gz) src="$tmp11/fake-release/springfield_1.0.0_${os}_${arch}.tar.gz" ;;
+  *springfield_2.0.0_${os}_${arch}.tar.gz) src="$tmp11/fake-release/springfield_2.0.0_${os}_${arch}.tar.gz" ;;
+  *) exit 22 ;;
+esac
+sleep 0.2
+if [ "\$out" = "-" ]; then cat "\$src"; else cp "\$src" "\$out"; fi
+STUB
+chmod +x "$tmp11/bin/curl"
+
+t11_start=$(date +%s)
+HOME="$tmp11/homeA" CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT_A" PATH="$tmp11/bin:$PATH" \
+  bash "$hook" >/dev/null 2>/dev/null &
+pA=$!
+HOME="$tmp11/homeB" CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT_B" PATH="$tmp11/bin:$PATH" \
+  bash "$hook" >/dev/null 2>/dev/null &
+pB=$!
+wait "$pA" || { echo "FAIL test11: session A exited non-zero" >&2; fail=1; }
+wait "$pB" || { echo "FAIL test11: session B exited non-zero" >&2; fail=1; }
+t11_end=$(date +%s)
+# Each session has 2 curl calls × ~0.2s sleep = ~0.4s. Run in parallel → ~0.4s
+# total. If serialized (bug), would be ~0.8s+. Loose bound at 3s for CI noise.
+if (( t11_end - t11_start > 3 )); then
+  echo "FAIL test11: concurrent different-version installs did not run in parallel: ${$((t11_end - t11_start))}s" >&2
+  fail=1
+fi
+[[ -x "$tmp11/homeA/.cache/springfield/1.0.0/springfield" ]] || { echo "FAIL test11: v1 not installed" >&2; fail=1; }
+[[ -x "$tmp11/homeB/.cache/springfield/2.0.0/springfield" ]] || { echo "FAIL test11: v2 not installed" >&2; fail=1; }
+rm -rf "$tmp11"
+
+# ---------- Test 12: $dest exists as regular file (not symlink) ----------
+# User manually ran `cp springfield ~/.local/bin/`. Hook must replace it with
+# a proper symlink to the cached binary, not error out or leave both states.
+tmp12="$(mktemp -d)"
+export HOME="$tmp12"
+export CLAUDE_PLUGIN_ROOT="$tmp12/plugin"
+mkdir -p "$tmp12/plugin/.claude-plugin" "$tmp12/.local/bin" \
+  "$tmp12/.cache/springfield/0.4.2"
+printf '{"version":"0.4.2"}\n' > "$tmp12/plugin/.claude-plugin/plugin.json"
+printf '#!/bin/sh\necho v0.4.2\n' > "$tmp12/.cache/springfield/0.4.2/springfield"
+chmod +x "$tmp12/.cache/springfield/0.4.2/springfield"
+# Regular file, not a symlink
+printf '#!/bin/sh\necho stale regular file\n' > "$tmp12/.local/bin/springfield"
+chmod +x "$tmp12/.local/bin/springfield"
+
+PATH="/usr/bin:/bin" bash "$hook" >/dev/null 2>/dev/null || { echo "FAIL test12: hook errored on regular-file dest" >&2; fail=1; }
+if [[ ! -L "$tmp12/.local/bin/springfield" ]]; then
+  echo "FAIL test12: $dest is not a symlink after hook" >&2
+  fail=1
+fi
+got12="$(readlink "$tmp12/.local/bin/springfield" 2>/dev/null || true)"
+want12="$tmp12/.cache/springfield/0.4.2/springfield"
+if [[ "$got12" != "$want12" ]]; then
+  echo "FAIL test12: symlink target wrong: got=$got12 want=$want12" >&2
+  fail=1
+fi
+rm -rf "$tmp12"
+
+# ---------- Test 13: plugin.json file missing entirely ----------
+# CLAUDE_PLUGIN_ROOT set but the manifest doesn't exist (e.g. broken install,
+# wrong path). Hook must not error the session; just print a clear message
+# and exit 0.
+tmp13="$(mktemp -d)"
+export HOME="$tmp13"
+export CLAUDE_PLUGIN_ROOT="$tmp13/plugin"
+mkdir -p "$tmp13/plugin" "$tmp13/.local/bin"
+# No .claude-plugin/plugin.json created.
+
+set +e
+err13="$(bash "$hook" 2>&1 >/dev/null)"
+rc13=$?
+set -e
+if (( rc13 != 0 )); then
+  echo "FAIL test13: missing plugin.json crashed hook with rc=$rc13" >&2
+  fail=1
+fi
+if [[ "$err13" != *"could not read plugin version"* ]]; then
+  echo "FAIL test13: missing plugin.json did not produce expected message: $err13" >&2
+  fail=1
+fi
+rm -rf "$tmp13"
+
+# ---------- Test 14: cached binary deleted externally (dangling refs) ----------
+# Something (antivirus? user?) deleted the cached binary after a prior install.
+# Cache dir still exists but is empty. Fast path must miss, fetch path must
+# re-install without error.
+tmp14="$(mktemp -d)"
+export HOME="$tmp14"
+export CLAUDE_PLUGIN_ROOT="$tmp14/plugin"
+mkdir -p "$tmp14/plugin/.claude-plugin" "$tmp14/bin" "$tmp14/fake-release" \
+  "$tmp14/.local/bin" "$tmp14/.cache/springfield/0.7.7"
+printf '{"version":"0.7.7"}\n' > "$tmp14/plugin/.claude-plugin/plugin.json"
+# Empty cache dir — binary was deleted externally
+# Dangling symlink pointing at deleted file
+ln -sfn "$tmp14/.cache/springfield/0.7.7/springfield" "$tmp14/.local/bin/springfield"
+
+stage14="$(mktemp -d)"
+printf '#!/bin/sh\necho v0.7.7\n' > "$stage14/springfield"
+chmod +x "$stage14/springfield"
+tarball14="$tmp14/fake-release/springfield_0.7.7_${os}_${arch}.tar.gz"
+tar -C "$stage14" -czf "$tarball14" springfield
+if command -v sha256sum >/dev/null 2>&1; then
+  sum14="$(sha256sum "$tarball14" | awk '{print $1}')"
+else
+  sum14="$(shasum -a 256 "$tarball14" | awk '{print $1}')"
+fi
+printf '%s  ./springfield_0.7.7_%s_%s.tar.gz\n' "$sum14" "$os" "$arch" \
+  > "$tmp14/fake-release/checksums.txt"
+
+cat > "$tmp14/bin/curl" <<STUB
+#!/usr/bin/env bash
+url=""; out="-"
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -o) out="\$2"; shift 2 ;;
+    --fail|--silent|--show-error|--location|-fsSL|-fL|-sL|-s|-L|-f) shift ;;
+    --connect-timeout|--max-time) shift 2 ;;
+    http*) url="\$1"; shift ;;
+    *) shift ;;
+  esac
+done
+case "\$url" in
+  *checksums.txt) src="$tmp14/fake-release/checksums.txt" ;;
+  *springfield_0.7.7_${os}_${arch}.tar.gz) src="$tarball14" ;;
+  *) exit 22 ;;
+esac
+if [ "\$out" = "-" ]; then cat "\$src"; else cp "\$src" "\$out"; fi
+STUB
+chmod +x "$tmp14/bin/curl"
+
+PATH="$tmp14/bin:$PATH" bash "$hook" >/dev/null 2>/dev/null || { echo "FAIL test14: hook errored on dangling state" >&2; fail=1; }
+[[ -x "$tmp14/.cache/springfield/0.7.7/springfield" ]] || { echo "FAIL test14: binary not re-installed" >&2; fail=1; }
+got14="$(readlink "$tmp14/.local/bin/springfield" 2>/dev/null || true)"
+want14="$tmp14/.cache/springfield/0.7.7/springfield"
+if [[ "$got14" != "$want14" ]]; then
+  echo "FAIL test14: symlink not refreshed: got=$got14 want=$want14" >&2
+  fail=1
+fi
+rm -rf "$tmp14"
+
 exit $fail
