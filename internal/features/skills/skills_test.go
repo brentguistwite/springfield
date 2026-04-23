@@ -277,6 +277,51 @@ func TestInstallWritesSelectedHostArtifacts(t *testing.T) {
 	}
 }
 
+// TestInstallDoesNotMutateGeminiSettings locks the invariant that the
+// skills installer never touches ~/.gemini/settings.json. Gemini's
+// control-plane hook is injected per-invocation via
+// GEMINI_CLI_SYSTEM_SETTINGS_PATH — the installer must stay out of the
+// user's global Gemini config.
+func TestInstallDoesNotMutateGeminiSettings(t *testing.T) {
+	home := t.TempDir()
+	projectRoot := t.TempDir()
+
+	t.Setenv("HOME", home)
+
+	geminiDir := filepath.Join(home, ".gemini")
+	if err := os.MkdirAll(geminiDir, 0o755); err != nil {
+		t.Fatalf("mkdir gemini: %v", err)
+	}
+	settingsPath := filepath.Join(geminiDir, "settings.json")
+	original := `{"some":"user","config":true}`
+	if err := os.WriteFile(settingsPath, []byte(original), 0o644); err != nil {
+		t.Fatalf("seed settings: %v", err)
+	}
+	origStat, err := os.Stat(settingsPath)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+
+	if _, err := Install(projectRoot, InstallOptions{}); err != nil {
+		t.Fatalf("install: %v", err)
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read after install: %v", err)
+	}
+	if string(data) != original {
+		t.Fatalf("gemini settings.json was mutated by Install; want %q, got %q", original, string(data))
+	}
+	newStat, err := os.Stat(settingsPath)
+	if err != nil {
+		t.Fatalf("stat after: %v", err)
+	}
+	if !newStat.ModTime().Equal(origStat.ModTime()) {
+		t.Fatalf("gemini settings.json mtime changed by Install: %v -> %v", origStat.ModTime(), newStat.ModTime())
+	}
+}
+
 func TestInstallDefaultsCodexToAgentsSkillsDir(t *testing.T) {
 	t.Parallel()
 
