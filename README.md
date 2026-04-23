@@ -23,33 +23,38 @@ Supported agents (all fully executable):
 - Codex CLI
 - Gemini CLI (opt-in via `--agents ...,gemini` or by adding `"gemini"` to `agent_priority`; set `GEMINI_API_KEY` or sign in to the Gemini CLI before running headless)
 
-## End-User Install
+## Install
 
-Primary path:
-
-- Claude Code: install Springfield from the `brentguistwite` marketplace (see below).
-- Codex: install Springfield from the Codex plugin/catalog flow.
-
-Use the local CLI only when you need project bootstrap plus local host sync, development setup, or a fallback path outside plugin/catalog distribution.
-
-### Claude Code Marketplace
-
-Inside Claude Code, add the marketplace once, then install the plugin:
+Primary path (one step for both plugin skills and CLI binary):
 
 ```
 /plugin marketplace add brentguistwite/springfield
 /plugin install springfield@brentguistwite
 ```
 
-`/plugin marketplace add` accepts the `owner/repo` GitHub shorthand; use the full `https://github.com/brentguistwite/springfield.git` URL if your environment needs it. After install, the Springfield slash commands (`/springfield:plan`, `/springfield:start`, `/springfield:status`, `/springfield:recover`) become available in Claude Code.
+The plugin ships a `SessionStart` hook that downloads the matching `springfield` CLI binary from the GitHub release pinned by the installed plugin version, verifies its checksum against `checksums.txt`, caches it under `~/.cache/springfield/<version>/`, and symlinks it to `~/.local/bin/springfield`. Add `~/.local/bin` to your `PATH` once; afterwards every `/plugin update springfield@brentguistwite` refreshes the plugin skills **and** the CLI binary in a single step — no `go install` or `brew upgrade` needed.
 
-Manage the install with:
+Slash commands available after install: `/springfield:plan`, `/springfield:start`, `/springfield:status`, `/springfield:recover`.
+
+Manage the install:
 
 ```
 /plugin list                               # verify install
-/plugin update springfield@brentguistwite  # pull latest
+/plugin update springfield@brentguistwite  # pull latest plugin + CLI
 /plugin uninstall springfield@brentguistwite
 ```
+
+`/plugin marketplace add` accepts the `owner/repo` GitHub shorthand; use the full `https://github.com/brentguistwite/springfield.git` URL if your environment needs it.
+
+### Alternate Install Paths
+
+Use these only if you need the CLI outside the plugin flow:
+
+- Tarball: download from [Releases](https://github.com/brentguistwite/springfield/releases), then `tar -xzf springfield_<version>_<os>_<arch>.tar.gz && install -m 0755 springfield /usr/local/bin/springfield`.
+- Homebrew formula from release asset: `brew install --formula https://github.com/brentguistwite/springfield/releases/download/vX.Y.Z/springfield.rb`.
+- From source: `go install .` inside this repo.
+
+The SessionStart hook currently supports macOS and Linux (amd64/arm64). Windows CLI users must install via the alternate paths above.
 
 ### Codex Plugin Directory
 
@@ -186,7 +191,7 @@ springfield plan --append  --slices extra-slices.json
 
 Use `springfield doctor` whenever local agent tooling looks unhealthy or a host CLI is missing.
 
-## Install Methods
+## Release Assets
 
 Tagged releases publish:
 
@@ -197,18 +202,7 @@ Tagged releases publish:
 - `checksums.txt`
 - `springfield.rb`
 
-Install a downloaded archive with:
-
-```bash
-tar -xzf springfield_<version>_<os>_<arch>.tar.gz
-install -m 0755 springfield /usr/local/bin/springfield
-```
-
-Homebrew release asset:
-
-```bash
-brew install --formula https://github.com/<owner>/<repo>/releases/download/vX.Y.Z/springfield.rb
-```
+The SessionStart hook consumes these automatically on `/plugin install` / `/plugin update`. Manual install instructions live under [Alternate Install Paths](#alternate-install-paths).
 
 ## Development
 
