@@ -33,10 +33,10 @@ plugin_version() {
 }
 
 # fallback_symlink only reuses the EXACT pinned version from cache. If the
-# pinned version isn't cached, leave the existing symlink (if any) untouched
-# and emit a clear message. Never hop to a different version — plugin.json
-# version is the source of truth; silently running a different CLI breaks the
-# contract this hook exists to enforce.
+# pinned version isn't cached, REMOVE any pre-existing symlink so the user
+# doesn't silently keep running a stale CLI version under a newer plugin.
+# Visible breakage (`springfield: command not found`) beats invisible version
+# skew (new slash commands driving an old CLI with different flags/schema).
 fallback_symlink() {
   local dest="$1"
   local version="$2"
@@ -44,15 +44,30 @@ fallback_symlink() {
   if [[ -x "$exact" ]]; then
     ln -sfn "$exact" "$dest"
     echo "springfield: using cached v$version (fetch failed)" >&2
-  else
-    echo "springfield: no cached binary for v$version and fetch failed; install manually from https://github.com/brentguistwite/springfield/releases" >&2
+    return 0
   fi
+  if [[ -e "$dest" || -L "$dest" ]]; then
+    rm -f "$dest"
+    echo "springfield: removed stale CLI symlink — plugin pinned v$version but no matching binary is cached and fetch failed" >&2
+  fi
+  echo "springfield: install manually from https://github.com/brentguistwite/springfield/releases" >&2
+}
+
+# stat_mtime portably prints the epoch mtime of $1 (BSD stat on macOS vs
+# GNU stat on Linux). Echoes 0 if stat fails (treat as ancient → reapable).
+stat_mtime() {
+  stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0
 }
 
 # acquire_install_lock serializes concurrent SessionStart invocations for the
 # same version. mkdir is atomic across POSIX filesystems — the first caller
-# wins the directory, subsequent callers wait. If another process finishes
-# first, we'll see the binary and fast-path out without needing the lock.
+# wins the directory, subsequent callers wait. Stale-lock recovery:
+#   1. On acquire, write $$ into $lock/pid so others can detect the holder.
+#   2. On contention, read that pid; if `kill -0 $pid` fails (process gone),
+#      reap the lock and retry. Covers SIGKILL, crash, reboot.
+#   3. Belt-and-braces: if the lock dir's mtime is older than 2× the wait
+#      budget (60s) and pid check couldn't reap it (missing pid file, cross-
+#      host cache, etc.), reap by age instead of returning failure.
 acquire_install_lock() {
   local version="$1"
   local locks_dir="$HOME/.cache/springfield/.locks"
@@ -61,20 +76,42 @@ acquire_install_lock() {
 
   local waited=0
   local max_wait_tenths=300  # 30 seconds
+  local stale_age_seconds=60
   while ! mkdir "$lock" 2>/dev/null; do
-    # Another process owns the lock. If they already finished and the binary
-    # is published, skip waiting.
+    # Fast path re-check: maybe another process just finished.
     if [[ -x "$HOME/.cache/springfield/$version/springfield" ]]; then
-      return 2  # signal "binary ready, no fetch needed"
+      return 2
+    fi
+    # Pid-based stale reap: owning process gone?
+    if [[ -f "$lock/pid" ]]; then
+      local holder
+      holder="$(cat "$lock/pid" 2>/dev/null || true)"
+      if [[ -n "$holder" ]] && ! kill -0 "$holder" 2>/dev/null; then
+        rm -rf "$lock"
+        continue
+      fi
+    fi
+    # Age-based stale reap for locks with no readable pid.
+    local now age
+    now=$(date +%s)
+    age=$(( now - $(stat_mtime "$lock") ))
+    if (( age > stale_age_seconds )); then
+      rm -rf "$lock"
+      continue
     fi
     sleep 0.1
     waited=$((waited + 1))
     if (( waited >= max_wait_tenths )); then
+      # Last-chance reap before giving up.
+      rm -rf "$lock" 2>/dev/null || true
+      if mkdir "$lock" 2>/dev/null; then
+        break
+      fi
       echo "springfield: install lock for v$version held too long, skipping" >&2
       return 1
     fi
   done
-  # Trap ensures lock is released even on error/signal
+  printf '%d\n' "$$" > "$lock/pid"
   export _SPRINGFIELD_LOCK="$lock"
   trap 'release_install_lock' EXIT INT TERM
   return 0

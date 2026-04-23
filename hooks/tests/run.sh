@@ -253,4 +253,104 @@ if [[ "$got" != "$final" ]]; then
 fi
 rm -rf "$tmp5"
 
+# ---------- Test 6: failed upgrade must NOT leave stale symlink in place ----------
+# User was on v4.4.4 (cached + symlinked). Plugin upgrades to v5.5.5. Fetch
+# fails and v5.5.5 isn't cached. The hook must REMOVE the stale symlink rather
+# than quietly keep routing to v4.4.4, because the plugin's skills/commands
+# will now expect v5.5.5 CLI semantics.
+tmp6="$(mktemp -d)"
+export HOME="$tmp6"
+export CLAUDE_PLUGIN_ROOT="$tmp6/plugin"
+mkdir -p "$tmp6/plugin/.claude-plugin" "$tmp6/bin" \
+  "$tmp6/.cache/springfield/4.4.4" "$tmp6/.local/bin"
+printf '{"version":"5.5.5"}\n' > "$tmp6/plugin/.claude-plugin/plugin.json"
+printf '#!/bin/sh\necho v4.4.4\n' > "$tmp6/.cache/springfield/4.4.4/springfield"
+chmod +x "$tmp6/.cache/springfield/4.4.4/springfield"
+ln -sfn "$tmp6/.cache/springfield/4.4.4/springfield" "$tmp6/.local/bin/springfield"
+
+cat > "$tmp6/bin/curl" <<'STUB'
+#!/bin/sh
+exit 22
+STUB
+chmod +x "$tmp6/bin/curl"
+
+PATH="$tmp6/bin:$PATH" bash "$hook" || true
+if [[ -L "$tmp6/.local/bin/springfield" || -e "$tmp6/.local/bin/springfield" ]]; then
+  target="$(readlink "$tmp6/.local/bin/springfield" 2>/dev/null || echo EXISTS)"
+  echo "FAIL test6: stale symlink not removed after failed upgrade: $target" >&2
+  fail=1
+fi
+rm -rf "$tmp6"
+
+# ---------- Test 7: stale install lock from dead pid must be reapable ----------
+# A prior run was SIGKILLed mid-install. The lock directory and its pid file
+# remain; the pid points at a long-gone process. The hook must detect this,
+# reap the lock, and install successfully — not spin for 30s and bail.
+tmp7="$(mktemp -d)"
+export HOME="$tmp7"
+export CLAUDE_PLUGIN_ROOT="$tmp7/plugin"
+mkdir -p "$tmp7/plugin/.claude-plugin" "$tmp7/bin" "$tmp7/fake-release" \
+  "$tmp7/.local/bin" "$tmp7/.cache/springfield/.locks/3.3.3"
+printf '{"version":"3.3.3"}\n' > "$tmp7/plugin/.claude-plugin/plugin.json"
+# Use pid 999999 — virtually guaranteed to be dead. Portable `kill -0` will
+# fail on a non-existent pid, triggering stale-lock reap.
+printf '999999\n' > "$tmp7/.cache/springfield/.locks/3.3.3/pid"
+
+os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+arch="$(uname -m)"
+case "$arch" in x86_64) arch=amd64;; aarch64|arm64) arch=arm64;; esac
+
+stage7="$(mktemp -d)"
+printf '#!/bin/sh\necho v3.3.3\n' > "$stage7/springfield"
+chmod +x "$stage7/springfield"
+tarball7="$tmp7/fake-release/springfield_3.3.3_${os}_${arch}.tar.gz"
+tar -C "$stage7" -czf "$tarball7" springfield
+
+if command -v sha256sum >/dev/null 2>&1; then
+  sum7="$(sha256sum "$tarball7" | awk '{print $1}')"
+else
+  sum7="$(shasum -a 256 "$tarball7" | awk '{print $1}')"
+fi
+printf '%s  ./springfield_3.3.3_%s_%s.tar.gz\n' "$sum7" "$os" "$arch" \
+  > "$tmp7/fake-release/checksums.txt"
+
+cat > "$tmp7/bin/curl" <<STUB
+#!/usr/bin/env bash
+set -euo pipefail
+url=""
+out="-"
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -o) out="\$2"; shift 2 ;;
+    -fsSL|-fL|-sL|-s|-L|-f) shift ;;
+    http*) url="\$1"; shift ;;
+    *) shift ;;
+  esac
+done
+case "\$url" in
+  *checksums.txt) src="$tmp7/fake-release/checksums.txt" ;;
+  *springfield_3.3.3_${os}_${arch}.tar.gz) src="$tarball7" ;;
+  *) echo "unexpected url \$url" >&2; exit 22 ;;
+esac
+if [ "\$out" = "-" ]; then cat "\$src"; else cp "\$src" "\$out"; fi
+STUB
+chmod +x "$tmp7/bin/curl"
+
+# Enforce a tight wall-clock budget so spinning on stale lock would fail this test.
+t_start=$(date +%s)
+PATH="$tmp7/bin:$PATH" bash "$hook" || { echo "FAIL test7: hook errored on stale-lock recovery" >&2; fail=1; }
+t_end=$(date +%s)
+if (( t_end - t_start > 5 )); then
+  echo "FAIL test7: hook did not reap stale lock quickly (took $((t_end - t_start))s; expected <5s)" >&2
+  fail=1
+fi
+
+got="$(readlink "$tmp7/.local/bin/springfield" 2>/dev/null || true)"
+want="$tmp7/.cache/springfield/3.3.3/springfield"
+if [[ "$got" != "$want" ]]; then
+  echo "FAIL test7: install did not complete after stale-lock reap: got=$got want=$want" >&2
+  fail=1
+fi
+rm -rf "$tmp7"
+
 exit $fail
