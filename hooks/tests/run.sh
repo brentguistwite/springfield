@@ -5,6 +5,43 @@ fail=0
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 hook="$script_dir/../session-start.sh"
 
+install_plugin_checksums() {
+  local plugin_root="$1"
+  local src="$2"
+  mkdir -p "$plugin_root/hooks"
+  cp "$src" "$plugin_root/hooks/checksums.txt"
+}
+
+sha256_file() {
+  local path="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$path" | awk '{print $1}'
+  else
+    shasum -a 256 "$path" | awk '{print $1}'
+  fi
+}
+
+write_checksum_entry() {
+  local manifest_path="$1"
+  local version="$2"
+  local os="$3"
+  local arch="$4"
+  local file_path="$5"
+  printf '%s  ./springfield_%s_%s_%s.tar.gz\n' "$(sha256_file "$file_path")" "$version" "$os" "$arch" \
+    > "$manifest_path"
+}
+
+write_plugin_checksum_entry() {
+  local plugin_root="$1"
+  local version="$2"
+  local os="$3"
+  local arch="$4"
+  local sum="$5"
+  mkdir -p "$plugin_root/hooks"
+  printf '%s  ./springfield_%s_%s_%s.tar.gz\n' "$sum" "$version" "$os" "$arch" \
+    > "$plugin_root/hooks/checksums.txt"
+}
+
 # ---------- Test 1: cache hit + correct symlink → exit 0, no network ----------
 tmp="$(mktemp -d)"
 export HOME="$tmp"
@@ -55,14 +92,8 @@ chmod +x "$stage/springfield"
 tarball="$tmp2/fake-release/springfield_9.9.9_${os}_${arch}.tar.gz"
 tar -C "$stage" -czf "$tarball" springfield
 
-if command -v sha256sum >/dev/null 2>&1; then
-  sum="$(sha256sum "$tarball" | awk '{print $1}')"
-else
-  sum="$(shasum -a 256 "$tarball" | awk '{print $1}')"
-fi
-# Mirror real release workflow: `sha256sum ./*.tar.gz > checksums.txt` writes ./-prefixed paths
-printf '%s  ./springfield_9.9.9_%s_%s.tar.gz\n' "$sum" "$os" "$arch" \
-  > "$tmp2/fake-release/checksums.txt"
+write_checksum_entry "$tmp2/fake-release/checksums.txt" "9.9.9" "$os" "$arch" "$stage/springfield"
+install_plugin_checksums "$tmp2/plugin" "$tmp2/fake-release/checksums.txt"
 
 # Stub curl to serve from local filesystem by URL suffix
 cat > "$tmp2/bin/curl" <<STUB
@@ -114,6 +145,8 @@ mkdir -p "$tmp3/plugin/.claude-plugin" "$tmp3/bin" \
 printf '{"version":"8.8.8"}\n' > "$tmp3/plugin/.claude-plugin/plugin.json"
 printf '#!/bin/sh\necho v7.7.7\n' > "$tmp3/.cache/springfield/7.7.7/springfield"
 chmod +x "$tmp3/.cache/springfield/7.7.7/springfield"
+write_plugin_checksum_entry "$tmp3/plugin" "8.8.8" "$os" "$arch" \
+  "0000000000000000000000000000000000000000000000000000000000000000"
 
 # curl stub that 404s everything
 cat > "$tmp3/bin/curl" <<'STUB'
@@ -200,15 +233,10 @@ chmod +x "$stage5/springfield"
 tarball5="$tmp5/fake-release/springfield_5.5.5_${os}_${arch}.tar.gz"
 tar -C "$stage5" -czf "$tarball5" springfield
 
-if command -v sha256sum >/dev/null 2>&1; then
-  sum5="$(sha256sum "$tarball5" | awk '{print $1}')"
-  expected_bin_sum="$(sha256sum "$stage5/springfield" | awk '{print $1}')"
-else
-  sum5="$(shasum -a 256 "$tarball5" | awk '{print $1}')"
-  expected_bin_sum="$(shasum -a 256 "$stage5/springfield" | awk '{print $1}')"
-fi
-printf '%s  ./springfield_5.5.5_%s_%s.tar.gz\n' "$sum5" "$os" "$arch" \
+expected_bin_sum="$(sha256_file "$stage5/springfield")"
+printf '%s  ./springfield_5.5.5_%s_%s.tar.gz\n' "$expected_bin_sum" "$os" "$arch" \
   > "$tmp5/fake-release/checksums.txt"
+install_plugin_checksums "$tmp5/plugin" "$tmp5/fake-release/checksums.txt"
 
 # curl stub with a small artificial delay so the race window is real
 cat > "$tmp5/bin/curl" <<STUB
@@ -284,6 +312,8 @@ printf '#!/bin/sh\necho v4.4.4\n' > "$tmp6/.cache/springfield/4.4.4/springfield"
 chmod +x "$tmp6/.cache/springfield/4.4.4/springfield"
 old_target="$tmp6/.cache/springfield/4.4.4/springfield"
 ln -sfn "$old_target" "$tmp6/.local/bin/springfield"
+write_plugin_checksum_entry "$tmp6/plugin" "5.5.5" "$os" "$arch" \
+  "0000000000000000000000000000000000000000000000000000000000000000"
 
 cat > "$tmp6/bin/curl" <<'STUB'
 #!/bin/sh
@@ -335,13 +365,8 @@ chmod +x "$stage7/springfield"
 tarball7="$tmp7/fake-release/springfield_3.3.3_${os}_${arch}.tar.gz"
 tar -C "$stage7" -czf "$tarball7" springfield
 
-if command -v sha256sum >/dev/null 2>&1; then
-  sum7="$(sha256sum "$tarball7" | awk '{print $1}')"
-else
-  sum7="$(shasum -a 256 "$tarball7" | awk '{print $1}')"
-fi
-printf '%s  ./springfield_3.3.3_%s_%s.tar.gz\n' "$sum7" "$os" "$arch" \
-  > "$tmp7/fake-release/checksums.txt"
+write_checksum_entry "$tmp7/fake-release/checksums.txt" "3.3.3" "$os" "$arch" "$stage7/springfield"
+install_plugin_checksums "$tmp7/plugin" "$tmp7/fake-release/checksums.txt"
 
 cat > "$tmp7/bin/curl" <<STUB
 #!/usr/bin/env bash
@@ -392,6 +417,8 @@ export HOME="$tmp8"
 export CLAUDE_PLUGIN_ROOT="$tmp8/plugin"
 mkdir -p "$tmp8/plugin/.claude-plugin" "$tmp8/bin" "$tmp8/.local/bin"
 printf '{"version":"2.2.2"}\n' > "$tmp8/plugin/.claude-plugin/plugin.json"
+write_plugin_checksum_entry "$tmp8/plugin" "2.2.2" "$os" "$arch" \
+  "0000000000000000000000000000000000000000000000000000000000000000"
 
 # Curl stub that honors connect-timeout first. If the hook stops passing
 # --connect-timeout, this test stalls on the larger max-time budget instead.
@@ -448,6 +475,8 @@ export HOME="$tmp8b"
 export CLAUDE_PLUGIN_ROOT="$tmp8b/plugin"
 mkdir -p "$tmp8b/plugin/.claude-plugin" "$tmp8b/bin" "$tmp8b/.local/bin"
 printf '{"version":"2.2.3"}\n' > "$tmp8b/plugin/.claude-plugin/plugin.json"
+write_plugin_checksum_entry "$tmp8b/plugin" "2.2.3" "$os" "$arch" \
+  "0000000000000000000000000000000000000000000000000000000000000000"
 
 cat > "$tmp8b/bin/curl" <<'STUB'
 #!/usr/bin/env bash
@@ -498,7 +527,8 @@ rm -rf "$tmp8b"
 
 # ---------- Test 9: checksum mismatch must fall back, not install ----------
 # Release was tampered with / retransmission corrupted. The script MUST NOT
-# install a binary whose sha256 doesn't match the published checksums.txt.
+# install a binary whose extracted payload hash doesn't match the plugin-shipped
+# manifest.
 tmp9="$(mktemp -d)"
 export HOME="$tmp9"
 export CLAUDE_PLUGIN_ROOT="$tmp9/plugin"
@@ -520,6 +550,7 @@ tar -C "$stage9" -czf "$tarball9" springfield
 printf '%s  ./springfield_2.9.9_%s_%s.tar.gz\n' \
   '0000000000000000000000000000000000000000000000000000000000000000' "$os" "$arch" \
   > "$tmp9/fake-release/checksums.txt"
+install_plugin_checksums "$tmp9/plugin" "$tmp9/fake-release/checksums.txt"
 
 cat > "$tmp9/bin/curl" <<STUB
 #!/usr/bin/env bash
@@ -573,16 +604,13 @@ mkdir -p "$tmp10/plugin/.claude-plugin" "$tmp10/bin" "$tmp10/fake-release" \
   "$tmp10/.local/bin"
 printf '{"version":"1.1.1"}\n' > "$tmp10/plugin/.claude-plugin/plugin.json"
 
-# "Tarball" is random garbage — tar -xzf will fail.
+# "Tarball" is random garbage — tar -xzf will fail before checksum validation.
 bad_tarball="$tmp10/fake-release/springfield_1.1.1_${os}_${arch}.tar.gz"
 head -c 4096 /dev/urandom > "$bad_tarball"
-if command -v sha256sum >/dev/null 2>&1; then
-  bad_sum="$(sha256sum "$bad_tarball" | awk '{print $1}')"
-else
-  bad_sum="$(shasum -a 256 "$bad_tarball" | awk '{print $1}')"
-fi
+bad_sum='0000000000000000000000000000000000000000000000000000000000000000'
 printf '%s  ./springfield_1.1.1_%s_%s.tar.gz\n' "$bad_sum" "$os" "$arch" \
   > "$tmp10/fake-release/checksums.txt"
+install_plugin_checksums "$tmp10/plugin" "$tmp10/fake-release/checksums.txt"
 
 cat > "$tmp10/bin/curl" <<STUB
 #!/usr/bin/env bash
@@ -644,16 +672,14 @@ build_tarball() {
   chmod +x "$stage/springfield"
   tarball="$tmp11/fake-release/springfield_${ver}_${os}_${arch}.tar.gz"
   tar -C "$stage" -czf "$tarball" springfield
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$tarball" | awk -v a="./springfield_${ver}_${os}_${arch}.tar.gz" '{print $1"  "a}'
-  else
-    shasum -a 256 "$tarball" | awk -v a="./springfield_${ver}_${os}_${arch}.tar.gz" '{print $1"  "a}'
-  fi
+  printf '%s  ./springfield_%s_%s_%s.tar.gz\n' "$(sha256_file "$stage/springfield")" "$ver" "$os" "$arch"
 }
 {
   build_tarball 1.0.0
   build_tarball 2.0.0
 } > "$tmp11/fake-release/checksums.txt"
+install_plugin_checksums "$tmp11/pluginA" "$tmp11/fake-release/checksums.txt"
+install_plugin_checksums "$tmp11/pluginB" "$tmp11/fake-release/checksums.txt"
 
 cat > "$tmp11/bin/curl" <<STUB
 #!/usr/bin/env bash
@@ -778,13 +804,8 @@ printf '#!/bin/sh\necho v0.7.7\n' > "$stage14/springfield"
 chmod +x "$stage14/springfield"
 tarball14="$tmp14/fake-release/springfield_0.7.7_${os}_${arch}.tar.gz"
 tar -C "$stage14" -czf "$tarball14" springfield
-if command -v sha256sum >/dev/null 2>&1; then
-  sum14="$(sha256sum "$tarball14" | awk '{print $1}')"
-else
-  sum14="$(shasum -a 256 "$tarball14" | awk '{print $1}')"
-fi
-printf '%s  ./springfield_0.7.7_%s_%s.tar.gz\n' "$sum14" "$os" "$arch" \
-  > "$tmp14/fake-release/checksums.txt"
+write_checksum_entry "$tmp14/fake-release/checksums.txt" "0.7.7" "$os" "$arch" "$stage14/springfield"
+install_plugin_checksums "$tmp14/plugin" "$tmp14/fake-release/checksums.txt"
 
 cat > "$tmp14/bin/curl" <<STUB
 #!/usr/bin/env bash
@@ -833,13 +854,8 @@ printf '#!/bin/sh\necho v1.5.0\n' > "$stage15/springfield"
 chmod +x "$stage15/springfield"
 tarball15="$tmp15/fake-release/springfield_1.5.0_${os}_${arch}.tar.gz"
 tar -C "$stage15" -czf "$tarball15" springfield
-if command -v sha256sum >/dev/null 2>&1; then
-  sum15="$(sha256sum "$tarball15" | awk '{print $1}')"
-else
-  sum15="$(shasum -a 256 "$tarball15" | awk '{print $1}')"
-fi
-printf '%s  ./springfield_1.5.0_%s_%s.tar.gz\n' "$sum15" "$os" "$arch" \
-  > "$tmp15/fake-release/checksums.txt"
+write_checksum_entry "$tmp15/fake-release/checksums.txt" "1.5.0" "$os" "$arch" "$stage15/springfield"
+install_plugin_checksums "$tmp15/plugin" "$tmp15/fake-release/checksums.txt"
 
 cat > "$tmp15/bin/curl" <<STUB
 #!/usr/bin/env bash
@@ -916,13 +932,8 @@ printf '#!/bin/sh\necho v0.8.8\n' > "$stage17/springfield"
 chmod +x "$stage17/springfield"
 tarball17="$tmp17/fake-release/springfield_0.8.8_${os}_${arch}.tar.gz"
 tar -C "$stage17" -czf "$tarball17" springfield
-if command -v sha256sum >/dev/null 2>&1; then
-  sum17="$(sha256sum "$tarball17" | awk '{print $1}')"
-else
-  sum17="$(shasum -a 256 "$tarball17" | awk '{print $1}')"
-fi
-printf '%s  ./springfield_0.8.8_%s_%s.tar.gz\n' "$sum17" "$os" "$arch" \
-  > "$tmp17/fake-release/checksums.txt"
+write_checksum_entry "$tmp17/fake-release/checksums.txt" "0.8.8" "$os" "$arch" "$stage17/springfield"
+install_plugin_checksums "$tmp17/plugin" "$tmp17/fake-release/checksums.txt"
 
 real_tar="$(command -v tar)"
 cat > "$tmp17/bin/curl" <<STUB
@@ -1062,15 +1073,12 @@ printf '#!/bin/sh\necho v0.9.1\n' > "$stage19/springfield"
 chmod +x "$stage19/springfield"
 tarball19="$tmp19/fake-release/springfield_0.9.1_${os}_${arch}.tar.gz"
 tar -C "$stage19" -czf "$tarball19" springfield
-if command -v sha256sum >/dev/null 2>&1; then
-  sum19="$(sha256sum "$tarball19" | awk '{print $1}')"
-else
-  sum19="$(shasum -a 256 "$tarball19" | awk '{print $1}')"
-fi
+sum19="$(sha256_file "$stage19/springfield")"
 cat > "$tmp19/fake-release/checksums.txt" <<EOF
 0000000000000000000000000000000000000000000000000000000000000000  ./springfield_0.9.1_${os}_${arch}.tar.gz; touch "$tmp19/pwned"
 $sum19  ./springfield_0.9.1_${os}_${arch}.tar.gz
 EOF
+install_plugin_checksums "$tmp19/plugin" "$tmp19/fake-release/checksums.txt"
 
 cat > "$tmp19/bin/curl" <<STUB
 #!/usr/bin/env bash
@@ -1114,13 +1122,8 @@ printf '#!/bin/sh\necho v0.9.2\n' > "$stage20/springfield"
 chmod +x "$stage20/springfield"
 tarball20="$tmp20/fake release/springfield_0.9.2_${os}_${arch}.tar.gz"
 tar -C "$stage20" -czf "$tarball20" springfield
-if command -v sha256sum >/dev/null 2>&1; then
-  sum20="$(sha256sum "$tarball20" | awk '{print $1}')"
-else
-  sum20="$(shasum -a 256 "$tarball20" | awk '{print $1}')"
-fi
-printf '%s  ./springfield_0.9.2_%s_%s.tar.gz\n' "$sum20" "$os" "$arch" \
-  > "$tmp20/fake release/checksums.txt"
+write_checksum_entry "$tmp20/fake release/checksums.txt" "0.9.2" "$os" "$arch" "$stage20/springfield"
+install_plugin_checksums "$tmp20/plugin root" "$tmp20/fake release/checksums.txt"
 
 cat > "$tmp20/bin dir/curl" <<STUB
 #!/usr/bin/env bash
@@ -1196,13 +1199,8 @@ printf '#!/bin/sh\necho v0.9.4\n' > "$stage22/springfield"
 chmod +x "$stage22/springfield"
 tarball22="$tmp22/fake-release/springfield_0.9.4_${os}_${arch}.tar.gz"
 tar -C "$stage22" -czf "$tarball22" springfield
-if command -v sha256sum >/dev/null 2>&1; then
-  sum22="$(sha256sum "$tarball22" | awk '{print $1}')"
-else
-  sum22="$(shasum -a 256 "$tarball22" | awk '{print $1}')"
-fi
-printf '%s  ./springfield_0.9.4_%s_%s.tar.gz\n' "$sum22" "$os" "$arch" \
-  > "$tmp22/fake-release/checksums.txt"
+write_checksum_entry "$tmp22/fake-release/checksums.txt" "0.9.4" "$os" "$arch" "$stage22/springfield"
+install_plugin_checksums "$tmp22/plugin" "$tmp22/fake-release/checksums.txt"
 
 cat > "$tmp22/bin/curl" <<STUB
 #!/usr/bin/env bash
@@ -1257,7 +1255,7 @@ wait "$p22b" || { echo "FAIL test22: waiting install exited non-zero" >&2; fail=
 
 asset_fetches22="$(grep -c 'springfield_0.9.4_' "$tmp22/curl.log" 2>/dev/null || true)"
 sum_fetches22="$(grep -c 'checksums.txt' "$tmp22/curl.log" 2>/dev/null || true)"
-if [[ "$asset_fetches22" != "1" || "$sum_fetches22" != "1" ]]; then
+if [[ "$asset_fetches22" != "1" || "$sum_fetches22" != "0" ]]; then
   echo "FAIL test22: waiting session stole live lock and started duplicate downloads: assets=$asset_fetches22 sums=$sum_fetches22" >&2
   fail=1
 fi
@@ -1267,5 +1265,86 @@ if ! grep -q 'held too long, skipping' "$tmp22/err22b.log" 2>/dev/null; then
   fail=1
 fi
 rm -rf "$tmp22"
+
+# ---------- Test 23: missing plugin-shipped checksum manifest blocks install before network ----------
+tmp23="$(mktemp -d)"
+export HOME="$tmp23"
+export CLAUDE_PLUGIN_ROOT="$tmp23/plugin"
+mkdir -p "$tmp23/plugin/.claude-plugin" "$tmp23/bin" "$tmp23/.local/bin"
+printf '{"version":"0.9.5"}\n' > "$tmp23/plugin/.claude-plugin/plugin.json"
+
+cat > "$tmp23/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+echo "unexpected network fetch" >&2
+exit 99
+STUB
+chmod +x "$tmp23/bin/curl"
+
+set +e
+PATH="$tmp23/bin:$PATH" bash "$hook" >/dev/null 2>"$tmp23/err23.log"
+rc23=$?
+set -e
+err23="$(cat "$tmp23/err23.log" 2>/dev/null || true)"
+if (( rc23 != 0 )); then
+  echo "FAIL test23: missing manifest crashed hook with rc=$rc23" >&2
+  fail=1
+fi
+if [[ "$err23" != *"checksum manifest missing"* ]]; then
+  echo "FAIL test23: missing manifest not reported clearly: $err23" >&2
+  fail=1
+fi
+if [[ "$err23" == *"checksum entry missing"* ]]; then
+  echo "FAIL test23: missing manifest should not be reported as missing entry: $err23" >&2
+  fail=1
+fi
+if [[ -e "$tmp23/.cache/springfield/0.9.5/springfield" ]]; then
+  echo "FAIL test23: install proceeded despite missing manifest" >&2
+  fail=1
+fi
+rm -rf "$tmp23"
+
+# ---------- Test 24: manifest without current asset entry blocks install before network ----------
+tmp24="$(mktemp -d)"
+export HOME="$tmp24"
+export CLAUDE_PLUGIN_ROOT="$tmp24/plugin"
+mkdir -p "$tmp24/plugin/.claude-plugin" "$tmp24/.local/bin"
+printf '{"version":"0.9.6"}\n' > "$tmp24/plugin/.claude-plugin/plugin.json"
+other_arch="amd64"
+if [[ "$arch" == "amd64" ]]; then
+  other_arch="arm64"
+fi
+write_plugin_checksum_entry "$tmp24/plugin" "0.9.6" "$os" "$other_arch" \
+  "0000000000000000000000000000000000000000000000000000000000000000"
+
+mkdir -p "$tmp24/bin"
+cat > "$tmp24/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+echo "unexpected network fetch" >&2
+exit 99
+STUB
+chmod +x "$tmp24/bin/curl"
+
+set +e
+PATH="$tmp24/bin:$PATH" bash "$hook" >/dev/null 2>"$tmp24/err24.log"
+rc24=$?
+set -e
+err24="$(cat "$tmp24/err24.log" 2>/dev/null || true)"
+if (( rc24 != 0 )); then
+  echo "FAIL test24: missing manifest entry crashed hook with rc=$rc24" >&2
+  fail=1
+fi
+if [[ "$err24" != *"checksum entry missing"* ]]; then
+  echo "FAIL test24: missing manifest entry not reported clearly: $err24" >&2
+  fail=1
+fi
+if [[ "$err24" == *"checksum manifest missing"* ]]; then
+  echo "FAIL test24: missing entry should not be reported as missing manifest: $err24" >&2
+  fail=1
+fi
+if [[ -e "$tmp24/.cache/springfield/0.9.6/springfield" ]]; then
+  echo "FAIL test24: install proceeded despite missing manifest entry" >&2
+  fail=1
+fi
+rm -rf "$tmp24"
 
 exit $fail

@@ -16,10 +16,40 @@ Plugin metadata is release-critical. Do not cut a tag with pending changes in:
 - [`.claude-plugin/plugin.json`](../.claude-plugin/plugin.json)
 - [`.claude-plugin/marketplace.json`](../.claude-plugin/marketplace.json)
 - [`.codex-plugin/plugin.json`](../.codex-plugin/plugin.json)
+- [`hooks/checksums.txt`](../hooks/checksums.txt)
 
 Those manifests and marketplace records must describe Springfield, stay version-aligned, and keep the checked-in `skills/plan`, `skills/start`, `skills/status`, and `skills/recover` inventory intact.
 
 **Bump `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` (springfield plugin entry), and `.codex-plugin/plugin.json` `version` to match the upcoming tag before pushing.** The release workflow sets `SPRINGFIELD_RELEASE_TAG=${{ github.ref_name }}` on the `Validate plugin metadata` step, which runs `TestPluginJSONVersionMatchesTagEnv` and fails the release if the manifest version disagrees with the tag. `go test ./...` also enforces Codex/Claude plugin version parity. Version bump is what triggers the SessionStart hook to fetch a new CLI binary after teammates run `/plugin update`.
+
+`hooks/checksums.txt` is now release-critical too. The SessionStart hook trusts the plugin-shipped checksum manifest, not a runtime-fetched proof file from the release page. Each line stays keyed by the archive asset name (`./springfield_<version>_<os>_<arch>.tar.gz`), but the hash value is the SHA256 of the extracted `springfield` binary inside that archive. Before tagging, rebuild the four release archives for the target version and refresh the committed manifest:
+
+```bash
+version="$(awk -F'\"' '/\"version\"[[:space:]]*:/ { print $4; exit }' .claude-plugin/plugin.json)"
+rm -rf dist
+mkdir -p dist
+sha_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+: > hooks/checksums.txt
+
+for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
+  GOOS="${target%/*}"
+  GOARCH="${target#*/}"
+  stage="$(mktemp -d)"
+  CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" \
+    go build -trimpath -ldflags="-s -w -X springfield/cmd.Version=v${version}" -o "${stage}/springfield" .
+  tar -C "${stage}" -czf "dist/springfield_${version}_${GOOS}_${GOARCH}.tar.gz" springfield
+  printf "%s  ./springfield_%s_%s_%s.tar.gz\n" "$(sha_file "${stage}/springfield")" "${version}" "${GOOS}" "${GOARCH}" >> hooks/checksums.txt
+  rm -rf "${stage}"
+done
+
+rm -rf dist
+```
 
 ## Cut A Release
 
@@ -40,10 +70,9 @@ The workflow publishes:
 - `springfield_<version>_darwin_arm64.tar.gz`
 - `springfield_<version>_linux_amd64.tar.gz`
 - `springfield_<version>_linux_arm64.tar.gz`
-- `checksums.txt`
 - `springfield.rb`
 
-Each archive contains a single `springfield` binary built with `cmd.Version` set from the Git tag. Before packaging, the workflow runs plugin metadata validation so manifest drift fails before release creation.
+Each archive contains a single `springfield` binary built with `cmd.Version` set from the Git tag. Before release creation, the workflow unpacks each downloaded `dist/*.tar.gz`, hashes the extracted `springfield` binary, and compares that hash to the committed `hooks/checksums.txt` entry for the matching asset name. `checksums.txt` is not published as a release asset anymore because its semantics are now plugin trust for extracted binaries, not direct verification of tarball bytes.
 
 ## Homebrew
 

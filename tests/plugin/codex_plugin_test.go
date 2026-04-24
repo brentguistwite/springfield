@@ -35,6 +35,22 @@ func TestReleaseMetadataStaysPluginFirst(t *testing.T) {
 	if !strings.Contains(workflow, `go test ./tests/plugin/...`) {
 		t.Fatal("release workflow should validate plugin metadata before packaging")
 	}
+	for _, want := range []string{
+		"hooks/checksums.txt",
+		"-xzf \"dist/$asset\" springfield",
+	} {
+		if !strings.Contains(workflow, want) {
+			t.Fatalf("release workflow should enforce committed checksum manifest: want %q", want)
+		}
+	}
+	for _, stale := range []string{
+		"dist/checksums.txt",
+		"sha256sum -c checksums.txt",
+	} {
+		if strings.Contains(workflow, stale) {
+			t.Fatalf("release workflow should not use stale release checksums asset flow: found %q", stale)
+		}
+	}
 	if !strings.Contains(workflow, wantFormulaDesc) {
 		t.Fatalf("release workflow should render plugin-first formula description: want %s", wantFormulaDesc)
 	}
@@ -52,6 +68,7 @@ func TestReleaseMetadataStaysPluginFirst(t *testing.T) {
 		".claude-plugin/plugin.json",
 		".claude-plugin/marketplace.json",
 		".codex-plugin/plugin.json",
+		"hooks/checksums.txt",
 	} {
 		if !strings.Contains(releaseDoc, rel) {
 			t.Fatalf("release doc should mark %s as release-critical", rel)
@@ -59,6 +76,20 @@ func TestReleaseMetadataStaysPluginFirst(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(releaseDoc), "release-critical") {
 		t.Fatal("release doc should explicitly call plugin metadata release-critical")
+	}
+	if !strings.Contains(strings.ToLower(releaseDoc), "plugin-shipped") {
+		t.Fatal("release doc should explain that the hook trusts plugin-shipped checksums")
+	}
+	if strings.Contains(releaseDoc, "- `checksums.txt`") {
+		t.Fatal("release doc should not list checksums.txt as a published release asset")
+	}
+
+	readme := string(readFile(t, root, "README.md"))
+	if !strings.Contains(readme, "plugin-shipped") || !strings.Contains(readme, "hooks/checksums.txt") {
+		t.Fatal("README should explain that SessionStart trusts plugin-shipped hooks/checksums.txt")
+	}
+	if strings.Contains(readme, "- `checksums.txt`") {
+		t.Fatal("README should not list checksums.txt as a published release asset")
 	}
 
 	for _, rel := range []string{

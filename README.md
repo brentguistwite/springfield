@@ -32,7 +32,7 @@ Primary path (one step for both plugin skills and CLI binary):
 /plugin install springfield@brentguistwite
 ```
 
-The plugin ships a `SessionStart` hook that downloads the matching `springfield` CLI binary from the GitHub release pinned by the installed plugin version, verifies its checksum against `checksums.txt`, caches it under `~/.cache/springfield/<version>/`, and symlinks it to `~/.local/bin/springfield`. Add `~/.local/bin` to your `PATH` once; afterwards every `/plugin update springfield@brentguistwite` refreshes the plugin skills **and** the CLI binary in a single step — no `go install` or `brew upgrade` needed.
+The plugin ships a `SessionStart` hook that downloads the matching `springfield` CLI binary from the GitHub release pinned by the installed plugin version, verifies it against the plugin-shipped `hooks/checksums.txt` manifest, caches it under `~/.cache/springfield/<version>/`, and symlinks it to `~/.local/bin/springfield`. Add `~/.local/bin` to your `PATH` once; afterwards every `/plugin update springfield@brentguistwite` refreshes the plugin skills **and** the CLI binary in a single step — no `go install` or `brew upgrade` needed.
 
 Slash commands available after install: `/springfield:plan`, `/springfield:start`, `/springfield:status`, `/springfield:recover`.
 
@@ -199,10 +199,9 @@ Tagged releases publish:
 - `springfield_<version>_darwin_arm64.tar.gz`
 - `springfield_<version>_linux_amd64.tar.gz`
 - `springfield_<version>_linux_arm64.tar.gz`
-- `checksums.txt`
 - `springfield.rb`
 
-The SessionStart hook consumes these automatically on `/plugin install` / `/plugin update`. Manual install instructions live under [Alternate Install Paths](#alternate-install-paths).
+The SessionStart hook downloads the matching tarball automatically on `/plugin install` / `/plugin update`, then verifies the extracted binary against plugin-shipped `hooks/checksums.txt`. Manual install instructions live under [Alternate Install Paths](#alternate-install-paths).
 
 ## Development
 

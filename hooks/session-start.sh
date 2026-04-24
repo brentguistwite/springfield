@@ -73,6 +73,33 @@ plugin_version() {
   awk -F'"' '/"version"[[:space:]]*:/ { print $4; exit }' "$manifest" 2>/dev/null
 }
 
+checksums_manifest() {
+  printf '%s\n' "$PLUGIN_ROOT/hooks/checksums.txt"
+}
+
+expected_checksum_for_asset() {
+  local asset="$1"
+  local manifest
+  manifest="$(checksums_manifest)"
+  if [[ ! -f "$manifest" ]]; then
+    echo "springfield: checksum manifest missing at $manifest" >&2
+    return 2
+  fi
+
+  awk -v a="$asset" '
+    NF >= 2 && ($2 == a || $2 == "./" a) {
+      print $1
+      found = 1
+      exit
+    }
+    END {
+      if (!found) {
+        exit 1
+      }
+    }
+  ' "$manifest"
+}
+
 # fallback_symlink resolves the "fetch failed or binary missing" path with a
 # tradeoff between two bad outcomes:
 #   A) silently keep running an older CLI under a newer plugin (version skew)
@@ -177,10 +204,32 @@ acquire_install_lock() {
   return 0
 }
 
-install_binary() {
+extract_binary() {
+  local extract_dir="$1"
+  local archive="$2"
+  rm -rf "$extract_dir" 2>/dev/null || true
+  if ! mkdir -p "$extract_dir" 2>/dev/null; then
+    return 1
+  fi
+  if ! tar -C "$extract_dir" -xzf "$archive" springfield 2>/dev/null; then
+    rm -rf "$extract_dir" 2>/dev/null || true
+    return 1
+  fi
+  if [[ ! -f "$extract_dir/springfield" ]]; then
+    rm -rf "$extract_dir" 2>/dev/null || true
+    return 1
+  fi
+  if ! chmod +x "$extract_dir/springfield" 2>/dev/null; then
+    rm -rf "$extract_dir" 2>/dev/null || true
+    return 1
+  fi
+  printf '%s\n' "$extract_dir/springfield"
+}
+
+publish_binary() {
   local cache_dir="$1"
   local bin="$2"
-  local archive="$3"
+  local extracted="$3"
 
   if ! mkdir -p "$cache_dir" 2>/dev/null; then
     return 1
@@ -190,11 +239,7 @@ install_binary() {
   if ! mkdir -p "$staging" 2>/dev/null; then
     return 1
   fi
-  if ! tar -C "$staging" -xzf "$archive" springfield 2>/dev/null; then
-    rm -rf "$staging" 2>/dev/null || true
-    return 1
-  fi
-  if [[ ! -f "$staging/springfield" ]]; then
+  if ! cp "$extracted" "$staging/springfield" 2>/dev/null; then
     rm -rf "$staging" 2>/dev/null || true
     return 1
   fi
@@ -206,8 +251,8 @@ install_binary() {
     rm -rf "$staging" 2>/dev/null || true
     return 1
   fi
-  # Atomic rename within same filesystem. On failure (ENOSPC mid-extract,
-  # cross-device rename, etc), bail without leaving a half-written $bin.
+  # Atomic rename within same filesystem. Copy into cache-local staging first
+  # so the final publish is an in-filesystem rename after validation passed.
   if ! mv "$staging/springfield" "$bin" 2>/dev/null; then
     rm -rf "$staging" 2>/dev/null || true
     return 1
@@ -305,7 +350,15 @@ main() {
   local base="https://github.com/$repo/releases/download/v$version"
   local asset="springfield_${version}_${os}_${arch}.tar.gz"
   local asset_url="$base/$asset"
-  local sums_url="$base/checksums.txt"
+  local expected checksum_rc=0
+  expected="$(expected_checksum_for_asset "$asset")" || checksum_rc=$?
+  if (( checksum_rc != 0 )); then
+    if (( checksum_rc == 1 )); then
+      echo "springfield: checksum entry missing for $asset" >&2
+    fi
+    fallback_symlink "$dest" "$version"
+    exit 0
+  fi
 
   local tmp
   if ! tmp="$(make_temp_dir)"; then
@@ -320,37 +373,28 @@ main() {
     fallback_symlink "$dest" "$version"
     exit 0
   fi
-  if ! curl_bounded "$sums_url" > "$tmp/checksums.txt"; then
-    echo "springfield: failed to download checksums.txt (timeout or error)" >&2
+  local extracted
+  if ! extracted="$(extract_binary "$tmp/extracted" "$tmp/$asset")"; then
+    echo "springfield: install failed (disk, permissions, or corrupt archive); falling back" >&2
     fallback_symlink "$dest" "$version"
     exit 0
   fi
 
-  local expected
-  expected="$(awk -v a="$asset" '$2 == a || $2 == "./"a { print $1; exit }' "$tmp/checksums.txt")"
-  if [[ -z "$expected" ]]; then
-    echo "springfield: checksum entry missing for $asset" >&2
-    fallback_symlink "$dest" "$version"
-    exit 0
-  fi
   local got_sum
-  if ! got_sum="$(sha256 "$tmp/$asset")"; then
+  if ! got_sum="$(sha256 "$extracted")"; then
     fallback_symlink "$dest" "$version"
     exit 0
   fi
   if [[ "$got_sum" != "$expected" ]]; then
-    echo "springfield: checksum mismatch for $asset ($got_sum != $expected)" >&2
+    echo "springfield: checksum mismatch for extracted springfield from $asset ($got_sum != $expected)" >&2
     fallback_symlink "$dest" "$version"
     exit 0
   fi
 
-  # Extract to staging inside cache_dir, then atomic-rename into place.
-  # rename(2) within the same filesystem is atomic on POSIX, preventing a
-  # concurrent reader from observing a partially-written binary. Every I/O
-  # step returns an error code instead of crashing via `set -e` so we can
-  # route install failures (disk full, permission denied, corrupt tarball)
-  # through fallback_symlink rather than erroring the session.
-  if ! install_binary "$cache_dir" "$bin" "$tmp/$asset"; then
+  # Publish only after the extracted binary has been validated against the
+  # plugin-shipped manifest. Copy into cache-local staging, then atomically
+  # rename into place so readers never observe partial bytes.
+  if ! publish_binary "$cache_dir" "$bin" "$extracted"; then
     echo "springfield: install failed (disk, permissions, or corrupt archive); falling back" >&2
     fallback_symlink "$dest" "$version"
     exit 0

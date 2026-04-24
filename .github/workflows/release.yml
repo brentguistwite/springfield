@@ -72,9 +72,21 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Generate checksums
-        working-directory: dist
-        run: sha256sum ./*.tar.gz > checksums.txt
+      - name: Verify plugin checksum manifest against release binaries
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          while read -r expected asset; do
+            asset="${asset#./}"
+            extract_dir="$tmp/${asset%.tar.gz}"
+            mkdir -p "$extract_dir"
+            tar -C "$extract_dir" -xzf "dist/$asset" springfield
+            got="$(sha256sum "$extract_dir/springfield" | cut -d' ' -f1)"
+            if [[ "$got" != "$expected" ]]; then
+              echo "checksum mismatch for $asset: $got != $expected" >&2
+              exit 1
+            fi
+          done < hooks/checksums.txt
 
       - name: Render Homebrew formula
         env:
@@ -130,5 +142,4 @@ jobs:
           generate_release_notes: true
           files: |
             dist/*.tar.gz
-            dist/checksums.txt
             Formula/springfield.rb
