@@ -122,7 +122,14 @@ exit 22
 STUB
 chmod +x "$tmp3/bin/curl"
 
-PATH="$tmp3/bin:$PATH" bash "$hook" || true
+set +e
+PATH="$tmp3/bin:$PATH" bash "$hook" >/dev/null 2>"$tmp3/err3.log"
+rc3=$?
+set -e
+if (( rc3 != 0 )); then
+  echo "FAIL test3: fetch failure crashed hook with rc=$rc3" >&2
+  fail=1
+fi
 got="$(readlink "$tmp3/.local/bin/springfield" 2>/dev/null || true)"
 if [[ "$got" == *"7.7.7"* ]]; then
   echo "FAIL test3: version drift — symlink repointed to stale v7.7.7 on fetch failure: $got" >&2
@@ -149,7 +156,14 @@ exit 22
 STUB
 chmod +x "$tmp4/bin/curl"
 
-PATH="$tmp4/bin:$PATH" bash "$hook" || true
+set +e
+PATH="$tmp4/bin:$PATH" bash "$hook" >/dev/null 2>"$tmp4/err4.log"
+rc4=$?
+set -e
+if (( rc4 != 0 )); then
+  echo "FAIL test4: exact-version fallback crashed hook with rc=$rc4" >&2
+  fail=1
+fi
 got="$(readlink "$tmp4/.local/bin/springfield" 2>/dev/null || true)"
 want="$tmp4/.cache/springfield/6.6.6/springfield"
 if [[ "$got" != "$want" ]]; then
@@ -277,7 +291,15 @@ exit 22
 STUB
 chmod +x "$tmp6/bin/curl"
 
-err6="$(PATH="$tmp6/bin:$PATH" bash "$hook" 2>&1 >/dev/null || true)"
+set +e
+PATH="$tmp6/bin:$PATH" bash "$hook" >/dev/null 2>"$tmp6/err6.log"
+rc6=$?
+set -e
+err6="$(cat "$tmp6/err6.log" 2>/dev/null || true)"
+if (( rc6 != 0 )); then
+  echo "FAIL test6: failed-upgrade fallback crashed hook with rc=$rc6" >&2
+  fail=1
+fi
 got="$(readlink "$tmp6/.local/bin/springfield" 2>/dev/null || true)"
 if [[ "$got" != "$old_target" ]]; then
   echo "FAIL test6: existing symlink was removed or altered (got=$got want=$old_target)" >&2
@@ -360,58 +382,119 @@ if [[ "$got" != "$want" ]]; then
 fi
 rm -rf "$tmp7"
 
-# ---------- Test 8: stalled fetch must bound wall-clock and fall back ----------
-# GitHub / DNS / proxy hangs. SessionStart runs synchronously before any
-# interactive command, so an unbounded curl blocks the user out of Claude
-# for minutes. The hook MUST bound the download via --max-time and treat a
-# timeout identically to a network error — fall through to fallback_symlink,
-# do not hang.
+# ---------- Test 8: stalled connect must honor connect-timeout and fall back ----------
+# DNS / proxy / TCP connect hangs. SessionStart runs synchronously before any
+# interactive command, so an unbounded connect blocks the user out of Claude
+# for minutes. The hook MUST pass --connect-timeout and treat a timeout as a
+# fallback condition — not hang.
 tmp8="$(mktemp -d)"
 export HOME="$tmp8"
 export CLAUDE_PLUGIN_ROOT="$tmp8/plugin"
 mkdir -p "$tmp8/plugin/.claude-plugin" "$tmp8/bin" "$tmp8/.local/bin"
 printf '{"version":"2.2.2"}\n' > "$tmp8/plugin/.claude-plugin/plugin.json"
 
-# Curl stub that sleeps 10s — longer than the hook's max-time budget for this
-# test (set via SPRINGFIELD_CURL_MAX_TIME=2 below).
+# Curl stub that honors connect-timeout first. If the hook stops passing
+# --connect-timeout, this test stalls on the larger max-time budget instead.
 cat > "$tmp8/bin/curl" <<'STUB'
 #!/usr/bin/env bash
-# Emulate --max-time by honoring it ourselves: if passed, sleep min(N, stall).
-STALL=10
+CONNECT_TIME=""
 MAX_TIME=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --connect-timeout) CONNECT_TIME="$2"; shift 2 ;;
     --max-time) MAX_TIME="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
-if [ -n "$MAX_TIME" ]; then
-  sleep_for="$MAX_TIME"
-  # Sleep the max-time, then exit with curl's timeout code (28)
-  sleep "$sleep_for"
+if [ -n "$CONNECT_TIME" ]; then
+  sleep "$CONNECT_TIME"
   exit 28
 fi
-sleep "$STALL"
+if [ -n "$MAX_TIME" ]; then
+  sleep "$MAX_TIME"
+  exit 28
+fi
+sleep 10
 exit 28
 STUB
 chmod +x "$tmp8/bin/curl"
 
 t_start=$(date +%s)
-err8="$(PATH="$tmp8/bin:$PATH" SPRINGFIELD_CURL_CONNECT_TIMEOUT=1 \
-  SPRINGFIELD_CURL_MAX_TIME=2 bash "$hook" 2>&1 >/dev/null || true)"
+set +e
+PATH="$tmp8/bin:$PATH" SPRINGFIELD_CURL_CONNECT_TIMEOUT=1 \
+  SPRINGFIELD_CURL_MAX_TIME=9 bash "$hook" >/dev/null 2>"$tmp8/err8.log"
+rc8=$?
+set -e
+err8="$(cat "$tmp8/err8.log" 2>/dev/null || true)"
 t_end=$(date +%s)
 elapsed=$((t_end - t_start))
-# Budget: max-time 2s + fallback overhead. Generous cap 8s — well under the
-# minutes-long hang that would happen with no --max-time.
-if (( elapsed > 8 )); then
-  echo "FAIL test8: hook did not bound stalled fetch: elapsed=${elapsed}s" >&2
+if (( rc8 != 0 )); then
+  echo "FAIL test8: connect-timeout fallback crashed hook with rc=$rc8" >&2
+  fail=1
+fi
+if (( elapsed > 5 )); then
+  echo "FAIL test8: hook did not bound connect stall: elapsed=${elapsed}s" >&2
   fail=1
 fi
 if [[ "$err8" != *"timeout or error"* ]]; then
-  echo "FAIL test8: stalled fetch did not route through fallback path: $err8" >&2
+  echo "FAIL test8: connect stall did not route through fallback path: $err8" >&2
   fail=1
 fi
 rm -rf "$tmp8"
+
+# ---------- Test 8b: stalled transfer must honor max-time and fall back ----------
+tmp8b="$(mktemp -d)"
+export HOME="$tmp8b"
+export CLAUDE_PLUGIN_ROOT="$tmp8b/plugin"
+mkdir -p "$tmp8b/plugin/.claude-plugin" "$tmp8b/bin" "$tmp8b/.local/bin"
+printf '{"version":"2.2.3"}\n' > "$tmp8b/plugin/.claude-plugin/plugin.json"
+
+cat > "$tmp8b/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+CONNECT_TIME=""
+MAX_TIME=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --connect-timeout) CONNECT_TIME="$2"; shift 2 ;;
+    --max-time) MAX_TIME="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$MAX_TIME" ]; then
+  sleep "$MAX_TIME"
+  exit 28
+fi
+if [ -n "$CONNECT_TIME" ]; then
+  sleep "$CONNECT_TIME"
+  exit 28
+fi
+sleep 10
+exit 28
+STUB
+chmod +x "$tmp8b/bin/curl"
+
+t_start=$(date +%s)
+set +e
+PATH="$tmp8b/bin:$PATH" SPRINGFIELD_CURL_CONNECT_TIMEOUT=9 \
+  SPRINGFIELD_CURL_MAX_TIME=2 bash "$hook" >/dev/null 2>"$tmp8b/err8b.log"
+rc8b=$?
+set -e
+err8b="$(cat "$tmp8b/err8b.log" 2>/dev/null || true)"
+t_end=$(date +%s)
+elapsed=$((t_end - t_start))
+if (( rc8b != 0 )); then
+  echo "FAIL test8b: max-time fallback crashed hook with rc=$rc8b" >&2
+  fail=1
+fi
+if (( elapsed > 8 )); then
+  echo "FAIL test8b: hook did not bound transfer stall: elapsed=${elapsed}s" >&2
+  fail=1
+fi
+if [[ "$err8b" != *"timeout or error"* ]]; then
+  echo "FAIL test8b: transfer stall did not route through fallback path: $err8b" >&2
+  fail=1
+fi
+rm -rf "$tmp8b"
 
 # ---------- Test 9: checksum mismatch must fall back, not install ----------
 # Release was tampered with / retransmission corrupted. The script MUST NOT
@@ -459,7 +542,15 @@ if [ "\$out" = "-" ]; then cat "\$src"; else cp "\$src" "\$out"; fi
 STUB
 chmod +x "$tmp9/bin/curl"
 
-err9="$(PATH="$tmp9/bin:$PATH" bash "$hook" 2>&1 >/dev/null || true)"
+set +e
+PATH="$tmp9/bin:$PATH" bash "$hook" >/dev/null 2>"$tmp9/err9.log"
+rc9=$?
+set -e
+err9="$(cat "$tmp9/err9.log" 2>/dev/null || true)"
+if (( rc9 != 0 )); then
+  echo "FAIL test9: checksum-mismatch fallback crashed hook with rc=$rc9" >&2
+  fail=1
+fi
 if [[ "$err9" != *"checksum mismatch"* ]]; then
   echo "FAIL test9: checksum mismatch not detected: $err9" >&2
   fail=1
@@ -583,8 +674,9 @@ case "\$url" in
   *) exit 22 ;;
 esac
 case "\$url" in
-  *1.0.0*) sleep 0.8 ;;
+  *1.0.0*) sleep 1 ;;
 esac
+printf '%s\n' "\$url" >> "$tmp11/curl.log"
 if [ "\$out" = "-" ]; then cat "\$src"; else cp "\$src" "\$out"; fi
 STUB
 chmod +x "$tmp11/bin/curl"
@@ -597,7 +689,7 @@ HOME="$shared_home11" CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT_B" PATH="$tmp11/bi
 pB=$!
 
 v2_ready_while_v1_running=0
-for _ in 1 2 3 4 5 6 7 8; do
+for _ in $(seq 1 100); do
   if [[ -x "$shared_home11/.cache/springfield/2.0.0/springfield" ]] && kill -0 "$pA" 2>/dev/null; then
     v2_ready_while_v1_running=1
     break
@@ -608,7 +700,7 @@ done
 wait "$pA" || { echo "FAIL test11: session A exited non-zero" >&2; fail=1; }
 wait "$pB" || { echo "FAIL test11: session B exited non-zero" >&2; fail=1; }
 if (( v2_ready_while_v1_running == 0 )); then
-  echo "FAIL test11: v2 install did not finish while slow v1 install still held same HOME cache" >&2
+  echo "FAIL test11: v2 install did not finish while slow v1 install still held same HOME cache: $(cat "$tmp11/curl.log" 2>/dev/null)" >&2
   fail=1
 fi
 [[ -x "$shared_home11/.cache/springfield/1.0.0/springfield" ]] || { echo "FAIL test11: v1 not installed" >&2; fail=1; }
@@ -1143,12 +1235,16 @@ SPRINGFIELD_INSTALL_LOCK_STALE_AGE_SECONDS=60 \
   bash "$hook" >/dev/null 2>"$tmp22/err22a.log" &
 p22a=$!
 
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-  if [[ -d "$tmp22/.cache/springfield/.locks/0.9.4" ]]; then
+for _ in $(seq 1 100); do
+  if [[ -f "$tmp22/.cache/springfield/.locks/0.9.4/pid" ]] && [[ "$(cat "$tmp22/.cache/springfield/.locks/0.9.4/pid" 2>/dev/null || true)" == "$p22a" ]]; then
     break
   fi
-  sleep 0.02
+  sleep 0.05
 done
+if [[ ! -f "$tmp22/.cache/springfield/.locks/0.9.4/pid" ]] || [[ "$(cat "$tmp22/.cache/springfield/.locks/0.9.4/pid" 2>/dev/null || true)" != "$p22a" ]]; then
+  echo "FAIL test22: primary install never became lock holder" >&2
+  fail=1
+fi
 
 PATH="$tmp22/bin:$PATH" \
 SPRINGFIELD_INSTALL_LOCK_MAX_WAIT_TENTHS=2 \

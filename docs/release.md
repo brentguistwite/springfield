@@ -19,7 +19,7 @@ Plugin metadata is release-critical. Do not cut a tag with pending changes in:
 
 Those manifests and marketplace records must describe Springfield, stay version-aligned, and keep the checked-in `skills/plan`, `skills/start`, `skills/status`, and `skills/recover` inventory intact.
 
-**Bump `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` (springfield plugin entry) `version` to match the upcoming tag before pushing.** The release workflow sets `SPRINGFIELD_RELEASE_TAG=${{ github.ref_name }}` on the `Validate plugin metadata` step, which runs `TestPluginJSONVersionMatchesTagEnv` and fails the release if the manifest version disagrees with the tag. Version bump is what triggers the SessionStart hook to fetch a new CLI binary after teammates run `/plugin update`.
+**Bump `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` (springfield plugin entry), and `.codex-plugin/plugin.json` `version` to match the upcoming tag before pushing.** The release workflow sets `SPRINGFIELD_RELEASE_TAG=${{ github.ref_name }}` on the `Validate plugin metadata` step, which runs `TestPluginJSONVersionMatchesTagEnv` and fails the release if the manifest version disagrees with the tag. `go test ./...` also enforces Codex/Claude plugin version parity. Version bump is what triggers the SessionStart hook to fetch a new CLI binary after teammates run `/plugin update`.
 
 ## Cut A Release
 
