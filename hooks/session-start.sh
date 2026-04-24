@@ -13,6 +13,8 @@ fi
 # falling back. Env-overridable for tests.
 SPRINGFIELD_CURL_CONNECT_TIMEOUT="${SPRINGFIELD_CURL_CONNECT_TIMEOUT:-5}"
 SPRINGFIELD_CURL_MAX_TIME="${SPRINGFIELD_CURL_MAX_TIME:-30}"
+SPRINGFIELD_INSTALL_LOCK_MAX_WAIT_TENTHS="${SPRINGFIELD_INSTALL_LOCK_MAX_WAIT_TENTHS:-300}"
+SPRINGFIELD_INSTALL_LOCK_STALE_AGE_SECONDS="${SPRINGFIELD_INSTALL_LOCK_STALE_AGE_SECONDS:-60}"
 _SPRINGFIELD_LOCK=""
 _SPRINGFIELD_TMP=""
 
@@ -124,8 +126,8 @@ acquire_install_lock() {
   fi
 
   local waited=0
-  local max_wait_tenths=300  # 30 seconds
-  local stale_age_seconds=60
+  local max_wait_tenths="$SPRINGFIELD_INSTALL_LOCK_MAX_WAIT_TENTHS"
+  local stale_age_seconds="$SPRINGFIELD_INSTALL_LOCK_STALE_AGE_SECONDS"
   while ! mkdir "$lock" 2>/dev/null; do
     # Fast path re-check: maybe another process just finished.
     if cached_binary_ready "$bin"; then
@@ -151,8 +153,13 @@ acquire_install_lock() {
     sleep 0.1
     waited=$((waited + 1))
     if (( waited >= max_wait_tenths )); then
-      # Last-chance reap before giving up.
-      rm -rf "$lock" 2>/dev/null || true
+      # Never steal a live lock. A same-version install can legitimately hold
+      # the lock for longer than our wait budget if its bounded network calls
+      # are still in flight. If the holder publishes the binary or drops the
+      # lock between checks, take the fast path; otherwise fall back.
+      if cached_binary_ready "$bin"; then
+        return 2
+      fi
       if mkdir "$lock" 2>/dev/null; then
         break
       fi

@@ -34,6 +34,9 @@ func TestHooksJSONShape(t *testing.T) {
 	if len(doc.Hooks.SessionStart[0].Hooks) == 0 {
 		t.Fatal("SessionStart[0].hooks empty")
 	}
+	if doc.Hooks.SessionStart[0].Hooks[0].Type != "command" {
+		t.Fatalf("type = %q, want command", doc.Hooks.SessionStart[0].Hooks[0].Type)
+	}
 	cmd := doc.Hooks.SessionStart[0].Hooks[0].Command
 	want := "${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh"
 	if cmd != want {

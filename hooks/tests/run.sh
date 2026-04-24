@@ -534,15 +534,15 @@ fi
 rm -rf "$tmp10"
 
 # ---------- Test 11: concurrent installs of DIFFERENT versions don't block ----------
-# Two sessions, one targeting v1 and one targeting v2. They use separate lock
-# dirs and separate cache paths. They must both succeed without one starving
-# the other. Wall-clock budget is tight; if they serialize on a shared lock
-# the second finishes only after the first's curl delay completes.
+# Two sessions, one targeting v1 and one targeting v2, share the same HOME so
+# they contend on the same .cache tree. They must still run independently
+# because locks are version-scoped, not user-scoped.
 tmp11="$(mktemp -d)"
+shared_home11="$tmp11/home"
 export CLAUDE_PLUGIN_ROOT_A="$tmp11/pluginA"
 export CLAUDE_PLUGIN_ROOT_B="$tmp11/pluginB"
 mkdir -p "$CLAUDE_PLUGIN_ROOT_A/.claude-plugin" "$CLAUDE_PLUGIN_ROOT_B/.claude-plugin" \
-  "$tmp11/bin" "$tmp11/fake-release" "$tmp11/homeA/.local/bin" "$tmp11/homeB/.local/bin"
+  "$tmp11/bin" "$tmp11/fake-release" "$shared_home11/.local/bin"
 printf '{"version":"1.0.0"}\n' > "$CLAUDE_PLUGIN_ROOT_A/.claude-plugin/plugin.json"
 printf '{"version":"2.0.0"}\n' > "$CLAUDE_PLUGIN_ROOT_B/.claude-plugin/plugin.json"
 
@@ -582,29 +582,37 @@ case "\$url" in
   *springfield_2.0.0_${os}_${arch}.tar.gz) src="$tmp11/fake-release/springfield_2.0.0_${os}_${arch}.tar.gz" ;;
   *) exit 22 ;;
 esac
-sleep 0.2
+case "\$url" in
+  *1.0.0*) sleep 0.8 ;;
+esac
 if [ "\$out" = "-" ]; then cat "\$src"; else cp "\$src" "\$out"; fi
 STUB
 chmod +x "$tmp11/bin/curl"
 
-t11_start=$(date +%s)
-HOME="$tmp11/homeA" CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT_A" PATH="$tmp11/bin:$PATH" \
+HOME="$shared_home11" CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT_A" PATH="$tmp11/bin:$PATH" \
   bash "$hook" >/dev/null 2>/dev/null &
 pA=$!
-HOME="$tmp11/homeB" CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT_B" PATH="$tmp11/bin:$PATH" \
+HOME="$shared_home11" CLAUDE_PLUGIN_ROOT="$CLAUDE_PLUGIN_ROOT_B" PATH="$tmp11/bin:$PATH" \
   bash "$hook" >/dev/null 2>/dev/null &
 pB=$!
+
+v2_ready_while_v1_running=0
+for _ in 1 2 3 4 5 6 7 8; do
+  if [[ -x "$shared_home11/.cache/springfield/2.0.0/springfield" ]] && kill -0 "$pA" 2>/dev/null; then
+    v2_ready_while_v1_running=1
+    break
+  fi
+  sleep 0.05
+done
+
 wait "$pA" || { echo "FAIL test11: session A exited non-zero" >&2; fail=1; }
 wait "$pB" || { echo "FAIL test11: session B exited non-zero" >&2; fail=1; }
-t11_end=$(date +%s)
-# Each session has 2 curl calls × ~0.2s sleep = ~0.4s. Run in parallel → ~0.4s
-# total. If serialized (bug), would be ~0.8s+. Loose bound at 3s for CI noise.
-if (( t11_end - t11_start > 3 )); then
-  echo "FAIL test11: concurrent different-version installs did not run in parallel: $((t11_end - t11_start))s" >&2
+if (( v2_ready_while_v1_running == 0 )); then
+  echo "FAIL test11: v2 install did not finish while slow v1 install still held same HOME cache" >&2
   fail=1
 fi
-[[ -x "$tmp11/homeA/.cache/springfield/1.0.0/springfield" ]] || { echo "FAIL test11: v1 not installed" >&2; fail=1; }
-[[ -x "$tmp11/homeB/.cache/springfield/2.0.0/springfield" ]] || { echo "FAIL test11: v2 not installed" >&2; fail=1; }
+[[ -x "$shared_home11/.cache/springfield/1.0.0/springfield" ]] || { echo "FAIL test11: v1 not installed" >&2; fail=1; }
+[[ -x "$shared_home11/.cache/springfield/2.0.0/springfield" ]] || { echo "FAIL test11: v2 not installed" >&2; fail=1; }
 rm -rf "$tmp11"
 
 # ---------- Test 12: $dest exists as regular file (not symlink) ----------
@@ -1079,5 +1087,89 @@ if ! grep -q "failed to update" "$tmp21/err21.log" 2>/dev/null; then
   fail=1
 fi
 rm -rf "$tmp21"
+
+# ---------- Test 22: timeout must not steal a live same-version lock ----------
+# First install holds the version lock with slow-but-valid downloads. Second
+# same-version session times out waiting and must fall back, not delete the
+# live lock and start its own download.
+tmp22="$(mktemp -d)"
+export HOME="$tmp22"
+export CLAUDE_PLUGIN_ROOT="$tmp22/plugin"
+mkdir -p "$tmp22/plugin/.claude-plugin" "$tmp22/bin" "$tmp22/fake-release" \
+  "$tmp22/.local/bin"
+printf '{"version":"0.9.4"}\n' > "$tmp22/plugin/.claude-plugin/plugin.json"
+
+stage22="$(mktemp -d)"
+printf '#!/bin/sh\necho v0.9.4\n' > "$stage22/springfield"
+chmod +x "$stage22/springfield"
+tarball22="$tmp22/fake-release/springfield_0.9.4_${os}_${arch}.tar.gz"
+tar -C "$stage22" -czf "$tarball22" springfield
+if command -v sha256sum >/dev/null 2>&1; then
+  sum22="$(sha256sum "$tarball22" | awk '{print $1}')"
+else
+  sum22="$(shasum -a 256 "$tarball22" | awk '{print $1}')"
+fi
+printf '%s  ./springfield_0.9.4_%s_%s.tar.gz\n' "$sum22" "$os" "$arch" \
+  > "$tmp22/fake-release/checksums.txt"
+
+cat > "$tmp22/bin/curl" <<STUB
+#!/usr/bin/env bash
+set -euo pipefail
+url=""
+out="-"
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -o) out="\$2"; shift 2 ;;
+    --fail|--silent|--show-error|--location|-fsSL|-fL|-sL|-s|-L|-f) shift ;;
+    --connect-timeout|--max-time) shift 2 ;;
+    http*) url="\$1"; shift ;;
+    *) shift ;;
+  esac
+done
+printf '%s\n' "\$url" >> "$tmp22/curl.log"
+case "\$url" in
+  *checksums.txt) src="$tmp22/fake-release/checksums.txt" ;;
+  *springfield_0.9.4_${os}_${arch}.tar.gz) src="$tarball22" ;;
+  *) exit 22 ;;
+esac
+sleep 0.4
+if [ "\$out" = "-" ]; then cat "\$src"; else cp "\$src" "\$out"; fi
+STUB
+chmod +x "$tmp22/bin/curl"
+
+PATH="$tmp22/bin:$PATH" \
+SPRINGFIELD_INSTALL_LOCK_MAX_WAIT_TENTHS=2 \
+SPRINGFIELD_INSTALL_LOCK_STALE_AGE_SECONDS=60 \
+  bash "$hook" >/dev/null 2>"$tmp22/err22a.log" &
+p22a=$!
+
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  if [[ -d "$tmp22/.cache/springfield/.locks/0.9.4" ]]; then
+    break
+  fi
+  sleep 0.02
+done
+
+PATH="$tmp22/bin:$PATH" \
+SPRINGFIELD_INSTALL_LOCK_MAX_WAIT_TENTHS=2 \
+SPRINGFIELD_INSTALL_LOCK_STALE_AGE_SECONDS=60 \
+  bash "$hook" >/dev/null 2>"$tmp22/err22b.log" &
+p22b=$!
+
+wait "$p22a" || { echo "FAIL test22: primary install exited non-zero" >&2; fail=1; }
+wait "$p22b" || { echo "FAIL test22: waiting install exited non-zero" >&2; fail=1; }
+
+asset_fetches22="$(grep -c 'springfield_0.9.4_' "$tmp22/curl.log" 2>/dev/null || true)"
+sum_fetches22="$(grep -c 'checksums.txt' "$tmp22/curl.log" 2>/dev/null || true)"
+if [[ "$asset_fetches22" != "1" || "$sum_fetches22" != "1" ]]; then
+  echo "FAIL test22: waiting session stole live lock and started duplicate downloads: assets=$asset_fetches22 sums=$sum_fetches22" >&2
+  fail=1
+fi
+[[ -x "$tmp22/.cache/springfield/0.9.4/springfield" ]] || { echo "FAIL test22: primary install did not finish" >&2; fail=1; }
+if ! grep -q 'held too long, skipping' "$tmp22/err22b.log" 2>/dev/null; then
+  echo "FAIL test22: waiting session did not time out cleanly: $(cat "$tmp22/err22b.log")" >&2
+  fail=1
+fi
+rm -rf "$tmp22"
 
 exit $fail
