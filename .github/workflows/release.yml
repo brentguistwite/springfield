@@ -9,7 +9,25 @@ permissions:
   contents: write
 
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify tag matches version.txt
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          want="${TAG#v}"
+          got="$(tr -d '[:space:]' < version.txt)"
+          if [[ "$got" != "$want" ]]; then
+            echo "tag $TAG disagrees with version.txt ($got)" >&2
+            exit 1
+          fi
+
   build:
+    needs: preflight
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -49,6 +67,7 @@ jobs:
 
           go build \
             -trimpath \
+            -buildvcs=false \
             -ldflags="-s -w -X springfield/cmd.Version=${TAG}" \
             -o "${stage}/springfield" \
             .
@@ -137,9 +156,44 @@ jobs:
           FORMULA
 
       - name: Create GitHub release
+        id: gh_release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
             dist/*.tar.gz
             Formula/springfield.rb
+
+      - name: Post-publish smoke — published assets match committed checksums
+        env:
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          smoke_dir="$(mktemp -d)"
+          while read -r expected asset; do
+            asset="${asset#./}"
+            url="https://github.com/${REPOSITORY}/releases/download/${TAG}/${asset}"
+            for attempt in 1 2 3 4 5; do
+              if curl --fail --silent --show-error --location \
+                --connect-timeout 10 --max-time 60 \
+                -o "${smoke_dir}/${asset}" "${url}"; then
+                break
+              fi
+              echo "post-publish smoke: download attempt ${attempt} failed for ${url}; retrying" >&2
+              sleep 5
+            done
+            if [[ ! -s "${smoke_dir}/${asset}" ]]; then
+              echo "post-publish smoke: failed to fetch ${url}" >&2
+              exit 1
+            fi
+            extract="${smoke_dir}/${asset%.tar.gz}"
+            mkdir -p "${extract}"
+            tar -C "${extract}" -xzf "${smoke_dir}/${asset}" springfield
+            got="$(sha256sum "${extract}/springfield" | cut -d' ' -f1)"
+            if [[ "${got}" != "${expected}" ]]; then
+              echo "post-publish smoke: ${asset} ${got} != ${expected}" >&2
+              exit 1
+            fi
+          done < hooks/checksums.txt

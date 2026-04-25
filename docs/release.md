@@ -1,66 +1,70 @@
 # Springfield Release Workflow
 
-Springfield release polish lives around one invariant: tagged releases publish installable artifacts for the thin Springfield CLI without any hand-edited version files.
+Springfield ships one version across every surface — CLI binary, Claude plugin manifest, Claude marketplace entry, Codex plugin manifest, Codex marketplace entry, release tag, and `hooks/checksums.txt`. The single source of truth is `version.txt`, owned by [release-please](https://github.com/googleapis/release-please). All derived files are generated, not hand-edited.
 
-## Preflight
+## How a release happens now
 
-Run these before cutting a tag:
+Day-to-day work merges to `main` with [Conventional Commits](https://www.conventionalcommits.org/). `release-please` watches `main` and maintains a single open release PR that updates `version.txt` and `CHANGELOG.md` from those commits.
 
-```bash
-go test ./...
-go build .
-```
+1. Push a feature branch using a conventional commit (`feat:`, `fix:`, `deps:`, etc.). Open and merge the PR as usual.
+2. The [`Release Please`](../.github/workflows/release-please.yml) workflow opens or updates the release PR named `release-please--branches--main`. It bumps `version.txt` based on the commits since the last release.
+3. The [`Release PR Hydrate`](../.github/workflows/release-hydrate.yml) workflow runs on that PR, executes [`go run ./cmd/release-sync`](../cmd/release-sync/main.go), and commits any drift back to the PR branch with the `[release-sync]` sentinel. The hydration step:
+   - propagates `version.txt` into all four plugin/marketplace manifests
+   - rebuilds each platform archive with deterministic flags and refreshes `hooks/checksums.txt`
+   - runs `go run ./cmd/release-sync -check` to assert idempotency
+   - runs `SPRINGFIELD_RELEASE_TAG=v<version> go test ./tests/plugin/...` to assert version parity
+4. A maintainer reviews the green release PR and merges it. **No manual tag push.**
+5. `release-please` tags `vX.Y.Z` once `main` advances. It is configured with `skip-github-release: true`, so it does not publish an empty release page.
+6. The existing [`Release`](../.github/workflows/release.yml) workflow is tag-triggered. It rebuilds artifacts with the same `-trimpath -buildvcs=false` flags, verifies the rebuilt binaries against the committed `hooks/checksums.txt`, renders `Formula/springfield.rb`, uploads release assets, creates the GitHub release as the final step, and runs a post-publish smoke that re-downloads each asset by its public URL and re-verifies the checksum.
 
-Plugin metadata is release-critical. Do not cut a tag with pending changes in:
+## Versioning contract
 
+- Operator-visible version: `version.txt`. Edit through `release-please`, never by hand.
+- Tool state: `.release-please-manifest.json`. Initialized once during bootstrap; thereafter `release-please` owns it.
+- Tag format: `vX.Y.Z`. Plugin/CLI versions are always `X.Y.Z` (no `v` prefix in manifests).
+- Bump rules:
+  - `fix:` / `deps:` → patch
+  - `feat:` → minor
+  - `!` / `BREAKING CHANGE:` → major
+  - Plugin-only changes still get a normal release. We always ship a matching CLI artifact even if Go code did not change, so plugin/CLI versions stay locked.
+
+## Plugin metadata is release-critical
+
+`release-sync` keeps these in lock-step. Do not edit by hand:
+
+- [`version.txt`](../version.txt)
 - [`.claude-plugin/plugin.json`](../.claude-plugin/plugin.json)
 - [`.claude-plugin/marketplace.json`](../.claude-plugin/marketplace.json)
 - [`.codex-plugin/plugin.json`](../.codex-plugin/plugin.json)
+- [`.agents/plugins/marketplace.json`](../.agents/plugins/marketplace.json)
 - [`hooks/checksums.txt`](../hooks/checksums.txt)
 
-Those manifests and marketplace records must describe Springfield, stay version-aligned, and keep the checked-in `skills/plan`, `skills/start`, `skills/status`, and `skills/recover` inventory intact.
+`hooks/checksums.txt` is plugin-shipped, not a published release asset. Each line is keyed by archive asset name (`./springfield_<version>_<os>_<arch>.tar.gz`); the hash is the SHA256 of the extracted `springfield` binary inside that archive.
 
-**Bump `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` (springfield plugin entry), and `.codex-plugin/plugin.json` `version` to match the upcoming tag before pushing.** The release workflow sets `SPRINGFIELD_RELEASE_TAG=${{ github.ref_name }}` on the `Validate plugin metadata` step, which runs `TestPluginJSONVersionMatchesTagEnv` and fails the release if the manifest version disagrees with the tag. `go test ./...` also enforces Codex/Claude plugin version parity. Version bump is what triggers the SessionStart hook to fetch a new CLI binary after teammates run `/plugin update`.
+## Manual sync (rare)
 
-`hooks/checksums.txt` is now release-critical too. The SessionStart hook trusts the plugin-shipped checksum manifest, not a runtime-fetched proof file from the release page. Each line stays keyed by the archive asset name (`./springfield_<version>_<os>_<arch>.tar.gz`), but the hash value is the SHA256 of the extracted `springfield` binary inside that archive. Before tagging, rebuild the four release archives for the target version and refresh the committed manifest:
-
-```bash
-version="$(awk -F'\"' '/\"version\"[[:space:]]*:/ { print $4; exit }' .claude-plugin/plugin.json)"
-rm -rf dist
-mkdir -p dist
-sha_file() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  else
-    shasum -a 256 "$1" | awk '{print $1}'
-  fi
-}
-: > hooks/checksums.txt
-
-for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
-  GOOS="${target%/*}"
-  GOARCH="${target#*/}"
-  stage="$(mktemp -d)"
-  CGO_ENABLED=0 GOOS="${GOOS}" GOARCH="${GOARCH}" \
-    go build -trimpath -ldflags="-s -w -X springfield/cmd.Version=v${version}" -o "${stage}/springfield" .
-  tar -C "${stage}" -czf "dist/springfield_${version}_${GOOS}_${GOARCH}.tar.gz" springfield
-  printf "%s  ./springfield_%s_%s_%s.tar.gz\n" "$(sha_file "${stage}/springfield")" "${version}" "${GOOS}" "${GOARCH}" >> hooks/checksums.txt
-  rm -rf "${stage}"
-done
-
-rm -rf dist
-```
-
-## Cut A Release
-
-Push a semantic tag:
+Outside the release-PR flow, regenerate everything locally with:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+go run ./cmd/release-sync           # propagate version.txt + rebuild checksums
+go run ./cmd/release-sync -check    # idempotency guard
 ```
 
-That tag triggers [`.github/workflows/release.yml`](../.github/workflows/release.yml).
+Use `-skip-build` to update only the manifest version fields.
+
+## Rollout window
+
+Between "release PR merges into `main`" and "publish workflow uploads assets," `main` advertises `vX.Y.Z` slightly before `vX.Y.Z` assets exist on GitHub. The contract:
+
+- **Existing installs**: `SessionStart` keeps the previously cached CLI binary if the exact-version asset is still missing. The hook surfaces a visible `springfield: VERSION MISMATCH` warning so operators know an upgrade is in flight.
+- **Fresh installs**: fail visibly during the rollout window. Retrying after the publish workflow finishes recovers cleanly.
+- The `hooks/tests/run.sh` `Test 6` case exercises this rollout-window fallback.
+
+## Rollback
+
+- If publish fails after tag creation but before assets upload: fix the workflow and rerun publish for the same tag. Because the GitHub release object is the final step, the broken state is invisible to the release page.
+- If publish is merely slow: existing installs keep their previous CLI; fresh installs recover automatically once assets land.
+- If a bad release ships: do not retag or mutate the tag. Merge a revert/fix to `main` and let `release-please` cut the next patch.
 
 ## Published Assets
 
