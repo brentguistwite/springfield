@@ -90,6 +90,7 @@ func buildReleaseArchive(t *testing.T, root, version, goos, goarch, distDir stri
 		"go",
 		"build",
 		"-trimpath",
+		"-buildvcs=false",
 		"-ldflags=-s -w -X springfield/cmd.Version=v"+version,
 		"-o",
 		bin,
@@ -183,6 +184,26 @@ func TestSessionStartChecksumsManifestMatchesReleaseBinaries(t *testing.T) {
 
 	if len(entries) != len(targets) {
 		t.Fatalf("checksums.txt entry count = %d, want %d", len(entries), len(targets))
+	}
+}
+
+func TestRolloutWindowFallbackCovered(t *testing.T) {
+	// Asserts that hooks/tests/run.sh exercises the rollout-window contract:
+	// when the exact-version asset is missing, the hook must keep the existing
+	// cached binary and surface the visible "VERSION MISMATCH" warning.
+	root := repoRoot(t)
+	runScript := string(readFile(t, root, "hooks/tests/run.sh"))
+	for _, marker := range []string{
+		"failed upgrade keeps existing symlink",
+		"VERSION MISMATCH",
+	} {
+		if !strings.Contains(runScript, marker) {
+			t.Fatalf("hooks/tests/run.sh missing rollout-window marker %q", marker)
+		}
+	}
+	hook := string(readFile(t, root, "hooks/session-start.sh"))
+	if !strings.Contains(hook, "VERSION MISMATCH") {
+		t.Fatal("session-start.sh must surface a 'VERSION MISMATCH' warning when the exact-version asset is missing")
 	}
 }
 

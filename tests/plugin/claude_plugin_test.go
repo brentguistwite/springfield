@@ -150,14 +150,89 @@ func TestPluginJSONVersionMatchesTagEnv(t *testing.T) {
 		t.Skip("SPRINGFIELD_RELEASE_TAG not set; release-time only")
 	}
 	want := strings.TrimPrefix(tag, "v")
-	manifest := readJSON[pluginManifest](t, repoRoot(t), ".claude-plugin/plugin.json")
-	if manifest.Version != want {
-		t.Fatalf("plugin.json version = %q, want %q (from tag %q)", manifest.Version, want, tag)
+	root := repoRoot(t)
+
+	for _, rel := range []string{
+		".claude-plugin/plugin.json",
+		".codex-plugin/plugin.json",
+	} {
+		m := readJSON[pluginManifest](t, root, rel)
+		if m.Version != want {
+			t.Fatalf("%s version = %q, want %q (from tag %q)", rel, m.Version, want, tag)
+		}
 	}
-	marketplace := readJSON[marketplaceManifest](t, repoRoot(t), ".claude-plugin/marketplace.json")
-	for _, p := range marketplace.Plugins {
-		if p.Name == "springfield" && p.Version != want {
-			t.Fatalf("marketplace.json springfield version = %q, want %q (from tag %q)", p.Version, want, tag)
+
+	for _, rel := range []string{
+		".claude-plugin/marketplace.json",
+		".agents/plugins/marketplace.json",
+	} {
+		mp := readJSON[marketplaceManifest](t, root, rel)
+		for _, p := range mp.Plugins {
+			if p.Name == "springfield" && p.Version != want {
+				t.Fatalf("%s springfield version = %q, want %q (from tag %q)", rel, p.Version, want, tag)
+			}
+		}
+	}
+
+	versionTxt, err := os.ReadFile(filepath.Join(root, "version.txt"))
+	if err != nil {
+		t.Fatalf("read version.txt: %v", err)
+	}
+	got := strings.TrimSpace(string(versionTxt))
+	if got != want {
+		t.Fatalf("version.txt = %q, want %q (from tag %q)", got, want, tag)
+	}
+}
+
+func TestPluginManifestsAgreeOnVersion(t *testing.T) {
+	root := repoRoot(t)
+
+	versionTxt, err := os.ReadFile(filepath.Join(root, "version.txt"))
+	if err != nil {
+		t.Fatalf("read version.txt: %v", err)
+	}
+	want := strings.TrimSpace(string(versionTxt))
+	if want == "" {
+		t.Fatal("version.txt is empty")
+	}
+
+	for _, rel := range []string{
+		".claude-plugin/plugin.json",
+		".codex-plugin/plugin.json",
+	} {
+		m := readJSON[pluginManifest](t, root, rel)
+		if m.Version != want {
+			t.Fatalf("%s version = %q, want %q (version.txt)", rel, m.Version, want)
+		}
+	}
+
+	for _, rel := range []string{
+		".claude-plugin/marketplace.json",
+		".agents/plugins/marketplace.json",
+	} {
+		mp := readJSON[marketplaceManifest](t, root, rel)
+		found := false
+		for _, p := range mp.Plugins {
+			if p.Name == "springfield" {
+				found = true
+				if p.Version != want {
+					t.Fatalf("%s springfield version = %q, want %q (version.txt)", rel, p.Version, want)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("%s does not list a springfield plugin entry", rel)
+		}
+	}
+
+	checksums, err := os.ReadFile(filepath.Join(root, "hooks", "checksums.txt"))
+	if err != nil {
+		t.Fatalf("read hooks/checksums.txt: %v", err)
+	}
+	for _, target := range []string{"darwin_amd64", "darwin_arm64", "linux_amd64", "linux_arm64"} {
+		archive := "springfield_" + want + "_" + target + ".tar.gz"
+		if !strings.Contains(string(checksums), archive) {
+			t.Fatalf("hooks/checksums.txt missing entry for %s", archive)
 		}
 	}
 }

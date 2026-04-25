@@ -213,7 +213,7 @@ go run . install --help
 
 ## Release Workflow
 
-Maintainer release steps live in [docs/release.md](docs/release.md).
+Springfield uses [release-please](https://github.com/googleapis/release-please) on `main` to maintain a single open release PR driven by [Conventional Commits](https://www.conventionalcommits.org/). A hydration workflow on that PR runs `go run ./cmd/release-sync` to keep `version.txt`, every plugin/marketplace manifest, and `hooks/checksums.txt` in lock-step. Merging the release PR creates the tag, which triggers the publish workflow. Maintainer details live in [docs/release.md](docs/release.md).
 
 ## License
 
