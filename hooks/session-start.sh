@@ -130,8 +130,12 @@ fallback_symlink() {
 
 # stat_mtime portably prints the epoch mtime of $1 (BSD stat on macOS vs
 # GNU stat on Linux). Echoes 0 if stat fails (treat as ancient → reapable).
+# Order matters: GNU stat tolerates `-f` (filesystem mode) and ignores
+# unknown format specs by printing default multi-line output that includes
+# a literal `File:` token, which downstream arithmetic then misinterprets
+# as an unset variable. Try Linux GNU flag first, fall back to BSD.
 stat_mtime() {
-  stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0
 }
 
 # acquire_install_lock serializes concurrent SessionStart invocations for the
