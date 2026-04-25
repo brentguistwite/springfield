@@ -20,10 +20,13 @@ jobs:
         with:
           ref: ${{ github.head_ref }}
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # Use PAT so the hydrate commit's `synchronize` event re-fires CI
+          # against the post-hydrate tree. The `[release-sync]` sentinel
+          # below short-circuits the recursive hydrate run.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
 
-      # Belt-and-suspenders: GITHUB_TOKEN pushes do not retrigger workflows,
-      # but if a maintainer ever rebases or copies our commit, this short-circuits.
+      # PAT-pushed commits DO retrigger pull_request: synchronize, so the
+      # sentinel guard is load-bearing here, not belt-and-suspenders.
       - name: Detect prior hydrate commit
         id: detect
         run: |
