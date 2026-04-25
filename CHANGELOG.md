@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/brentguistwite/springfield/compare/v0.3.0...v0.3.1) (2026-04-25)
+
+
+### Bug Fixes
+
+* **release:** switch release.yml trigger to release.published ([5ef2318](https://github.com/brentguistwite/springfield/commit/5ef2318284bfa5d5d312f8792a42049d8a9c0f5e))
+
 ## [0.3.0](https://github.com/brentguistwite/springfield/compare/v0.2.0...v0.3.0) (2026-04-25)
 
 
