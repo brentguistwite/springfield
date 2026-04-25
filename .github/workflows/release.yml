@@ -1,9 +1,11 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  release:
+    # Fires after release-please publishes the GitHub release object (which
+    # also creates the tag). softprops/action-gh-release below uploads our
+    # built artifacts to the existing release in this same run.
+    types: [published]
 
 permissions:
   contents: write
@@ -203,11 +205,14 @@ jobs:
           end
           FORMULA
 
-      - name: Create GitHub release
+      - name: Upload assets to release-please's GitHub release
         id: gh_release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          generate_release_notes: true
+          # release-please publishes the release object first; this step
+          # finds it by tag and appends our build artifacts. Notes are
+          # already populated from CHANGELOG.md by release-please.
+          tag_name: ${{ github.ref_name }}
           files: |
             dist/*.tar.gz
             Formula/springfield.rb

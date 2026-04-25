@@ -3,7 +3,6 @@
   "release-type": "simple",
   "include-component-in-tag": false,
   "include-v-in-tag": true,
-  "skip-github-release": true,
   "bump-minor-pre-major": false,
   "bump-patch-for-minor-pre-major": false,
   "packages": {

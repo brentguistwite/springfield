@@ -13,9 +13,11 @@ Day-to-day work merges to `main` with [Conventional Commits](https://www.convent
    - rebuilds each platform archive with deterministic flags and refreshes `hooks/checksums.txt`
    - runs `go run ./cmd/release-sync -check` to assert idempotency
    - runs `SPRINGFIELD_RELEASE_TAG=v<version> go test ./tests/plugin/...` to assert version parity
-4. A maintainer reviews the green release PR and merges it. **No manual tag push.**
-5. `release-please` tags `vX.Y.Z` once `main` advances. It is configured with `skip-github-release: true`, so it does not publish an empty release page.
-6. The existing [`Release`](../.github/workflows/release.yml) workflow is tag-triggered. It rebuilds artifacts with the same `-trimpath -buildvcs=false` flags, verifies the rebuilt binaries against the committed `hooks/checksums.txt`, renders `Formula/springfield.rb`, uploads release assets, creates the GitHub release as the final step, and runs a post-publish smoke that re-downloads each asset by its public URL and re-verifies the checksum.
+4. A maintainer waits for the hydrate workflow to finish on the release PR (manifests + checksums must be at the new version), reviews the green release PR, and merges it. **No manual tag push.**
+5. `release-please` runs again on `main`, sees the merged PR with no tag, and creates both the tag `vX.Y.Z` and the GitHub release object. release-please uses `RELEASE_PLEASE_TOKEN` (a fine-grained PAT) so the release-published event dispatches correctly.
+6. The [`Release`](../.github/workflows/release.yml) workflow is `release: published` triggered. It runs preflight (semver + tag-vs-version.txt + manifest parity + checksum format), rebuilds artifacts with the same `-trimpath -buildvcs=false` flags, verifies the rebuilt binaries against the committed `hooks/checksums.txt`, runs a pre-publish `springfield version` smoke against the linux binary, renders `Formula/springfield.rb`, uploads all assets to the existing release object, and runs a post-publish smoke that re-downloads each asset by its public URL and re-verifies the checksum.
+
+> Earlier iterations used `skip-github-release: true` plus a `push: tags` trigger. release-please-action v4 refuses to tag with that flag set when an untagged merged release PR is outstanding, which deadlocks the chain. The current configuration lets release-please own both tag and release object, and `release.yml` uploads assets to the existing release.
 
 ## Versioning contract
 
