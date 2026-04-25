@@ -60,6 +60,16 @@ Between "release PR merges into `main`" and "publish workflow uploads assets," `
 - **Fresh installs**: fail visibly during the rollout window. Retrying after the publish workflow finishes recovers cleanly.
 - The `hooks/tests/run.sh` `Test 6` case exercises this rollout-window fallback.
 
+## Branch protection (operator setup)
+
+The hydration workflow runs `go run ./cmd/release-sync` from PR-branch source under `contents: write`. release-please always branches from `main`, so any commit landing on `main` is executed by the next hydration run with write access to release artifacts. To preserve the supply chain, `main` must require at least one PR review and forbid direct pushes. Configure this in repository **Settings → Branches → Branch protection rules** for `main`:
+
+- Require pull requests with at least 1 approving review
+- Require status checks (`Release PR Hydrate`, plugin tests) before merge
+- Disallow direct pushes to `main`
+
+Without these protections, anyone with `contents: write` on the repo can stage code that the next release cycle will execute.
+
 ## Rollback
 
 - If publish fails after tag creation but before assets upload: fix the workflow and rerun publish for the same tag. Because the GitHub release object is the final step, the broken state is invisible to the release page.

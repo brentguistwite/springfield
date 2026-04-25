@@ -35,7 +35,10 @@ var releaseTargets = []struct {
 	{"linux", "arm64"},
 }
 
-var versionFieldRe = regexp.MustCompile(`"version":\s*"[^"]*"`)
+var (
+	versionFieldRe = regexp.MustCompile(`"version":\s*"[^"]*"`)
+	semverRe       = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+)
 
 func main() {
 	check := flag.Bool("check", false, "fail with non-zero status if this run would write any file (idempotency guard)")
@@ -114,6 +117,9 @@ func readVersion() (string, error) {
 	if v == "" {
 		return "", fmt.Errorf("version.txt is empty")
 	}
+	if !semverRe.MatchString(v) {
+		return "", fmt.Errorf("version.txt %q is not strict semver MAJOR.MINOR.PATCH", v)
+	}
 	return v, nil
 }
 
@@ -121,6 +127,10 @@ func syncManifestVersion(path, version string, dryRun bool) (bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return false, err
+	}
+	matches := versionFieldRe.FindAll(data, -1)
+	if len(matches) != 1 {
+		return false, fmt.Errorf("expected exactly 1 \"version\" field in %s, found %d (refusing to silently rewrite ambiguous manifest)", path, len(matches))
 	}
 	target := fmt.Sprintf(`"version": %q`, version)
 	updated := versionFieldRe.ReplaceAllString(string(data), target)
