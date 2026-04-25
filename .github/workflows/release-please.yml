@@ -15,5 +15,10 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
         with:
+          # PAT (not GITHUB_TOKEN) so PRs/tags created here dispatch
+          # downstream pull_request / push events to release-hydrate.yml
+          # and release.yml. GITHUB_TOKEN-created refs do not trigger
+          # workflow runs by design.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
