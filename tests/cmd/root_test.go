@@ -160,7 +160,13 @@ func installFakeAgentBinary(t *testing.T, binDir, name, argvPath string) {
 		t.Fatalf("mkdir fake bin dir: %v", err)
 	}
 
-	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\necho 'agent-output'\n", argvPath)
+	// Emit a positive-signal stream-json line (tool_use + non-error
+	// tool_result collapsed into one assistant message) so the
+	// ValidateResult contract treats this no-op agent as a successful
+	// run. Without this, the strict positive-signal contract would
+	// reject the bare "agent-output" stdout as "no tool invoked."
+	const positiveSignalLine = `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_fake"},{"type":"tool_result","tool_use_id":"toolu_fake","is_error":false}]}}`
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\necho '%s'\necho 'agent-output'\n", argvPath, positiveSignalLine)
 	path := filepath.Join(binDir, name)
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake %s binary: %v", name, err)

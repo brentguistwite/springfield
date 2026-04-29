@@ -30,7 +30,15 @@ func TestRunnerSuccessStreamsEventsAndReturnsPassedResult(t *testing.T) {
 			t.Fatalf("expected dir %q, got %q", "/tmp/project", cmd.Dir)
 		}
 
-		ev := exec.Event{Type: exec.EventStdout, Data: "done", Time: clock.now()}
+		// Positive-signal contract: emit a tool_use/tool_result success
+		// pair (collapsed into a single assistant content array so the
+		// fixture stays one event) so ValidateResult treats the run as a
+		// real completion.
+		ev := exec.Event{
+			Type: exec.EventStdout,
+			Data: `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_01"},{"type":"tool_result","tool_use_id":"toolu_01","is_error":false}]}}`,
+			Time: clock.now(),
+		}
 		if h != nil {
 			h(ev)
 		}
@@ -155,7 +163,15 @@ func TestRunnerFallsBackToNextAgentOnRateLimit(t *testing.T) {
 				Events:   []exec.Event{{Type: exec.EventStderr, Data: "429 Too Many Requests"}},
 			}
 		}
-		return exec.Result{ExitCode: 0}
+		// Codex fallback: emit a real work item so ValidateResult sees
+		// the positive completion signal Policy A requires.
+		return exec.Result{
+			ExitCode: 0,
+			Events: []exec.Event{
+				{Type: exec.EventStdout, Data: `{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"go test","exit_code":0,"status":"completed"}}`},
+				{Type: exec.EventStdout, Data: `{"type":"turn.completed"}`},
+			},
+		}
 	}
 
 	runner := runtime.NewTestRunner(registry, fakeRun, clock.now)
@@ -220,7 +236,14 @@ func TestRunnerUsesReorderedPriority(t *testing.T) {
 		if cmd.Name == "codex" {
 			return exec.Result{ExitCode: 1, Err: errors.New("rate limit exceeded")}
 		}
-		return exec.Result{ExitCode: 0}
+		// Claude success: emit a tool_use/tool_result success pair so
+		// ValidateResult sees a positive completion signal.
+		return exec.Result{
+			ExitCode: 0,
+			Events: []exec.Event{
+				{Type: exec.EventStdout, Data: `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_01"},{"type":"tool_result","tool_use_id":"toolu_01","is_error":false}]}}`},
+			},
+		}
 	}
 
 	runner := runtime.NewTestRunner(registry, fakeRun, clock.now)
