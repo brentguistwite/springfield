@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/brentguistwite/springfield/compare/v0.3.1...v0.3.2) (2026-04-29)
+
+
+### Bug Fixes
+
+* **agents:** require positive completion signal in ValidateResult ([#16](https://github.com/brentguistwite/springfield/issues/16)) ([#21](https://github.com/brentguistwite/springfield/issues/21)) ([41dcdae](https://github.com/brentguistwite/springfield/commit/41dcdae3a3a0f38e28feb69121eaa3c37f995606))
+
 ## [0.3.1](https://github.com/brentguistwite/springfield/compare/v0.3.0...v0.3.1) (2026-04-25)
 
 
