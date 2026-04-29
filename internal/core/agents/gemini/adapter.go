@@ -201,7 +201,6 @@ func (a *adapter) ValidateResult(result coreexec.Result) error {
 	}
 
 	seenToolUseIDs := map[string]bool{}
-	anonymousToolUse := false
 	sawSuccessfulToolResult := false
 
 	for _, e := range result.Events {
@@ -216,20 +215,12 @@ func (a *adapter) ValidateResult(result coreexec.Result) error {
 		case "tool_use":
 			if event.ID != "" {
 				seenToolUseIDs[event.ID] = true
-			} else {
-				anonymousToolUse = true
 			}
 		case "tool_result":
 			if event.IsError {
 				continue
 			}
-			// Match against a known tool_use ID when present; otherwise
-			// fall back to the legacy ID-less stream shape where any
-			// tool_use immediately followed by a non-error tool_result
-			// is treated as a success pair.
 			if event.ToolUseID != "" && seenToolUseIDs[event.ToolUseID] {
-				sawSuccessfulToolResult = true
-			} else if event.ToolUseID == "" && anonymousToolUse {
 				sawSuccessfulToolResult = true
 			}
 		}

@@ -135,10 +135,17 @@ type codexStreamEvent struct {
 }
 
 type codexStreamItem struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type     string `json:"type"`
+	Text     string `json:"text"`
+	ExitCode *int   `json:"exit_code"`
 }
 
+// inspectCodexStdout reports whether a streamed Codex item.completed event
+// represents successful work (returns hasWork=true). Positive-signal contract:
+// a tool item only counts as success when its exit_code is zero (or absent,
+// for tool types that do not expose one). Tool items with a non-zero exit_code
+// are treated as failed work — the shell command ran but errored — and do NOT
+// satisfy the contract on their own.
 func inspectCodexStdout(data string) (hasWork bool, askedClarifyingQuestion bool) {
 	var event codexStreamEvent
 	if err := json.Unmarshal([]byte(data), &event); err != nil {
@@ -155,6 +162,12 @@ func inspectCodexStdout(data string) (hasWork bool, askedClarifyingQuestion bool
 	}
 
 	if item.Type != "" && item.Type != "agent_message" && item.Type != "reasoning" {
+		// Tool item. If it carries an exit_code, require it to be 0 to
+		// count as work. Item types without an exit_code field (e.g.
+		// file_change) report success implicitly via item.completed.
+		if item.ExitCode != nil && *item.ExitCode != 0 {
+			return false, false
+		}
 		return true, false
 	}
 
