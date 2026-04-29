@@ -155,6 +155,14 @@ func sha256TarMember(t *testing.T, archivePath, member string) string {
 }
 
 func TestSessionStartChecksumsManifestMatchesReleaseBinaries(t *testing.T) {
+	// Compares hooks/checksums.txt against locally-rebuilt binaries. Any source
+	// change after the last release-sync hydration drifts the binary hash,
+	// failing this test on every feature branch. Release-time only — the
+	// release.yml preflight job sets SPRINGFIELD_RELEASE_TAG, which is also
+	// the gate the parity test below uses.
+	if os.Getenv("SPRINGFIELD_RELEASE_TAG") == "" {
+		t.Skip("SPRINGFIELD_RELEASE_TAG not set; release-time only")
+	}
 	root := repoRoot(t)
 	manifest := readJSON[pluginManifest](t, root, ".claude-plugin/plugin.json")
 	entries := readChecksumsManifest(t, root)
