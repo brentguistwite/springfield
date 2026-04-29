@@ -258,52 +258,78 @@ func (a *adapter) emitSettingsWarning(errMsg string) {
 	})
 }
 
-// ValidateResult checks Claude's stream-json output for rejected tool calls,
-// which indicate the agent couldn't complete the task autonomously.
+// Positive-signal contract: ValidateResult returns nil only when the
+// transcript carries an explicit success marker — at least one tool_use ID
+// emitted by the assistant whose paired tool_result reports is_error == false,
+// or a top-level result event with subtype == "success" and is_error ==
+// false. Absence of failure markers is not enough; refusal-with-no-tools and
+// all-tools-errored runs both fail validation. Process-level failures
+// (non-zero exit, hard error) also fail before stream inspection.
 func (a *adapter) ValidateResult(result coreexec.Result) error {
+	if result.ExitCode != 0 {
+		return fmt.Errorf("claude exited with non-zero code %d", result.ExitCode)
+	}
+
+	seenToolUseIDs := map[string]bool{}
+	sawSuccessfulToolResult := false
+	sawSuccessResult := false
+
 	for _, e := range result.Events {
 		if e.Type != coreexec.EventStdout {
 			continue
 		}
-		if isClaudeRejectedToolCall(e.Data) {
-			return fmt.Errorf("claude had rejected tool calls (agent may have asked questions instead of completing work)")
+		var event claudeStreamEvent
+		if err := json.Unmarshal([]byte(e.Data), &event); err != nil {
+			continue
+		}
+		if event.Type == "result" && event.Subtype == "success" && !event.IsError {
+			sawSuccessResult = true
+			continue
+		}
+		for _, item := range event.Message.Content {
+			switch item.Type {
+			case "tool_use":
+				if item.ID != "" {
+					seenToolUseIDs[item.ID] = true
+				}
+			case "tool_result":
+				if item.IsError {
+					continue
+				}
+				if item.ToolUseID != "" && seenToolUseIDs[item.ToolUseID] {
+					sawSuccessfulToolResult = true
+				}
+			}
 		}
 	}
-	return nil
+
+	if sawSuccessfulToolResult {
+		return nil
+	}
+	if sawSuccessResult && len(seenToolUseIDs) == 0 {
+		// No tool work attempted; a success-typed result alone is not
+		// a positive completion signal under the tightened contract.
+		return errors.New("claude exited without taking action")
+	}
+	if len(seenToolUseIDs) == 0 {
+		return errors.New("claude exited without invoking any tool")
+	}
+	return errors.New("claude exited without a successful tool_result")
 }
 
 type claudeStreamEvent struct {
 	Type    string `json:"type"`
+	Subtype string `json:"subtype"`
+	IsError bool   `json:"is_error"`
 	Message struct {
 		Content []claudeMessageContent `json:"content"`
 	} `json:"message"`
 }
 
 type claudeMessageContent struct {
-	Type    string `json:"type"`
-	IsError bool   `json:"is_error"`
-	Content any    `json:"content"`
-}
-
-func isClaudeRejectedToolCall(data string) bool {
-	var event claudeStreamEvent
-	if err := json.Unmarshal([]byte(data), &event); err != nil {
-		return false
-	}
-
-	for _, item := range event.Message.Content {
-		if item.Type != "tool_result" || !item.IsError {
-			continue
-		}
-		if isClaudeRejectionContent(item.Content) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func isClaudeRejectionContent(content any) bool {
-	text := strings.ToLower(agents.FlattenJSONText(content))
-	return strings.Contains(text, "rejected") || strings.Contains(text, "denied")
+	Type      string `json:"type"`
+	ID        string `json:"id"`
+	ToolUseID string `json:"tool_use_id"`
+	IsError   bool   `json:"is_error"`
+	Content   any    `json:"content"`
 }

@@ -1,0 +1,5 @@
+{"type":"init"}
+{"type":"message","text":"I'll write the file."}
+{"type":"tool_use","id":"call_01","tool_name":"write_file"}
+{"type":"tool_result","tool_use_id":"call_01","is_error":false,"content":"ok"}
+{"type":"result"}

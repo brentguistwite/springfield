@@ -1,0 +1,6 @@
+{"type":"init"}
+{"type":"tool_use","id":"call_01","tool_name":"read_file"}
+{"type":"tool_result","tool_use_id":"call_01","is_error":true,"content":"file not found"}
+{"type":"tool_use","id":"call_02","tool_name":"write_file"}
+{"type":"tool_result","tool_use_id":"call_02","is_error":false,"content":"ok"}
+{"type":"result"}

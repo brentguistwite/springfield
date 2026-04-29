@@ -16,8 +16,15 @@ import (
 )
 
 func fakeRuntimeSuccess(_ context.Context, cmd exec.Command, handler exec.EventHandler) exec.Result {
+	// Positive-signal contract: emit a tool_use/tool_result success pair
+	// (collapsed into one assistant message so the existing single-event
+	// expectations stay valid) so ValidateResult sees a real completion.
 	events := []exec.Event{
-		{Type: exec.EventStdout, Data: "ok", Time: time.Now()},
+		{
+			Type: exec.EventStdout,
+			Data: `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_01"},{"type":"tool_result","tool_use_id":"toolu_01","is_error":false}]}}`,
+			Time: time.Now(),
+		},
 	}
 	if handler != nil {
 		handler(events[0])

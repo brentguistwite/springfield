@@ -222,9 +222,14 @@ func TestClaudeValidatorAcceptsCleanRun(t *testing.T) {
 	adapter := claude.New(exec.LookPath)
 	validator := adapter.(agents.ResultValidator)
 
+	// Positive-signal contract: a successful tool_use/tool_result pair is
+	// the explicit completion signal. A bare result-success event without
+	// any tool work is no longer accepted.
 	result := coreexec.Result{
 		ExitCode: 0,
 		Events: []coreexec.Event{
+			{Type: coreexec.EventStdout, Data: `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_01"}]}}`, Time: time.Now()},
+			{Type: coreexec.EventStdout, Data: `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"ok","is_error":false,"tool_use_id":"toolu_01"}]}}`, Time: time.Now()},
 			{Type: coreexec.EventStdout, Data: `{"type":"assistant","message":{"content":[{"type":"text","text":"Done."}]}}`, Time: time.Now()},
 			{Type: coreexec.EventStdout, Data: `{"type":"result","subtype":"success","is_error":false}`, Time: time.Now()},
 		},
@@ -239,11 +244,16 @@ func TestClaudeValidatorAcceptsRecoverableToolFailure(t *testing.T) {
 	adapter := claude.New(exec.LookPath)
 	validator := adapter.(agents.ResultValidator)
 
+	// Partial tool failure: one tool errors, a later tool succeeds. The
+	// successful tool_result satisfies the positive-signal contract even
+	// though an earlier tool_result reported is_error=true.
 	result := coreexec.Result{
 		ExitCode: 0,
 		Events: []coreexec.Event{
 			{Type: coreexec.EventStdout, Data: `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_01"}]}}`, Time: time.Now()},
 			{Type: coreexec.EventStdout, Data: `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"command exited 1","is_error":true,"tool_use_id":"toolu_01"}]}}`, Time: time.Now()},
+			{Type: coreexec.EventStdout, Data: `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_02"}]}}`, Time: time.Now()},
+			{Type: coreexec.EventStdout, Data: `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"ok","is_error":false,"tool_use_id":"toolu_02"}]}}`, Time: time.Now()},
 			{Type: coreexec.EventStdout, Data: `{"type":"assistant","message":{"content":[{"type":"text","text":"I fixed the command and completed the task."}]}}`, Time: time.Now()},
 			{Type: coreexec.EventStdout, Data: `{"type":"result","subtype":"success","is_error":false}`, Time: time.Now()},
 		},
@@ -279,9 +289,13 @@ func TestCodexValidatorAcceptsCleanRun(t *testing.T) {
 	adapter := codex.New(exec.LookPath)
 	validator := adapter.(agents.ResultValidator)
 
+	// Positive-signal contract (Policy A): Codex must complete at least one
+	// real tool/function-call item to count as success. A bare
+	// turn.completed event with no work is no longer accepted.
 	result := coreexec.Result{
 		ExitCode: 0,
 		Events: []coreexec.Event{
+			{Type: coreexec.EventStdout, Data: `{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"go test","exit_code":0,"status":"completed"}}`, Time: time.Now()},
 			{Type: coreexec.EventStdout, Data: `{"type":"turn.completed"}`, Time: time.Now()},
 		},
 	}

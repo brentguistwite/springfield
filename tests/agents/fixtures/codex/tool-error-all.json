@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"t_123"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"./missing","aggregated_output":"not found","exit_code":127,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"./other","aggregated_output":"permission denied","exit_code":126,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"All commands failed."}}
+{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}

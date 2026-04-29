@@ -1,0 +1,4 @@
+# Default owner for everything in the repo. Required-reviewer status takes
+# effect once branch protection on `main` is configured to require code-owner
+# review.
+*       @brentguistwite

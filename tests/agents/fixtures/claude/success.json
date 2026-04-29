@@ -1,0 +1,6 @@
+{"type":"system","subtype":"init","session_id":"abc"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"I'll write the file."}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_01","name":"Write","input":{"file_path":"/tmp/x"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"File created successfully","is_error":false}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Done."}]}}
+{"type":"result","subtype":"success","is_error":false}

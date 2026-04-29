@@ -181,159 +181,60 @@ func (a *adapter) maybeEmitAuthWarning() {
 	})
 }
 
-// ValidateResult inspects a completed gemini run and returns an error when
-// the run failed silently (e.g. exit 0 but only a clarifying question was
-// emitted), or when OS exit codes indicate Gemini-specific failure modes.
-//
-// Field-shape notes (synthetic, verified against Gemini CLI v0.39 docs —
-// docs/cli/tutorials/automation.md + docs/hooks/reference.md):
-//   - error event:         {"type":"error","message":"..."}
-//   - tool_result event:   {"type":"tool_result","is_error":bool,"content":...}
-//   - result event:        {"type":"result",...}
-//   - message event:       {"type":"message","content":...}
-//   - tool_use event:      {"type":"tool_use",...}
-//
-// Fixtures under tests/agents/fixtures/gemini/ exercise each path. The
-// synthetic-fixture caveat: field names should be reconfirmed during F.4.
+// Positive-signal contract: ValidateResult returns nil only when the
+// transcript carries an explicit success marker — at least one tool_use ID
+// emitted by the agent whose paired tool_result reports is_error == false.
+// Absence of failure markers is not enough; refusal-with-no-tools, all-tools-
+// errored, and text-only runs all fail validation. OS exit code special
+// cases (53 turn-limit, 42 rejected-input) short-circuit at the top before
+// stream inspection. Process-level failures (any non-zero exit) also fail.
 func (a *adapter) ValidateResult(result coreexec.Result) error {
-	// Map OS exit codes Gemini documents.
+	// OS exit code special cases — Gemini-specific, take precedence.
 	switch result.ExitCode {
 	case 53:
 		return errors.New("gemini exceeded turn limit without completing task")
 	case 42:
 		return errors.New("gemini rejected input (exit 42); likely malformed prompt or missing auth")
 	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("gemini exited with non-zero code %d", result.ExitCode)
+	}
 
-	hasWork := false
-	sawError := ""
-	sawDenied := false
-	onlyClarifyingQuestion := false
+	seenToolUseIDs := map[string]bool{}
+	sawSuccessfulToolResult := false
 
 	for _, e := range result.Events {
 		if e.Type != coreexec.EventStdout {
 			continue
 		}
-		inspectGeminiStreamLine(e.Data, &hasWork, &sawError, &sawDenied, &onlyClarifyingQuestion)
+		var event geminiStreamEvent
+		if err := json.Unmarshal([]byte(e.Data), &event); err != nil {
+			continue
+		}
+		switch event.Type {
+		case "tool_use":
+			if event.ID != "" {
+				seenToolUseIDs[event.ID] = true
+			}
+		case "tool_result":
+			if event.IsError {
+				continue
+			}
+			if event.ToolUseID != "" && seenToolUseIDs[event.ToolUseID] {
+				sawSuccessfulToolResult = true
+			}
+		}
 	}
 
-	if sawError != "" {
-		return fmt.Errorf("gemini reported error: %s", sawError)
+	if sawSuccessfulToolResult {
+		return nil
 	}
-	if sawDenied {
-		return errors.New("gemini had denied tool calls (agent may have asked questions instead of completing work)")
-	}
-
-	// Exit 1 with no work event → treat as failure.
-	if result.ExitCode == 1 && !hasWork {
-		return errors.New("gemini exited with code 1 before completing any work")
-	}
-
-	// Clean exit but only a clarifying question and no real work → failure.
-	if result.ExitCode == 0 && onlyClarifyingQuestion && !hasWork {
-		return errors.New("gemini asked a clarifying question without completing work")
-	}
-
-	return nil
+	return errors.New("gemini exited without completing tool work")
 }
 
 type geminiStreamEvent struct {
-	Type     string          `json:"type"`
-	Message  string          `json:"message"`
-	IsError  bool            `json:"is_error"`
-	Content  json.RawMessage `json:"content"`
-	Text     string          `json:"text"`
-	ToolName string          `json:"tool_name"`
-	ExitCode int             `json:"exit_code"`
-}
-
-func inspectGeminiStreamLine(data string, hasWork *bool, sawError *string, sawDenied *bool, onlyClarifyingQuestion *bool) {
-	var event geminiStreamEvent
-	if err := json.Unmarshal([]byte(data), &event); err != nil {
-		return
-	}
-
-	switch event.Type {
-	case "error":
-		if event.Message != "" && *sawError == "" {
-			*sawError = event.Message
-		}
-	case "result":
-		// Gemini sometimes reports a non-zero exit_code in the result event
-		// body before the OS exit code surfaces. Treat as fatal so a clean
-		// OS exit 0 with an in-band failure still fails the run.
-		if event.ExitCode != 0 && *sawError == "" {
-			*sawError = fmt.Sprintf("gemini reported non-zero exit_code=%d in result event", event.ExitCode)
-		}
-	case "tool_use":
-		*hasWork = true
-	case "tool_result":
-		if event.IsError && isGeminiDeniedContent(event.Content) {
-			*sawDenied = true
-			return
-		}
-		*hasWork = true
-	case "message":
-		// Only count as clarifying-question if no prior work event has
-		// been seen for this stream. If the model later emits a tool_use
-		// the hasWork flag flips and this will be ignored.
-		text := agentMessageText(event)
-		if !*hasWork && looksLikeClarifyingQuestion(text) {
-			*onlyClarifyingQuestion = true
-		}
-	}
-}
-
-func agentMessageText(ev geminiStreamEvent) string {
-	if ev.Text != "" {
-		return ev.Text
-	}
-	if len(ev.Content) > 0 {
-		var raw any
-		if err := json.Unmarshal(ev.Content, &raw); err == nil {
-			return agents.FlattenJSONText(raw)
-		}
-	}
-	return ""
-}
-
-// isGeminiDeniedContent reports whether an is_error=true tool_result's
-// content payload explicitly signals a denial/rejection. Mirrors Claude's
-// narrow heuristic: only an explicit "denied"/"rejected" substring counts.
-// Empty content or unparseable content is treated as a recoverable tool
-// failure — let exit code decide rather than synthesize a denial.
-func isGeminiDeniedContent(raw json.RawMessage) bool {
-	if len(raw) == 0 {
-		return false
-	}
-	var any_ any
-	if err := json.Unmarshal(raw, &any_); err != nil {
-		return false
-	}
-	text := strings.ToLower(agents.FlattenJSONText(any_))
-	return strings.Contains(text, "denied") || strings.Contains(text, "rejected")
-}
-
-func looksLikeClarifyingQuestion(text string) bool {
-	trimmed := strings.TrimSpace(strings.ToLower(text))
-	if trimmed == "" || !strings.Contains(trimmed, "?") {
-		return false
-	}
-	for _, prefix := range []string{
-		"what ",
-		"which ",
-		"where ",
-		"when ",
-		"why ",
-		"how ",
-		"can you ",
-		"could you ",
-		"would you ",
-		"do you want ",
-		"should i ",
-	} {
-		if strings.HasPrefix(trimmed, prefix) {
-			return true
-		}
-	}
-	return strings.Contains(trimmed, "clarif")
+	Type      string `json:"type"`
+	ID        string `json:"id"`
+	ToolUseID string `json:"tool_use_id"`
+	IsError   bool   `json:"is_error"`
 }

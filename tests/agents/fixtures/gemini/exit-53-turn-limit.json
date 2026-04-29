@@ -1,0 +1,2 @@
+{"type":"init"}
+{"type":"tool_use","id":"call_01","tool_name":"read_file"}

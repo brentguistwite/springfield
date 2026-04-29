@@ -119,6 +119,14 @@ type Commander interface {
 // ResultValidator optionally validates whether exit code 0 truly means task success.
 // Adapters that implement this are checked by the runner after a clean exit.
 type ResultValidator interface {
+	// Positive-signal contract: ValidateResult returns nil only when the
+	// agent's transcript carries an explicit positive completion signal
+	// (e.g. a tool_use/tool_result success pair, or an adapter-specific
+	// item.completed work event). Absence of failure markers is not
+	// enough; refusal-with-no-tools, all-tools-errored, and text-only
+	// runs all return a non-nil, operator-readable error. Adapter-
+	// specific OS exit-code rules (Gemini exit 53/42) and process-level
+	// failures take precedence over stream inspection.
 	ValidateResult(result exec.Result) error
 }
 

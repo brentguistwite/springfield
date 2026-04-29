@@ -78,11 +78,17 @@ func (a adapter) Command(input agents.CommandInput) (coreexec.Command, error) {
 	}, nil
 }
 
-// ValidateResult checks Codex stderr for fatal errors that indicate the session
-// didn't complete real work despite exit code 0.
+// Positive-signal contract: ValidateResult returns nil only when the
+// transcript contains at least one item.completed event whose item.type is a
+// real tool/function-call (i.e. neither agent_message nor reasoning) and no
+// FATAL stderr appeared during the run. Text-only sessions are failures
+// under Policy A — Codex must take action to count as success.
 func (a adapter) ValidateResult(result coreexec.Result) error {
+	if result.ExitCode != 0 {
+		return fmt.Errorf("codex exited with non-zero code %d", result.ExitCode)
+	}
+
 	hasWork := false
-	askedClarifyingQuestion := false
 
 	for _, e := range result.Events {
 		switch e.Type {
@@ -91,18 +97,15 @@ func (a adapter) ValidateResult(result coreexec.Result) error {
 				return fmt.Errorf("codex reported fatal error: %s", truncate(e.Data, 200))
 			}
 		case coreexec.EventStdout:
-			workSeen, questionSeen := inspectCodexStdout(e.Data)
+			workSeen, _ := inspectCodexStdout(e.Data)
 			if workSeen {
 				hasWork = true
-			}
-			if questionSeen {
-				askedClarifyingQuestion = true
 			}
 		}
 	}
 
-	if askedClarifyingQuestion && !hasWork {
-		return fmt.Errorf("codex asked a clarifying question without completing work")
+	if !hasWork {
+		return errors.New("codex exited without taking action")
 	}
 
 	return nil
@@ -132,10 +135,17 @@ type codexStreamEvent struct {
 }
 
 type codexStreamItem struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type     string `json:"type"`
+	Text     string `json:"text"`
+	ExitCode *int   `json:"exit_code"`
 }
 
+// inspectCodexStdout reports whether a streamed Codex item.completed event
+// represents successful work (returns hasWork=true). Positive-signal contract:
+// a tool item only counts as success when its exit_code is zero (or absent,
+// for tool types that do not expose one). Tool items with a non-zero exit_code
+// are treated as failed work — the shell command ran but errored — and do NOT
+// satisfy the contract on their own.
 func inspectCodexStdout(data string) (hasWork bool, askedClarifyingQuestion bool) {
 	var event codexStreamEvent
 	if err := json.Unmarshal([]byte(data), &event); err != nil {
@@ -152,6 +162,12 @@ func inspectCodexStdout(data string) (hasWork bool, askedClarifyingQuestion bool
 	}
 
 	if item.Type != "" && item.Type != "agent_message" && item.Type != "reasoning" {
+		// Tool item. If it carries an exit_code, require it to be 0 to
+		// count as work. Item types without an exit_code field (e.g.
+		// file_change) report success implicitly via item.completed.
+		if item.ExitCode != nil && *item.ExitCode != 0 {
+			return false, false
+		}
 		return true, false
 	}
 
