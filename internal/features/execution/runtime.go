@@ -54,7 +54,7 @@ func NewRuntimeRunner(root string, lookPath func(string) (string, error), onEven
 		gemini.New(lookPath),
 	)
 	runtimeRunner := coreruntime.NewRunner(registry)
-	agentIDs := priorityAgentIDs(loaded.Config.EffectivePriority())
+	agentIDs := priorityAgentIDs(loaded.Config.Project.AgentPriority)
 	settings := loaded.Config.ExecutionSettings()
 
 	return Runner{

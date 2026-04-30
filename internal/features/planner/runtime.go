@@ -69,7 +69,7 @@ func (r RuntimeRunner) Run(prompt string) (string, error) {
 func (r RuntimeRunner) loadConfig() ([]agents.ID, agents.ExecutionSettings, error) {
 	loaded, err := config.LoadFrom(r.projectRoot)
 	if err == nil {
-		return priorityAgentIDs(loaded.Config.EffectivePriority()), loaded.Config.ExecutionSettings(), nil
+		return priorityAgentIDs(loaded.Config.Project.AgentPriority), loaded.Config.ExecutionSettings(), nil
 	}
 
 	var missing *config.MissingConfigError
