@@ -144,7 +144,7 @@ approval_policy = "never"
 
 Notes:
 
-- `springfield init` asks for the agent priority order (default `claude,codex`) and scaffolds `springfield.toml` + `.springfield/` with recommended execution settings for Claude and Codex. Use `--agents codex,claude` to skip the prompt, or pipe input to run non-interactively.
+- `springfield init` prompts for agent priority order and scaffolds `springfield.toml` + `.springfield/` with recommended execution settings for each selected agent. Use `--agents claude,codex` to skip the interactive prompt; non-interactive runs without `--agents` will error.
 - Gemini is execution-supported but opt-in. Pass `--agents claude,codex,gemini` (or edit `agent_priority`) to include it. See [`docs/release.md`](docs/release.md#2026-04-gemini-cli-execution-support) for the migration note.
 - Primary end-user install is the Claude marketplace or Codex plugin/catalog flow.
 - `springfield install` is the local sync/bootstrap/fallback path after `init`.
