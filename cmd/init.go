@@ -101,15 +101,17 @@ func NewInitCommand() *cobra.Command {
 	return cmd
 }
 
-// resolvePriority determines the agent priority list from flag, prompt, or default.
-// interactive=true prompts the user via in/out; false returns the default list.
+// resolvePriority determines the agent priority list from flag or interactive
+// prompt. Non-interactive callers must pass --agents explicitly — there is no
+// fixed default priority for fresh init.
 func resolvePriority(agentsFlag string, interactive bool, in io.Reader, out io.Writer) ([]string, error) {
 	if agentsFlag != "" {
 		return parseAndValidateAgents(agentsFlag)
 	}
 
 	if !interactive {
-		return defaultPriority(), nil
+		return nil, fmt.Errorf(
+			"non-interactive init requires --agents flag (e.g. --agents claude,codex,gemini)")
 	}
 
 	return promptForAgents(in, out)
@@ -301,14 +303,10 @@ func ensureGuardrailBlock(path string) (bool, error) {
 	return true, nil
 }
 
-// defaultPriority returns the default init priority as strings. Intentionally
-// narrower than SupportedForExecution: Gemini is execution-supported but must
-// be opted in via --agents to avoid clobbering existing user priority.
+// defaultPriority returns a temporary default priority for the legacy
+// interactive prompt path. Task 4 rewrites promptForAgents into a 3-agent
+// picker and this helper goes away with it. Non-interactive callers no longer
+// hit this code path — they must pass --agents explicitly.
 func defaultPriority() []string {
-	ids := agents.DefaultInitPriority()
-	out := make([]string, len(ids))
-	for i, id := range ids {
-		out[i] = string(id)
-	}
-	return out
+	return []string{string(agents.AgentClaude), string(agents.AgentCodex)}
 }

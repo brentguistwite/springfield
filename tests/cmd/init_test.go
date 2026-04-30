@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// TestInitAgentsFlagSetsDefaultAgent verifies --agents flag controls default_agent.
-func TestInitAgentsFlagSetsDefaultAgent(t *testing.T) {
+// TestInitAgentsFlagSetsAgentPriority verifies --agents flag controls agent_priority.
+func TestInitAgentsFlagSetsAgentPriority(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 
@@ -24,13 +24,10 @@ func TestInitAgentsFlagSetsDefaultAgent(t *testing.T) {
 	}
 	toml := string(content)
 
-	if !strings.Contains(toml, `default_agent = "codex"`) {
-		t.Errorf("expected default_agent=codex in config:\n%s", toml)
-	}
 	if !strings.Contains(toml, `agent_priority = ["codex", "claude"]`) {
 		t.Errorf("expected agent_priority=[codex,claude] in config:\n%s", toml)
 	}
-	// Both agent sections should always be present.
+	// Both selected agent sections should be present.
 	if !strings.Contains(toml, "[agents.claude]") {
 		t.Errorf("expected [agents.claude] section in config:\n%s", toml)
 	}
@@ -55,9 +52,6 @@ func TestInitAcceptsGeminiInAgentsFlag(t *testing.T) {
 		t.Fatalf("read springfield.toml: %v", err)
 	}
 	toml := string(content)
-	if !strings.Contains(toml, `default_agent = "gemini"`) {
-		t.Errorf("expected default_agent=gemini in config:\n%s", toml)
-	}
 	if !strings.Contains(toml, `agent_priority = ["gemini"]`) {
 		t.Errorf("expected agent_priority=[gemini], got:\n%s", toml)
 	}
@@ -66,50 +60,24 @@ func TestInitAcceptsGeminiInAgentsFlag(t *testing.T) {
 	}
 }
 
-// TestInitNonTTYDefaultPriorityExcludesGemini locks the roadmap rule:
-// without --agents, Gemini is NOT auto-added to priority even though it
-// is execution-supported.
-func TestInitNonTTYDefaultPriorityExcludesGemini(t *testing.T) {
+// TestInitNonTTYWithoutAgentsFlagErrors verifies that running init non-interactively
+// (no TTY) without an explicit --agents flag fails with a clear error. There is no
+// fixed default priority — the user must opt in.
+func TestInitNonTTYWithoutAgentsFlagErrors(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 
 	output, err := runBinaryInWithInput(t, bin, dir, "", "init")
-	if err != nil {
-		t.Fatalf("init: %v\n%s", err, output)
+	if err == nil {
+		t.Fatalf("expected error when non-interactive and no --agents flag, output:\n%s", output)
+	}
+	if !strings.Contains(output, "--agents") {
+		t.Fatalf("expected error mentioning --agents, got:\n%s", output)
 	}
 
-	content, err := os.ReadFile(filepath.Join(dir, "springfield.toml"))
-	if err != nil {
-		t.Fatalf("read springfield.toml: %v", err)
-	}
-	toml := string(content)
-	if strings.Contains(toml, "gemini") {
-		t.Fatalf("expected default init to exclude gemini, got:\n%s", toml)
-	}
-}
-
-// TestInitNonTTYDefaultsToSupportedAgents verifies non-TTY + no flag uses SupportedForExecution.
-func TestInitNonTTYDefaultsToSupportedAgents(t *testing.T) {
-	bin := buildBinary(t)
-	dir := t.TempDir()
-
-	// Pipe empty stdin → non-TTY, no --agents flag → should use default [claude, codex].
-	output, err := runBinaryInWithInput(t, bin, dir, "", "init")
-	if err != nil {
-		t.Fatalf("init with empty stdin failed: %v\n%s", err, output)
-	}
-
-	content, err := os.ReadFile(filepath.Join(dir, "springfield.toml"))
-	if err != nil {
-		t.Fatalf("read springfield.toml: %v", err)
-	}
-	toml := string(content)
-
-	if !strings.Contains(toml, `default_agent = "claude"`) {
-		t.Errorf("expected default_agent=claude in config:\n%s", toml)
-	}
-	if !strings.Contains(toml, `agent_priority = ["claude", "codex"]`) {
-		t.Errorf("expected agent_priority=[claude,codex] in config:\n%s", toml)
+	// No springfield.toml should have been written.
+	if _, statErr := os.Stat(filepath.Join(dir, "springfield.toml")); statErr == nil {
+		t.Fatalf("expected no springfield.toml on error path")
 	}
 }
 
