@@ -1,12 +1,56 @@
 package cmd_test
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
+
+	"springfield/cmd"
+	"springfield/internal/core/agents"
 )
+
+// TestPromptShowsAllThreeAgentsWithDetection verifies the picker lists every
+// execution-supported agent with a detection marker so the user can see at a
+// glance which CLIs are installed before choosing.
+func TestPromptShowsAllThreeAgentsWithDetection(t *testing.T) {
+	var out bytes.Buffer
+	in := strings.NewReader("claude,codex\n")
+	priority, err := cmd.PromptForAgentsWithDetection(in, &out, fakeDetector{
+		statuses: map[agents.ID]agents.DetectionStatus{
+			agents.AgentClaude: agents.DetectionStatusAvailable,
+			agents.AgentCodex:  agents.DetectionStatusMissing,
+			agents.AgentGemini: agents.DetectionStatusAvailable,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := out.String()
+	for _, want := range []string{"claude", "codex", "gemini", "✓", "✗"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("prompt output missing %q:\n%s", want, s)
+		}
+	}
+	if !slices.Equal(priority, []string{"claude", "codex"}) {
+		t.Fatalf("priority = %v, want [claude codex]", priority)
+	}
+}
+
+// TestPromptRejectsAllOff verifies the picker errors out when the user
+// repeatedly submits no agents — the runtime cannot proceed without at
+// least one agent in the priority list.
+func TestPromptRejectsAllOff(t *testing.T) {
+	var out bytes.Buffer
+	in := strings.NewReader("\n\n\n\n") // empty selection retries
+	_, err := cmd.PromptForAgentsWithDetection(in, &out, fakeDetector{})
+	if err == nil {
+		t.Fatal("expected error when no agents selected after retries")
+	}
+}
 
 // TestInitAgentsFlagSetsAgentPriority verifies --agents flag controls agent_priority.
 func TestInitAgentsFlagSetsAgentPriority(t *testing.T) {
