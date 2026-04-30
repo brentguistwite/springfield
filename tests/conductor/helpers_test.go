@@ -16,7 +16,7 @@ func writeProjectConfig(t *testing.T, root string) string {
 
 	path := filepath.Join(root, config.FileName)
 	body := `[project]
-default_agent = "claude"
+agent_priority = ["claude"]
 `
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(body)+"\n"), 0o644); err != nil {
 		t.Fatalf("write project config: %v", err)

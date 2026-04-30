@@ -1,15 +1,84 @@
 package cmd_test
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
+
+	"springfield/cmd"
+	"springfield/internal/core/agents"
 )
 
-// TestInitAgentsFlagSetsDefaultAgent verifies --agents flag controls default_agent.
-func TestInitAgentsFlagSetsDefaultAgent(t *testing.T) {
+// TestPromptShowsAllThreeAgentsWithDetection verifies the picker lists every
+// execution-supported agent with a detection marker so the user can see at a
+// glance which CLIs are installed before choosing.
+func TestPromptShowsAllThreeAgentsWithDetection(t *testing.T) {
+	var out bytes.Buffer
+	in := strings.NewReader("claude,codex\n")
+	priority, err := cmd.PromptForAgentsWithDetection(in, &out, fakeDetector{
+		statuses: map[agents.ID]agents.DetectionStatus{
+			agents.AgentClaude: agents.DetectionStatusAvailable,
+			agents.AgentCodex:  agents.DetectionStatusMissing,
+			agents.AgentGemini: agents.DetectionStatusAvailable,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := out.String()
+	for _, want := range []string{"claude", "codex", "gemini", "✓", "✗"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("prompt output missing %q:\n%s", want, s)
+		}
+	}
+	if !slices.Equal(priority, []string{"claude", "codex"}) {
+		t.Fatalf("priority = %v, want [claude codex]", priority)
+	}
+}
+
+// TestPromptRejectsAllOff verifies the picker errors out when the user
+// repeatedly submits no agents — the runtime cannot proceed without at
+// least one agent in the priority list.
+func TestPromptRejectsAllOff(t *testing.T) {
+	var out bytes.Buffer
+	// strings.Repeat with maxPromptAttempts+1 newlines so the loop exhausts the cap
+	// rather than hitting EOF — exercises the "too many invalid attempts" path.
+	// (maxPromptAttempts = 4, so 5 newlines exceeds it)
+	in := strings.NewReader(strings.Repeat("\n", 5))
+	_, err := cmd.PromptForAgentsWithDetection(in, &out, fakeDetector{})
+	if err == nil {
+		t.Fatal("expected error when no agents selected after retries")
+	}
+}
+
+// TestPromptShowsUnhealthyMarker verifies the picker renders the ⚠ marker and
+// "unhealthy" descriptor when an agent's detection status is Unhealthy.
+func TestPromptShowsUnhealthyMarker(t *testing.T) {
+	var out bytes.Buffer
+	in := strings.NewReader("claude\n")
+	_, err := cmd.PromptForAgentsWithDetection(in, &out, fakeDetector{
+		statuses: map[agents.ID]agents.DetectionStatus{
+			agents.AgentClaude: agents.DetectionStatusUnhealthy,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := out.String()
+	if !strings.Contains(s, "⚠") {
+		t.Fatalf("expected unhealthy marker ⚠ in output:\n%s", s)
+	}
+	if !strings.Contains(s, "unhealthy") {
+		t.Fatalf("expected 'unhealthy' descriptor in output:\n%s", s)
+	}
+}
+
+// TestInitAgentsFlagSetsAgentPriority verifies --agents flag controls agent_priority.
+func TestInitAgentsFlagSetsAgentPriority(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 
@@ -24,13 +93,10 @@ func TestInitAgentsFlagSetsDefaultAgent(t *testing.T) {
 	}
 	toml := string(content)
 
-	if !strings.Contains(toml, `default_agent = "codex"`) {
-		t.Errorf("expected default_agent=codex in config:\n%s", toml)
-	}
 	if !strings.Contains(toml, `agent_priority = ["codex", "claude"]`) {
 		t.Errorf("expected agent_priority=[codex,claude] in config:\n%s", toml)
 	}
-	// Both agent sections should always be present.
+	// Both selected agent sections should be present.
 	if !strings.Contains(toml, "[agents.claude]") {
 		t.Errorf("expected [agents.claude] section in config:\n%s", toml)
 	}
@@ -55,9 +121,6 @@ func TestInitAcceptsGeminiInAgentsFlag(t *testing.T) {
 		t.Fatalf("read springfield.toml: %v", err)
 	}
 	toml := string(content)
-	if !strings.Contains(toml, `default_agent = "gemini"`) {
-		t.Errorf("expected default_agent=gemini in config:\n%s", toml)
-	}
 	if !strings.Contains(toml, `agent_priority = ["gemini"]`) {
 		t.Errorf("expected agent_priority=[gemini], got:\n%s", toml)
 	}
@@ -66,50 +129,24 @@ func TestInitAcceptsGeminiInAgentsFlag(t *testing.T) {
 	}
 }
 
-// TestInitNonTTYDefaultPriorityExcludesGemini locks the roadmap rule:
-// without --agents, Gemini is NOT auto-added to priority even though it
-// is execution-supported.
-func TestInitNonTTYDefaultPriorityExcludesGemini(t *testing.T) {
+// TestInitNonTTYWithoutAgentsFlagErrors verifies that running init non-interactively
+// (no TTY) without an explicit --agents flag fails with a clear error. There is no
+// fixed default priority — the user must opt in.
+func TestInitNonTTYWithoutAgentsFlagErrors(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 
 	output, err := runBinaryInWithInput(t, bin, dir, "", "init")
-	if err != nil {
-		t.Fatalf("init: %v\n%s", err, output)
+	if err == nil {
+		t.Fatalf("expected error when non-interactive and no --agents flag, output:\n%s", output)
+	}
+	if !strings.Contains(output, "--agents") {
+		t.Fatalf("expected error mentioning --agents, got:\n%s", output)
 	}
 
-	content, err := os.ReadFile(filepath.Join(dir, "springfield.toml"))
-	if err != nil {
-		t.Fatalf("read springfield.toml: %v", err)
-	}
-	toml := string(content)
-	if strings.Contains(toml, "gemini") {
-		t.Fatalf("expected default init to exclude gemini, got:\n%s", toml)
-	}
-}
-
-// TestInitNonTTYDefaultsToSupportedAgents verifies non-TTY + no flag uses SupportedForExecution.
-func TestInitNonTTYDefaultsToSupportedAgents(t *testing.T) {
-	bin := buildBinary(t)
-	dir := t.TempDir()
-
-	// Pipe empty stdin → non-TTY, no --agents flag → should use default [claude, codex].
-	output, err := runBinaryInWithInput(t, bin, dir, "", "init")
-	if err != nil {
-		t.Fatalf("init with empty stdin failed: %v\n%s", err, output)
-	}
-
-	content, err := os.ReadFile(filepath.Join(dir, "springfield.toml"))
-	if err != nil {
-		t.Fatalf("read springfield.toml: %v", err)
-	}
-	toml := string(content)
-
-	if !strings.Contains(toml, `default_agent = "claude"`) {
-		t.Errorf("expected default_agent=claude in config:\n%s", toml)
-	}
-	if !strings.Contains(toml, `agent_priority = ["claude", "codex"]`) {
-		t.Errorf("expected agent_priority=[claude,codex] in config:\n%s", toml)
+	// No springfield.toml should have been written.
+	if _, statErr := os.Stat(filepath.Join(dir, "springfield.toml")); statErr == nil {
+		t.Fatalf("expected no springfield.toml on error path")
 	}
 }
 

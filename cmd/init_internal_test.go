@@ -6,24 +6,18 @@ import (
 	"testing"
 )
 
-// TestResolvePriorityInteractiveEmptyInput verifies empty input returns the default list.
+// TestResolvePriorityInteractiveEmptyInput verifies empty input is rejected —
+// the picker requires the user to explicitly opt in to at least one agent.
 func TestResolvePriorityInteractiveEmptyInput(t *testing.T) {
 	in := strings.NewReader("\n")
 	var out bytes.Buffer
 
-	got, err := resolvePriority("", true, in, &out)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, err := resolvePriority("", true, in, &out)
+	if err == nil {
+		t.Fatal("expected error on empty input, got nil")
 	}
-
-	want := defaultPriority()
-	if len(got) != len(want) {
-		t.Fatalf("got %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("got[%d]=%q, want %q", i, got[i], want[i])
-		}
+	if !strings.Contains(out.String(), "at least one agent is required") {
+		t.Errorf("expected rejection message in output, got: %q", out.String())
 	}
 }
 
@@ -78,25 +72,18 @@ func TestResolvePriorityInteractiveRetryOnInvalid(t *testing.T) {
 }
 
 // TestResolvePriorityInteractiveWhitespaceInput verifies that a line containing
-// only whitespace is treated the same as empty input — TrimSpace collapses it
-// and the default priority list is returned.
+// only whitespace is rejected like empty input — TrimSpace collapses it and
+// the picker still requires an explicit agent selection.
 func TestResolvePriorityInteractiveWhitespaceInput(t *testing.T) {
 	in := strings.NewReader("   \n")
 	var out bytes.Buffer
 
-	got, err := resolvePriority("", true, in, &out)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, err := resolvePriority("", true, in, &out)
+	if err == nil {
+		t.Fatal("expected error on whitespace-only input, got nil")
 	}
-
-	want := defaultPriority()
-	if len(got) != len(want) {
-		t.Fatalf("got %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("got[%d]=%q, want %q", i, got[i], want[i])
-		}
+	if !strings.Contains(out.String(), "at least one agent is required") {
+		t.Errorf("expected rejection message in output, got: %q", out.String())
 	}
 }
 

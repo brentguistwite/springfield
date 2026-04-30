@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"springfield/internal/core/agents"
 )
 
 // MissingConfigError reports that no springfield.toml exists in the current
@@ -99,8 +101,21 @@ func findConfig(startDir string) (string, string, error) {
 }
 
 func validate(cfg Config) error {
-	if strings.TrimSpace(cfg.Project.DefaultAgent) == "" {
-		return fmt.Errorf("project.default_agent must be set")
+	// agent_priority may be empty (unconfigured project routes through init flow);
+	// when set, entries must be non-empty, unique, and execution-supported.
+	seen := make(map[string]struct{}, len(cfg.Project.AgentPriority))
+	for _, id := range cfg.Project.AgentPriority {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" {
+			return fmt.Errorf("project.agent_priority entries must not be empty")
+		}
+		if !agents.IsExecutionSupported(agents.ID(trimmed)) {
+			return fmt.Errorf("project.agent_priority: %q is not an execution-supported agent", trimmed)
+		}
+		if _, dup := seen[trimmed]; dup {
+			return fmt.Errorf("project.agent_priority: duplicate agent %q", trimmed)
+		}
+		seen[trimmed] = struct{}{}
 	}
 
 	for planID, plan := range cfg.Plans {

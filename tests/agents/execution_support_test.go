@@ -52,15 +52,3 @@ func TestIsExecutionSupported(t *testing.T) {
 	}
 }
 
-// TestDefaultInitPriorityExcludesGemini locks the roadmap rule that Gemini
-// is execution-supported but opt-in only. Fresh init without --agents must
-// not silently insert gemini.
-func TestDefaultInitPriorityExcludesGemini(t *testing.T) {
-	priority := agents.DefaultInitPriority()
-	if len(priority) != 2 {
-		t.Fatalf("expected 2 default agents, got %d: %v", len(priority), priority)
-	}
-	if priority[0] != agents.AgentClaude || priority[1] != agents.AgentCodex {
-		t.Fatalf("default priority: want [claude codex], got %v", priority)
-	}
-}

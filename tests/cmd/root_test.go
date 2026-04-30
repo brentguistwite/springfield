@@ -221,7 +221,7 @@ func TestInitCreatesProjectInCurrentDir(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 
-	output, err := runBinaryIn(t, bin, dir, "init")
+	output, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude,codex")
 	if err != nil {
 		t.Fatalf("springfield init failed: %v\n%s", err, output)
 	}
@@ -240,7 +240,7 @@ func TestInitCreatesProjectInCurrentDir(t *testing.T) {
 	}
 
 	// Re-run should show skip messages
-	output2, err := runBinaryIn(t, bin, dir, "init")
+	output2, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude,codex")
 	if err != nil {
 		t.Fatalf("re-run init failed: %v\n%s", err, output2)
 	}

@@ -33,14 +33,17 @@ type InitResult struct {
 
 // Init writes springfield.toml and creates .springfield/ (skip-if-exists).
 //
-// priority[0] becomes default_agent; the full list is written as agent_priority.
+// priority is written as agent_priority. The first entry is the implicit default
+// agent at runtime; no explicit default_agent field is emitted. An empty priority
+// produces `agent_priority = []` and no agent blocks. Init NEVER auto-emits
+// [agents.<id>] blocks for agents the caller did not include in priority.
 //
 // Behavior depends on whether springfield.toml already exists and opts.Reset:
 //
 //   - Fresh init (no existing config): write scaffold atomically. ConfigCreated=true.
 //   - Re-init, no Reset (merge mode): load existing config, update project priority and
-//     any absent agent defaults, preserve [plans.*], save atomically. ConfigUpdated=true
-//     when the file was changed.
+//     fill defaults only for agents in priority that are absent, preserve [plans.*],
+//     save atomically. ConfigUpdated=true when the file was changed.
 //   - Re-init with Reset: copy existing config to a timestamped backup, write fresh
 //     scaffold atomically. BackupPath populated.
 func Init(dir string, priority []string, opts InitOptions) (InitResult, error) {
@@ -89,38 +92,36 @@ func Init(dir string, priority []string, opts InitOptions) (InitResult, error) {
 		changed := false
 		rec := RecommendedExecutionSettings()
 
-		// Always update agent priority and default agent from the provided priority.
+		// Always update agent priority from the provided priority.
 		if !slices.Equal(loaded.Config.Project.AgentPriority, priority) {
 			loaded.Config.Project.AgentPriority = priority
 			changed = true
 		}
-		if len(priority) > 0 && loaded.Config.Project.DefaultAgent != priority[0] {
-			loaded.Config.Project.DefaultAgent = priority[0]
-			changed = true
-		}
 
-		// Fill in missing Claude defaults.
-		// The field check alongside isPresent is defensive: isPresent comes from the
-		// TOML decoder metadata, and the extra empty-field test guards against any
-		// future drift where a struct is marked present but fields arrived zeroed.
-		if !loaded.Config.Agents.Claude.isPresent && loaded.Config.Agents.Claude.PermissionMode == "" {
+		// Merge mode: fill missing defaults *only* for agents in the requested
+		// priority. Never auto-add [agents.<id>] blocks for agents the user did
+		// not ask for. The field-empty check alongside isPresent is defensive:
+		// isPresent comes from the TOML decoder metadata, and the extra
+		// empty-field test guards against any future drift where a struct is
+		// marked present but fields arrived zeroed.
+		if slices.Contains(priority, string(agents.AgentClaude)) &&
+			!loaded.Config.Agents.Claude.isPresent &&
+			loaded.Config.Agents.Claude.PermissionMode == "" {
 			loaded.Config.Agents.Claude.PermissionMode = rec.Claude.PermissionMode
 			loaded.Config.Agents.Claude.isPresent = true
 			changed = true
 		}
 
-		// Fill in missing Codex defaults. Same defensive pattern as Claude above.
-		if !loaded.Config.Agents.Codex.isPresent && loaded.Config.Agents.Codex.SandboxMode == "" && loaded.Config.Agents.Codex.ApprovalPolicy == "" {
+		if slices.Contains(priority, string(agents.AgentCodex)) &&
+			!loaded.Config.Agents.Codex.isPresent &&
+			loaded.Config.Agents.Codex.SandboxMode == "" &&
+			loaded.Config.Agents.Codex.ApprovalPolicy == "" {
 			loaded.Config.Agents.Codex.SandboxMode = rec.Codex.SandboxMode
 			loaded.Config.Agents.Codex.ApprovalPolicy = rec.Codex.ApprovalPolicy
 			loaded.Config.Agents.Codex.isPresent = true
 			changed = true
 		}
 
-		// Fill in missing Gemini defaults, but only when Gemini is in the
-		// user's priority. Gemini is execution-supported but stays opt-in —
-		// we must not silently add [agents.gemini] to users who never asked
-		// for Gemini.
 		if slices.Contains(priority, string(agents.AgentGemini)) &&
 			!loaded.Config.Agents.Gemini.isPresent &&
 			loaded.Config.Agents.Gemini.ApprovalMode == "" &&
@@ -154,15 +155,12 @@ func Init(dir string, priority []string, opts InitOptions) (InitResult, error) {
 	return result, nil
 }
 
-// buildScaffold returns the initial TOML content. Claude and Codex sections are
-// always emitted; Gemini's [agents.gemini] is only emitted when "gemini" appears
-// in priority, keeping Gemini opt-in for existing projects.
+// buildScaffold returns the initial TOML content. Only [agents.<id>] blocks for
+// agents listed in priority are emitted; an empty priority produces just the
+// [project] section with `agent_priority = []` and no agent blocks. The first
+// entry of priority is the implicit default at runtime — no default_agent field
+// is emitted.
 func buildScaffold(priority []string) string {
-	defaultAgent := ""
-	if len(priority) > 0 {
-		defaultAgent = priority[0]
-	}
-
 	// Format agent_priority as a TOML inline array.
 	quoted := make([]string, len(priority))
 	for i, a := range priority {
@@ -172,24 +170,19 @@ func buildScaffold(priority []string) string {
 
 	rec := RecommendedExecutionSettings()
 
-	base := fmt.Sprintf(`[project]
-default_agent = %q
-agent_priority = %s
+	base := fmt.Sprintf("[project]\nagent_priority = %s\n", agentPriority)
 
-[agents.claude]
-permission_mode = %q
-
-[agents.codex]
-sandbox_mode = %q
-approval_policy = %q
-`, defaultAgent, agentPriority, rec.Claude.PermissionMode, rec.Codex.SandboxMode, rec.Codex.ApprovalPolicy)
-
+	if slices.Contains(priority, string(agents.AgentClaude)) {
+		base += fmt.Sprintf("\n[agents.claude]\npermission_mode = %q\n",
+			rec.Claude.PermissionMode)
+	}
+	if slices.Contains(priority, string(agents.AgentCodex)) {
+		base += fmt.Sprintf("\n[agents.codex]\nsandbox_mode = %q\napproval_policy = %q\n",
+			rec.Codex.SandboxMode, rec.Codex.ApprovalPolicy)
+	}
 	if slices.Contains(priority, string(agents.AgentGemini)) {
-		base += fmt.Sprintf(`
-[agents.gemini]
-approval_mode = %q
-sandbox_mode = %q
-`, rec.Gemini.ApprovalMode, rec.Gemini.SandboxMode)
+		base += fmt.Sprintf("\n[agents.gemini]\napproval_mode = %q\nsandbox_mode = %q\n",
+			rec.Gemini.ApprovalMode, rec.Gemini.SandboxMode)
 	}
 
 	return base

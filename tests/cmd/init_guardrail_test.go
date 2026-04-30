@@ -16,7 +16,7 @@ func TestInitAppendsGuardrailToClaudeMd(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 
-	if _, err := runBinaryIn(t, bin, dir, "init"); err != nil {
+	if _, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude,codex"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
@@ -38,7 +38,7 @@ func TestInitCreatesAgentsMdIfMissing(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 
-	if _, err := runBinaryIn(t, bin, dir, "init"); err != nil {
+	if _, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude,codex"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
@@ -56,10 +56,10 @@ func TestInitGuardrailIdempotent(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 
-	if _, err := runBinaryIn(t, bin, dir, "init"); err != nil {
+	if _, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude,codex"); err != nil {
 		t.Fatalf("init 1: %v", err)
 	}
-	if _, err := runBinaryIn(t, bin, dir, "init"); err != nil {
+	if _, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude,codex"); err != nil {
 		t.Fatalf("init 2: %v", err)
 	}
 
@@ -94,7 +94,7 @@ func TestInitGuardrailPreservesMode(t *testing.T) {
 		t.Fatalf("chmod seed: %v", err)
 	}
 
-	if _, err := runBinaryIn(t, bin, dir, "init"); err != nil {
+	if _, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude,codex"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
@@ -125,7 +125,7 @@ func TestInitGuardrailFreshFileDefaultMode(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 
-	if _, err := runBinaryIn(t, bin, dir, "init"); err != nil {
+	if _, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude,codex"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
@@ -152,7 +152,7 @@ func TestInitGuardrailPreservesExistingContent(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	if _, err := runBinaryIn(t, bin, dir, "init"); err != nil {
+	if _, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude,codex"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 

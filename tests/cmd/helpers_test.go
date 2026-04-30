@@ -6,13 +6,28 @@ import (
 	"path/filepath"
 	"testing"
 
+	"springfield/internal/core/agents"
 	"springfield/internal/features/conductor"
 )
+
+// fakeDetector implements cmd.Detector for prompt tests. Missing entries
+// default to DetectionStatusMissing so tests only need to specify positive
+// cases.
+type fakeDetector struct {
+	statuses map[agents.ID]agents.DetectionStatus
+}
+
+func (f fakeDetector) Detect(id agents.ID) agents.DetectionStatus {
+	if status, ok := f.statuses[id]; ok {
+		return status
+	}
+	return agents.DetectionStatusMissing
+}
 
 func writeSpringfieldConfig(t *testing.T, dir string, agent string) {
 	t.Helper()
 
-	content := "[project]\ndefault_agent = \"" + agent + "\"\n"
+	content := "[project]\nagent_priority = [\"" + agent + "\"]\n"
 	path := filepath.Join(dir, "springfield.toml")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write springfield.toml: %v", err)

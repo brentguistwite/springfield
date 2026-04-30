@@ -53,10 +53,7 @@ func TestInitCreatesConfigAndRuntimeDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("created config should be loadable: %v", err)
 	}
-	if loaded.Config.Project.DefaultAgent != "codex" {
-		t.Errorf("default_agent: want codex, got %q", loaded.Config.Project.DefaultAgent)
-	}
-	priority := loaded.Config.EffectivePriority()
+	priority := loaded.Config.Project.AgentPriority
 	if len(priority) != 2 || priority[0] != "codex" || priority[1] != "claude" {
 		t.Errorf("agent_priority: want [codex claude], got %v", priority)
 	}
@@ -73,13 +70,77 @@ func TestInitCreatesConfigAndRuntimeDir(t *testing.T) {
 	}
 }
 
+func TestInitWritesOnlyRequestedAgentBlocks(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := config.Init(dir, []string{"claude"}, config.InitOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, config.FileName))
+	s := string(raw)
+	if !strings.Contains(s, "[agents.claude]") {
+		t.Fatalf("expected [agents.claude]:\n%s", s)
+	}
+	if strings.Contains(s, "[agents.codex]") || strings.Contains(s, "[agents.gemini]") {
+		t.Fatalf("unexpected non-claude blocks:\n%s", s)
+	}
+}
+
+func TestInitEmptyPriorityWritesEmptyList(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := config.Init(dir, []string{}, config.InitOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, config.FileName))
+	s := string(raw)
+	if !strings.Contains(s, "agent_priority = []") {
+		t.Fatalf("expected empty priority literal, got:\n%s", s)
+	}
+	for _, marker := range []string{"[agents.claude]", "[agents.codex]", "[agents.gemini]", "default_agent"} {
+		if strings.Contains(s, marker) {
+			t.Fatalf("unexpected %q in scaffold:\n%s", marker, s)
+		}
+	}
+}
+
+func TestInitMergeDoesNotBackfillAgentsNotInPriority(t *testing.T) {
+	dir := t.TempDir()
+
+	// Pre-existing config with only claude block; priority changes to ["claude"]
+	// alone — merge must NOT auto-add codex or gemini blocks.
+	configPath := filepath.Join(dir, config.FileName)
+	original := `[project]
+agent_priority = ["claude", "codex"]
+
+[agents.claude]
+permission_mode = "bypassPermissions"
+`
+	if err := os.WriteFile(configPath, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := config.Init(dir, []string{"claude"}, config.InitOptions{}); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	s := string(data)
+	if strings.Contains(s, "[agents.codex]") {
+		t.Errorf("merge should not auto-add [agents.codex]:\n%s", s)
+	}
+	if strings.Contains(s, "[agents.gemini]") {
+		t.Errorf("merge should not auto-add [agents.gemini]:\n%s", s)
+	}
+}
+
 func TestInitMergePreservesPlans(t *testing.T) {
 	dir := t.TempDir()
 
 	// Pre-create config with a [plans] section.
 	configPath := filepath.Join(dir, config.FileName)
 	original := `[project]
-default_agent = "claude"
 agent_priority = ["claude", "codex"]
 
 [agents.claude]
@@ -126,8 +187,8 @@ agent = "codex"
 	}
 
 	// Priority updated.
-	if loaded.Config.Project.DefaultAgent != "codex" {
-		t.Errorf("default_agent: want codex, got %q", loaded.Config.Project.DefaultAgent)
+	if got := loaded.Config.AgentForPlan(""); got != "codex" {
+		t.Errorf("AgentForPlan(\"\"): want codex, got %q", got)
 	}
 }
 
@@ -137,7 +198,6 @@ func TestInitMergeFillsMissingAgentDefaults(t *testing.T) {
 	// Pre-create config with only [project] section (no agents).
 	configPath := filepath.Join(dir, config.FileName)
 	original := `[project]
-default_agent = "claude"
 agent_priority = ["claude", "codex"]
 `
 	if err := os.WriteFile(configPath, []byte(original), 0644); err != nil {
@@ -180,7 +240,6 @@ func TestInitMergePreservesCustomAgentSettings(t *testing.T) {
 	// so merge must preserve it and still fill in the absent Codex section.
 	configPath := filepath.Join(dir, config.FileName)
 	original := `[project]
-default_agent = "claude"
 agent_priority = ["claude", "codex"]
 
 [agents.claude]
@@ -227,7 +286,6 @@ func TestInitMergeUpdatesAgentPriority(t *testing.T) {
 
 	configPath := filepath.Join(dir, config.FileName)
 	original := `[project]
-default_agent = "claude"
 agent_priority = ["claude"]
 
 [agents.claude]
@@ -253,12 +311,9 @@ approval_policy = "never"
 	if err != nil {
 		t.Fatalf("load after merge: %v", err)
 	}
-	priority := loaded.Config.EffectivePriority()
+	priority := loaded.Config.Project.AgentPriority
 	if len(priority) != 2 || priority[0] != "codex" || priority[1] != "claude" {
 		t.Errorf("agent_priority: want [codex claude], got %v", priority)
-	}
-	if loaded.Config.Project.DefaultAgent != "codex" {
-		t.Errorf("default_agent: want codex, got %q", loaded.Config.Project.DefaultAgent)
 	}
 }
 
@@ -289,7 +344,6 @@ func TestInitMergeBackfillsGeminiDefaults(t *testing.T) {
 
 	configPath := filepath.Join(dir, config.FileName)
 	original := `[project]
-default_agent = "claude"
 agent_priority = ["claude", "codex", "gemini"]
 
 [agents.claude]
@@ -364,7 +418,6 @@ func TestInitMergeDoesNotBackfillGeminiWhenNotInPriority(t *testing.T) {
 
 	configPath := filepath.Join(dir, config.FileName)
 	original := `[project]
-default_agent = "claude"
 agent_priority = ["claude", "codex"]
 
 [agents.claude]
@@ -408,7 +461,6 @@ func TestInitResetBacksUpAndWritesFresh(t *testing.T) {
 	// Pre-create a minimal valid config (with agents) so it round-trips cleanly.
 	configPath := filepath.Join(dir, config.FileName)
 	original := `[project]
-default_agent = "claude"
 agent_priority = ["claude", "codex"]
 
 [agents.claude]
@@ -452,8 +504,8 @@ agent = "codex"
 	if _, ok := loaded.Config.Plans["release"]; ok {
 		t.Error("expected [plans.release] to be gone after --reset")
 	}
-	if loaded.Config.Project.DefaultAgent != "claude" {
-		t.Errorf("default_agent: want claude, got %q", loaded.Config.Project.DefaultAgent)
+	if got := loaded.Config.AgentForPlan(""); got != "claude" {
+		t.Errorf("AgentForPlan(\"\"): want claude, got %q", got)
 	}
 }
 
@@ -462,7 +514,6 @@ func TestInitBackupPathFormat(t *testing.T) {
 
 	configPath := filepath.Join(dir, config.FileName)
 	stub := `[project]
-default_agent = "claude"
 agent_priority = ["claude", "codex"]
 
 [agents.claude]

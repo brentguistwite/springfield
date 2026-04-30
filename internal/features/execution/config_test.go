@@ -53,7 +53,7 @@ func writeProjectConfig(t *testing.T, root string) {
 	t.Helper()
 
 	body := `[project]
-default_agent = "claude"
+agent_priority = ["claude"]
 `
 	if err := os.WriteFile(filepath.Join(root, "springfield.toml"), []byte(body), 0o644); err != nil {
 		t.Fatalf("write springfield.toml: %v", err)

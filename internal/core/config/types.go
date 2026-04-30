@@ -39,29 +39,21 @@ func (c Config) KeepAwakeEnabled() bool {
 	return *c.Start.KeepAwake
 }
 
-// AgentForPlan resolves the effective agent for a plan, falling back to the
-// project default when no override exists.
+// AgentForPlan resolves the effective agent for a plan. Returns the per-plan
+// override if set; otherwise priority[0]. Returns "" when neither is set.
 func (c Config) AgentForPlan(planID string) string {
 	if plan, ok := c.Plans[planID]; ok && plan.Agent != "" {
 		return plan.Agent
 	}
-
-	return c.Project.DefaultAgent
+	if len(c.Project.AgentPriority) > 0 {
+		return c.Project.AgentPriority[0]
+	}
+	return ""
 }
 
 // ProjectConfig stores project-wide defaults.
 type ProjectConfig struct {
-	DefaultAgent  string   `toml:"default_agent"`
 	AgentPriority []string `toml:"agent_priority,omitempty"`
-}
-
-// EffectivePriority returns the agent priority list, falling back to
-// [DefaultAgent] when no explicit priority is configured.
-func (c Config) EffectivePriority() []string {
-	if len(c.Project.AgentPriority) > 0 {
-		return c.Project.AgentPriority
-	}
-	return []string{c.Project.DefaultAgent}
 }
 
 // ExecutionSettingsForAgent resolves adapter-specific execution settings for

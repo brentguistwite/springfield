@@ -31,7 +31,7 @@ func TestLoadFromReadsRepoRootConfig(t *testing.T) {
 
 	configPath := writeConfigFile(t, root, `
 [project]
-default_agent = "claude"
+agent_priority = ["claude"]
 
 [plans.release]
 agent = "codex"
@@ -50,16 +50,31 @@ agent = "codex"
 		t.Fatalf("expected config path %q, got %q", configPath, loaded.Path)
 	}
 
-	if loaded.Config.Project.DefaultAgent != "claude" {
-		t.Fatalf("expected default agent claude, got %q", loaded.Config.Project.DefaultAgent)
-	}
-
 	if got := loaded.Config.AgentForPlan("release"); got != "codex" {
 		t.Fatalf("expected plan override codex, got %q", got)
 	}
 
 	if got := loaded.Config.AgentForPlan("missing"); got != "claude" {
 		t.Fatalf("expected fallback agent claude, got %q", got)
+	}
+}
+
+func TestAgentForPlanReadsPriorityZero(t *testing.T) {
+	cfg := config.Config{
+		Project: config.ProjectConfig{AgentPriority: []string{"claude", "codex"}},
+	}
+	if got := cfg.AgentForPlan("missing"); got != "claude" {
+		t.Fatalf("AgentForPlan(missing) = %q, want claude", got)
+	}
+}
+
+func TestAgentForPlanRespectsPlanOverride(t *testing.T) {
+	cfg := config.Config{
+		Project: config.ProjectConfig{AgentPriority: []string{"claude"}},
+		Plans:   map[string]config.PlanConfig{"release": {Agent: "codex"}},
+	}
+	if got := cfg.AgentForPlan("release"); got != "codex" {
+		t.Fatalf("AgentForPlan(release) = %q, want codex", got)
 	}
 }
 
@@ -85,11 +100,11 @@ func TestLoadFromReturnsActionableMissingConfigError(t *testing.T) {
 	}
 }
 
-func TestLoadFromRejectsInvalidConfig(t *testing.T) {
+func TestLoadFromRejectsUnsupportedAgentInPriority(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `
 [project]
-default_agent = ""
+agent_priority = ["bogus"]
 `)
 
 	_, err := config.LoadFrom(root)
@@ -102,8 +117,8 @@ default_agent = ""
 		t.Fatalf("expected InvalidConfigError, got %T", err)
 	}
 
-	if !strings.Contains(err.Error(), "project.default_agent") {
-		t.Fatalf("expected error to mention project.default_agent, got %q", err.Error())
+	if !strings.Contains(err.Error(), "project.agent_priority") {
+		t.Fatalf("expected error to mention project.agent_priority, got %q", err.Error())
 	}
 
 	if !strings.Contains(err.Error(), filepath.Join(root, config.FileName)) {
@@ -111,11 +126,42 @@ default_agent = ""
 	}
 }
 
+func TestLoadFromRejectsDuplicateAgentInPriority(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+[project]
+agent_priority = ["claude", "claude"]
+`)
+
+	_, err := config.LoadFrom(root)
+	if err == nil {
+		t.Fatal("expected invalid config error")
+	}
+	if !strings.Contains(err.Error(), "duplicate agent") {
+		t.Fatalf("expected duplicate-agent error, got %q", err.Error())
+	}
+}
+
+func TestLoadFromAcceptsEmptyPriority(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+[project]
+`)
+
+	loaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("expected empty priority to be valid (unconfigured), got %v", err)
+	}
+	if got := loaded.Config.AgentForPlan("anything"); got != "" {
+		t.Fatalf("AgentForPlan with empty priority = %q, want empty", got)
+	}
+}
+
 func TestLoadParsesClaudeExecutionConfig(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `
 [project]
-default_agent = "claude"
+agent_priority = ["claude"]
 
 [agents.claude]
 permission_mode = "bypassPermissions"
@@ -140,7 +186,7 @@ func TestLoadParsesCodexExecutionConfig(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `
 [project]
-default_agent = "codex"
+agent_priority = ["codex"]
 
 [agents.codex]
 sandbox_mode = "workspace-write"
@@ -173,7 +219,7 @@ func TestLoadRejectsUnknownClaudePermissionMode(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `
 [project]
-default_agent = "claude"
+agent_priority = ["claude"]
 
 [agents.claude]
 permission_mode = "invalid"
@@ -193,7 +239,7 @@ func TestLoadRejectsUnknownCodexSandboxMode(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `
 [project]
-default_agent = "codex"
+agent_priority = ["codex"]
 
 [agents.codex]
 sandbox_mode = "invalid"
@@ -212,7 +258,6 @@ sandbox_mode = "invalid"
 func TestLoadParsesGeminiSection(t *testing.T) {
 	dir := t.TempDir()
 	tomlContent := `[project]
-default_agent = "claude"
 agent_priority = ["claude","codex","gemini"]
 [agents.gemini]
 approval_mode = "yolo"
@@ -250,7 +295,7 @@ model = "pro"
 func TestLoadRejectsUnknownGeminiApprovalMode(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "springfield.toml"), []byte(
-		"[project]\ndefault_agent = \"gemini\"\n[agents.gemini]\napproval_mode = \"invalid\"\n",
+		"[project]\nagent_priority = [\"gemini\"]\n[agents.gemini]\napproval_mode = \"invalid\"\n",
 	), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -263,7 +308,7 @@ func TestLoadRejectsUnknownGeminiApprovalMode(t *testing.T) {
 func TestLoadRejectsUnknownGeminiSandboxMode(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "springfield.toml"), []byte(
-		"[project]\ndefault_agent = \"gemini\"\n[agents.gemini]\nsandbox_mode = \"invalid\"\n",
+		"[project]\nagent_priority = [\"gemini\"]\n[agents.gemini]\nsandbox_mode = \"invalid\"\n",
 	), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -277,7 +322,7 @@ func TestLoadTrimsGeminiExecutionConfigWhitespace(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `
 [project]
-default_agent = "gemini"
+agent_priority = ["gemini"]
 
 [agents.gemini]
 approval_mode = "  yolo  "
@@ -382,7 +427,7 @@ func TestLoadRejectsUnknownCodexApprovalPolicy(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `
 [project]
-default_agent = "codex"
+agent_priority = ["codex"]
 
 [agents.codex]
 approval_policy = "invalid"
@@ -402,7 +447,7 @@ func TestLoadTrimsAgentExecutionConfigWhitespace(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `
 [project]
-default_agent = "claude"
+agent_priority = ["claude"]
 
 [agents.claude]
 permission_mode = " bypassPermissions "
@@ -507,7 +552,7 @@ func TestLoadParsesStartKeepAwake(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `
 [project]
-default_agent = "claude"
+agent_priority = ["claude"]
 
 [start]
 keep_awake = false

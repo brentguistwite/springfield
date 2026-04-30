@@ -69,7 +69,11 @@ func (r RuntimeRunner) Run(prompt string) (string, error) {
 func (r RuntimeRunner) loadConfig() ([]agents.ID, agents.ExecutionSettings, error) {
 	loaded, err := config.LoadFrom(r.projectRoot)
 	if err == nil {
-		return priorityAgentIDs(loaded.Config.EffectivePriority()), loaded.Config.ExecutionSettings(), nil
+		if len(loaded.Config.Project.AgentPriority) == 0 {
+			return nil, agents.ExecutionSettings{}, fmt.Errorf(
+				"project has no agents configured: agent_priority is empty. Run \"springfield init\" to select agents.")
+		}
+		return priorityAgentIDs(loaded.Config.Project.AgentPriority), loaded.Config.ExecutionSettings(), nil
 	}
 
 	var missing *config.MissingConfigError

@@ -15,7 +15,6 @@ func TestLoadParsesAgentPriority(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `
 [project]
-default_agent = "claude"
 agent_priority = ["claude", "codex", "gemini"]
 `)
 
@@ -40,7 +39,6 @@ func TestLoadMissingPriorityDefaultsToNil(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `
 [project]
-default_agent = "claude"
 `)
 
 	loaded, err := config.LoadFrom(root)
@@ -53,36 +51,10 @@ default_agent = "claude"
 	}
 }
 
-// --- EffectivePriority ---
-
-func TestEffectivePriorityFallsBackToDefaultAgent(t *testing.T) {
-	cfg := config.Config{
-		Project: config.ProjectConfig{DefaultAgent: "claude"},
-	}
-
-	got := cfg.EffectivePriority()
-	if len(got) != 1 || got[0] != "claude" {
-		t.Fatalf("want [claude], got %v", got)
-	}
-}
-
-func TestEffectivePriorityReturnsExplicitList(t *testing.T) {
-	cfg := config.Config{
-		Project: config.ProjectConfig{
-			DefaultAgent:  "claude",
-			AgentPriority: []string{"codex", "gemini"},
-		},
-	}
-
-	got := cfg.EffectivePriority()
-	want := []string{"codex", "gemini"}
-	if len(got) != len(want) {
-		t.Fatalf("want %v, got %v", want, got)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("[%d]: want %q, got %q", i, want[i], got[i])
-		}
+func TestAgentForPlanWithoutPriorityReturnsEmpty(t *testing.T) {
+	cfg := config.Config{Project: config.ProjectConfig{}}
+	if got := cfg.AgentForPlan("anything"); got != "" {
+		t.Fatalf("AgentForPlan with empty priority = %q, want empty", got)
 	}
 }
 
@@ -92,7 +64,7 @@ func TestSaveWritesAgentPriority(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `
 [project]
-default_agent = "claude"
+agent_priority = ["claude"]
 `)
 
 	loaded, err := config.LoadFrom(root)
@@ -122,39 +94,11 @@ default_agent = "claude"
 	}
 }
 
-func TestSaveSyncsDefaultAgentFromPriority(t *testing.T) {
-	root := t.TempDir()
-	writeConfigFile(t, root, `
-[project]
-default_agent = "claude"
-`)
-
-	loaded, err := config.LoadFrom(root)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-
-	loaded.Config.Project.AgentPriority = []string{"codex", "claude", "gemini"}
-	if err := config.Save(loaded); err != nil {
-		t.Fatalf("save: %v", err)
-	}
-
-	reloaded, err := config.LoadFrom(root)
-	if err != nil {
-		t.Fatalf("reload: %v", err)
-	}
-
-	if reloaded.Config.Project.DefaultAgent != "codex" {
-		t.Fatalf("default_agent should sync to priority[0]: want codex, got %q",
-			reloaded.Config.Project.DefaultAgent)
-	}
-}
-
 func TestSavePreservesPlanOverrides(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `
 [project]
-default_agent = "claude"
+agent_priority = ["claude"]
 
 [plans.release]
 agent = "codex"
@@ -184,7 +128,7 @@ func TestSaveRoundTripsGeminiExecutionConfig(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `
 [project]
-default_agent = "gemini"
+agent_priority = ["gemini"]
 `)
 
 	loaded, err := config.LoadFrom(root)
@@ -218,7 +162,7 @@ func TestSaveRoundTripsAgentExecutionConfig(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `
 [project]
-default_agent = "claude"
+agent_priority = ["claude"]
 `)
 
 	loaded, err := config.LoadFrom(root)
@@ -253,7 +197,7 @@ func TestSaveOmitsEmptyAgentExecutionConfigBlocks(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `
 [project]
-default_agent = "claude"
+agent_priority = ["claude"]
 `)
 
 	loaded, err := config.LoadFrom(root)
@@ -282,7 +226,7 @@ func TestSavePreservesOffExecutionModesCleanly(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `
 [project]
-default_agent = "claude"
+agent_priority = ["claude"]
 
 [agents.claude]
 permission_mode = "bypassPermissions"
@@ -320,7 +264,7 @@ func TestSaveRoundTripsStartKeepAwakeFalse(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `
 [project]
-default_agent = "claude"
+agent_priority = ["claude"]
 
 [start]
 keep_awake = false
@@ -347,7 +291,7 @@ func TestInitMergePreservesStartKeepAwakeFalse(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `
 [project]
-default_agent = "claude"
+agent_priority = ["claude"]
 
 [start]
 keep_awake = false
@@ -374,7 +318,7 @@ func TestSaveRoundTripsExplicitOffExecutionConfig(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `
 [project]
-default_agent = "claude"
+agent_priority = ["claude"]
 `)
 
 	loaded, err := config.LoadFrom(root)

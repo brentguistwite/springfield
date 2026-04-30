@@ -3,11 +3,13 @@ package cmd
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -15,6 +17,7 @@ import (
 	"golang.org/x/term"
 
 	"springfield/internal/core/agents"
+	"springfield/internal/core/agents/catalog"
 	"springfield/internal/core/config"
 )
 
@@ -101,33 +104,56 @@ func NewInitCommand() *cobra.Command {
 	return cmd
 }
 
-// resolvePriority determines the agent priority list from flag, prompt, or default.
-// interactive=true prompts the user via in/out; false returns the default list.
+// resolvePriority determines the agent priority list from flag or interactive
+// prompt. Non-interactive callers must pass --agents explicitly — there is no
+// fixed default priority for fresh init.
 func resolvePriority(agentsFlag string, interactive bool, in io.Reader, out io.Writer) ([]string, error) {
 	if agentsFlag != "" {
 		return parseAndValidateAgents(agentsFlag)
 	}
 
 	if !interactive {
-		return defaultPriority(), nil
+		return nil, fmt.Errorf(
+			"non-interactive init requires --agents flag (e.g. --agents claude,codex,gemini)")
 	}
 
 	return promptForAgents(in, out)
 }
 
-// promptForAgents prompts the user interactively. Retries up to maxPromptAttempts
-// on invalid input before giving up.
+// Detector reports detection status for execution-supported agents. Exported
+// so external test packages (tests/cmd) can supply fakes without touching
+// internals.
+type Detector interface {
+	Detect(id agents.ID) agents.DetectionStatus
+}
+
+// PromptForAgentsWithDetection runs the multi-agent picker. It surfaces each
+// execution-supported agent alongside its current detection state so users
+// can see at a glance which CLIs are installed before opting in. The user
+// supplies a comma-separated priority list of the agents they want enabled;
+// empty input is rejected and re-prompts up to maxPromptAttempts.
 //
 // The bufio.Reader is constructed once outside the retry loop so its internal
 // buffer is shared across attempts — constructing it per-attempt would strand
 // any bytes already read past the current line.
-func promptForAgents(in io.Reader, out io.Writer) ([]string, error) {
-	defaults := defaultPriority()
-	defaultStr := strings.Join(defaults, ",")
-	reader := bufio.NewReader(in)
+func PromptForAgentsWithDetection(in io.Reader, out io.Writer, det Detector) ([]string, error) {
+	fmt.Fprintln(out, "Which agents do you want Springfield to use? (order = priority)")
+	fmt.Fprintln(out)
+	for _, id := range agents.SupportedForExecution() {
+		marker := "✗ not found"
+		switch det.Detect(id) {
+		case agents.DetectionStatusAvailable:
+			marker = "✓ detected on PATH"
+		case agents.DetectionStatusUnhealthy:
+			marker = "⚠ found but unhealthy"
+		}
+		fmt.Fprintf(out, "  %s — %s\n", id, marker)
+	}
+	fmt.Fprintln(out)
 
+	reader := bufio.NewReader(in)
 	for attempt := 0; attempt < maxPromptAttempts; attempt++ {
-		fmt.Fprintf(out, "Enter agents in priority order (comma-separated) [%s]: ", defaultStr)
+		fmt.Fprint(out, "Enter agents in priority order (comma-separated, e.g. claude,codex): ")
 
 		line, err := reader.ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
@@ -136,14 +162,18 @@ func promptForAgents(in io.Reader, out io.Writer) ([]string, error) {
 
 		line = strings.TrimSpace(line)
 		if line == "" {
-			return defaults, nil
+			fmt.Fprintln(out, "Error: at least one agent is required")
+			if errors.Is(err, io.EOF) {
+				// Stream exhausted; retrying would reprompt with no input to read.
+				break
+			}
+			continue
 		}
 
 		priority, parseErr := parseAndValidateAgents(line)
 		if parseErr != nil {
 			fmt.Fprintf(out, "Error: %v\n", parseErr)
 			if errors.Is(err, io.EOF) {
-				// Stream exhausted; retrying would reprompt with no input to read.
 				break
 			}
 			continue
@@ -152,6 +182,38 @@ func promptForAgents(in io.Reader, out io.Writer) ([]string, error) {
 	}
 
 	return nil, fmt.Errorf("too many invalid attempts; aborting")
+}
+
+// promptForAgents runs the interactive picker against real adapter detection.
+// Internal wrapper around PromptForAgentsWithDetection — it constructs a
+// production registryDetector backed by os/exec.LookPath so call sites in
+// resolvePriority don't need to know about the Detector seam.
+func promptForAgents(in io.Reader, out io.Writer) ([]string, error) {
+	return PromptForAgentsWithDetection(in, out, newRegistryDetector(exec.LookPath))
+}
+
+// registryDetector is the production Detector implementation. It runs a real
+// adapter detection sweep once at construction time and indexes the results
+// by agent ID so the picker can look them up cheaply per-row.
+type registryDetector struct {
+	statuses map[agents.ID]agents.DetectionStatus
+}
+
+func newRegistryDetector(lookPath agents.LookPathFunc) registryDetector {
+	registry := agents.NewRegistry(catalog.DefaultAdapters(lookPath)...)
+	detections := registry.DetectAll(context.Background())
+	statuses := make(map[agents.ID]agents.DetectionStatus, len(detections))
+	for _, d := range detections {
+		statuses[d.ID] = d.Status
+	}
+	return registryDetector{statuses: statuses}
+}
+
+func (r registryDetector) Detect(id agents.ID) agents.DetectionStatus {
+	if s, ok := r.statuses[id]; ok {
+		return s
+	}
+	return agents.DetectionStatusMissing
 }
 
 // parseAndValidateAgents splits a comma-separated agent string and validates each entry.
@@ -301,14 +363,3 @@ func ensureGuardrailBlock(path string) (bool, error) {
 	return true, nil
 }
 
-// defaultPriority returns the default init priority as strings. Intentionally
-// narrower than SupportedForExecution: Gemini is execution-supported but must
-// be opted in via --agents to avoid clobbering existing user priority.
-func defaultPriority() []string {
-	ids := agents.DefaultInitPriority()
-	out := make([]string, len(ids))
-	for i, id := range ids {
-		out[i] = string(id)
-	}
-	return out
-}

@@ -23,14 +23,8 @@ type saveStartConfig struct {
 	KeepAwake *bool `toml:"keep_awake,omitempty"`
 }
 
-// Save writes the config back to disk. When AgentPriority is set, it syncs
-// DefaultAgent to priority[0] for backwards compatibility.
-// The sync modifies a local copy; callers should reload via LoadFrom if they
-// need the in-memory Config to reflect the change.
+// Save writes the config back to disk.
 func Save(loaded Loaded) error {
-	if len(loaded.Config.Project.AgentPriority) > 0 {
-		loaded.Config.Project.DefaultAgent = loaded.Config.Project.AgentPriority[0]
-	}
 	normalize(&loaded.Config)
 
 	var buf bytes.Buffer
