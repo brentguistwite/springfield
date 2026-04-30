@@ -45,10 +45,35 @@ func TestPromptShowsAllThreeAgentsWithDetection(t *testing.T) {
 // least one agent in the priority list.
 func TestPromptRejectsAllOff(t *testing.T) {
 	var out bytes.Buffer
-	in := strings.NewReader("\n\n\n\n") // empty selection retries
+	// strings.Repeat with maxPromptAttempts+1 newlines so the loop exhausts the cap
+	// rather than hitting EOF — exercises the "too many invalid attempts" path.
+	// (maxPromptAttempts = 4, so 5 newlines exceeds it)
+	in := strings.NewReader(strings.Repeat("\n", 5))
 	_, err := cmd.PromptForAgentsWithDetection(in, &out, fakeDetector{})
 	if err == nil {
 		t.Fatal("expected error when no agents selected after retries")
+	}
+}
+
+// TestPromptShowsUnhealthyMarker verifies the picker renders the ⚠ marker and
+// "unhealthy" descriptor when an agent's detection status is Unhealthy.
+func TestPromptShowsUnhealthyMarker(t *testing.T) {
+	var out bytes.Buffer
+	in := strings.NewReader("claude\n")
+	_, err := cmd.PromptForAgentsWithDetection(in, &out, fakeDetector{
+		statuses: map[agents.ID]agents.DetectionStatus{
+			agents.AgentClaude: agents.DetectionStatusUnhealthy,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := out.String()
+	if !strings.Contains(s, "⚠") {
+		t.Fatalf("expected unhealthy marker ⚠ in output:\n%s", s)
+	}
+	if !strings.Contains(s, "unhealthy") {
+		t.Fatalf("expected 'unhealthy' descriptor in output:\n%s", s)
 	}
 }
 
