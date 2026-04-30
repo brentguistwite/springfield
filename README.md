@@ -121,13 +121,13 @@ These local artifacts carry the shared Springfield playbook plus project context
 ## Configuration
 
 Springfield resolves the project root from `springfield.toml` at the repo root.
-See [`springfield.toml.example`](springfield.toml.example) for the current file shape.
+Run `springfield init` and follow the prompt to scaffold one.
 
 Project-level agent execution settings live in `springfield.toml`. Example:
 
 ```toml
 [project]
-default_agent = "claude"
+agent_priority = ["claude", "codex"]
 
 [agents.claude]
 permission_mode = "bypassPermissions"
