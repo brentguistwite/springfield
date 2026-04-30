@@ -89,13 +89,9 @@ func Init(dir string, priority []string, opts InitOptions) (InitResult, error) {
 		changed := false
 		rec := RecommendedExecutionSettings()
 
-		// Always update agent priority and default agent from the provided priority.
+		// Always update agent priority from the provided priority.
 		if !slices.Equal(loaded.Config.Project.AgentPriority, priority) {
 			loaded.Config.Project.AgentPriority = priority
-			changed = true
-		}
-		if len(priority) > 0 && loaded.Config.Project.DefaultAgent != priority[0] {
-			loaded.Config.Project.DefaultAgent = priority[0]
 			changed = true
 		}
 
