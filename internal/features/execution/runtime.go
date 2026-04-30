@@ -47,6 +47,10 @@ func NewRuntimeRunner(root string, lookPath func(string) (string, error), onEven
 	if err != nil {
 		return Runner{}, err
 	}
+	if len(loaded.Config.Project.AgentPriority) == 0 {
+		return Runner{}, fmt.Errorf(
+			"project has no agents configured: agent_priority is empty. Run \"springfield init\" to select agents.")
+	}
 
 	registry := agents.NewRegistry(
 		claude.New(lookPath),

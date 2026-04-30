@@ -30,7 +30,7 @@ func TestResolveFromUsesConfigRootForRuntimePaths(t *testing.T) {
 
 	writeConfigFile(t, root, `
 [project]
-default_agent = "claude"
+agent_priority = ["claude"]
 `)
 
 	runtime, err := storage.ResolveFrom(nested)

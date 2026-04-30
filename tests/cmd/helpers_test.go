@@ -27,7 +27,7 @@ func (f fakeDetector) Detect(id agents.ID) agents.DetectionStatus {
 func writeSpringfieldConfig(t *testing.T, dir string, agent string) {
 	t.Helper()
 
-	content := "[project]\ndefault_agent = \"" + agent + "\"\n"
+	content := "[project]\nagent_priority = [\"" + agent + "\"]\n"
 	path := filepath.Join(dir, "springfield.toml")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write springfield.toml: %v", err)
