@@ -39,15 +39,14 @@ func TestAdaptersImplementModelProvider(t *testing.T) {
 				t.Fatalf("SuggestedModels() returned no models for %q", agentID)
 			}
 
-			hasNonEmpty := false
 			for _, model := range models {
-				if strings.TrimSpace(model) != "" {
-					hasNonEmpty = true
-					break
+				trimmed := strings.TrimSpace(model)
+				if trimmed == "" {
+					t.Fatalf("SuggestedModels() returned empty model id for %q", agentID)
 				}
-			}
-			if !hasNonEmpty {
-				t.Fatalf("SuggestedModels() returned only empty model ids for %q", agentID)
+				if trimmed != model {
+					t.Fatalf("SuggestedModels() returned untrimmed model id %q for %q", model, agentID)
+				}
 			}
 		})
 	}

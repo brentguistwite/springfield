@@ -42,7 +42,7 @@ func TestAdaptersImplementErrorClassifier(t *testing.T) {
 		{
 			name:      "claude classifies missing cli as retryable",
 			agentID:   agents.AgentClaude,
-			exitCode:  1,
+			exitCode:  -1,
 			err:       exec.ErrNotFound,
 			wantClass: agents.ErrorClassRetryable,
 		},
@@ -62,7 +62,7 @@ func TestAdaptersImplementErrorClassifier(t *testing.T) {
 		{
 			name:      "codex classifies missing cli as retryable",
 			agentID:   agents.AgentCodex,
-			exitCode:  1,
+			exitCode:  -1,
 			err:       exec.ErrNotFound,
 			wantClass: agents.ErrorClassRetryable,
 		},
@@ -82,7 +82,7 @@ func TestAdaptersImplementErrorClassifier(t *testing.T) {
 		{
 			name:      "gemini classifies missing cli as retryable",
 			agentID:   agents.AgentGemini,
-			exitCode:  1,
+			exitCode:  -1,
 			err:       exec.ErrNotFound,
 			wantClass: agents.ErrorClassRetryable,
 		},
