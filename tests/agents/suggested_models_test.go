@@ -51,3 +51,30 @@ func TestAdaptersImplementModelProvider(t *testing.T) {
 		})
 	}
 }
+
+func TestGeminiSuggestedModelsCurated2Point5Family(t *testing.T) {
+	models := gemini.SuggestedModels()
+
+	for _, want := range []string{
+		"gemini-2.5-pro",
+		"gemini-2.5-flash",
+		"gemini-2.5-flash-lite",
+	} {
+		if !containsString(models, want) {
+			t.Fatalf("SuggestedModels() missing %q; got %v", want, models)
+		}
+	}
+
+	if containsString(models, "gemini-2.0-flash-exp") {
+		t.Fatalf("SuggestedModels() still contains stale model %q; got %v", "gemini-2.0-flash-exp", models)
+	}
+}
+
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}

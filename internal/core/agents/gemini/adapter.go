@@ -159,7 +159,7 @@ func (a *adapter) ClassifyError(events []coreexec.Event, exitCode int, err error
 		return agents.ErrorClassRetryable
 	}
 	for _, event := range events {
-		if geminiRetryableText(event.Data) {
+		if geminiRetryableEvent(event) {
 			return agents.ErrorClassRetryable
 		}
 	}
@@ -259,6 +259,7 @@ type geminiStreamEvent struct {
 	ID        string `json:"id"`
 	ToolUseID string `json:"tool_use_id"`
 	IsError   bool   `json:"is_error"`
+	Text      string `json:"text"`
 }
 
 var geminiRetryableNeedles = []string{
@@ -305,4 +306,24 @@ func geminiRetryableText(s string) bool {
 		}
 	}
 	return false
+}
+
+func geminiRetryableEvent(event coreexec.Event) bool {
+	if event.Type == coreexec.EventStderr {
+		return geminiRetryableText(event.Data)
+	}
+	if event.Type != coreexec.EventStdout {
+		return false
+	}
+
+	var streamEvent geminiStreamEvent
+	if err := json.Unmarshal([]byte(event.Data), &streamEvent); err != nil {
+		return false
+	}
+
+	if streamEvent.Type != "message" {
+		return false
+	}
+
+	return geminiRetryableText(streamEvent.Text)
 }
