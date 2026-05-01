@@ -192,6 +192,28 @@ func TestInitModelFlagRejectsAgentOutsidePriority(t *testing.T) {
 	}
 }
 
+func TestInitModelFlagRejectsNoUsableEntries(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	output, err := runBinaryIn(
+		t,
+		bin,
+		dir,
+		"init",
+		"--agents",
+		"claude",
+		"--model",
+		" , ",
+	)
+	if err == nil {
+		t.Fatalf("expected init to fail, output:\n%s", output)
+	}
+	if !strings.Contains(output, "at least one agent=model entry is required in --model") {
+		t.Fatalf("expected clear empty --model error, got:\n%s", output)
+	}
+}
+
 // TestInitAcceptsGeminiInAgentsFlag verifies gemini is accepted when passed
 // via --agents (execution support flipped on in 2026-04).
 func TestInitAcceptsGeminiInAgentsFlag(t *testing.T) {

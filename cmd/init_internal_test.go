@@ -2,8 +2,11 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
+
+	"springfield/internal/core/agents"
 )
 
 // TestResolvePriorityInteractiveEmptyInput verifies empty input is rejected —
@@ -97,4 +100,95 @@ func TestParseAndValidateAgentsRejectsDuplicates(t *testing.T) {
 	if !strings.Contains(err.Error(), "duplicate") {
 		t.Errorf("expected duplicate error, got: %v", err)
 	}
+}
+
+func TestResolveModelsPromptsInteractivelyEvenWithAgentsFlag(t *testing.T) {
+	in := strings.NewReader("claude-sonnet-4-6\n\n")
+	var out bytes.Buffer
+
+	models, err := resolveModels(
+		"claude,codex",
+		"",
+		true,
+		[]string{"claude", "codex"},
+		in,
+		&out,
+		func(id agents.ID) []string {
+			switch id {
+			case agents.AgentClaude:
+				return []string{"claude-sonnet-4-6"}
+			case agents.AgentCodex:
+				return []string{"gpt-5-codex"}
+			default:
+				return nil
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got := models["claude"]; got != "claude-sonnet-4-6" {
+		t.Fatalf("claude model = %q, want claude-sonnet-4-6", got)
+	}
+	if _, ok := models["codex"]; ok {
+		t.Fatalf("expected blank codex input to omit model, got %v", models)
+	}
+	if !strings.Contains(out.String(), "Model for claude") || !strings.Contains(out.String(), "Model for codex") {
+		t.Fatalf("expected prompt output for both agents, got:\n%s", out.String())
+	}
+}
+
+func TestParseAndValidateModelsRejectsNoUsableEntries(t *testing.T) {
+	_, err := parseAndValidateModels(" , ", []string{"claude"})
+	if err == nil {
+		t.Fatal("expected error for empty --model value")
+	}
+	if !strings.Contains(err.Error(), "at least one agent=model entry is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestNewModelSuggesterUnknownAgentPanicsWithImpossibleState(t *testing.T) {
+	suggester := newModelSuggesterFromRegistry(agents.NewRegistry())
+
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			t.Fatal("expected panic")
+		}
+		msg, ok := recovered.(string)
+		if !ok {
+			t.Fatalf("panic = %T, want string", recovered)
+		}
+		if !strings.Contains(msg, `impossible state: no adapter registered for agent "bogus"`) {
+			t.Fatalf("unexpected panic message: %q", msg)
+		}
+	}()
+
+	_ = suggester(agents.ID("bogus"))
+}
+
+func TestNewModelSuggesterReturnsNilWhenAdapterHasNoModelProvider(t *testing.T) {
+	suggester := newModelSuggesterFromRegistry(agents.NewRegistry(fakeAdapterNoModelProvider{id: agents.AgentClaude}))
+
+	if got := suggester(agents.AgentClaude); got != nil {
+		t.Fatalf("suggestions = %v, want nil", got)
+	}
+}
+
+type fakeAdapterNoModelProvider struct {
+	id agents.ID
+}
+
+func (f fakeAdapterNoModelProvider) ID() agents.ID {
+	return f.id
+}
+
+func (f fakeAdapterNoModelProvider) Metadata() agents.Metadata {
+	return agents.Metadata{ID: f.id}
+}
+
+func (f fakeAdapterNoModelProvider) Detect(context.Context) agents.Detection {
+	return agents.Detection{ID: f.id}
 }

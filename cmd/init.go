@@ -152,7 +152,7 @@ func resolveModels(
 		return parseAndValidateModels(modelsFlag, priority)
 	}
 
-	if !interactive || agentsFlag != "" {
+	if !interactive {
 		return nil, nil
 	}
 
@@ -291,16 +291,19 @@ func promptForAgents(in io.Reader, out io.Writer) ([]string, error) {
 
 func newModelSuggester(lookPath agents.LookPathFunc) func(agents.ID) []string {
 	registry := agents.NewRegistry(catalog.DefaultAdapters(lookPath)...)
+	return newModelSuggesterFromRegistry(registry)
+}
 
+func newModelSuggesterFromRegistry(registry agents.Registry) func(agents.ID) []string {
 	return func(id agents.ID) []string {
 		resolved, err := registry.Resolve(agents.ResolveInput{ProjectDefault: id})
 		if err != nil {
-			panic(err)
+			panic(fmt.Sprintf("impossible state: no adapter registered for agent %q", id))
 		}
 
 		provider, ok := resolved.Adapter.(agents.ModelProvider)
 		if !ok {
-			panic(fmt.Sprintf("adapter %s does not provide model suggestions", id))
+			return nil
 		}
 
 		return provider.SuggestedModels()
@@ -391,6 +394,10 @@ func parseAndValidateModels(raw string, priority []string) (map[string]string, e
 		}
 
 		models[id] = model
+	}
+
+	if len(models) == 0 {
+		return nil, fmt.Errorf("at least one agent=model entry is required in --model")
 	}
 
 	return models, nil
