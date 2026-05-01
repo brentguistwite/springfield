@@ -94,6 +94,16 @@ func printDiagnosis(w io.Writer, root string, run batch.Run, paths batch.Paths) 
 	fmt.Fprintf(w, "  plan dir:      %s\n", statHint(paths.PlanDir()))
 	fmt.Fprintf(w, "  batch.json:    %s\n", statHint(paths.BatchPath()))
 	fmt.Fprintf(w, "  source.md:     %s\n", statHint(paths.SourcePath()))
+	evidenceDir := filepath.Join(paths.PlanDir(), "evidence")
+	fmt.Fprintf(w, "  evidence dir:  %s\n", statHint(evidenceDir))
+	if entries, err := os.ReadDir(evidenceDir); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			fmt.Fprintf(w, "    - %s\n", filepath.Join(evidenceDir, e.Name()))
+		}
+	}
 
 	archiveDir := batch.ArchiveDir(root)
 	fmt.Fprintf(w, "  archive dir:   %s\n", statHint(archiveDir))

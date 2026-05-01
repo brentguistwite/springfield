@@ -224,6 +224,9 @@ func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, log
 		if runErr != nil || report.Status == "failed" {
 			s.Status = batch.SliceFailed
 			s.Error = report.Error
+			if len(report.Workstreams) > 0 {
+				s.EvidencePath = report.Workstreams[0].EvidencePath
+			}
 			if runErr != nil && s.Error == "" {
 				s.Error = runErr.Error()
 			}
@@ -235,6 +238,9 @@ func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, log
 		}
 
 		s.Status = batch.SliceDone
+		if len(report.Workstreams) > 0 {
+			s.EvidencePath = report.Workstreams[0].EvidencePath
+		}
 		if err := batch.UpdateBatchSlice(batchPaths, s); err != nil {
 			return BatchRunResult{Error: err.Error()}, err
 		}
@@ -307,6 +313,9 @@ func snapshotPlanTree(planDir string) (map[string][]byte, error) {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
+		if strings.HasPrefix(rel, "evidence/") {
+			return nil
+		}
 
 		if d.Type()&(fs.ModeSymlink|fs.ModeDevice|fs.ModeNamedPipe|fs.ModeSocket|fs.ModeIrregular) != 0 {
 			return fmt.Errorf("non-regular entry %q", rel)

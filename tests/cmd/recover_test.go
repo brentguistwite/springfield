@@ -137,6 +137,9 @@ func TestSpringfieldRecoverDiagnoseDoesNotModifyState(t *testing.T) {
 	if err := batch.WriteRun(dir, batch.Run{ActiveBatchID: "ghost"}); err != nil {
 		t.Fatalf("WriteRun: %v", err)
 	}
+	if err := os.MkdirAll(filepath.Join(dir, ".springfield", "plans", "ghost", "evidence", "01"), 0o755); err != nil {
+		t.Fatalf("MkdirAll evidence dir: %v", err)
+	}
 
 	output, err := runBinaryIn(t, bin, dir, "recover", "--diagnose")
 	if err != nil {
@@ -144,6 +147,9 @@ func TestSpringfieldRecoverDiagnoseDoesNotModifyState(t *testing.T) {
 	}
 	if !strings.Contains(output, "Diagnosis:") {
 		t.Errorf("expected Diagnosis header, got:\n%s", output)
+	}
+	if !strings.Contains(output, "evidence dir:") || !strings.Contains(output, filepath.Join(dir, ".springfield", "plans", "ghost", "evidence", "01")) {
+		t.Errorf("expected evidence dir details, got:\n%s", output)
 	}
 	// State untouched.
 	if _, ok, _ := batch.ReadRun(dir); !ok {

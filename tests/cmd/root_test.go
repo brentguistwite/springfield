@@ -173,6 +173,20 @@ func installFakeAgentBinary(t *testing.T, binDir, name, argvPath string) {
 	}
 }
 
+func installFailingAgentBinary(t *testing.T, binDir, name string) {
+	t.Helper()
+
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir fake bin dir: %v", err)
+	}
+
+	script := "#!/bin/sh\necho 'agent stderr line' 1>&2\nexit 1\n"
+	path := filepath.Join(binDir, name)
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write failing %s binary: %v", name, err)
+	}
+}
+
 func readRecordedArgs(t *testing.T, path string) []string {
 	t.Helper()
 

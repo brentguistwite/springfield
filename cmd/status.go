@@ -75,6 +75,9 @@ func printBatchStatus(w io.Writer, b batch.Batch, run batch.Run) error {
 		if s.Error != "" {
 			fmt.Fprintf(w, "    Error: %s\n", s.Error)
 		}
+		if s.EvidencePath != "" {
+			fmt.Fprintf(w, "    Evidence: %s\n", s.EvidencePath)
+		}
 	}
 	return nil
 }

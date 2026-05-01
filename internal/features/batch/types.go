@@ -34,11 +34,12 @@ func (s SliceStatus) IsTerminal() bool {
 
 // Slice is one execution unit within a batch phase.
 type Slice struct {
-	ID      string      `json:"id"`
-	Title   string      `json:"title"`
-	Summary string      `json:"summary,omitempty"`
-	Status  SliceStatus `json:"status"`
-	Error   string      `json:"error,omitempty"`
+	ID           string      `json:"id"`
+	Title        string      `json:"title"`
+	Summary      string      `json:"summary,omitempty"`
+	Status       SliceStatus `json:"status"`
+	Error        string      `json:"error,omitempty"`
+	EvidencePath string      `json:"evidence_path,omitempty"`
 }
 
 // Phase groups slices that share an execution mode.

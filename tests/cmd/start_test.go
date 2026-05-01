@@ -86,6 +86,42 @@ func TestSpringfieldStatusNoStateReportsCleanly(t *testing.T) {
 	}
 }
 
+func TestSpringfieldStatusShowsEvidencePathForFailedSlice(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeSpringfieldConfig(t, dir, "claude")
+
+	if _, err := singleSlicePlan(t, bin, dir, "Implement login"); err != nil {
+		t.Fatalf("plan failed: %v", err)
+	}
+
+	run, ok, err := batch.ReadRun(dir)
+	if err != nil || !ok {
+		t.Fatalf("ReadRun: ok=%v err=%v", ok, err)
+	}
+
+	fakeBinDir := filepath.Join(dir, "bin")
+	installFailingAgentBinary(t, fakeBinDir, "claude")
+
+	startOutput, startErr := runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + fakeBinDir}, "start")
+	if startErr == nil {
+		t.Fatalf("expected start failure, got:\n%s", startOutput)
+	}
+
+	statusOutput, err := runBinaryIn(t, bin, dir, "status")
+	if err != nil {
+		t.Fatalf("status failed: %v\n%s", err, statusOutput)
+	}
+
+	wantEvidence := filepath.Join(dir, ".springfield", "plans", run.ActiveBatchID, "evidence", "01")
+	if resolved, err := filepath.EvalSymlinks(wantEvidence); err == nil {
+		wantEvidence = resolved
+	}
+	if !strings.Contains(statusOutput, "Evidence: "+wantEvidence) {
+		t.Fatalf("expected status to show evidence path %q, got:\n%s", wantEvidence, statusOutput)
+	}
+}
+
 func TestSpringfieldStartRunsBatchSlices(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
