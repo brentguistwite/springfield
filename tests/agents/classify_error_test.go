@@ -1,7 +1,8 @@
 package agents_test
 
 import (
-	"os/exec"
+	"errors"
+	osexec "os/exec"
 	"testing"
 
 	"springfield/internal/core/agents"
@@ -13,9 +14,9 @@ import (
 
 func TestAdaptersImplementErrorClassifier(t *testing.T) {
 	registry := agents.NewRegistry(
-		claude.New(exec.LookPath),
-		codex.New(exec.LookPath),
-		gemini.New(exec.LookPath),
+		claude.New(osexec.LookPath),
+		codex.New(osexec.LookPath),
+		gemini.New(osexec.LookPath),
 	)
 
 	tests := []struct {
@@ -29,22 +30,39 @@ func TestAdaptersImplementErrorClassifier(t *testing.T) {
 		{
 			name:      "claude classifies rate limit as retryable",
 			agentID:   agents.AgentClaude,
-			events:    []coreexec.Event{{Type: coreexec.EventStderr, Data: "429 Too Many Requests"}},
+			events:    []coreexec.Event{{Type: coreexec.EventStderr, Data: "rate_limit exceeded"}},
 			exitCode:  1,
+			err:       assertErr("claude failed"),
+			wantClass: agents.ErrorClassRetryable,
+		},
+		{
+			name:      "claude classifies authentication failure as retryable",
+			agentID:   agents.AgentClaude,
+			events:    []coreexec.Event{{Type: coreexec.EventStderr, Data: "authentication_error: unauthenticated 401"}},
+			exitCode:  1,
+			err:       assertErr("claude failed"),
 			wantClass: agents.ErrorClassRetryable,
 		},
 		{
 			name:      "claude classifies unrecognized failure as fatal",
 			agentID:   agents.AgentClaude,
 			exitCode:  17,
+			err:       assertErr("claude failed"),
 			wantClass: agents.ErrorClassFatal,
 		},
 		{
 			name:      "claude classifies missing cli as retryable",
 			agentID:   agents.AgentClaude,
 			exitCode:  -1,
-			err:       exec.ErrNotFound,
+			err:       osexec.ErrNotFound,
 			wantClass: agents.ErrorClassRetryable,
+		},
+		{
+			name:      "claude classifies validator failure as fatal on clean exit",
+			agentID:   agents.AgentClaude,
+			exitCode:  0,
+			err:       assertErr("validator rejected transcript"),
+			wantClass: agents.ErrorClassFatal,
 		},
 		{
 			name:      "codex classifies rate limit as retryable",
@@ -63,7 +81,7 @@ func TestAdaptersImplementErrorClassifier(t *testing.T) {
 			name:      "codex classifies missing cli as retryable",
 			agentID:   agents.AgentCodex,
 			exitCode:  -1,
-			err:       exec.ErrNotFound,
+			err:       osexec.ErrNotFound,
 			wantClass: agents.ErrorClassRetryable,
 		},
 		{
@@ -83,7 +101,7 @@ func TestAdaptersImplementErrorClassifier(t *testing.T) {
 			name:      "gemini classifies missing cli as retryable",
 			agentID:   agents.AgentGemini,
 			exitCode:  -1,
-			err:       exec.ErrNotFound,
+			err:       osexec.ErrNotFound,
 			wantClass: agents.ErrorClassRetryable,
 		},
 	}
@@ -106,4 +124,8 @@ func TestAdaptersImplementErrorClassifier(t *testing.T) {
 			}
 		})
 	}
+}
+
+func assertErr(msg string) error {
+	return errors.New(msg)
 }

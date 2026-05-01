@@ -77,6 +77,7 @@ type ExecutionSettings struct {
 }
 
 type ClaudeExecutionSettings struct {
+	Model          string
 	PermissionMode string
 }
 

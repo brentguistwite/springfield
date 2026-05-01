@@ -156,6 +156,39 @@ func TestClaudeAdapterAppendsPermissionModeWhenConfigured(t *testing.T) {
 	assertArgsContain(t, cmd.Args, "--permission-mode", "bypassPermissions")
 }
 
+func TestClaudeAdapterOmitsModelByDefault(t *testing.T) {
+	adapter := claude.New(exec.LookPath)
+	commander := adapter.(agents.Commander)
+
+	cmd, err := commander.Command(agents.CommandInput{
+		Prompt:  "implement the login feature",
+		WorkDir: "/tmp/project",
+	})
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
+
+	assertArgsDoNotContain(t, cmd.Args, "--model")
+}
+
+func TestClaudeAdapterAppendsModelWhenConfigured(t *testing.T) {
+	adapter := claude.New(exec.LookPath)
+	commander := adapter.(agents.Commander)
+
+	cmd, err := commander.Command(agents.CommandInput{
+		Prompt:  "implement the login feature",
+		WorkDir: "/tmp/project",
+		ExecutionSettings: agents.ExecutionSettings{
+			Claude: agents.ClaudeExecutionSettings{Model: "claude-sonnet-4-6"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
+
+	assertArgsContain(t, cmd.Args, "--model", "claude-sonnet-4-6")
+}
+
 func TestCodexAdapterUsesExecJsonByDefault(t *testing.T) {
 	adapter := codex.New(exec.LookPath)
 	commander := adapter.(agents.Commander)

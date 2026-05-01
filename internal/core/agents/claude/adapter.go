@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
+	osexec "os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -53,7 +53,7 @@ func New(lookPath agents.LookPathFunc) agents.Commander {
 // (e.g. injecting a custom warn writer for tests).
 func NewWithOptions(lookPath agents.LookPathFunc, opts Options) agents.Commander {
 	if lookPath == nil {
-		lookPath = exec.LookPath
+		lookPath = osexec.LookPath
 	}
 
 	hookBin, err := os.Executable()
@@ -102,7 +102,7 @@ func (a *adapter) Detect(context.Context) agents.Detection {
 	switch {
 	case err == nil:
 		result.Status = agents.DetectionStatusAvailable
-	case errors.Is(err, exec.ErrNotFound):
+	case errors.Is(err, osexec.ErrNotFound):
 		result.Status = agents.DetectionStatusMissing
 	default:
 		result.Status = agents.DetectionStatusUnhealthy
@@ -123,6 +123,9 @@ func (a *adapter) Command(input agents.CommandInput) (coreexec.Command, error) {
 	if permissionMode := strings.TrimSpace(input.ExecutionSettings.Claude.PermissionMode); permissionMode != "" {
 		args = append(args, "--permission-mode", permissionMode)
 	}
+	if model := strings.TrimSpace(input.ExecutionSettings.Claude.Model); model != "" {
+		args = append(args, "--model", model)
+	}
 
 	// Hard-block agent writes to Springfield's control plane with a
 	// PreToolUse hook. The hook command invokes `springfield hook-guard`,
@@ -138,6 +141,28 @@ func (a *adapter) Command(input agents.CommandInput) (coreexec.Command, error) {
 		Stdin: input.Prompt,
 		Dir:   input.WorkDir,
 	}, nil
+}
+
+func (a *adapter) SuggestedModels() []string {
+	return SuggestedModels()
+}
+
+func (a *adapter) ClassifyError(events []coreexec.Event, exitCode int, err error) agents.ErrorClass {
+	if exitCode == 0 {
+		return agents.ErrorClassFatal
+	}
+	if errors.Is(err, osexec.ErrNotFound) {
+		return agents.ErrorClassRetryable
+	}
+	if claudeRetryableText(errorString(err)) {
+		return agents.ErrorClassRetryable
+	}
+	for _, event := range events {
+		if claudeRetryableText(event.Data) {
+			return agents.ErrorClassRetryable
+		}
+	}
+	return agents.ErrorClassFatal
 }
 
 // SpringfieldControlPlaneHookCommand returns the hook command string used
@@ -241,7 +266,7 @@ func isTargetPlugin(id string) bool {
 // settings.json is unreadable.
 func defaultPluginDisables() map[string]bool {
 	return map[string]bool{
-		"springfield@brentguistwite":       false,
+		"springfield@brentguistwite":          false,
 		"superpowers@claude-plugins-official": false,
 	}
 }
@@ -332,4 +357,38 @@ type claudeMessageContent struct {
 	ToolUseID string `json:"tool_use_id"`
 	IsError   bool   `json:"is_error"`
 	Content   any    `json:"content"`
+}
+
+var claudeRetryableNeedles = []string{
+	"rate limit",
+	"rate-limit",
+	"rate_limit",
+	"too many requests",
+	"429",
+	"quota exceeded",
+	"resource exhausted",
+	"overloaded_error",
+	"authentication_error",
+	"unauthenticated",
+	"401",
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func claudeRetryableText(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return false
+	}
+	for _, needle := range claudeRetryableNeedles {
+		if strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
 }
