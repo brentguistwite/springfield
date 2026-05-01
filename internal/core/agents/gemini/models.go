@@ -1,9 +1,9 @@
 package gemini
 
 var suggestedModels = []string{
-	"gemini-2.0-flash-exp",
 	"gemini-2.5-pro",
 	"gemini-2.5-flash",
+	"gemini-2.5-flash-lite",
 }
 
 // SuggestedModels returns a curated, non-exhaustive set of Gemini CLI model
