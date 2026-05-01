@@ -1,7 +1,6 @@
 package agents_test
 
 import (
-	"errors"
 	"os/exec"
 	"testing"
 
@@ -35,10 +34,9 @@ func TestAdaptersImplementErrorClassifier(t *testing.T) {
 			wantClass: agents.ErrorClassRetryable,
 		},
 		{
-			name:      "claude classifies invalid prompt as fatal",
+			name:      "claude classifies unrecognized failure as fatal",
 			agentID:   agents.AgentClaude,
-			err:       errors.New("plan syntax error"),
-			exitCode:  1,
+			exitCode:  17,
 			wantClass: agents.ErrorClassFatal,
 		},
 		{
@@ -49,10 +47,9 @@ func TestAdaptersImplementErrorClassifier(t *testing.T) {
 			wantClass: agents.ErrorClassRetryable,
 		},
 		{
-			name:      "codex classifies invalid prompt as fatal",
+			name:      "codex classifies unrecognized failure as fatal",
 			agentID:   agents.AgentCodex,
-			err:       errors.New("validator rejection"),
-			exitCode:  1,
+			exitCode:  17,
 			wantClass: agents.ErrorClassFatal,
 		},
 		{
@@ -63,10 +60,9 @@ func TestAdaptersImplementErrorClassifier(t *testing.T) {
 			wantClass: agents.ErrorClassRetryable,
 		},
 		{
-			name:      "gemini classifies invalid prompt as fatal",
+			name:      "gemini classifies unrecognized failure as fatal",
 			agentID:   agents.AgentGemini,
-			err:       errors.New("rejected input"),
-			exitCode:  42,
+			exitCode:  17,
 			wantClass: agents.ErrorClassFatal,
 		},
 	}
