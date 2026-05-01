@@ -215,6 +215,38 @@ approval_policy = "on-request"
 	}
 }
 
+func TestLoadParsesPerAgentModels(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+[project]
+agent_priority = ["claude", "codex", "gemini"]
+
+[agents.claude]
+model = "claude-sonnet"
+
+[agents.codex]
+model = "codex-pro"
+
+[agents.gemini]
+model = "gemini-pro"
+`)
+
+	loaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	if got := loaded.Config.ExecutionSettingsForAgent(string(agents.AgentClaude)).Claude.Model; got != "claude-sonnet" {
+		t.Fatalf("resolved claude model: want claude-sonnet, got %q", got)
+	}
+	if got := loaded.Config.ExecutionSettingsForAgent(string(agents.AgentCodex)).Codex.Model; got != "codex-pro" {
+		t.Fatalf("resolved codex model: want codex-pro, got %q", got)
+	}
+	if got := loaded.Config.ExecutionSettingsForAgent(string(agents.AgentGemini)).Gemini.Model; got != "gemini-pro" {
+		t.Fatalf("resolved gemini model: want gemini-pro, got %q", got)
+	}
+}
+
 func TestLoadRejectsUnknownClaudePermissionMode(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `
@@ -412,6 +444,29 @@ func TestApplyExecutionModeOffGemini(t *testing.T) {
 	}
 }
 
+func TestApplyExecutionModeOffClearsClaudeAndCodexModels(t *testing.T) {
+	cfg := config.Config{
+		Agents: config.AgentsConfig{
+			Claude: config.ClaudeAgentConfig{Model: "claude-sonnet", PermissionMode: "bypassPermissions"},
+			Codex: config.CodexAgentConfig{
+				Model:          "codex-pro",
+				SandboxMode:    "danger-full-access",
+				ApprovalPolicy: "never",
+			},
+		},
+	}
+
+	cfg.ApplyExecutionMode("claude", config.ExecutionModeOff)
+	cfg.ApplyExecutionMode("codex", config.ExecutionModeOff)
+
+	if cfg.Agents.Claude.Model != "" || cfg.Agents.Claude.PermissionMode != "" {
+		t.Fatalf("expected claude fields cleared, got %+v", cfg.Agents.Claude)
+	}
+	if cfg.Agents.Codex.Model != "" || cfg.Agents.Codex.SandboxMode != "" || cfg.Agents.Codex.ApprovalPolicy != "" {
+		t.Fatalf("expected codex fields cleared, got %+v", cfg.Agents.Codex)
+	}
+}
+
 func TestApplyRecommendedDefaultsSetsGemini(t *testing.T) {
 	cfg := config.Config{}
 	cfg.ApplyRecommendedExecutionDefaults()
@@ -513,6 +568,23 @@ func TestExecutionModesCustom(t *testing.T) {
 				SandboxMode:    "danger-full-access",
 				ApprovalPolicy: "on-request",
 			},
+		},
+	}
+
+	got := cfg.ExecutionModes()
+	if got.Claude != config.ExecutionModeCustom {
+		t.Fatalf("claude mode: want %q, got %q", config.ExecutionModeCustom, got.Claude)
+	}
+	if got.Codex != config.ExecutionModeCustom {
+		t.Fatalf("codex mode: want %q, got %q", config.ExecutionModeCustom, got.Codex)
+	}
+}
+
+func TestExecutionModesModelOnlyIsCustom(t *testing.T) {
+	cfg := config.Config{
+		Agents: config.AgentsConfig{
+			Claude: config.ClaudeAgentConfig{Model: "claude-sonnet"},
+			Codex:  config.CodexAgentConfig{Model: "codex-pro"},
 		},
 	}
 

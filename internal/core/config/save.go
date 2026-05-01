@@ -43,16 +43,20 @@ func newSaveConfig(cfg Config) saveConfig {
 	}
 
 	var agentsCfg *saveAgentsConfig
-	if cfg.Agents.Claude.isPresent || cfg.Agents.Claude.PermissionMode != "" {
+	if cfg.Agents.Claude.isPresent || cfg.Agents.Claude.Model != "" || cfg.Agents.Claude.PermissionMode != "" {
 		agentsCfg = &saveAgentsConfig{
-			Claude: &ClaudeAgentConfig{PermissionMode: cfg.Agents.Claude.PermissionMode},
+			Claude: &ClaudeAgentConfig{
+				Model:          cfg.Agents.Claude.Model,
+				PermissionMode: cfg.Agents.Claude.PermissionMode,
+			},
 		}
 	}
-	if cfg.Agents.Codex.isPresent || cfg.Agents.Codex.SandboxMode != "" || cfg.Agents.Codex.ApprovalPolicy != "" {
+	if cfg.Agents.Codex.isPresent || cfg.Agents.Codex.Model != "" || cfg.Agents.Codex.SandboxMode != "" || cfg.Agents.Codex.ApprovalPolicy != "" {
 		if agentsCfg == nil {
 			agentsCfg = &saveAgentsConfig{}
 		}
 		agentsCfg.Codex = &CodexAgentConfig{
+			Model:          cfg.Agents.Codex.Model,
 			SandboxMode:    cfg.Agents.Codex.SandboxMode,
 			ApprovalPolicy: cfg.Agents.Codex.ApprovalPolicy,
 		}

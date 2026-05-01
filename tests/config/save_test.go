@@ -193,6 +193,41 @@ agent_priority = ["claude"]
 	}
 }
 
+func TestSaveRoundTripsPerAgentModels(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+[project]
+agent_priority = ["claude", "codex", "gemini"]
+`)
+
+	loaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	loaded.Config.Agents.Claude.Model = "claude-sonnet"
+	loaded.Config.Agents.Codex.Model = "codex-pro"
+	loaded.Config.Agents.Gemini.Model = "gemini-pro"
+	if err := config.Save(loaded); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	reloaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+
+	if got := reloaded.Config.ExecutionSettingsForAgent("claude").Claude.Model; got != "claude-sonnet" {
+		t.Fatalf("claude model: want claude-sonnet, got %q", got)
+	}
+	if got := reloaded.Config.ExecutionSettingsForAgent("codex").Codex.Model; got != "codex-pro" {
+		t.Fatalf("codex model: want codex-pro, got %q", got)
+	}
+	if got := reloaded.Config.ExecutionSettingsForAgent("gemini").Gemini.Model; got != "gemini-pro" {
+		t.Fatalf("gemini model: want gemini-pro, got %q", got)
+	}
+}
+
 func TestSaveOmitsEmptyAgentExecutionConfigBlocks(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `

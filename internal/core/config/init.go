@@ -106,7 +106,9 @@ func Init(dir string, priority []string, opts InitOptions) (InitResult, error) {
 		// marked present but fields arrived zeroed.
 		if slices.Contains(priority, string(agents.AgentClaude)) &&
 			!loaded.Config.Agents.Claude.isPresent &&
+			loaded.Config.Agents.Claude.Model == "" &&
 			loaded.Config.Agents.Claude.PermissionMode == "" {
+			loaded.Config.Agents.Claude.Model = rec.Claude.Model
 			loaded.Config.Agents.Claude.PermissionMode = rec.Claude.PermissionMode
 			loaded.Config.Agents.Claude.isPresent = true
 			changed = true
@@ -114,8 +116,10 @@ func Init(dir string, priority []string, opts InitOptions) (InitResult, error) {
 
 		if slices.Contains(priority, string(agents.AgentCodex)) &&
 			!loaded.Config.Agents.Codex.isPresent &&
+			loaded.Config.Agents.Codex.Model == "" &&
 			loaded.Config.Agents.Codex.SandboxMode == "" &&
 			loaded.Config.Agents.Codex.ApprovalPolicy == "" {
+			loaded.Config.Agents.Codex.Model = rec.Codex.Model
 			loaded.Config.Agents.Codex.SandboxMode = rec.Codex.SandboxMode
 			loaded.Config.Agents.Codex.ApprovalPolicy = rec.Codex.ApprovalPolicy
 			loaded.Config.Agents.Codex.isPresent = true
@@ -173,11 +177,18 @@ func buildScaffold(priority []string) string {
 	base := fmt.Sprintf("[project]\nagent_priority = %s\n", agentPriority)
 
 	if slices.Contains(priority, string(agents.AgentClaude)) {
-		base += fmt.Sprintf("\n[agents.claude]\npermission_mode = %q\n",
-			rec.Claude.PermissionMode)
+		base += "\n[agents.claude]\n"
+		if rec.Claude.Model != "" {
+			base += fmt.Sprintf("model = %q\n", rec.Claude.Model)
+		}
+		base += fmt.Sprintf("permission_mode = %q\n", rec.Claude.PermissionMode)
 	}
 	if slices.Contains(priority, string(agents.AgentCodex)) {
-		base += fmt.Sprintf("\n[agents.codex]\nsandbox_mode = %q\napproval_policy = %q\n",
+		base += "\n[agents.codex]\n"
+		if rec.Codex.Model != "" {
+			base += fmt.Sprintf("model = %q\n", rec.Codex.Model)
+		}
+		base += fmt.Sprintf("sandbox_mode = %q\napproval_policy = %q\n",
 			rec.Codex.SandboxMode, rec.Codex.ApprovalPolicy)
 	}
 	if slices.Contains(priority, string(agents.AgentGemini)) {
@@ -187,4 +198,3 @@ func buildScaffold(priority []string) string {
 
 	return base
 }
-

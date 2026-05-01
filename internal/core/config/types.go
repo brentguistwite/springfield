@@ -82,9 +82,11 @@ func (c Config) ExecutionSettingsForAgent(agentID string) agents.ExecutionSettin
 func (c Config) ExecutionSettings() agents.ExecutionSettings {
 	return agents.ExecutionSettings{
 		Claude: agents.ClaudeExecutionSettings{
+			Model:          c.Agents.Claude.Model,
 			PermissionMode: c.Agents.Claude.PermissionMode,
 		},
 		Codex: agents.CodexExecutionSettings{
+			Model:          c.Agents.Codex.Model,
 			SandboxMode:    c.Agents.Codex.SandboxMode,
 			ApprovalPolicy: c.Agents.Codex.ApprovalPolicy,
 		},
@@ -125,7 +127,9 @@ func (c Config) HasAnyExecutionSettings() bool {
 	return c.Agents.Claude.isPresent ||
 		c.Agents.Codex.isPresent ||
 		c.Agents.Gemini.isPresent ||
+		c.Agents.Claude.Model != "" ||
 		c.Agents.Claude.PermissionMode != "" ||
+		c.Agents.Codex.Model != "" ||
 		c.Agents.Codex.SandboxMode != "" ||
 		c.Agents.Codex.ApprovalPolicy != "" ||
 		c.Agents.Gemini.ApprovalMode != "" ||
@@ -135,7 +139,9 @@ func (c Config) HasAnyExecutionSettings() bool {
 
 func (c *Config) ApplyRecommendedExecutionDefaults() {
 	recommended := RecommendedExecutionSettings()
+	c.Agents.Claude.Model = recommended.Claude.Model
 	c.Agents.Claude.PermissionMode = recommended.Claude.PermissionMode
+	c.Agents.Codex.Model = recommended.Codex.Model
 	c.Agents.Codex.SandboxMode = recommended.Codex.SandboxMode
 	c.Agents.Codex.ApprovalPolicy = recommended.Codex.ApprovalPolicy
 	c.Agents.Gemini.ApprovalMode = recommended.Gemini.ApprovalMode
@@ -149,9 +155,12 @@ func (c *Config) ApplyExecutionMode(agentID string, mode ExecutionMode) {
 		switch mode {
 		case ExecutionModeRecommended:
 			c.Agents.Claude.isPresent = true
-			c.Agents.Claude.PermissionMode = RecommendedExecutionSettings().Claude.PermissionMode
+			recommended := RecommendedExecutionSettings().Claude
+			c.Agents.Claude.Model = recommended.Model
+			c.Agents.Claude.PermissionMode = recommended.PermissionMode
 		case ExecutionModeOff:
 			c.Agents.Claude.isPresent = true
+			c.Agents.Claude.Model = ""
 			c.Agents.Claude.PermissionMode = ""
 		}
 	case string(agents.AgentCodex):
@@ -159,10 +168,12 @@ func (c *Config) ApplyExecutionMode(agentID string, mode ExecutionMode) {
 		case ExecutionModeRecommended:
 			c.Agents.Codex.isPresent = true
 			recommended := RecommendedExecutionSettings().Codex
+			c.Agents.Codex.Model = recommended.Model
 			c.Agents.Codex.SandboxMode = recommended.SandboxMode
 			c.Agents.Codex.ApprovalPolicy = recommended.ApprovalPolicy
 		case ExecutionModeOff:
 			c.Agents.Codex.isPresent = true
+			c.Agents.Codex.Model = ""
 			c.Agents.Codex.SandboxMode = ""
 			c.Agents.Codex.ApprovalPolicy = ""
 		}
@@ -184,10 +195,10 @@ func (c *Config) ApplyExecutionMode(agentID string, mode ExecutionMode) {
 }
 
 func executionModeForClaude(cfg ClaudeAgentConfig) ExecutionMode {
-	switch cfg.PermissionMode {
-	case "bypassPermissions":
+	switch {
+	case cfg.PermissionMode == "bypassPermissions" && cfg.Model == "":
 		return ExecutionModeRecommended
-	case "":
+	case cfg.PermissionMode == "" && cfg.Model == "":
 		return ExecutionModeOff
 	default:
 		return ExecutionModeCustom
@@ -195,10 +206,10 @@ func executionModeForClaude(cfg ClaudeAgentConfig) ExecutionMode {
 }
 
 func executionModeForCodex(cfg CodexAgentConfig) ExecutionMode {
-	if cfg.SandboxMode == "danger-full-access" && cfg.ApprovalPolicy == "never" {
+	if cfg.SandboxMode == "danger-full-access" && cfg.ApprovalPolicy == "never" && cfg.Model == "" {
 		return ExecutionModeRecommended
 	}
-	if cfg.SandboxMode == "" && cfg.ApprovalPolicy == "" {
+	if cfg.SandboxMode == "" && cfg.ApprovalPolicy == "" && cfg.Model == "" {
 		return ExecutionModeOff
 	}
 	return ExecutionModeCustom
@@ -228,12 +239,14 @@ type AgentsConfig struct {
 
 // ClaudeAgentConfig stores supported Claude execution settings.
 type ClaudeAgentConfig struct {
+	Model          string `toml:"model,omitempty"`
 	PermissionMode string `toml:"permission_mode,omitempty"`
 	isPresent      bool   `toml:"-"`
 }
 
 // CodexAgentConfig stores supported Codex execution settings.
 type CodexAgentConfig struct {
+	Model          string `toml:"model,omitempty"`
 	SandboxMode    string `toml:"sandbox_mode,omitempty"`
 	ApprovalPolicy string `toml:"approval_policy,omitempty"`
 	isPresent      bool   `toml:"-"`

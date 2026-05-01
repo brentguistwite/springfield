@@ -179,7 +179,9 @@ func validateEnum(key, value string, allowed []string) error {
 }
 
 func normalize(cfg *Config) {
+	cfg.Agents.Claude.Model = strings.TrimSpace(cfg.Agents.Claude.Model)
 	cfg.Agents.Claude.PermissionMode = strings.TrimSpace(cfg.Agents.Claude.PermissionMode)
+	cfg.Agents.Codex.Model = strings.TrimSpace(cfg.Agents.Codex.Model)
 	cfg.Agents.Codex.SandboxMode = strings.TrimSpace(cfg.Agents.Codex.SandboxMode)
 	cfg.Agents.Codex.ApprovalPolicy = strings.TrimSpace(cfg.Agents.Codex.ApprovalPolicy)
 	cfg.Agents.Gemini.ApprovalMode = strings.TrimSpace(cfg.Agents.Gemini.ApprovalMode)
