@@ -96,7 +96,7 @@ func (a adapter) ClassifyError(events []coreexec.Event, exitCode int, err error)
 		return agents.ErrorClassRetryable
 	}
 	for _, event := range events {
-		if codexRetryableText(event.Data) {
+		if codexRetryableEvent(event) {
 			return agents.ErrorClassRetryable
 		}
 	}
@@ -275,4 +275,11 @@ func codexRetryableText(s string) bool {
 		}
 	}
 	return false
+}
+
+func codexRetryableEvent(event coreexec.Event) bool {
+	if event.Type != coreexec.EventStderr {
+		return false
+	}
+	return codexRetryableText(event.Data)
 }

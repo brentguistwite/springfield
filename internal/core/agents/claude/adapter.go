@@ -158,7 +158,7 @@ func (a *adapter) ClassifyError(events []coreexec.Event, exitCode int, err error
 		return agents.ErrorClassRetryable
 	}
 	for _, event := range events {
-		if claudeRetryableText(event.Data) {
+		if claudeRetryableEvent(event) {
 			return agents.ErrorClassRetryable
 		}
 	}
@@ -371,6 +371,18 @@ var claudeRetryableNeedles = []string{
 	"authentication_error",
 	"unauthenticated",
 	"401",
+	"timed out",
+	"timeout",
+	"temporary failure",
+	"temporarily unavailable",
+	"service unavailable",
+	"connection reset",
+	"connection refused",
+	"econnreset",
+	"econnrefused",
+	"503",
+	"500",
+	"overloaded",
 }
 
 func errorString(err error) string {
@@ -391,4 +403,11 @@ func claudeRetryableText(s string) bool {
 		}
 	}
 	return false
+}
+
+func claudeRetryableEvent(event coreexec.Event) bool {
+	if event.Type != coreexec.EventStderr {
+		return false
+	}
+	return claudeRetryableText(event.Data)
 }

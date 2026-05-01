@@ -45,6 +45,13 @@ func TestAdaptersImplementErrorClassifier(t *testing.T) {
 			wantClass: agents.ErrorClassRetryable,
 		},
 		{
+			name:      "claude classifies timeout as retryable",
+			agentID:   agents.AgentClaude,
+			exitCode:  1,
+			err:       assertErr("request timed out talking to provider"),
+			wantClass: agents.ErrorClassRetryable,
+		},
+		{
 			name:      "claude classifies unrecognized failure as fatal",
 			agentID:   agents.AgentClaude,
 			exitCode:  17,
@@ -150,13 +157,6 @@ func TestCodexClassifyErrorUsesRetryableAndFatalRules(t *testing.T) {
 			name:      "missing cli is retryable",
 			exitCode:  -1,
 			err:       osexec.ErrNotFound,
-			wantClass: agents.ErrorClassRetryable,
-		},
-		{
-			name:      "rate limit in codex command event is retryable",
-			events:    append(loadFixtureEvents(t, filepath.Join("fixtures", "codex", "hard-error.json")), coreexec.Event{Type: coreexec.EventStdout, Data: `{"type":"item.completed","item":{"id":"item_9","type":"command_execution","command":"codex exec","aggregated_output":"HTTP 429: quota exceeded","exit_code":1,"status":"completed"}}`}),
-			exitCode:  1,
-			err:       assertErr("codex failed"),
 			wantClass: agents.ErrorClassRetryable,
 		},
 		{
@@ -271,6 +271,40 @@ func TestGeminiClassifyErrorToolResultAppHTTP500IsFatal(t *testing.T) {
 	)
 
 	got := classifier.ClassifyError(events, 1, assertErr("gemini failed"))
+	if got != agents.ErrorClassFatal {
+		t.Fatalf("ClassifyError() = %q, want %q", got, agents.ErrorClassFatal)
+	}
+}
+
+func TestClaudeClassifyErrorToolResultAppHTTP500IsFatal(t *testing.T) {
+	classifier, ok := claude.New(osexec.LookPath).(agents.ErrorClassifier)
+	if !ok {
+		t.Fatal("claude adapter does not implement ErrorClassifier")
+	}
+
+	events := append(
+		loadFixtureEvents(t, filepath.Join("fixtures", "claude", "tool-error-all.json")),
+		coreexec.Event{Type: coreexec.EventStdout, Data: `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_03","content":"app returned HTTP 500 while fetching report","is_error":true}]}}`},
+	)
+
+	got := classifier.ClassifyError(events, 1, assertErr("claude failed"))
+	if got != agents.ErrorClassFatal {
+		t.Fatalf("ClassifyError() = %q, want %q", got, agents.ErrorClassFatal)
+	}
+}
+
+func TestCodexClassifyErrorCommandOutputHTTP429IsFatal(t *testing.T) {
+	classifier, ok := codex.New(osexec.LookPath).(agents.ErrorClassifier)
+	if !ok {
+		t.Fatal("codex adapter does not implement ErrorClassifier")
+	}
+
+	events := append(
+		loadFixtureEvents(t, filepath.Join("fixtures", "codex", "tool-error-all.json")),
+		coreexec.Event{Type: coreexec.EventStdout, Data: `{"type":"item.completed","item":{"id":"item_9","type":"command_execution","command":"curl https://app.example/report","aggregated_output":"HTTP 429: quota exceeded","exit_code":1,"status":"completed"}}`},
+	)
+
+	got := classifier.ClassifyError(events, 1, assertErr("codex failed"))
 	if got != agents.ErrorClassFatal {
 		t.Fatalf("ClassifyError() = %q, want %q", got, agents.ErrorClassFatal)
 	}
