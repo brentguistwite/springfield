@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"springfield/internal/features/execution"
 	"springfield/internal/features/conductor"
 	"springfield/internal/storage"
 )
@@ -47,6 +48,68 @@ func TestSetup_GeneratesConfigWhenNoneExists(t *testing.T) {
 	}
 	if len(cfg.Sequential) != 2 || cfg.Sequential[0] != "plan-a" {
 		t.Errorf("Sequential = %v, want [plan-a plan-b]", cfg.Sequential)
+	}
+	data, err := os.ReadFile(filepath.Join(root, ".springfield", "execution", "config.json"))
+	if err != nil {
+		t.Fatalf("ReadFile generated config: %v", err)
+	}
+	if strings.Contains(string(data), `"fallback_tool"`) {
+		t.Fatalf("generated config should not persist fallback_tool: %s", string(data))
+	}
+}
+
+func TestExecutionSetup_PersistsPrimaryToolOnlyForPriorityChain(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root)
+
+	result, err := execution.Setup(root, []string{"claude", "codex"}, execution.Defaults())
+	if err != nil {
+		t.Fatalf("execution.Setup() error: %v", err)
+	}
+	if !result.Created {
+		t.Fatal("expected Created=true for fresh execution setup")
+	}
+
+	data, err := os.ReadFile(result.Path)
+	if err != nil {
+		t.Fatalf("ReadFile generated config: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, `"tool": "claude"`) {
+		t.Fatalf("expected primary tool to be persisted, got:\n%s", content)
+	}
+	if strings.Contains(content, `"fallback_tool"`) {
+		t.Fatalf("execution setup should not persist fallback_tool from agent_priority chain: %s", content)
+	}
+}
+
+func TestExecutionUpdate_PersistsPrimaryToolOnlyForPriorityChain(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root)
+
+	_, err := execution.Setup(root, []string{"claude"}, execution.Defaults())
+	if err != nil {
+		t.Fatalf("execution.Setup() error: %v", err)
+	}
+
+	result, err := execution.Update(root, []string{"codex", "claude"}, execution.Defaults())
+	if err != nil {
+		t.Fatalf("execution.Update() error: %v", err)
+	}
+	if !result.Updated {
+		t.Fatal("expected Updated=true for execution update")
+	}
+
+	data, err := os.ReadFile(result.Path)
+	if err != nil {
+		t.Fatalf("ReadFile updated config: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, `"tool": "codex"`) {
+		t.Fatalf("expected updated primary tool to be persisted, got:\n%s", content)
+	}
+	if strings.Contains(content, `"fallback_tool"`) {
+		t.Fatalf("execution update should not persist fallback_tool from agent_priority chain: %s", content)
 	}
 }
 
@@ -232,6 +295,9 @@ func TestUpdateConfig_OverwritesExisting(t *testing.T) {
 	}
 	if strings.Contains(content, "ralph_iterations") {
 		t.Fatalf("did not expect legacy ralph_iterations key after update, got:\n%s", content)
+	}
+	if strings.Contains(content, `"fallback_tool"`) {
+		t.Fatalf("did not expect fallback_tool key after update, got:\n%s", content)
 	}
 }
 

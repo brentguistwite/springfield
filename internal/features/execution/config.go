@@ -45,7 +45,6 @@ func Load(rootDir string) (*Config, error) {
 		SingleWorkstreamIterations: project.Config.SingleWorkstreamIterations,
 		SingleWorkstreamTimeout:    project.Config.SingleWorkstreamTimeout,
 		Tool:                       project.Config.Tool,
-		FallbackTool:               project.Config.FallbackTool,
 		Batches:                    project.Config.Batches,
 		Sequential:                 project.Config.Sequential,
 	}, nil
@@ -78,9 +77,7 @@ func Update(rootDir string, priority []string, input Input) (UpdateResult, error
 
 func toConductorOptions(priority []string, input Input) conductor.SetupOptions {
 	defaults := conductor.SetupDefaults()
-	primary, fallback := toolsFromPriority(priority)
-	defaults.Tool = primary
-	defaults.FallbackTool = fallback
+	defaults.Tool = primaryTool(priority)
 	defaults.PlansDir = input.PlansDir
 	defaults.WorktreeBase = input.WorktreeBase
 	defaults.MaxRetries = input.MaxRetries
@@ -89,23 +86,12 @@ func toConductorOptions(priority []string, input Input) conductor.SetupOptions {
 	return defaults
 }
 
-func toolsFromPriority(priority []string) (string, string) {
-	primary := ""
+func primaryTool(priority []string) string {
 	for _, candidate := range priority {
 		if candidate == "" {
 			continue
 		}
-		primary = candidate
-		break
+		return candidate
 	}
-	if primary == "" {
-		return "", ""
-	}
-	for _, candidate := range priority {
-		if candidate == "" || candidate == primary {
-			continue
-		}
-		return primary, candidate
-	}
-	return primary, ""
+	return ""
 }

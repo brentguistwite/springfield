@@ -8,7 +8,6 @@ type Config struct {
 	SingleWorkstreamIterations int
 	SingleWorkstreamTimeout    int
 	Tool                       string
-	FallbackTool               string
 	Batches                    [][]string
 	Sequential                 []string
 }

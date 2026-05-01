@@ -10,7 +10,6 @@ type Config struct {
 	SingleWorkstreamIterations int        `json:"single_workstream_iterations"`
 	SingleWorkstreamTimeout    int        `json:"single_workstream_timeout"`
 	Tool                       string     `json:"tool"`
-	FallbackTool               string     `json:"fallback_tool,omitempty"`
 	Batches                    [][]string `json:"batches"`
 	Sequential                 []string   `json:"sequential"`
 }

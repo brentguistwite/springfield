@@ -16,7 +16,6 @@ const (
 // SetupOptions holds guided inputs for conductor config generation.
 type SetupOptions struct {
 	Tool                       string
-	FallbackTool               string
 	PlansDir                   string
 	WorktreeBase               string
 	MaxRetries                 int
@@ -91,7 +90,6 @@ func Setup(rootDir string, opts SetupOptions) (SetupResult, error) {
 		SingleWorkstreamIterations: opts.SingleWorkstreamIterations,
 		SingleWorkstreamTimeout:    opts.SingleWorkstreamTimeout,
 		Tool:                       opts.Tool,
-		FallbackTool:               opts.FallbackTool,
 		Sequential:                 sequential,
 		Batches:                    batches,
 	}
@@ -145,7 +143,6 @@ func UpdateConfig(rootDir string, opts SetupOptions) (UpdateResult, error) {
 		SingleWorkstreamIterations: opts.SingleWorkstreamIterations,
 		SingleWorkstreamTimeout:    opts.SingleWorkstreamTimeout,
 		Tool:                       opts.Tool,
-		FallbackTool:               opts.FallbackTool,
 		Sequential:                 sequential,
 		Batches:                    batches,
 	}

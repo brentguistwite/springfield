@@ -85,7 +85,6 @@ func sequentialOnlyConfig() *conductor.Config {
 		SingleWorkstreamIterations: 50,
 		SingleWorkstreamTimeout:    3600,
 		Tool:                       "claude",
-		FallbackTool:               "codex",
 		Sequential: []string{
 			"01-bootstrap",
 			"02-config",
