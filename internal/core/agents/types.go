@@ -130,4 +130,34 @@ type ResultValidator interface {
 	ValidateResult(result exec.Result) error
 }
 
+// ErrorClass classifies whether a runtime failure is worth falling back to the
+// next agent in priority. Adapters parse provider-specific stderr/exit codes
+// and normalize into this enum; runtime sees only the enum.
+type ErrorClass string
+
+const (
+	// ErrorClassRetryable: try the next agent in priority. Covers rate limit,
+	// quota exceeded, transient API 5xx, CLI auth expired, CLI not found,
+	// network failure.
+	ErrorClassRetryable ErrorClass = "retryable"
+	// ErrorClassFatal: bubble up immediately. Covers user-fault errors
+	// (bad input, validator rejection, plan syntax error).
+	ErrorClassFatal ErrorClass = "fatal"
+)
+
+// ErrorClassifier optionally classifies a failed run. Adapters that implement
+// this are consulted by the runtime when an agent's run fails; the result
+// determines whether fallback proceeds. Adapters without this interface
+// default to ErrorClassFatal (no automatic fallback).
+type ErrorClassifier interface {
+	ClassifyError(events []exec.Event, exitCode int, err error) ErrorClass
+}
+
+// ModelProvider exposes a small curated list of "blessed/tested" models for an
+// adapter. Used by the init picker as autocomplete suggestions; free-text
+// input remains the primary path so new models are always reachable.
+type ModelProvider interface {
+	SuggestedModels() []string
+}
+
 var ErrUnsupportedAgent = errors.New("unsupported agent")
