@@ -187,6 +187,15 @@ Execution is serial by default. Parallel execution only happens when the batch e
 
 When an agent run fails, Springfield consults the adapter classifier. Retryable failures fall through to the next id in `agent_priority`; fatal failures stop immediately. There is no separate legacy fallback config key.
 
+Each slice run writes evidence under `.springfield/plans/<batch-id>/evidence/<slice-id>/`:
+
+- `meta.json` with agent, exit code, timing, and error metadata
+- `events.jsonl` with the full stdout/stderr event stream
+- `assistant_text.txt` with the human-readable stdout tail
+- `prompt.txt` with the exact prompt sent to the agent
+
+`springfield status` shows the per-slice evidence path after a run settles, and `springfield recover --diagnose` points at the batch evidence directory for orphaned runs.
+
 If a batch already exists, use `--replace` to archive it and start fresh, or `--append` to add new slices:
 
 ```bash

@@ -313,10 +313,6 @@ func snapshotPlanTree(planDir string) (map[string][]byte, error) {
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		if strings.HasPrefix(rel, "evidence/") {
-			return nil
-		}
-
 		if d.Type()&(fs.ModeSymlink|fs.ModeDevice|fs.ModeNamedPipe|fs.ModeSocket|fs.ModeIrregular) != 0 {
 			return fmt.Errorf("non-regular entry %q", rel)
 		}
@@ -368,7 +364,7 @@ type tamperForensicsContext struct {
 // regardless of whether the archive write itself was a no-op (e.g. already
 // archived from a prior call under the same reason).
 func detectAndRecoverTamper(root string, paths batch.Paths, snap controlPlaneSnapshot, forensics tamperForensicsContext) error {
-	reason := compareControlPlane(root, paths, snap)
+	reason := compareControlPlane(root, paths, snap, allowedEvidenceRelPaths(forensics.sliceID))
 	if reason == "" {
 		return nil
 	}
@@ -654,12 +650,12 @@ func writeFileReplacingNonRegular(abs string, data []byte, mode os.FileMode) err
 // that diverged (or "run.json" / "run.json missing" for the shared cursor).
 // Divergence is ordered: added/missing/changed files under the plan dir
 // first (stable alpha order), then run.json.
-func compareControlPlane(root string, paths batch.Paths, snap controlPlaneSnapshot) string {
+func compareControlPlane(root string, paths batch.Paths, snap controlPlaneSnapshot, allowed map[string]bool) string {
 	current, err := snapshotPlanTree(paths.PlanDir())
 	if err != nil {
 		return fmt.Sprintf("plan dir unreadable: %v", err)
 	}
-	if reason := firstTreeDivergence(snap.tree, current); reason != "" {
+	if reason := firstTreeDivergence(snap.tree, current, allowed); reason != "" {
 		return reason
 	}
 	runNow, err := os.ReadFile(batch.RunPath(root))
@@ -675,7 +671,7 @@ func compareControlPlane(root string, paths batch.Paths, snap controlPlaneSnapsh
 // firstTreeDivergence compares two relpath->bytes maps and returns a reason
 // string identifying the first divergent relpath, or "" when they match.
 // Iteration is sorted so the reason is deterministic across runs.
-func firstTreeDivergence(want, got map[string][]byte) string {
+func firstTreeDivergence(want, got map[string][]byte, allowed map[string]bool) string {
 	keys := make([]string, 0, len(want)+len(got))
 	seen := make(map[string]bool, len(want)+len(got))
 	for k := range want {
@@ -692,6 +688,9 @@ func firstTreeDivergence(want, got map[string][]byte) string {
 	}
 	sort.Strings(keys)
 	for _, rel := range keys {
+		if allowed[rel] {
+			continue
+		}
 		w, okWant := want[rel]
 		g, okGot := got[rel]
 		switch {
@@ -704,6 +703,19 @@ func firstTreeDivergence(want, got map[string][]byte) string {
 		}
 	}
 	return ""
+}
+
+func allowedEvidenceRelPaths(sliceID string) map[string]bool {
+	if sliceID == "" {
+		return nil
+	}
+	base := filepath.ToSlash(filepath.Join("evidence", sliceID))
+	return map[string]bool{
+		filepath.ToSlash(filepath.Join(base, "meta.json")):          true,
+		filepath.ToSlash(filepath.Join(base, "events.jsonl")):       true,
+		filepath.ToSlash(filepath.Join(base, "assistant_text.txt")): true,
+		filepath.ToSlash(filepath.Join(base, "prompt.txt")):         true,
+	}
 }
 
 // openBatchLog tees Springfield's cobra stdout+stderr into a persistent log
