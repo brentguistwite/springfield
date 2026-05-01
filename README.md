@@ -130,9 +130,11 @@ Project-level agent execution settings live in `springfield.toml`. Example:
 agent_priority = ["claude", "codex"]
 
 [agents.claude]
+model = "claude-sonnet-4-6"
 permission_mode = "bypassPermissions"
 
 [agents.codex]
+model = "gpt-5.4"
 sandbox_mode = "danger-full-access"
 approval_policy = "never"
 
@@ -144,7 +146,8 @@ approval_policy = "never"
 
 Notes:
 
-- `springfield init` prompts for agent priority order and scaffolds `springfield.toml` + `.springfield/` with recommended execution settings for each selected agent. Use `--agents claude,codex` to skip the interactive prompt; non-interactive runs without `--agents` will error.
+- `springfield init` prompts for agent priority order, then prompts for an optional model per enabled agent. Press enter to keep the agent default, pick a suggested model, or pass `--model claude=<id>,codex=<id>,gemini=<id>` for non-interactive runs.
+- `springfield init` scaffolds `springfield.toml` + `.springfield/` with recommended execution settings for each selected agent. Use `--agents claude,codex` to skip the interactive priority prompt; non-interactive runs without `--agents` will error.
 - Gemini is execution-supported but opt-in. Pass `--agents claude,codex,gemini` (or edit `agent_priority`) to include it. See [`docs/release.md`](docs/release.md#2026-04-gemini-cli-execution-support) for the migration note.
 - Primary end-user install is the Claude marketplace or Codex plugin/catalog flow.
 - `springfield install` is the local sync/bootstrap/fallback path after `init`.
@@ -181,6 +184,8 @@ springfield status
 ```
 
 Execution is serial by default. Parallel execution only happens when the batch explicitly marks independent phases — this is rare and must be intentional.
+
+When an agent run fails, Springfield consults the adapter classifier. Retryable failures fall through to the next id in `agent_priority`; fatal failures stop immediately. There is no separate legacy fallback config key.
 
 If a batch already exists, use `--replace` to archive it and start fresh, or `--append` to add new slices:
 

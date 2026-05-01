@@ -1,9 +1,11 @@
 package conductor_test
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -53,9 +55,7 @@ func TestSetup_GeneratesConfigWhenNoneExists(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile generated config: %v", err)
 	}
-	if strings.Contains(string(data), `"fallback_tool"`) {
-		t.Fatalf("generated config should not persist fallback_tool: %s", string(data))
-	}
+	assertExactConfigKeys(t, data, "batches", "max_retries", "plans_dir", "sequential", "single_workstream_iterations", "single_workstream_timeout", "tool", "worktree_base")
 }
 
 func TestExecutionSetup_PersistsPrimaryToolOnlyForPriorityChain(t *testing.T) {
@@ -78,9 +78,7 @@ func TestExecutionSetup_PersistsPrimaryToolOnlyForPriorityChain(t *testing.T) {
 	if !strings.Contains(content, `"tool": "claude"`) {
 		t.Fatalf("expected primary tool to be persisted, got:\n%s", content)
 	}
-	if strings.Contains(content, `"fallback_tool"`) {
-		t.Fatalf("execution setup should not persist fallback_tool from agent_priority chain: %s", content)
-	}
+	assertExactConfigKeys(t, data, "batches", "max_retries", "plans_dir", "sequential", "single_workstream_iterations", "single_workstream_timeout", "tool", "worktree_base")
 }
 
 func TestExecutionUpdate_PersistsPrimaryToolOnlyForPriorityChain(t *testing.T) {
@@ -108,9 +106,7 @@ func TestExecutionUpdate_PersistsPrimaryToolOnlyForPriorityChain(t *testing.T) {
 	if !strings.Contains(content, `"tool": "codex"`) {
 		t.Fatalf("expected updated primary tool to be persisted, got:\n%s", content)
 	}
-	if strings.Contains(content, `"fallback_tool"`) {
-		t.Fatalf("execution update should not persist fallback_tool from agent_priority chain: %s", content)
-	}
+	assertExactConfigKeys(t, data, "batches", "max_retries", "plans_dir", "sequential", "single_workstream_iterations", "single_workstream_timeout", "tool", "worktree_base")
 }
 
 func TestSetup_ReusesExistingValidConfig(t *testing.T) {
@@ -296,9 +292,7 @@ func TestUpdateConfig_OverwritesExisting(t *testing.T) {
 	if strings.Contains(content, "ralph_iterations") {
 		t.Fatalf("did not expect legacy ralph_iterations key after update, got:\n%s", content)
 	}
-	if strings.Contains(content, `"fallback_tool"`) {
-		t.Fatalf("did not expect fallback_tool key after update, got:\n%s", content)
-	}
+	assertExactConfigKeys(t, data, "batches", "max_retries", "plans_dir", "sequential", "single_workstream_iterations", "single_workstream_timeout", "tool", "worktree_base")
 }
 
 func TestUpdateConfig_FailsWhenNoExistingConfig(t *testing.T) {
@@ -396,6 +390,32 @@ func TestSetupCreatesCanonicalConfigWhenLegacyConfigExists(t *testing.T) {
 	if got, want := result.Path, filepath.Join(root, ".springfield", "execution", "config.json"); got != want {
 		t.Fatalf("Path = %q, want %q", got, want)
 	}
+}
+
+func assertExactConfigKeys(t *testing.T, data []byte, want ...string) {
+	t.Helper()
+
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("json.Unmarshal config: %v", err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("config keys = %v, want %v", sortedKeys(got), want)
+	}
+	for _, key := range want {
+		if _, ok := got[key]; !ok {
+			t.Fatalf("config keys = %v, want %v", sortedKeys(got), want)
+		}
+	}
+}
+
+func sortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	return keys
 }
 
 func TestUpdateConfigRejectsLegacyConfigPath(t *testing.T) {
