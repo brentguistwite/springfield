@@ -139,6 +139,42 @@ func TestResolveModelsPromptsInteractivelyEvenWithAgentsFlag(t *testing.T) {
 	}
 }
 
+func TestInteractiveInitFlowPreservesQueuedModelAnswers(t *testing.T) {
+	in := strings.NewReader("claude,codex\nclaude-opus-4-7\ncustom-codex-model\n")
+	var out bytes.Buffer
+
+	priority, models, err := resolveInitSelections(
+		"",
+		"",
+		true,
+		in,
+		&out,
+		func(id agents.ID) []string {
+			switch id {
+			case agents.AgentClaude:
+				return []string{"claude-opus-4-7"}
+			case agents.AgentCodex:
+				return []string{"gpt-5-codex"}
+			default:
+				return nil
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("resolveInitSelections: %v", err)
+	}
+
+	if len(priority) != 2 || priority[0] != "claude" || priority[1] != "codex" {
+		t.Fatalf("priority = %v, want [claude codex]", priority)
+	}
+	if got := models["claude"]; got != "claude-opus-4-7" {
+		t.Fatalf("claude model = %q, want claude-opus-4-7", got)
+	}
+	if got := models["codex"]; got != "custom-codex-model" {
+		t.Fatalf("codex model = %q, want custom-codex-model", got)
+	}
+}
+
 func TestParseAndValidateModelsRejectsNoUsableEntries(t *testing.T) {
 	_, err := parseAndValidateModels(" , ", []string{"claude"})
 	if err == nil {

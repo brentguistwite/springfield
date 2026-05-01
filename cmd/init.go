@@ -47,16 +47,10 @@ func NewInitCommand() *cobra.Command {
 			}
 
 			interactive := isTTY(int(os.Stdin.Fd()))
-			priority, err := resolvePriority(agentsFlag, interactive, cmd.InOrStdin(), cmd.OutOrStdout())
-			if err != nil {
-				return err
-			}
-
-			models, err := resolveModels(
+			priority, models, err := resolveInitSelections(
 				agentsFlag,
 				modelsFlag,
 				interactive,
-				priority,
 				cmd.InOrStdin(),
 				cmd.OutOrStdout(),
 				modelSuggester,
@@ -123,10 +117,44 @@ func NewInitCommand() *cobra.Command {
 	return cmd
 }
 
+func resolveInitSelections(
+	agentsFlag string,
+	modelsFlag string,
+	interactive bool,
+	in io.Reader,
+	out io.Writer,
+	suggest func(agents.ID) []string,
+) ([]string, map[string]string, error) {
+	reader := bufio.NewReader(in)
+
+	priority, err := resolvePriorityWithReader(agentsFlag, interactive, reader, out)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	models, err := resolveModelsWithReader(
+		modelsFlag,
+		interactive,
+		priority,
+		reader,
+		out,
+		suggest,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return priority, models, nil
+}
+
 // resolvePriority determines the agent priority list from flag or interactive
 // prompt. Non-interactive callers must pass --agents explicitly — there is no
 // fixed default priority for fresh init.
 func resolvePriority(agentsFlag string, interactive bool, in io.Reader, out io.Writer) ([]string, error) {
+	return resolvePriorityWithReader(agentsFlag, interactive, bufferedReader(in), out)
+}
+
+func resolvePriorityWithReader(agentsFlag string, interactive bool, in *bufio.Reader, out io.Writer) ([]string, error) {
 	if agentsFlag != "" {
 		return parseAndValidateAgents(agentsFlag)
 	}
@@ -136,7 +164,7 @@ func resolvePriority(agentsFlag string, interactive bool, in io.Reader, out io.W
 			"non-interactive init requires --agents flag (e.g. --agents claude,codex,gemini)")
 	}
 
-	return promptForAgents(in, out)
+	return promptForAgentsWithReader(in, out)
 }
 
 func resolveModels(
@@ -145,6 +173,17 @@ func resolveModels(
 	interactive bool,
 	priority []string,
 	in io.Reader,
+	out io.Writer,
+	suggest func(agents.ID) []string,
+) (map[string]string, error) {
+	return resolveModelsWithReader(modelsFlag, interactive, priority, bufferedReader(in), out, suggest)
+}
+
+func resolveModelsWithReader(
+	modelsFlag string,
+	interactive bool,
+	priority []string,
+	in *bufio.Reader,
 	out io.Writer,
 	suggest func(agents.ID) []string,
 ) (map[string]string, error) {
@@ -161,7 +200,7 @@ func resolveModels(
 		enabled = append(enabled, agents.ID(id))
 	}
 
-	models, err := PromptForAgentModels(in, out, enabled, suggest)
+	models, err := promptForAgentModelsWithReader(in, out, enabled, suggest)
 	if err != nil {
 		return nil, err
 	}
@@ -195,6 +234,10 @@ type Detector interface {
 // buffer is shared across attempts — constructing it per-attempt would strand
 // any bytes already read past the current line.
 func PromptForAgentsWithDetection(in io.Reader, out io.Writer, det Detector) ([]string, error) {
+	return promptForAgentsWithDetectionReader(bufferedReader(in), out, det)
+}
+
+func promptForAgentsWithDetectionReader(in *bufio.Reader, out io.Writer, det Detector) ([]string, error) {
 	fmt.Fprintln(out, "Which agents do you want Springfield to use? (order = priority)")
 	fmt.Fprintln(out)
 	for _, id := range agents.SupportedForExecution() {
@@ -209,11 +252,10 @@ func PromptForAgentsWithDetection(in io.Reader, out io.Writer, det Detector) ([]
 	}
 	fmt.Fprintln(out)
 
-	reader := bufio.NewReader(in)
 	for attempt := 0; attempt < maxPromptAttempts; attempt++ {
 		fmt.Fprint(out, "Enter agents in priority order (comma-separated, e.g. claude,codex): ")
 
-		line, err := reader.ReadString('\n')
+		line, err := in.ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
 			return nil, fmt.Errorf("read input: %w", err)
 		}
@@ -251,8 +293,16 @@ func PromptForAgentModels(
 	enabled []agents.ID,
 	suggest func(agents.ID) []string,
 ) (map[agents.ID]string, error) {
+	return promptForAgentModelsWithReader(bufferedReader(in), out, enabled, suggest)
+}
+
+func promptForAgentModelsWithReader(
+	in *bufio.Reader,
+	out io.Writer,
+	enabled []agents.ID,
+	suggest func(agents.ID) []string,
+) (map[agents.ID]string, error) {
 	models := make(map[agents.ID]string, len(enabled))
-	reader := bufio.NewReader(in)
 
 	for _, id := range enabled {
 		suggestions := suggest(id)
@@ -263,7 +313,7 @@ func PromptForAgentModels(
 			strings.Join(suggestions, ", "),
 		)
 
-		line, err := reader.ReadString('\n')
+		line, err := in.ReadString('\n')
 		if err != nil && !errors.Is(err, io.EOF) {
 			return nil, fmt.Errorf("read input: %w", err)
 		}
@@ -286,7 +336,18 @@ func PromptForAgentModels(
 // production registryDetector backed by os/exec.LookPath so call sites in
 // resolvePriority don't need to know about the Detector seam.
 func promptForAgents(in io.Reader, out io.Writer) ([]string, error) {
-	return PromptForAgentsWithDetection(in, out, newRegistryDetector(exec.LookPath))
+	return promptForAgentsWithReader(bufferedReader(in), out)
+}
+
+func promptForAgentsWithReader(in *bufio.Reader, out io.Writer) ([]string, error) {
+	return promptForAgentsWithDetectionReader(in, out, newRegistryDetector(exec.LookPath))
+}
+
+func bufferedReader(in io.Reader) *bufio.Reader {
+	if reader, ok := in.(*bufio.Reader); ok {
+		return reader
+	}
+	return bufio.NewReader(in)
 }
 
 func newModelSuggester(lookPath agents.LookPathFunc) func(agents.ID) []string {
