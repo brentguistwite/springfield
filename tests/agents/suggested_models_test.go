@@ -2,6 +2,7 @@ package agents_test
 
 import (
 	"os/exec"
+	"strings"
 	"testing"
 
 	"springfield/internal/core/agents"
@@ -36,6 +37,17 @@ func TestAdaptersImplementModelProvider(t *testing.T) {
 			models := provider.SuggestedModels()
 			if len(models) == 0 {
 				t.Fatalf("SuggestedModels() returned no models for %q", agentID)
+			}
+
+			hasNonEmpty := false
+			for _, model := range models {
+				if strings.TrimSpace(model) != "" {
+					hasNonEmpty = true
+					break
+				}
+			}
+			if !hasNonEmpty {
+				t.Fatalf("SuggestedModels() returned only empty model ids for %q", agentID)
 			}
 		})
 	}

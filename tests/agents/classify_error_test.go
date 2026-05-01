@@ -40,6 +40,13 @@ func TestAdaptersImplementErrorClassifier(t *testing.T) {
 			wantClass: agents.ErrorClassFatal,
 		},
 		{
+			name:      "claude classifies missing cli as retryable",
+			agentID:   agents.AgentClaude,
+			exitCode:  1,
+			err:       exec.ErrNotFound,
+			wantClass: agents.ErrorClassRetryable,
+		},
+		{
 			name:      "codex classifies rate limit as retryable",
 			agentID:   agents.AgentCodex,
 			events:    []coreexec.Event{{Type: coreexec.EventStderr, Data: "quota exceeded"}},
@@ -53,6 +60,13 @@ func TestAdaptersImplementErrorClassifier(t *testing.T) {
 			wantClass: agents.ErrorClassFatal,
 		},
 		{
+			name:      "codex classifies missing cli as retryable",
+			agentID:   agents.AgentCodex,
+			exitCode:  1,
+			err:       exec.ErrNotFound,
+			wantClass: agents.ErrorClassRetryable,
+		},
+		{
 			name:      "gemini classifies rate limit as retryable",
 			agentID:   agents.AgentGemini,
 			events:    []coreexec.Event{{Type: coreexec.EventStderr, Data: "RESOURCE_EXHAUSTED: too many requests"}},
@@ -64,6 +78,13 @@ func TestAdaptersImplementErrorClassifier(t *testing.T) {
 			agentID:   agents.AgentGemini,
 			exitCode:  17,
 			wantClass: agents.ErrorClassFatal,
+		},
+		{
+			name:      "gemini classifies missing cli as retryable",
+			agentID:   agents.AgentGemini,
+			exitCode:  1,
+			err:       exec.ErrNotFound,
+			wantClass: agents.ErrorClassRetryable,
 		},
 	}
 
