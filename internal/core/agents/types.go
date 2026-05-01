@@ -82,6 +82,7 @@ type ClaudeExecutionSettings struct {
 }
 
 type CodexExecutionSettings struct {
+	Model          string
 	SandboxMode    string
 	ApprovalPolicy string
 }

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
+	osexec "os/exec"
 	"strings"
 
 	"springfield/internal/core/agents"
@@ -18,7 +18,7 @@ type adapter struct {
 
 func New(lookPath agents.LookPathFunc) agents.Commander {
 	if lookPath == nil {
-		lookPath = exec.LookPath
+		lookPath = osexec.LookPath
 	}
 
 	return adapter{lookPath: lookPath}
@@ -52,7 +52,7 @@ func (a adapter) Detect(context.Context) agents.Detection {
 	switch {
 	case err == nil:
 		result.Status = agents.DetectionStatusAvailable
-	case errors.Is(err, exec.ErrNotFound):
+	case errors.Is(err, osexec.ErrNotFound):
 		result.Status = agents.DetectionStatusMissing
 	default:
 		result.Status = agents.DetectionStatusUnhealthy
@@ -63,6 +63,9 @@ func (a adapter) Detect(context.Context) agents.Detection {
 
 func (a adapter) Command(input agents.CommandInput) (coreexec.Command, error) {
 	args := []string{"exec", "--json"}
+	if model := strings.TrimSpace(input.ExecutionSettings.Codex.Model); model != "" {
+		args = append(args, "--model", model)
+	}
 	if sandboxMode := strings.TrimSpace(input.ExecutionSettings.Codex.SandboxMode); sandboxMode != "" {
 		args = append(args, "-s", sandboxMode)
 	}
@@ -76,6 +79,28 @@ func (a adapter) Command(input agents.CommandInput) (coreexec.Command, error) {
 		Args: args,
 		Dir:  input.WorkDir,
 	}, nil
+}
+
+func (a adapter) SuggestedModels() []string {
+	return SuggestedModels()
+}
+
+func (a adapter) ClassifyError(events []coreexec.Event, exitCode int, err error) agents.ErrorClass {
+	if exitCode == 0 {
+		return agents.ErrorClassFatal
+	}
+	if errors.Is(err, osexec.ErrNotFound) {
+		return agents.ErrorClassRetryable
+	}
+	if codexRetryableText(errorString(err)) {
+		return agents.ErrorClassRetryable
+	}
+	for _, event := range events {
+		if codexRetryableText(event.Data) {
+			return agents.ErrorClassRetryable
+		}
+	}
+	return agents.ErrorClassFatal
 }
 
 // Positive-signal contract: ValidateResult returns nil only when the
@@ -203,4 +228,51 @@ func looksLikeClarifyingQuestion(text string) bool {
 	}
 
 	return strings.Contains(trimmed, "clarif")
+}
+
+var codexRetryableNeedles = []string{
+	"rate limit",
+	"rate-limit",
+	"too many requests",
+	"429",
+	"quota exceeded",
+	"resource exhausted",
+	"authrequired",
+	"invalid_token",
+	"missing or invalid access token",
+	"unauthorized",
+	"unauthenticated",
+	"401",
+	"timed out",
+	"timeout",
+	"temporary failure",
+	"temporarily unavailable",
+	"service unavailable",
+	"connection reset",
+	"connection refused",
+	"econnreset",
+	"econnrefused",
+	"503",
+	"500",
+	"overloaded",
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func codexRetryableText(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return false
+	}
+	for _, needle := range codexRetryableNeedles {
+		if strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
 }

@@ -229,6 +229,26 @@ func TestCodexAdapterAppendsSandboxAndApprovalWhenConfigured(t *testing.T) {
 	assertArgsContain(t, cmd.Args, "-a", "on-request")
 }
 
+func TestCodexAdapterAppendsModelWhenConfigured(t *testing.T) {
+	adapter := codex.New(exec.LookPath)
+	commander := adapter.(agents.Commander)
+
+	cmd, err := commander.Command(agents.CommandInput{
+		Prompt:  "fix the auth bug",
+		WorkDir: "/tmp/project",
+		ExecutionSettings: agents.ExecutionSettings{
+			Codex: agents.CodexExecutionSettings{
+				Model: "gpt-5-codex",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
+
+	assertArgsContain(t, cmd.Args, "--model", "gpt-5-codex")
+}
+
 func TestClaudeValidatorRejectsRejectedToolCalls(t *testing.T) {
 	adapter := claude.New(exec.LookPath)
 	validator, ok := adapter.(agents.ResultValidator)

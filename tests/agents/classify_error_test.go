@@ -3,6 +3,7 @@ package agents_test
 import (
 	"errors"
 	osexec "os/exec"
+	"path/filepath"
 	"testing"
 
 	"springfield/internal/core/agents"
@@ -118,6 +119,63 @@ func TestAdaptersImplementErrorClassifier(t *testing.T) {
 				t.Fatalf("adapter %q does not implement ErrorClassifier", tt.agentID)
 			}
 
+			got := classifier.ClassifyError(tt.events, tt.exitCode, tt.err)
+			if got != tt.wantClass {
+				t.Fatalf("ClassifyError() = %q, want %q", got, tt.wantClass)
+			}
+		})
+	}
+}
+
+func TestCodexClassifyErrorUsesRetryableAndFatalRules(t *testing.T) {
+	classifier, ok := codex.New(osexec.LookPath).(agents.ErrorClassifier)
+	if !ok {
+		t.Fatal("codex adapter does not implement ErrorClassifier")
+	}
+
+	tests := []struct {
+		name      string
+		events    []coreexec.Event
+		exitCode  int
+		err       error
+		wantClass agents.ErrorClass
+	}{
+		{
+			name:      "validator failure on clean exit is fatal",
+			exitCode:  0,
+			err:       assertErr("validator rejected transcript"),
+			wantClass: agents.ErrorClassFatal,
+		},
+		{
+			name:      "missing cli is retryable",
+			exitCode:  -1,
+			err:       osexec.ErrNotFound,
+			wantClass: agents.ErrorClassRetryable,
+		},
+		{
+			name:      "rate limit in codex command event is retryable",
+			events:    append(loadFixtureEvents(t, filepath.Join("fixtures", "codex", "hard-error.json")), coreexec.Event{Type: coreexec.EventStdout, Data: `{"type":"item.completed","item":{"id":"item_9","type":"command_execution","command":"codex exec","aggregated_output":"HTTP 429: quota exceeded","exit_code":1,"status":"completed"}}`}),
+			exitCode:  1,
+			err:       assertErr("codex failed"),
+			wantClass: agents.ErrorClassRetryable,
+		},
+		{
+			name:      "authrequired stderr is retryable",
+			events:    append(loadFixtureEvents(t, filepath.Join("fixtures", "codex", "success.json")), coreexec.Event{Type: coreexec.EventStderr, Data: `2026-04-08T16:34:12.577918Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer realm=\"OAuth\", error=\"invalid_token\", error_description=\"Missing or invalid access token\"" })`}),
+			exitCode:  1,
+			err:       assertErr("codex failed"),
+			wantClass: agents.ErrorClassRetryable,
+		},
+		{
+			name:      "unrecognized failure is fatal",
+			exitCode:  17,
+			err:       assertErr("codex failed"),
+			wantClass: agents.ErrorClassFatal,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			got := classifier.ClassifyError(tt.events, tt.exitCode, tt.err)
 			if got != tt.wantClass {
 				t.Fatalf("ClassifyError() = %q, want %q", got, tt.wantClass)
