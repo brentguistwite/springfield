@@ -184,6 +184,81 @@ func TestCodexClassifyErrorUsesRetryableAndFatalRules(t *testing.T) {
 	}
 }
 
+func TestGeminiClassifyErrorValidatorFailureOnCleanExitIsFatal(t *testing.T) {
+	classifier, ok := gemini.New(osexec.LookPath).(agents.ErrorClassifier)
+	if !ok {
+		t.Fatal("gemini adapter does not implement ErrorClassifier")
+	}
+
+	got := classifier.ClassifyError(nil, 0, assertErr("validator rejected transcript"))
+	if got != agents.ErrorClassFatal {
+		t.Fatalf("ClassifyError() = %q, want %q", got, agents.ErrorClassFatal)
+	}
+}
+
+func TestGeminiClassifyErrorMissingCLIIsRetryable(t *testing.T) {
+	classifier, ok := gemini.New(osexec.LookPath).(agents.ErrorClassifier)
+	if !ok {
+		t.Fatal("gemini adapter does not implement ErrorClassifier")
+	}
+
+	got := classifier.ClassifyError(nil, -1, osexec.ErrNotFound)
+	if got != agents.ErrorClassRetryable {
+		t.Fatalf("ClassifyError() = %q, want %q", got, agents.ErrorClassRetryable)
+	}
+}
+
+func TestGeminiClassifyErrorRateLimitMessageEventIsRetryable(t *testing.T) {
+	classifier, ok := gemini.New(osexec.LookPath).(agents.ErrorClassifier)
+	if !ok {
+		t.Fatal("gemini adapter does not implement ErrorClassifier")
+	}
+
+	events := append(
+		loadFixtureEvents(t, filepath.Join("fixtures", "gemini", "hard-error.json")),
+		coreexec.Event{Type: coreexec.EventStdout, Data: `{"type":"message","text":"RESOURCE_EXHAUSTED: too many requests"}`},
+	)
+
+	got := classifier.ClassifyError(events, 1, assertErr("gemini failed"))
+	if got != agents.ErrorClassRetryable {
+		t.Fatalf("ClassifyError() = %q, want %q", got, agents.ErrorClassRetryable)
+	}
+}
+
+func TestGeminiClassifyErrorRateLimitToolResultEventIsRetryable(t *testing.T) {
+	classifier, ok := gemini.New(osexec.LookPath).(agents.ErrorClassifier)
+	if !ok {
+		t.Fatal("gemini adapter does not implement ErrorClassifier")
+	}
+
+	events := append(
+		loadFixtureEvents(t, filepath.Join("fixtures", "gemini", "tool-error-all.json")),
+		coreexec.Event{Type: coreexec.EventStdout, Data: `{"type":"tool_result","tool_use_id":"call_03","is_error":true,"content":"HTTP 429: quota exceeded"}`},
+	)
+
+	got := classifier.ClassifyError(events, 1, assertErr("gemini failed"))
+	if got != agents.ErrorClassRetryable {
+		t.Fatalf("ClassifyError() = %q, want %q", got, agents.ErrorClassRetryable)
+	}
+}
+
+func TestGeminiClassifyErrorAuthenticationEventIsRetryable(t *testing.T) {
+	classifier, ok := gemini.New(osexec.LookPath).(agents.ErrorClassifier)
+	if !ok {
+		t.Fatal("gemini adapter does not implement ErrorClassifier")
+	}
+
+	events := append(
+		loadFixtureEvents(t, filepath.Join("fixtures", "gemini", "refusal-no-tools.json")),
+		coreexec.Event{Type: coreexec.EventStdout, Data: `{"type":"message","text":"authentication failed: unauthenticated 401"}`},
+	)
+
+	got := classifier.ClassifyError(events, 1, assertErr("gemini failed"))
+	if got != agents.ErrorClassRetryable {
+		t.Fatalf("ClassifyError() = %q, want %q", got, agents.ErrorClassRetryable)
+	}
+}
+
 func assertErr(msg string) error {
 	return errors.New(msg)
 }

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
+	osexec "os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -47,7 +47,7 @@ func New(lookPath agents.LookPathFunc) agents.Commander {
 // overrides (e.g. injecting a custom warn writer for tests).
 func NewWithOptions(lookPath agents.LookPathFunc, opts Options) agents.Commander {
 	if lookPath == nil {
-		lookPath = exec.LookPath
+		lookPath = osexec.LookPath
 	}
 
 	hookBin, err := os.Executable()
@@ -97,7 +97,7 @@ func (a *adapter) Detect(context.Context) agents.Detection {
 	switch {
 	case err == nil:
 		result.Status = agents.DetectionStatusAvailable
-	case errors.Is(err, exec.ErrNotFound):
+	case errors.Is(err, osexec.ErrNotFound):
 		result.Status = agents.DetectionStatusMissing
 	default:
 		result.Status = agents.DetectionStatusUnhealthy
@@ -142,6 +142,28 @@ func (a *adapter) Command(input agents.CommandInput) (coreexec.Command, error) {
 		Dir:   input.WorkDir,
 		Env:   env,
 	}, nil
+}
+
+func (a *adapter) SuggestedModels() []string {
+	return SuggestedModels()
+}
+
+func (a *adapter) ClassifyError(events []coreexec.Event, exitCode int, err error) agents.ErrorClass {
+	if exitCode == 0 {
+		return agents.ErrorClassFatal
+	}
+	if errors.Is(err, osexec.ErrNotFound) {
+		return agents.ErrorClassRetryable
+	}
+	if geminiRetryableText(errorString(err)) {
+		return agents.ErrorClassRetryable
+	}
+	for _, event := range events {
+		if geminiRetryableText(event.Data) {
+			return agents.ErrorClassRetryable
+		}
+	}
+	return agents.ErrorClassFatal
 }
 
 // commandEnv writes the per-invocation system-settings override file and
@@ -237,4 +259,50 @@ type geminiStreamEvent struct {
 	ID        string `json:"id"`
 	ToolUseID string `json:"tool_use_id"`
 	IsError   bool   `json:"is_error"`
+}
+
+var geminiRetryableNeedles = []string{
+	"rate limit",
+	"rate-limit",
+	"too many requests",
+	"429",
+	"quota exceeded",
+	"resource exhausted",
+	"authentication",
+	"unauthorized",
+	"unauthenticated",
+	"invalid_token",
+	"401",
+	"timed out",
+	"timeout",
+	"temporary failure",
+	"temporarily unavailable",
+	"service unavailable",
+	"connection reset",
+	"connection refused",
+	"econnreset",
+	"econnrefused",
+	"503",
+	"500",
+	"overloaded",
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func geminiRetryableText(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return false
+	}
+	for _, needle := range geminiRetryableNeedles {
+		if strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
 }
