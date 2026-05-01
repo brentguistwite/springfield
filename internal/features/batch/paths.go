@@ -40,6 +40,11 @@ func (p Paths) BatchPath() string {
 	return filepath.Join(p.PlanDir(), "batch.json")
 }
 
+// EvidenceDir returns the per-slice evidence directory under the batch plan dir.
+func (p Paths) EvidenceDir(sliceID string) string {
+	return filepath.Join(p.PlanDir(), "evidence", sliceID)
+}
+
 // RunPath returns the active runtime cursor path (shared across batches).
 func RunPath(rootDir string) string {
 	return filepath.Join(rootDir, springfieldDir, "run.json")

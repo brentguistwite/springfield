@@ -58,7 +58,7 @@ func (r *Runner) RunNext() (ran []string, done bool, err error) {
 			continue
 		}
 
-		r.Project.MarkCompleted(name, result.Agent)
+		r.Project.MarkCompleted(name, result.Agent, result.EvidencePath)
 	}
 
 	done = r.schedule.IsComplete(r.Project.State)

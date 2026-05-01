@@ -128,6 +128,46 @@ func TestRuntimeSingleExecutorRunReturnsFailedReportOnRuntimeFailure(t *testing.
 	}
 }
 
+func TestRuntimeSingleExecutorRunDoesNotFailWhenEvidenceWriteFails(t *testing.T) {
+	registry := testRuntimeRegistry()
+	runner := coreruntime.NewTestRunner(registry, fakeRuntimeSuccess, time.Now)
+	root := t.TempDir()
+
+	blockingPath := filepath.Join(root, ".springfield", "plans", "batch-01", "evidence")
+	if err := os.MkdirAll(filepath.Dir(blockingPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(blockingPath, []byte("not a dir"), 0o644); err != nil {
+		t.Fatalf("WriteFile blocking path: %v", err)
+	}
+
+	executor := runtimeSingleExecutor{
+		runner:   runner,
+		agents:   []agents.ID{agents.AgentClaude},
+		workDir:  t.TempDir(),
+		settings: agents.ExecutionSettings{},
+	}
+
+	report, err := executor.Run(root, Work{
+		ID:          "batch-01-01",
+		Title:       "Execution seam",
+		RequestBody: "Implement the runtime seam.",
+		Split:       "single",
+		Workstreams: []Workstream{
+			{Name: "01", Title: "Adapter", Summary: "Route one workstream."},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if report.Status != statusCompleted {
+		t.Fatalf("status = %q, want %q", report.Status, statusCompleted)
+	}
+	if got := report.Workstreams[0].EvidencePath; got != filepath.Join(root, ".springfield", "plans", "batch-01", "evidence", "01") {
+		t.Fatalf("evidence path = %q", got)
+	}
+}
+
 func TestRuntimeSingleExecutorRejectsMultipleWorkstreams(t *testing.T) {
 	executor := runtimeSingleExecutor{}
 

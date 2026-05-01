@@ -127,12 +127,13 @@ func (p *Project) MarkRunning(name string) {
 	plan.Attempts++
 }
 
-// MarkCompleted records completed status, agent, and end time for name.
-func (p *Project) MarkCompleted(name, agent string) {
+// MarkCompleted records completed status, agent, evidence path, and end time for name.
+func (p *Project) MarkCompleted(name, agent, evidencePath string) {
 	plan := p.ensurePlan(name)
 	plan.Status = StatusCompleted
 	plan.Error = ""
 	plan.Agent = agent
+	plan.EvidencePath = evidencePath
 	plan.EndedAt = time.Now()
 }
 

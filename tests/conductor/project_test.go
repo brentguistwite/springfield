@@ -82,7 +82,7 @@ func TestSaveStateRoundTrips(t *testing.T) {
 		t.Fatalf("load project: %v", err)
 	}
 
-	project.MarkCompleted("01-bootstrap", "claude")
+	project.MarkCompleted("01-bootstrap", "claude", "/tmp/evidence")
 	project.MarkFailed("02-config", "timeout", "claude", "")
 	if err := project.SaveState(); err != nil {
 		t.Fatalf("save state: %v", err)
@@ -155,7 +155,7 @@ func TestMarkCompletedRecordsEndedAtAndAgent(t *testing.T) {
 	}
 
 	project.MarkRunning("01-bootstrap")
-	project.MarkCompleted("01-bootstrap", "claude")
+	project.MarkCompleted("01-bootstrap", "claude", "/tmp/evidence")
 
 	ps := project.State.Plans["01-bootstrap"]
 	if ps.EndedAt.IsZero() {
@@ -163,6 +163,9 @@ func TestMarkCompletedRecordsEndedAtAndAgent(t *testing.T) {
 	}
 	if ps.Agent != "claude" {
 		t.Fatalf("agent: got %q want claude", ps.Agent)
+	}
+	if ps.EvidencePath != "/tmp/evidence" {
+		t.Fatalf("evidence path: got %q want /tmp/evidence", ps.EvidencePath)
 	}
 	if !ps.EndedAt.After(ps.StartedAt) && !ps.EndedAt.Equal(ps.StartedAt) {
 		t.Fatalf("EndedAt %v should be >= StartedAt %v", ps.EndedAt, ps.StartedAt)
@@ -232,7 +235,7 @@ func TestExpandedStateRoundTrips(t *testing.T) {
 	}
 
 	project.MarkRunning("01-bootstrap")
-	project.MarkCompleted("01-bootstrap", "claude")
+	project.MarkCompleted("01-bootstrap", "claude", "/evidence/01")
 	project.MarkRunning("02-config")
 	project.MarkFailed("02-config", "exit 1", "codex", "/evidence/02")
 
@@ -249,6 +252,9 @@ func TestExpandedStateRoundTrips(t *testing.T) {
 	ps1 := reloaded.State.Plans["01-bootstrap"]
 	if ps1.Agent != "claude" {
 		t.Fatalf("01 agent: got %q want claude", ps1.Agent)
+	}
+	if ps1.EvidencePath != "/evidence/01" {
+		t.Fatalf("01 evidence path: got %q want /evidence/01", ps1.EvidencePath)
 	}
 	if ps1.StartedAt.IsZero() {
 		t.Fatal("01 StartedAt should persist")

@@ -42,7 +42,7 @@ func TestDiagnoseFailureIncludesResumeGuidance(t *testing.T) {
 		t.Fatalf("load project: %v", err)
 	}
 
-	project.MarkCompleted("01-bootstrap", "claude")
+	project.MarkCompleted("01-bootstrap", "claude", "")
 	project.MarkFailed("02-config", "exit code 1", "claude", "")
 
 	diagnosis := conductor.Diagnose(project)
@@ -71,7 +71,7 @@ func TestDiagnoseCompleteProject(t *testing.T) {
 	}
 
 	for _, name := range project.AllPlans() {
-		project.MarkCompleted(name, "claude")
+		project.MarkCompleted(name, "claude", "")
 	}
 
 	diagnosis := conductor.Diagnose(project)
@@ -93,7 +93,7 @@ func TestDiagnoseFailureIncludesEvidenceDetails(t *testing.T) {
 		t.Fatalf("load project: %v", err)
 	}
 
-	project.MarkCompleted("01-bootstrap", "claude")
+	project.MarkCompleted("01-bootstrap", "claude", "")
 	project.MarkRunning("02-config")
 	project.MarkFailed("02-config", "exit code 1", "codex", "/tmp/evidence/02-config.log")
 
@@ -124,7 +124,7 @@ func TestDiagnoseReportShowsEvidencePath(t *testing.T) {
 		t.Fatalf("load project: %v", err)
 	}
 
-	project.MarkCompleted("01-bootstrap", "claude")
+	project.MarkCompleted("01-bootstrap", "claude", "")
 	project.MarkFailed("02-config", "exit code 1", "codex", "/tmp/evidence/02-config.log")
 
 	report := conductor.Diagnose(project).Report()
@@ -146,7 +146,7 @@ func TestDiagnosePartialSuccessShowsCompletedPlans(t *testing.T) {
 		t.Fatalf("load project: %v", err)
 	}
 
-	project.MarkCompleted("01-bootstrap", "claude")
+	project.MarkCompleted("01-bootstrap", "claude", "")
 	project.MarkFailed("02-config", "exit code 1", "claude", "")
 
 	diagnosis := conductor.Diagnose(project)

@@ -8,9 +8,10 @@ import (
 )
 
 type fakeExecutor struct {
-	calls  []string
-	failOn map[string]string
-	agent  string
+	calls               []string
+	failOn              map[string]string
+	agent               string
+	successEvidencePath string
 }
 
 func (f *fakeExecutor) Execute(plan string) (conductor.ExecuteResult, error) {
@@ -24,7 +25,25 @@ func (f *fakeExecutor) Execute(plan string) (conductor.ExecuteResult, error) {
 		result.EvidencePath = ".springfield/execution/evidence/" + plan + ".log"
 		return result, errors.New(message)
 	}
+	result.EvidencePath = f.successEvidencePath
 	return result, nil
+}
+
+func TestRunNextPersistsCompletedEvidencePath(t *testing.T) {
+	root, runner, executor := newRunner(t, sequentialOnlyConfig())
+	executor.successEvidencePath = "/evidence/01-bootstrap"
+
+	if _, _, err := runner.RunNext(); err != nil {
+		t.Fatalf("run next: %v", err)
+	}
+
+	reloaded, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("reload project: %v", err)
+	}
+	if got := reloaded.PlanEvidencePath("01-bootstrap"); got != "/evidence/01-bootstrap" {
+		t.Fatalf("persisted success evidence path: got %q want /evidence/01-bootstrap", got)
+	}
 }
 
 func newRunner(t *testing.T, cfg *conductor.Config) (string, *conductor.Runner, *fakeExecutor) {
@@ -85,6 +104,9 @@ func TestRunNextPersistsFailureState(t *testing.T) {
 	}
 	if got := reloaded.PlanError("01-bootstrap"); got != "compile error" {
 		t.Fatalf("persisted error: got %q want compile error", got)
+	}
+	if got := reloaded.PlanEvidencePath("01-bootstrap"); got != ".springfield/execution/evidence/01-bootstrap.log" {
+		t.Fatalf("persisted evidence path: got %q want .springfield/execution/evidence/01-bootstrap.log", got)
 	}
 }
 

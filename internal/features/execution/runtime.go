@@ -16,6 +16,7 @@ import (
 	"springfield/internal/core/config"
 	coreexec "springfield/internal/core/exec"
 	coreruntime "springfield/internal/core/runtime"
+	"springfield/internal/features/batch"
 	"springfield/internal/features/conductor"
 )
 
@@ -125,21 +126,24 @@ func (e runtimeSingleExecutor) Run(root string, work Work) (Report, error) {
 		OnEvent:           e.onEvent,
 		ExecutionSettings: e.settings,
 	})
+	runErr := errorFromResult(result)
+	evidencePath := writeEvidenceBestEffort(root, work, workstream, prompt, result, runErr, e.settings)
 
 	outcome := WorkstreamRun{
-		Name:   workstream.Name,
-		Status: statusCompleted,
+		Name:         workstream.Name,
+		Status:       statusCompleted,
+		EvidencePath: evidencePath,
 	}
-	if err := errorFromResult(result); err != nil {
+	if runErr != nil {
 		outcome.Status = statusFailed
-		outcome.Error = err.Error()
+		outcome.Error = runErr.Error()
 		return Report{
 			Status:      statusFailed,
 			Error:       outcome.Error,
 			Workstreams: []WorkstreamRun{outcome},
 			AgentID:     string(result.Agent),
 			ExitCode:    result.ExitCode,
-		}, err
+		}, runErr
 	}
 
 	return Report{
@@ -158,6 +162,68 @@ func errorFromResult(result coreruntime.Result) error {
 		return fmt.Errorf("agent %s exited with code %d", result.Agent, result.ExitCode)
 	}
 	return nil
+}
+
+func writeEvidenceBestEffort(
+	root string,
+	work Work,
+	workstream Workstream,
+	prompt string,
+	result coreruntime.Result,
+	runErr error,
+	settings agents.ExecutionSettings,
+) string {
+	dir, ok := evidenceDirForWork(root, work.ID, workstream.Name)
+	if !ok {
+		return ""
+	}
+
+	snap := EvidenceSnapshot{
+		AgentID:   string(result.Agent),
+		Model:     modelForAgent(result.Agent, settings),
+		ExitCode:  result.ExitCode,
+		Prompt:    prompt,
+		Events:    result.Events,
+		StartedAt: result.StartedAt,
+		EndedAt:   result.EndedAt,
+		Err:       runErr,
+	}
+	if err := WriteEvidence(dir, snap); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: write evidence for %s: %v\n", workstream.Name, err)
+	}
+	return dir
+}
+
+func evidenceDirForWork(root, workID, sliceID string) (string, bool) {
+	if root == "" || sliceID == "" {
+		return "", false
+	}
+	suffix := "-" + sliceID
+	if !strings.HasSuffix(workID, suffix) {
+		return "", false
+	}
+	batchID := strings.TrimSuffix(workID, suffix)
+	if batchID == "" {
+		return "", false
+	}
+	paths, err := batch.NewPaths(root, batchID)
+	if err != nil {
+		return "", false
+	}
+	return paths.EvidenceDir(sliceID), true
+}
+
+func modelForAgent(agentID agents.ID, settings agents.ExecutionSettings) string {
+	switch agentID {
+	case agents.AgentClaude:
+		return settings.Claude.Model
+	case agents.AgentCodex:
+		return settings.Codex.Model
+	case agents.AgentGemini:
+		return settings.Gemini.Model
+	default:
+		return ""
+	}
 }
 
 type runtimeMultiExecutor struct {
