@@ -2,6 +2,7 @@ package cmd_test
 
 import (
 	"bytes"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,6 +13,38 @@ import (
 	"springfield/cmd"
 	"springfield/internal/core/agents"
 )
+
+func TestPromptCollectsPerAgentModels(t *testing.T) {
+	var out bytes.Buffer
+	in := strings.NewReader("claude-opus-4-7\ncustom-codex-model\n")
+
+	models, err := cmd.PromptForAgentModels(
+		in,
+		&out,
+		[]agents.ID{agents.AgentClaude, agents.AgentCodex},
+		func(id agents.ID) []string {
+			switch id {
+			case agents.AgentClaude:
+				return []string{"claude-opus-4-7", "claude-sonnet-4-6"}
+			case agents.AgentCodex:
+				return []string{"gpt-5-codex", "o3"}
+			default:
+				return nil
+			}
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[agents.ID]string{
+		agents.AgentClaude: "claude-opus-4-7",
+		agents.AgentCodex:  "custom-codex-model",
+	}
+	if !maps.Equal(models, want) {
+		t.Fatalf("models = %v, want %v", models, want)
+	}
+}
 
 // TestPromptShowsAllThreeAgentsWithDetection verifies the picker lists every
 // execution-supported agent with a detection marker so the user can see at a
@@ -102,6 +135,60 @@ func TestInitAgentsFlagSetsAgentPriority(t *testing.T) {
 	}
 	if !strings.Contains(toml, "[agents.codex]") {
 		t.Errorf("expected [agents.codex] section in config:\n%s", toml)
+	}
+}
+
+func TestInitModelFlagWritesPerAgentModels(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	output, err := runBinaryIn(
+		t,
+		bin,
+		dir,
+		"init",
+		"--agents",
+		"claude,codex",
+		"--model",
+		"claude=claude-sonnet-4-6,codex=custom-codex-model",
+	)
+	if err != nil {
+		t.Fatalf("init --model failed: %v\n%s", err, output)
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, "springfield.toml"))
+	if err != nil {
+		t.Fatalf("read springfield.toml: %v", err)
+	}
+	toml := string(content)
+
+	if !strings.Contains(toml, `[agents.claude]`) || !strings.Contains(toml, `model = "claude-sonnet-4-6"`) {
+		t.Fatalf("expected claude model in config:\n%s", toml)
+	}
+	if !strings.Contains(toml, `[agents.codex]`) || !strings.Contains(toml, `model = "custom-codex-model"`) {
+		t.Fatalf("expected codex model in config:\n%s", toml)
+	}
+}
+
+func TestInitModelFlagRejectsAgentOutsidePriority(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	output, err := runBinaryIn(
+		t,
+		bin,
+		dir,
+		"init",
+		"--agents",
+		"claude",
+		"--model",
+		"codex=custom-codex-model",
+	)
+	if err == nil {
+		t.Fatalf("expected init to fail, output:\n%s", output)
+	}
+	if !strings.Contains(output, "--model agent \"codex\" not present in --agents priority") {
+		t.Fatalf("expected clear --model mismatch error, got:\n%s", output)
 	}
 }
 

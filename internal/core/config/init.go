@@ -17,6 +17,11 @@ type InitOptions struct {
 	// the old unconditional behavior. Without Reset, Init merges into the existing
 	// config (preserve-by-default).
 	Reset bool
+	// Models applies per-agent model selections gathered during init. Nil means
+	// "leave existing models alone in merge mode"; non-nil means apply explicit
+	// init-time selections for agents in priority, where a missing/empty entry
+	// means "use adapter default" and therefore omit the model line.
+	Models map[string]string
 }
 
 // InitResult reports what Init created, updated, or backed up.
@@ -60,7 +65,7 @@ func Init(dir string, priority []string, opts InitOptions) (InitResult, error) {
 
 	if !exists {
 		// Fresh init.
-		content := buildScaffold(priority)
+		content := buildScaffold(priority, opts.Models)
 		if err := writeFileAtomic(configPath, []byte(content), 0644); err != nil {
 			return result, fmt.Errorf("write springfield.toml: %w", err)
 		}
@@ -78,7 +83,7 @@ func Init(dir string, priority []string, opts InitOptions) (InitResult, error) {
 		}
 		result.BackupPath = backupPath
 
-		content := buildScaffold(priority)
+		content := buildScaffold(priority, opts.Models)
 		if err := writeFileAtomic(configPath, []byte(content), 0644); err != nil {
 			return result, fmt.Errorf("write springfield.toml (original preserved at %s): %w", backupPath, err)
 		}
@@ -138,6 +143,27 @@ func Init(dir string, priority []string, opts InitOptions) (InitResult, error) {
 			changed = true
 		}
 
+		if opts.Models != nil {
+			if slices.Contains(priority, string(agents.AgentClaude)) {
+				if loaded.Config.Agents.Claude.Model != opts.Models[string(agents.AgentClaude)] {
+					loaded.Config.Agents.Claude.Model = opts.Models[string(agents.AgentClaude)]
+					changed = true
+				}
+			}
+			if slices.Contains(priority, string(agents.AgentCodex)) {
+				if loaded.Config.Agents.Codex.Model != opts.Models[string(agents.AgentCodex)] {
+					loaded.Config.Agents.Codex.Model = opts.Models[string(agents.AgentCodex)]
+					changed = true
+				}
+			}
+			if slices.Contains(priority, string(agents.AgentGemini)) {
+				if loaded.Config.Agents.Gemini.Model != opts.Models[string(agents.AgentGemini)] {
+					loaded.Config.Agents.Gemini.Model = opts.Models[string(agents.AgentGemini)]
+					changed = true
+				}
+			}
+		}
+
 		if changed {
 			if err := Save(loaded); err != nil {
 				return result, fmt.Errorf("save merged config: %w", err)
@@ -164,7 +190,7 @@ func Init(dir string, priority []string, opts InitOptions) (InitResult, error) {
 // [project] section with `agent_priority = []` and no agent blocks. The first
 // entry of priority is the implicit default at runtime — no default_agent field
 // is emitted.
-func buildScaffold(priority []string) string {
+func buildScaffold(priority []string, models map[string]string) string {
 	// Format agent_priority as a TOML inline array.
 	quoted := make([]string, len(priority))
 	for i, a := range priority {
@@ -178,15 +204,23 @@ func buildScaffold(priority []string) string {
 
 	if slices.Contains(priority, string(agents.AgentClaude)) {
 		base += "\n[agents.claude]\n"
-		if rec.Claude.Model != "" {
-			base += fmt.Sprintf("model = %q\n", rec.Claude.Model)
+		model := rec.Claude.Model
+		if models != nil {
+			model = models[string(agents.AgentClaude)]
+		}
+		if model != "" {
+			base += fmt.Sprintf("model = %q\n", model)
 		}
 		base += fmt.Sprintf("permission_mode = %q\n", rec.Claude.PermissionMode)
 	}
 	if slices.Contains(priority, string(agents.AgentCodex)) {
 		base += "\n[agents.codex]\n"
-		if rec.Codex.Model != "" {
-			base += fmt.Sprintf("model = %q\n", rec.Codex.Model)
+		model := rec.Codex.Model
+		if models != nil {
+			model = models[string(agents.AgentCodex)]
+		}
+		if model != "" {
+			base += fmt.Sprintf("model = %q\n", model)
 		}
 		base += fmt.Sprintf("sandbox_mode = %q\napproval_policy = %q\n",
 			rec.Codex.SandboxMode, rec.Codex.ApprovalPolicy)
@@ -194,6 +228,13 @@ func buildScaffold(priority []string) string {
 	if slices.Contains(priority, string(agents.AgentGemini)) {
 		base += fmt.Sprintf("\n[agents.gemini]\napproval_mode = %q\nsandbox_mode = %q\n",
 			rec.Gemini.ApprovalMode, rec.Gemini.SandboxMode)
+		model := rec.Gemini.Model
+		if models != nil {
+			model = models[string(agents.AgentGemini)]
+		}
+		if model != "" {
+			base += fmt.Sprintf("model = %q\n", model)
+		}
 	}
 
 	return base

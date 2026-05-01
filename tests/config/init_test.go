@@ -85,6 +85,33 @@ func TestInitWritesOnlyRequestedAgentBlocks(t *testing.T) {
 	}
 }
 
+func TestInitWritesSelectedPerAgentModels(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := config.Init(
+		dir,
+		[]string{"claude", "codex"},
+		config.InitOptions{
+			Models: map[string]string{
+				"claude": "claude-opus-4-7",
+			},
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, config.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(raw)
+	if !strings.Contains(s, `[agents.claude]`) || !strings.Contains(s, `model = "claude-opus-4-7"`) {
+		t.Fatalf("expected claude model line:\n%s", s)
+	}
+	if strings.Contains(s, `[agents.codex]`+"\n"+`model =`) {
+		t.Fatalf("expected codex model line omitted when blank/default:\n%s", s)
+	}
+}
+
 func TestInitEmptyPriorityWritesEmptyList(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := config.Init(dir, []string{}, config.InitOptions{}); err != nil {

@@ -33,7 +33,9 @@ func isTTY(fd int) bool {
 // NewInitCommand creates the `springfield init` subcommand.
 func NewInitCommand() *cobra.Command {
 	var agentsFlag string
+	var modelsFlag string
 	var resetFlag bool
+	modelSuggester := newModelSuggester(exec.LookPath)
 
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -50,7 +52,23 @@ func NewInitCommand() *cobra.Command {
 				return err
 			}
 
-			result, err := config.Init(dir, priority, config.InitOptions{Reset: resetFlag})
+			models, err := resolveModels(
+				agentsFlag,
+				modelsFlag,
+				interactive,
+				priority,
+				cmd.InOrStdin(),
+				cmd.OutOrStdout(),
+				modelSuggester,
+			)
+			if err != nil {
+				return err
+			}
+
+			result, err := config.Init(dir, priority, config.InitOptions{
+				Reset:  resetFlag,
+				Models: models,
+			})
 			if err != nil {
 				return err
 			}
@@ -99,6 +117,7 @@ func NewInitCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&agentsFlag, "agents", "", "Comma-separated agent priority list (e.g. claude,codex)")
+	cmd.Flags().StringVar(&modelsFlag, "model", "", "Comma-separated per-agent model overrides (e.g. claude=claude-sonnet-4-6,codex=gpt-5-codex)")
 	cmd.Flags().BoolVar(&resetFlag, "reset", false, "Back up existing config and rewrite from scratch (destructive)")
 
 	return cmd
@@ -118,6 +137,45 @@ func resolvePriority(agentsFlag string, interactive bool, in io.Reader, out io.W
 	}
 
 	return promptForAgents(in, out)
+}
+
+func resolveModels(
+	agentsFlag string,
+	modelsFlag string,
+	interactive bool,
+	priority []string,
+	in io.Reader,
+	out io.Writer,
+	suggest func(agents.ID) []string,
+) (map[string]string, error) {
+	if modelsFlag != "" {
+		return parseAndValidateModels(modelsFlag, priority)
+	}
+
+	if !interactive || agentsFlag != "" {
+		return nil, nil
+	}
+
+	enabled := make([]agents.ID, 0, len(priority))
+	for _, id := range priority {
+		enabled = append(enabled, agents.ID(id))
+	}
+
+	models, err := PromptForAgentModels(in, out, enabled, suggest)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(models) == 0 {
+		return map[string]string{}, nil
+	}
+
+	result := make(map[string]string, len(models))
+	for id, model := range models {
+		result[string(id)] = model
+	}
+
+	return result, nil
 }
 
 // Detector reports detection status for execution-supported agents. Exported
@@ -184,12 +242,69 @@ func PromptForAgentsWithDetection(in io.Reader, out io.Writer, det Detector) ([]
 	return nil, fmt.Errorf("too many invalid attempts; aborting")
 }
 
+// PromptForAgentModels prompts once per enabled agent for an optional model
+// override. Blank input keeps the adapter default and is omitted from the
+// returned map.
+func PromptForAgentModels(
+	in io.Reader,
+	out io.Writer,
+	enabled []agents.ID,
+	suggest func(agents.ID) []string,
+) (map[agents.ID]string, error) {
+	models := make(map[agents.ID]string, len(enabled))
+	reader := bufio.NewReader(in)
+
+	for _, id := range enabled {
+		suggestions := suggest(id)
+		fmt.Fprintf(
+			out,
+			"Model for %s (blank = default; suggestions: %s): ",
+			id,
+			strings.Join(suggestions, ", "),
+		)
+
+		line, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("read input: %w", err)
+		}
+
+		model := strings.TrimSpace(line)
+		if model != "" {
+			models[id] = model
+		}
+
+		if errors.Is(err, io.EOF) {
+			break
+		}
+	}
+
+	return models, nil
+}
+
 // promptForAgents runs the interactive picker against real adapter detection.
 // Internal wrapper around PromptForAgentsWithDetection — it constructs a
 // production registryDetector backed by os/exec.LookPath so call sites in
 // resolvePriority don't need to know about the Detector seam.
 func promptForAgents(in io.Reader, out io.Writer) ([]string, error) {
 	return PromptForAgentsWithDetection(in, out, newRegistryDetector(exec.LookPath))
+}
+
+func newModelSuggester(lookPath agents.LookPathFunc) func(agents.ID) []string {
+	registry := agents.NewRegistry(catalog.DefaultAdapters(lookPath)...)
+
+	return func(id agents.ID) []string {
+		resolved, err := registry.Resolve(agents.ResolveInput{ProjectDefault: id})
+		if err != nil {
+			panic(err)
+		}
+
+		provider, ok := resolved.Adapter.(agents.ModelProvider)
+		if !ok {
+			panic(fmt.Sprintf("adapter %s does not provide model suggestions", id))
+		}
+
+		return provider.SuggestedModels()
+	}
 }
 
 // registryDetector is the production Detector implementation. It runs a real
@@ -240,6 +355,45 @@ func parseAndValidateAgents(raw string) ([]string, error) {
 		return nil, fmt.Errorf("at least one agent is required")
 	}
 	return priority, nil
+}
+
+func parseAndValidateModels(raw string, priority []string) (map[string]string, error) {
+	enabled := make(map[string]struct{}, len(priority))
+	for _, id := range priority {
+		enabled[id] = struct{}{}
+	}
+
+	models := make(map[string]string)
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+
+		id, model, ok := strings.Cut(part, "=")
+		if !ok {
+			return nil, fmt.Errorf("invalid --model entry %q: want agent=model", part)
+		}
+
+		id = strings.TrimSpace(id)
+		model = strings.TrimSpace(model)
+		if id == "" {
+			return nil, fmt.Errorf("invalid --model entry %q: missing agent", part)
+		}
+		if !agents.IsExecutionSupported(agents.ID(id)) {
+			return nil, fmt.Errorf("%s is not yet supported for execution", id)
+		}
+		if _, ok := enabled[id]; !ok {
+			return nil, fmt.Errorf("--model agent %q not present in --agents priority", id)
+		}
+		if _, dup := models[id]; dup {
+			return nil, fmt.Errorf("duplicate model override for agent %q", id)
+		}
+
+		models[id] = model
+	}
+
+	return models, nil
 }
 
 // gitignoreComment explains the Springfield entry to anyone browsing .gitignore.
@@ -362,4 +516,3 @@ func ensureGuardrailBlock(path string) (bool, error) {
 	}
 	return true, nil
 }
-
