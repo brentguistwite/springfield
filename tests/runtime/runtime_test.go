@@ -146,118 +146,33 @@ func TestRunnerSetsTimeoutOnCommand(t *testing.T) {
 	}
 }
 
-func TestRunnerFallsBackToNextAgentOnRateLimit(t *testing.T) {
-	registry := agents.NewRegistry(
-		claude.New(osexec.LookPath),
-		codex.New(osexec.LookPath),
-	)
-	clock := newFakeClock(time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC))
-
-	var calls []string
-	fakeRun := func(_ context.Context, cmd exec.Command, _ exec.EventHandler) exec.Result {
-		calls = append(calls, cmd.Name)
-		if cmd.Name == "claude" {
-			return exec.Result{
-				ExitCode: 1,
-				Err:      errors.New("rate limit exceeded"),
-				Events:   []exec.Event{{Type: exec.EventStderr, Data: "429 Too Many Requests"}},
-			}
-		}
-		// Codex fallback: emit a real work item so ValidateResult sees
-		// the positive completion signal Policy A requires.
-		return exec.Result{
-			ExitCode: 0,
-			Events: []exec.Event{
-				{Type: exec.EventStdout, Data: `{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"go test","exit_code":0,"status":"completed"}}`},
-				{Type: exec.EventStdout, Data: `{"type":"turn.completed"}`},
-			},
-		}
-	}
-
-	runner := runtime.NewTestRunner(registry, fakeRun, clock.now)
-	result := runner.Run(context.Background(), runtime.Request{
-		AgentIDs: []agents.ID{agents.AgentClaude, agents.AgentCodex},
-		Prompt:   "test",
-		WorkDir:  "/tmp/project",
-	})
-
-	if result.Status != runtime.StatusPassed {
-		t.Fatalf("expected passed, got %q (err: %v)", result.Status, result.Err)
-	}
-	if result.Agent != agents.AgentCodex {
-		t.Fatalf("expected codex to succeed, got %q", result.Agent)
-	}
-	if len(calls) != 2 || calls[0] != "claude" || calls[1] != "codex" {
-		t.Fatalf("expected fallback order [claude codex], got %v", calls)
-	}
-}
-
-func TestRunnerDoesNotFallbackOnGenericFailure(t *testing.T) {
-	registry := agents.NewRegistry(
-		claude.New(osexec.LookPath),
-		codex.New(osexec.LookPath),
-	)
-	clock := newFakeClock(time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC))
-
-	var calls []string
-	fakeRun := func(_ context.Context, cmd exec.Command, _ exec.EventHandler) exec.Result {
-		calls = append(calls, cmd.Name)
-		return exec.Result{ExitCode: 1, Err: errors.New("syntax error")}
-	}
-
-	runner := runtime.NewTestRunner(registry, fakeRun, clock.now)
-	result := runner.Run(context.Background(), runtime.Request{
-		AgentIDs: []agents.ID{agents.AgentClaude, agents.AgentCodex},
-		Prompt:   "test",
-		WorkDir:  "/tmp/project",
-	})
-
-	if result.Status != runtime.StatusFailed {
-		t.Fatalf("expected failed, got %q", result.Status)
-	}
-	if result.Agent != agents.AgentClaude {
-		t.Fatalf("expected first agent to be reported, got %q", result.Agent)
-	}
-	if len(calls) != 1 {
-		t.Fatalf("expected no fallback after generic failure, got %v", calls)
-	}
-}
-
 func TestRunnerUsesReorderedPriority(t *testing.T) {
-	registry := agents.NewRegistry(
-		claude.New(osexec.LookPath),
-		codex.New(osexec.LookPath),
-	)
+	first := &classifyingCommander{id: agents.AgentCodex, class: agents.ErrorClassRetryable}
+	second := &classifyingCommander{id: agents.AgentClaude, class: agents.ErrorClassFatal}
+	registry := agents.NewRegistry(first, second)
 	clock := newFakeClock(time.Date(2026, 4, 6, 10, 0, 0, 0, time.UTC))
 
 	var calls []string
 	fakeRun := func(_ context.Context, cmd exec.Command, _ exec.EventHandler) exec.Result {
 		calls = append(calls, cmd.Name)
-		if cmd.Name == "codex" {
-			return exec.Result{ExitCode: 1, Err: errors.New("rate limit exceeded")}
+		if cmd.Name == string(first.id) {
+			return exec.Result{ExitCode: 1, Err: errors.New("retryable failure")}
 		}
-		// Claude success: emit a tool_use/tool_result success pair so
-		// ValidateResult sees a positive completion signal.
-		return exec.Result{
-			ExitCode: 0,
-			Events: []exec.Event{
-				{Type: exec.EventStdout, Data: `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_01"},{"type":"tool_result","tool_use_id":"toolu_01","is_error":false}]}}`},
-			},
-		}
+		return exec.Result{ExitCode: 0}
 	}
 
 	runner := runtime.NewTestRunner(registry, fakeRun, clock.now)
 	result := runner.Run(context.Background(), runtime.Request{
-		AgentIDs: []agents.ID{agents.AgentCodex, agents.AgentClaude},
+		AgentIDs: []agents.ID{first.id, second.id},
 		Prompt:   "test",
 		WorkDir:  "/tmp/project",
 	})
 
-	if result.Agent != agents.AgentClaude {
-		t.Fatalf("expected fallback to claude, got %q", result.Agent)
+	if result.Agent != second.id {
+		t.Fatalf("expected fallback to %q, got %q", second.id, result.Agent)
 	}
-	if len(calls) != 2 || calls[0] != "codex" || calls[1] != "claude" {
-		t.Fatalf("expected reordered calls [codex claude], got %v", calls)
+	if len(calls) != 2 || calls[0] != string(first.id) || calls[1] != string(second.id) {
+		t.Fatalf("expected reordered calls [%s %s], got %v", first.id, second.id, calls)
 	}
 }
 
@@ -419,7 +334,7 @@ type validatingCommander struct {
 	validateCalled bool
 }
 
-func (c *validatingCommander) ID() agents.ID       { return c.id }
+func (c *validatingCommander) ID() agents.ID { return c.id }
 func (c *validatingCommander) Metadata() agents.Metadata {
 	return agents.Metadata{ID: c.id, Name: string(c.id), Binary: string(c.id)}
 }

@@ -114,7 +114,11 @@ func (r Runner) Run(ctx context.Context, req Request) Result {
 		if status == StatusPassed {
 			return last
 		}
-		if !IsRateLimitError(execResult.Err, execResult.Events) {
+		class := agents.ErrorClassFatal
+		if classifier, ok := resolved.Adapter.(agents.ErrorClassifier); ok {
+			class = classifier.ClassifyError(execResult.Events, execResult.ExitCode, execResult.Err)
+		}
+		if class == agents.ErrorClassFatal {
 			return last
 		}
 	}
