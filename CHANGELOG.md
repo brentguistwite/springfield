@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.4.0](https://github.com/brentguistwite/springfield/compare/v0.3.2...v0.4.0) (2026-05-02)
+
+
+### Features
+
+* **agents:** add ErrorClassifier + ModelProvider adapter interfaces ([e3ca63c](https://github.com/brentguistwite/springfield/commit/e3ca63c4bf615677f749c3c459744ec5581840ce))
+* **claude:** SuggestedModels + ClassifyError + per-agent model ([1f62cd7](https://github.com/brentguistwite/springfield/commit/1f62cd7c2426de445e8541be08001a07d3d531ed))
+* **codex:** SuggestedModels + ClassifyError + per-agent model ([6eb9503](https://github.com/brentguistwite/springfield/commit/6eb95033997d0f84a2c3aa535cf2811893adf70d))
+* **config:** per-agent model fields for Claude + Codex ([b4cea0b](https://github.com/brentguistwite/springfield/commit/b4cea0bd5e8112676cc6c26e1f9c54fb341b273d))
+* **execution:** evidence directory writer ([55890f0](https://github.com/brentguistwite/springfield/commit/55890f06093e4874fc9983d4e113f776a5378b94))
+* **gemini:** SuggestedModels + ClassifyError ([24247b7](https://github.com/brentguistwite/springfield/commit/24247b7e61f6e0993101b34b982888b0a313cf28))
+* **init:** prompt for model per agent; --model flag for non-interactive ([e205c46](https://github.com/brentguistwite/springfield/commit/e205c46f3c27d2ce29b6fe9e729a9eafb1cb86e6))
+* **runtime:** write evidence dir per slice; plumb path to conductor state ([d1af3ef](https://github.com/brentguistwite/springfield/commit/d1af3effef2db40aaa76d6f18d962e8eedd6b446))
+* **status:** surface evidence path per slice ([69d0b68](https://github.com/brentguistwite/springfield/commit/69d0b68ce84e8b85af488446ca1847b0d1921503))
+
+
+### Bug Fixes
+
+* **gemini:** narrow retryable matching ([44c75ad](https://github.com/brentguistwite/springfield/commit/44c75adba5dd52768cae2a33125a2806f4ae6ec2))
+* **gemini:** refresh suggested models ([3b523fe](https://github.com/brentguistwite/springfield/commit/3b523fe0bd46bce9d54665a23a8ee90a13c74ccf))
+* **init:** preserve buffered input across prompts ([3419049](https://github.com/brentguistwite/springfield/commit/34190490cced2d065caaeb212f273ef4a7002ab7))
+* **init:** tighten model suggester and prompt gating ([2721d7e](https://github.com/brentguistwite/springfield/commit/2721d7ecc7ecdd936d188f49b18fbb4d6549c07e))
+* **start:** allow Springfield evidence files in tamper checks ([c416703](https://github.com/brentguistwite/springfield/commit/c416703f0515cf9ee1da5ac09d617e236fff26e7))
+
 ## [0.3.2](https://github.com/brentguistwite/springfield/compare/v0.3.1...v0.3.2) (2026-04-29)
 
 
