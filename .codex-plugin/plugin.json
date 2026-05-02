@@ -1,7 +1,7 @@
 {
   "name": "springfield",
   "description": "Springfield plugin for planning, starting, inspecting, and recovering project work.",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "author": {
     "name": "Brent Guistwite"
   },
