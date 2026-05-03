@@ -190,19 +190,29 @@ func (s *PlanState) IsIntegrated() bool {
 	if s == nil || s.Status != StatusCompleted {
 		return false
 	}
-	if s.Merge != nil && s.Merge.Status != MergeSucceeded {
-		return false
-	}
-	if s.Merge != nil && s.Merge.SourceSyncStatus == "failed" {
-		// Source resync left the source checkout in a phantom-dirty
-		// state. Until the operator resolves it, the next preflight
-		// would attribute its dirty-source rejection to the wrong
-		// plan; keep this plan flagged as not-integrated so the queue
-		// surface points at the real owner.
-		return false
-	}
-	if s.Cleanup != nil && s.Cleanup.Status == CleanupFailed {
-		return false
+	if s.Merge != nil {
+		if s.Merge.Status != MergeSucceeded {
+			return false
+		}
+		if s.Merge.SourceSyncStatus == "failed" {
+			// Source resync left the source checkout in a phantom-
+			// dirty state. Until the operator resolves it, the next
+			// preflight would attribute its dirty-source rejection to
+			// the wrong plan; keep this plan flagged as not-integrated
+			// so the queue surface points at the real owner.
+			return false
+		}
+		// Cleanup ledger MUST be durably recorded for a plan-unit-
+		// driven flow. A cleanup-state-save-failed leaves Cleanup nil
+		// on disk while the in-memory cleanup may have run and even
+		// preserved artifacts; treating that as integrated would let
+		// the next start advance past the plan with no audit trail.
+		if s.Cleanup == nil {
+			return false
+		}
+		if s.Cleanup.Status == CleanupFailed {
+			return false
+		}
 	}
 	return true
 }

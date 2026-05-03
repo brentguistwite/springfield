@@ -598,6 +598,76 @@ func TestIntegrateRefusesResetWhenSourceIsDirty(t *testing.T) {
 	}
 }
 
+// TestIsIntegratedFalseWhenMergeSucceededButCleanupNil proves that a
+// plan whose merge is durably Succeeded but whose Cleanup ledger was
+// never persisted (e.g. cleanup-state-save-failed) must NOT advance the
+// queue. Without this gate a transient state.json write failure during
+// the cleanup save would let the next start treat the plan as fully
+// integrated even though preserved artifacts may still be on disk.
+func TestIsIntegratedFalseWhenMergeSucceededButCleanupNil(t *testing.T) {
+	st := &conductor.PlanState{
+		Status: conductor.StatusCompleted,
+		Merge: &conductor.MergeOutcome{
+			Status: conductor.MergeSucceeded,
+		},
+		Cleanup: nil,
+	}
+	if st.IsIntegrated() {
+		t.Fatalf("MergeSucceeded with Cleanup=nil must not count as integrated")
+	}
+}
+
+// TestIntegrateRetryAfterDriftPreservesPriorMergeWorktree proves the
+// preservation gate: a prior refused merge left .merges/<plan> on disk
+// for inspection. A second attempt that ALSO refuses (target still
+// drifted) must NOT delete that preserved worktree before the refusal —
+// otherwise the operator loses the only artifact the first failure was
+// kept around to support.
+func TestIntegrateRetryAfterDriftPreservesPriorMergeWorktree(t *testing.T) {
+	root, project, wt := projectFixture(t, "alpha", "springfield/alpha", "main", "AAAA", "BBBB")
+	prior := project.State.Plans["alpha"]
+	prior.PlanHead = "BBBB"
+	priorMergeWt := filepath.Join(root, ".worktrees", ".merges", "alpha")
+	prior.Merge = &conductor.MergeOutcome{
+		Status:       conductor.MergeRefused,
+		Mode:         string(planmerge.ModeFFOnly),
+		Reason:       planmerge.ReasonTargetDrift,
+		TargetRef:    "main",
+		WorktreePath: priorMergeWt,
+	}
+	prior.Cleanup = &conductor.CleanupOutcome{
+		Status: conductor.CleanupSkipped,
+		MergeWorktree: &conductor.ArtifactCleanup{
+			Status: conductor.CleanupPreserved,
+			Path:   priorMergeWt,
+			Reason: planmerge.ReasonTargetDrift,
+		},
+	}
+	if err := project.SaveState(); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+
+	g := newFakeGit()
+	g.headByDir[wt] = "BBBB"
+	// Target STILL drifted on retry: refused again.
+	g.resolveByRef["main"] = "ZZZZ"
+
+	res := planmerge.Integrate(planmerge.IntegrateInput{
+		Project: project, PlanID: "alpha", ControlRoot: root, WorktreeBase: ".worktrees", Git: g,
+	})
+	if res.Reason != planmerge.ReasonTargetDrift {
+		t.Fatalf("Reason = %q, want target-drift", res.Reason)
+	}
+	// The retry refusal must not have touched the preserved merge wt.
+	if len(g.worktreeRemoveAll) != 0 {
+		t.Fatalf("preserved merge worktree must not be removed before a viable new attempt; got %v", g.worktreeRemoveAll)
+	}
+	// Cleanup ledger still preserves the merge wt; the path is not lost.
+	if res.Cleanup.MergeWorktree == nil || res.Cleanup.MergeWorktree.Path == "" {
+		t.Fatalf("preserved merge worktree path lost from cleanup record: %+v", res.Cleanup.MergeWorktree)
+	}
+}
+
 // TestIsIntegratedFalseWhenSourceSyncFailed proves the queue-correctness
 // gate: a plan whose merge succeeded but whose source resync failed must
 // not advance, otherwise the next plan trips the dirty-source preflight

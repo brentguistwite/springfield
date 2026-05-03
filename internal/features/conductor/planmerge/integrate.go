@@ -122,15 +122,6 @@ func Integrate(in IntegrateInput) IntegrateResult {
 		return finishSuccessfulMerge(in, state, now, state.Merge)
 	}
 
-	// Re-entry from prior refused/failed merge: a leftover merge worktree
-	// at the recorded path would block `git worktree add` on the second
-	// attempt. Best-effort remove before re-creating; a real removal
-	// failure surfaces later when the new add fails with an actionable
-	// error.
-	if state.Merge != nil && state.Merge.WorktreePath != "" {
-		_ = in.Git.WorktreeRemoveForce(in.ControlRoot, state.Merge.WorktreePath)
-	}
-
 	progress(in.Progress, "merge %s: capturing plan head\n", in.PlanID)
 	planHead, err := in.Git.Head(state.WorktreePath)
 	if err != nil {
@@ -190,6 +181,13 @@ func Integrate(in IntegrateInput) IntegrateResult {
 		merge := failedMerge(state, currentTargetHead, "", ReasonMergeFailed,
 			fmt.Sprintf("cannot prepare merge worktree parent dir: %v", err), now())
 		return finalize(in, state, now, merge, ReasonMergeFailed)
+	}
+	// Re-entry from a prior refused/failed merge may have preserved a
+	// merge worktree at this path. Remove ONLY now — after every preflight
+	// (planHead, drift, recovery) has passed — so a fresh refusal cannot
+	// destroy the prior preserved artifact before a viable new attempt.
+	if state.Merge != nil && state.Merge.WorktreePath != "" {
+		_ = in.Git.WorktreeRemoveForce(in.ControlRoot, state.Merge.WorktreePath)
 	}
 	if err := in.Git.WorktreeAddDetached(in.ControlRoot, mergeWtPath, targetRef); err != nil {
 		merge := failedMerge(state, currentTargetHead, "", ReasonMergeFailed,
@@ -358,7 +356,16 @@ func resyncSourceCheckout(g Git, controlRoot, targetRef, newSHA string) (string,
 // finalize assigns merge + preservation cleanup to state and persists it.
 // Used on every non-success terminal path so partial state never leaks to
 // disk after the merge phase has decided.
+//
+// When this attempt did NOT create a new merge worktree (e.g. drift
+// refusal before WorktreeAddDetached), the prior merge worktree path —
+// carried forward from a preceding refused/failed attempt — is retained
+// so a repeated refusal does not erase the only artifact the first
+// failure preserved for inspection.
 func finalize(in IntegrateInput, state *conductor.PlanState, now func() time.Time, merge *conductor.MergeOutcome, reason string) IntegrateResult {
+	if merge.WorktreePath == "" {
+		merge.WorktreePath = priorMergeWorktreePath(state)
+	}
 	cleanup := preserveAllCleanup(state, merge.WorktreePath, reason)
 	state.Merge = merge
 	state.Cleanup = cleanup
@@ -374,6 +381,20 @@ func finalize(in IntegrateInput, state *conductor.PlanState, now func() time.Tim
 	}
 	_ = now
 	return out
+}
+
+// priorMergeWorktreePath returns the most recent recorded merge worktree
+// path from prior state, preferring the cleanup ledger (which is the
+// authoritative artifact record) over Merge.WorktreePath. Returns "" when
+// no prior path was recorded.
+func priorMergeWorktreePath(state *conductor.PlanState) string {
+	if state.Cleanup != nil && state.Cleanup.MergeWorktree != nil && state.Cleanup.MergeWorktree.Path != "" {
+		return state.Cleanup.MergeWorktree.Path
+	}
+	if state.Merge != nil && state.Merge.WorktreePath != "" {
+		return state.Merge.WorktreePath
+	}
+	return ""
 }
 
 // refused builds a MergeOutcome with Status=Refused.
