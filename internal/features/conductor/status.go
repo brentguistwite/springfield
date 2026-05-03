@@ -1,0 +1,204 @@
+package conductor
+
+import (
+	"fmt"
+	"strings"
+)
+
+// RegistryStatus is the rendered plan-registry surface for `springfield status`
+// when no batch runtime state exists.
+type RegistryStatus struct {
+	HasConfig bool
+	Units     []PlanUnitStatus
+	// LegacyPlans lists plan names projected from legacy sequential/batches
+	// when PlanUnits is empty. These are surfaced truthfully instead of
+	// claiming the registry is empty for upgraded repos that have not yet
+	// migrated to plan_units.
+	LegacyPlans []LegacyPlanStatus
+	Completed   int
+	Total       int
+	Failures    []PlanFailure
+	NextStep    string
+}
+
+// PlanUnitStatus is one ordered plan unit annotated with its current state.
+type PlanUnitStatus struct {
+	Unit         PlanUnit
+	Status       PlanStatus
+	Error        string
+	Agent        string
+	EvidencePath string
+	Attempts     int
+}
+
+// LegacyPlanStatus is one legacy sequential/batches plan name annotated with
+// its current execution state.
+type LegacyPlanStatus struct {
+	Name         string
+	Status       PlanStatus
+	Error        string
+	Agent        string
+	EvidencePath string
+	Attempts     int
+}
+
+// nextStepNoExecution is the truthful slice-1 message: the registry is the
+// product surface; execution of registered plans is a later slice. Pointing at
+// `springfield start` here is a dead end because `start` operates on the batch
+// runtime state and rejects callers that lack an active batch.
+const nextStepNoExecution = "Plan registry recorded. Springfield does not execute registered plans yet — that lands in a later slice. Use \"springfield plans add\"/\"plans reorder\"/\"plans remove\" to manage the registry."
+
+// BuildRegistryStatus pairs each ordered plan unit with its mutable state and
+// computes overall counts plus the suggested next action.
+func BuildRegistryStatus(project *Project) *RegistryStatus {
+	if project == nil || project.Config == nil {
+		return &RegistryStatus{NextStep: "No Springfield execution config. Run \"springfield init\", then \"springfield plans add\" to register a plan."}
+	}
+
+	rs := &RegistryStatus{HasConfig: true}
+
+	if len(project.Config.PlanUnits) == 0 {
+		legacy := legacyPlanNames(project.Config)
+		if len(legacy) == 0 {
+			rs.NextStep = "No plans configured. Run \"springfield plans add\" to register one."
+			return rs
+		}
+		// Legacy sequential/batches present; surface them truthfully so an
+		// upgraded repo isn't told its existing config is empty.
+		var failures []PlanFailure
+		for _, name := range legacy {
+			st := project.PlanStatus(name)
+			entry := LegacyPlanStatus{
+				Name:         name,
+				Status:       st,
+				Error:        project.PlanError(name),
+				Agent:        project.PlanAgent(name),
+				EvidencePath: project.PlanEvidencePath(name),
+				Attempts:     project.PlanAttempts(name),
+			}
+			rs.LegacyPlans = append(rs.LegacyPlans, entry)
+			rs.Total++
+			switch st {
+			case StatusCompleted:
+				rs.Completed++
+			case StatusFailed:
+				failures = append(failures, PlanFailure{
+					Plan:         name,
+					Error:        entry.Error,
+					Agent:        entry.Agent,
+					EvidencePath: entry.EvidencePath,
+					Attempts:     entry.Attempts,
+				})
+			}
+		}
+		rs.Failures = failures
+		rs.NextStep = "Legacy sequential/batches plans detected. Run \"springfield plans add\" to register them in the new plan registry; this slice does not yet execute either surface."
+		return rs
+	}
+
+	ordered := make([]PlanUnit, len(project.Config.PlanUnits))
+	copy(ordered, project.Config.PlanUnits)
+	idsInOrder := OrderedPlanUnitIDs(ordered)
+	byID := make(map[string]PlanUnit, len(ordered))
+	for _, u := range ordered {
+		byID[u.ID] = u
+	}
+
+	var failures []PlanFailure
+	for _, id := range idsInOrder {
+		u := byID[id]
+		st := project.PlanStatus(id)
+		entry := PlanUnitStatus{
+			Unit:         u,
+			Status:       st,
+			Error:        project.PlanError(id),
+			Agent:        project.PlanAgent(id),
+			EvidencePath: project.PlanEvidencePath(id),
+			Attempts:     project.PlanAttempts(id),
+		}
+		rs.Units = append(rs.Units, entry)
+		rs.Total++
+		switch st {
+		case StatusCompleted:
+			rs.Completed++
+		case StatusFailed:
+			failures = append(failures, PlanFailure{
+				Plan:         id,
+				Error:        entry.Error,
+				Agent:        entry.Agent,
+				EvidencePath: entry.EvidencePath,
+				Attempts:     entry.Attempts,
+			})
+		}
+	}
+	rs.Failures = failures
+
+	switch {
+	case rs.Completed == rs.Total && rs.Total > 0:
+		rs.NextStep = "All registered plans completed."
+	default:
+		rs.NextStep = nextStepNoExecution
+	}
+	return rs
+}
+
+// legacyPlanNames flattens sequential then batches into the order BuildSchedule
+// would consume.
+func legacyPlanNames(cfg *Config) []string {
+	out := make([]string, 0, len(cfg.Sequential))
+	out = append(out, cfg.Sequential...)
+	for _, b := range cfg.Batches {
+		out = append(out, b...)
+	}
+	return out
+}
+
+// Render produces a human-readable status block for the plan registry surface.
+func (rs *RegistryStatus) Render() string {
+	var b strings.Builder
+	if !rs.HasConfig {
+		fmt.Fprintln(&b, rs.NextStep)
+		return b.String()
+	}
+	if rs.Total == 0 {
+		fmt.Fprintln(&b, "No active Springfield batch.")
+		fmt.Fprintln(&b, rs.NextStep)
+		return b.String()
+	}
+
+	fmt.Fprintln(&b, "No active Springfield batch.")
+	fmt.Fprintf(&b, "Plans: %d configured, %d completed\n", rs.Total, rs.Completed)
+	fmt.Fprintln(&b)
+
+	if len(rs.LegacyPlans) > 0 {
+		fmt.Fprintln(&b, "Legacy plan list (sequential/batches):")
+		for i, p := range rs.LegacyPlans {
+			fmt.Fprintf(&b, "  %d. %s  %s\n", i+1, p.Name, p.Status)
+			if p.Error != "" {
+				fmt.Fprintf(&b, "     error: %s\n", p.Error)
+			}
+			if p.EvidencePath != "" {
+				fmt.Fprintf(&b, "     evidence: %s\n", p.EvidencePath)
+			}
+		}
+	} else {
+		fmt.Fprintln(&b, "Plan registry:")
+		for i, p := range rs.Units {
+			title := p.Unit.Title
+			if title == "" {
+				title = p.Unit.ID
+			}
+			fmt.Fprintf(&b, "  %d. %s  %s  %s\n", i+1, p.Unit.ID, p.Status, title)
+			fmt.Fprintf(&b, "     path: %s\n", p.Unit.Path)
+			if p.Error != "" {
+				fmt.Fprintf(&b, "     error: %s\n", p.Error)
+			}
+			if p.EvidencePath != "" {
+				fmt.Fprintf(&b, "     evidence: %s\n", p.EvidencePath)
+			}
+		}
+	}
+	fmt.Fprintln(&b)
+	fmt.Fprintf(&b, "Next step: %s\n", rs.NextStep)
+	return b.String()
+}

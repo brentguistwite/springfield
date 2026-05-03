@@ -12,6 +12,28 @@ type Config struct {
 	Tool                       string     `json:"tool"`
 	Batches                    [][]string `json:"batches"`
 	Sequential                 []string   `json:"sequential"`
+	// PlanUnits is the explicit sequential plan-unit registry. When non-empty,
+	// it is the source of truth for execution order; Sequential/Batches are
+	// kept only as a projection for legacy in-process consumers and ignored
+	// by the scheduler.
+	PlanUnits []PlanUnit `json:"plan_units,omitempty"`
+}
+
+// PlanUnit is one durable Springfield plan-unit registration.
+// Mutable runtime data (status, attempts, timestamps, evidence, error) lives
+// in [PlanState] under [State]; PlanUnit is config-only.
+type PlanUnit struct {
+	ID          string `json:"id"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	// Path is the canonical project-relative location of the plan source file.
+	Path string `json:"path"`
+	// Ref is the optional base ref the plan should branch from.
+	Ref string `json:"ref,omitempty"`
+	// PlanBranch is the optional explicit branch name for the plan worktree.
+	PlanBranch string `json:"plan_branch,omitempty"`
+	// Order is a 1-based execution order index. Unique within a config.
+	Order int `json:"order"`
 }
 
 // PlanStatus describes conductor state for one plan.

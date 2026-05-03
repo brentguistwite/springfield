@@ -2,6 +2,7 @@ package conductor
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"time"
 
@@ -21,8 +22,23 @@ type Project struct {
 }
 
 // LoadProject resolves the Springfield project root from startDir, then loads
-// conductor config and state from project-local runtime storage.
+// conductor config and state from project-local runtime storage. Plan-unit
+// invariants are validated; an invalid registry returns a structured error.
 func LoadProject(startDir string) (*Project, error) {
+	project, err := LoadProjectRaw(startDir)
+	if err != nil {
+		return nil, err
+	}
+	if err := ValidateConfigPlanUnits(project.Config, project.runtime.RootDir); err != nil {
+		return nil, fmt.Errorf("invalid execution config: %w", err)
+	}
+	return project, nil
+}
+
+// LoadProjectRaw decodes config and state without validating plan_units.
+// Use only from repair-oriented flows that need to fix an invalid registry
+// without first hand-editing JSON. Production callers should use [LoadProject].
+func LoadProjectRaw(startDir string) (*Project, error) {
 	runtime, err := storage.ResolveFrom(startDir)
 	if err != nil {
 		return nil, err
@@ -45,8 +61,19 @@ func LoadProject(startDir string) (*Project, error) {
 	}, nil
 }
 
-// SaveConfig persists conductor config.
+// SaveConfig persists conductor config after validating plan_units invariants.
 func (p *Project) SaveConfig() error {
+	if err := ValidateConfigPlanUnits(p.Config, p.runtime.RootDir); err != nil {
+		return fmt.Errorf("invalid execution config: %w", err)
+	}
+	return p.runtime.WriteJSON(configPath, p.Config)
+}
+
+// SaveConfigUnchecked persists conductor config without validating plan_units.
+// Repair flows use this so a partially fixed registry can be persisted even
+// when other entries remain invalid; iterative repair eventually returns the
+// registry to a state that passes [LoadProject].
+func (p *Project) SaveConfigUnchecked() error {
 	return p.runtime.WriteJSON(configPath, p.Config)
 }
 
@@ -55,8 +82,14 @@ func (p *Project) SaveState() error {
 	return p.runtime.WriteJSON(statePath, p.State)
 }
 
-// AllPlans returns sequential plans followed by flattened batch plans.
+// AllPlans returns the configured plans in execution order.
+//
+// When PlanUnits is populated, those are returned in Order/ID order; otherwise
+// the legacy Sequential then flattened-Batches projection is returned.
 func (p *Project) AllPlans() []string {
+	if len(p.Config.PlanUnits) > 0 {
+		return OrderedPlanUnitIDs(p.Config.PlanUnits)
+	}
 	plans := make([]string, 0, len(p.Config.Sequential))
 	plans = append(plans, p.Config.Sequential...)
 	for _, batch := range p.Config.Batches {

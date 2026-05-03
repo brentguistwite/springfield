@@ -8,6 +8,7 @@ import (
 
 	"springfield/internal/core/config"
 	"springfield/internal/features/batch"
+	"springfield/internal/features/execution"
 )
 
 // NewStatusCommand shows status for the active Springfield batch.
@@ -31,8 +32,7 @@ func NewStatusCommand() *cobra.Command {
 				return err
 			}
 			if !hasRun || run.ActiveBatchID == "" {
-				fmt.Fprintln(cmd.OutOrStdout(), "No active Springfield batch. Run \"springfield plan\" to create one.")
-				return nil
+				return printPlanRegistry(cmd.OutOrStdout(), root)
 			}
 
 			paths, err := batch.NewPaths(root, run.ActiveBatchID)
@@ -79,6 +79,15 @@ func printBatchStatus(w io.Writer, b batch.Batch, run batch.Run) error {
 			fmt.Fprintf(w, "    Evidence: %s\n", s.EvidencePath)
 		}
 	}
+	return nil
+}
+
+func printPlanRegistry(w io.Writer, root string) error {
+	rendered, err := execution.RenderRegistryStatus(root)
+	if err != nil {
+		return err
+	}
+	fmt.Fprint(w, rendered)
 	return nil
 }
 

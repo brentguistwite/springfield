@@ -78,11 +78,8 @@ func TestSpringfieldStatusNoStateReportsCleanly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status with no batch should exit 0, got err=%v\n%s", err, output)
 	}
-	if !strings.Contains(output, "No active Springfield batch") {
-		t.Errorf("expected no-batch informational message, got:\n%s", output)
-	}
-	if !strings.Contains(output, "springfield plan") {
-		t.Errorf("expected next-step hint, got:\n%s", output)
+	if !strings.Contains(output, "springfield init") || !strings.Contains(output, "springfield plans add") {
+		t.Errorf("expected init+plans add registration hint, got:\n%s", output)
 	}
 }
 

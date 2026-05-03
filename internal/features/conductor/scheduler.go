@@ -10,7 +10,21 @@ type Schedule struct {
 }
 
 // BuildSchedule derives sequential single-plan phases plus batch phases.
+//
+// When cfg.PlanUnits is non-empty, the schedule is derived from PlanUnits in
+// stable Order (ties broken by ID) and Sequential/Batches are ignored. This
+// keeps one source of truth for execution order while preserving the legacy
+// projection inputs in config.
 func BuildSchedule(cfg *Config) *Schedule {
+	if len(cfg.PlanUnits) > 0 {
+		ordered := OrderedPlanUnitIDs(cfg.PlanUnits)
+		phases := make([]phase, 0, len(ordered))
+		for _, id := range ordered {
+			phases = append(phases, phase{plans: []string{id}})
+		}
+		return &Schedule{phases: phases}
+	}
+
 	phases := make([]phase, 0, len(cfg.Sequential)+len(cfg.Batches))
 	for _, name := range cfg.Sequential {
 		phases = append(phases, phase{plans: []string{name}})
