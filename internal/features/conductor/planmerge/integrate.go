@@ -397,9 +397,12 @@ func priorMergeWorktreePath(state *conductor.PlanState) string {
 	return ""
 }
 
-// refused builds a MergeOutcome with Status=Refused.
+// refused builds a MergeOutcome with Status=Refused. Prior PostMergeHead
+// and source-sync diagnostics are carried forward so a refusal never
+// erases a SHA a previous attempt persisted — the on-disk record stays
+// honest about what landed before the refusal.
 func refused(state *conductor.PlanState, mergeWtPath, reason, msg string, when time.Time) *conductor.MergeOutcome {
-	return &conductor.MergeOutcome{
+	out := &conductor.MergeOutcome{
 		Status:       conductor.MergeRefused,
 		Mode:         string(ModeFFOnly),
 		Reason:       reason,
@@ -408,11 +411,14 @@ func refused(state *conductor.PlanState, mergeWtPath, reason, msg string, when t
 		WorktreePath: mergeWtPath,
 		AttemptedAt:  when,
 	}
+	carryForwardPriorMergeFields(state, out)
+	return out
 }
 
-// failedMerge builds a MergeOutcome with Status=Failed.
+// failedMerge builds a MergeOutcome with Status=Failed. Prior diagnostics
+// are carried forward (see refused).
 func failedMerge(state *conductor.PlanState, targetHead, mergeWtPath, reason, msg string, when time.Time) *conductor.MergeOutcome {
-	return &conductor.MergeOutcome{
+	out := &conductor.MergeOutcome{
 		Status:       conductor.MergeFailed,
 		Mode:         string(ModeFFOnly),
 		Reason:       reason,
@@ -421,6 +427,29 @@ func failedMerge(state *conductor.PlanState, targetHead, mergeWtPath, reason, ms
 		TargetHead:   targetHead,
 		WorktreePath: mergeWtPath,
 		AttemptedAt:  when,
+	}
+	carryForwardPriorMergeFields(state, out)
+	return out
+}
+
+// carryForwardPriorMergeFields propagates SHA/diagnostic fields from a
+// prior MergeOutcome into a new refusal/failure outcome. Without this
+// step, a refusal that follows a prior attempt that already published
+// (PostMergeHead set) would erase the post-merge SHA from the durable
+// record, losing the trail an operator needs to understand what landed.
+func carryForwardPriorMergeFields(state *conductor.PlanState, out *conductor.MergeOutcome) {
+	if state == nil || state.Merge == nil {
+		return
+	}
+	prior := state.Merge
+	if out.PostMergeHead == "" && prior.PostMergeHead != "" {
+		out.PostMergeHead = prior.PostMergeHead
+	}
+	if out.SourceSyncStatus == "" && prior.SourceSyncStatus != "" {
+		out.SourceSyncStatus = prior.SourceSyncStatus
+	}
+	if out.SourceSyncError == "" && prior.SourceSyncError != "" {
+		out.SourceSyncError = prior.SourceSyncError
 	}
 }
 

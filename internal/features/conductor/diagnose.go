@@ -69,6 +69,13 @@ func Diagnose(project *Project) *Diagnosis {
 		if !ok || ps == nil || ps.Merge == nil {
 			continue
 		}
+		// MergePending means execution finished but planmerge.Integrate
+		// has not yet run. The next `springfield start` will pick the
+		// plan up — surfacing it as a "merge issue" would mislead the
+		// operator that something needs fixing.
+		if ps.Merge.Status == MergePending {
+			continue
+		}
 		if ps.Merge.Status == MergeSucceeded && (ps.Cleanup == nil || ps.Cleanup.Status != CleanupFailed) {
 			continue
 		}

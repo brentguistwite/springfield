@@ -212,6 +212,14 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			Status:      conductor.MergePending,
 			AttemptedAt: now(),
 		}
+		// Capture plan_head from the execution worktree at the boundary
+		// between execution and merge phases. The slice contract names
+		// plan_head as a required ref/SHA; recording it here means the
+		// durable state is honest even if the process dies before
+		// planmerge.Integrate runs and re-captures it.
+		if planHead, err := in.Manager.Git.Head(ctx.WorktreeRoot); err == nil {
+			endState.PlanHead = planHead
+		}
 	}
 	in.Project.State.Plans[planID] = endState
 	saveErr := in.Project.SaveState()

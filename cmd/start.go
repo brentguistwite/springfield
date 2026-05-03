@@ -1049,19 +1049,24 @@ func renderMergeOutcome(w io.Writer, res planmerge.IntegrateResult) {
 
 func renderCleanupOutcome(w io.Writer, c *conductor.CleanupOutcome) {
 	fmt.Fprintf(w, "Cleanup: %s\n", c.Status)
-	for label, art := range map[string]*conductor.ArtifactCleanup{
-		"merge worktree":     c.MergeWorktree,
-		"execution worktree": c.ExecutionWorktree,
-		"plan branch":        c.PlanBranch,
-	} {
+	pairs := []struct {
+		label    string
+		artifact *conductor.ArtifactCleanup
+	}{
+		{"merge worktree", c.MergeWorktree},
+		{"execution worktree", c.ExecutionWorktree},
+		{"plan branch", c.PlanBranch},
+	}
+	for _, p := range pairs {
+		art := p.artifact
 		if art == nil {
 			continue
 		}
 		switch art.Status {
 		case conductor.CleanupPreserved:
-			fmt.Fprintf(w, "  %s: preserved (%s)\n", label, displayArtifact(art))
+			fmt.Fprintf(w, "  %s: preserved (%s)\n", p.label, displayArtifact(art))
 		case conductor.CleanupFailed:
-			fmt.Fprintf(w, "  %s: cleanup failed — %s (preserved at %s)\n", label, art.Error, displayArtifact(art))
+			fmt.Fprintf(w, "  %s: cleanup failed — %s (preserved at %s)\n", p.label, art.Error, displayArtifact(art))
 		}
 	}
 }

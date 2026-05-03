@@ -192,24 +192,33 @@ func renderCleanup(b *strings.Builder, c *CleanupOutcome) {
 		return
 	}
 	fmt.Fprintf(b, "     cleanup: %s\n", c.Status)
-	for label, art := range cleanupArtifactPairs(c) {
+	for _, p := range cleanupArtifactPairs(c) {
+		art := p.artifact
 		if art == nil {
 			continue
 		}
 		switch art.Status {
 		case CleanupPreserved:
-			fmt.Fprintf(b, "       %s preserved: %s\n", label, displayArtifactRef(art))
+			fmt.Fprintf(b, "       %s preserved: %s\n", p.label, displayArtifactRef(art))
 		case CleanupFailed:
-			fmt.Fprintf(b, "       %s cleanup failed: %s (preserved at %s)\n", label, art.Error, displayArtifactRef(art))
+			fmt.Fprintf(b, "       %s cleanup failed: %s (preserved at %s)\n", p.label, art.Error, displayArtifactRef(art))
 		}
 	}
 }
 
-func cleanupArtifactPairs(c *CleanupOutcome) map[string]*ArtifactCleanup {
-	return map[string]*ArtifactCleanup{
-		"merge worktree":     c.MergeWorktree,
-		"execution worktree": c.ExecutionWorktree,
-		"plan branch":        c.PlanBranch,
+// cleanupArtifactPair pairs a label with one cleanup artifact in the
+// canonical render order so status / diagnose / start.go produce stable,
+// run-to-run output. A map iteration would randomize order in Go.
+type cleanupArtifactPair struct {
+	label    string
+	artifact *ArtifactCleanup
+}
+
+func cleanupArtifactPairs(c *CleanupOutcome) []cleanupArtifactPair {
+	return []cleanupArtifactPair{
+		{"merge worktree", c.MergeWorktree},
+		{"execution worktree", c.ExecutionWorktree},
+		{"plan branch", c.PlanBranch},
 	}
 }
 

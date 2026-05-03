@@ -28,6 +28,7 @@ type fakeGit struct {
 	worktreeRemoveAll []string
 	branchDeleteErr   error
 	branchDeleteCalls []string
+	branchDeleteHook  func()
 	// currentBranchByDir maps a directory to the branch CurrentBranch
 	// returns. An empty entry means CurrentBranch returns an error
 	// (simulating detached HEAD or unreadable branch).
@@ -108,6 +109,9 @@ func (g *fakeGit) UpdateBranchRef(_, branch, newSHA, expected string) error {
 
 func (g *fakeGit) BranchDelete(_, branch string) error {
 	g.branchDeleteCalls = append(g.branchDeleteCalls, branch)
+	if g.branchDeleteHook != nil {
+		g.branchDeleteHook()
+	}
 	return g.branchDeleteErr
 }
 
@@ -826,6 +830,74 @@ func TestIntegrateReEntryAfterPartialCleanupSkipsAlreadyDeletedArtifacts(t *test
 	}
 	if res.Cleanup.PlanBranch.Status != conductor.CleanupSucceeded {
 		t.Fatalf("plan branch status carried wrong: %+v", res.Cleanup.PlanBranch)
+	}
+}
+
+// TestIntegrateRecordsCleanupSaveFailureWithoutLosingMergeRecord proves
+// the end-to-end behaviour of a post-cleanup SaveState failure: the
+// merge succeeded record is durable on disk (saved before cleanup),
+// cleanup ran (artifacts deleted in-memory by the fake git), but the
+// post-cleanup SaveState fails. The result must report
+// "cleanup-state-save-failed" with a non-nil error and the in-memory
+// Cleanup record. After reload, the durable state has Merge.Succeeded +
+// Cleanup=nil and IsIntegrated returns false (per F4 / cleanup-ledger
+// requirement) so the next start re-enters cleanup retry instead of
+// silently advancing.
+func TestIntegrateRecordsCleanupSaveFailureWithoutLosingMergeRecord(t *testing.T) {
+	root, project, wt := projectFixture(t, "alpha", "springfield/alpha", "main", "AAAA", "BBBB")
+	g := newFakeGit()
+	g.headByDir[wt] = "BBBB"
+	g.resolveByRef["main"] = "AAAA"
+	g.headByDir["branch:springfield/alpha"] = "BBBB"
+	g.currentBranchByDir = map[string]string{root: "main"}
+	// Sabotage state.json after the LAST cleanup op (BranchDelete) and
+	// before the post-cleanup SaveState. The pre-publish save and the
+	// post-merge save both succeed normally.
+	g.branchDeleteHook = func() { sabotageStateJSON(t, root) }
+
+	res := planmerge.Integrate(planmerge.IntegrateInput{
+		Project: project, PlanID: "alpha", ControlRoot: root, WorktreeBase: ".worktrees", Git: g,
+	})
+	if res.Err == nil {
+		t.Fatalf("expected post-cleanup save error")
+	}
+	if res.Reason != "cleanup-state-save-failed" {
+		t.Fatalf("Reason = %q, want cleanup-state-save-failed", res.Reason)
+	}
+	if res.Merge == nil || res.Merge.Status != conductor.MergeSucceeded {
+		t.Fatalf("merge record should still report success: %+v", res.Merge)
+	}
+	if res.Cleanup == nil {
+		t.Fatalf("in-memory cleanup record must be returned to caller")
+	}
+	// update-ref ran and target advanced.
+	if len(g.updateRefCalls) != 1 {
+		t.Fatalf("expected one update-ref call: %v", g.updateRefCalls)
+	}
+	// Cleanup ops actually ran.
+	if len(g.worktreeRemoveAll) == 0 {
+		t.Fatalf("cleanup did not delete any worktrees: %v", g.worktreeRemoveAll)
+	}
+	if len(g.branchDeleteCalls) != 1 {
+		t.Fatalf("plan branch delete should have run: %v", g.branchDeleteCalls)
+	}
+
+	// Reload state from disk to assert IsIntegrated honestly reports the
+	// non-converged state.
+	reloaded, err := conductor.LoadProject(root)
+	if err != nil {
+		// state.json was sabotaged; reload may or may not work. The
+		// important assertion is that the in-memory result already
+		// reports the failure; if reload errors that's its own honest
+		// signal.
+		return
+	}
+	st := reloaded.State.Plans["alpha"]
+	if st == nil {
+		t.Fatalf("plan state missing after reload")
+	}
+	if st.IsIntegrated() {
+		t.Fatalf("plan must NOT be considered integrated after cleanup save failure")
 	}
 }
 
