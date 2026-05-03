@@ -57,11 +57,11 @@ func TestStatusPlanRegistryWhenNoBatch(t *testing.T) {
 	if !strings.Contains(out, "feature-a") || !strings.Contains(out, "feature-b") {
 		t.Fatalf("missing plan ids:\n%s", out)
 	}
-	if strings.Contains(out, "springfield start") {
-		t.Fatalf("plan-registry status must not advertise springfield start in slice 1:\n%s", out)
+	if !strings.Contains(out, "springfield start") {
+		t.Fatalf("plan-registry status should advertise springfield start in parity 2:\n%s", out)
 	}
-	if !strings.Contains(out, "does not execute registered plans yet") {
-		t.Fatalf("expected truthful slice-1 next-step:\n%s", out)
+	if !strings.Contains(out, "worktree") {
+		t.Fatalf("expected worktree-based execution mention:\n%s", out)
 	}
 }
 
@@ -127,9 +127,6 @@ func TestStatusReportsCompletedAndFailedTruthfully(t *testing.T) {
 	if !strings.Contains(out, "feature-b  failed") {
 		t.Fatalf("expected feature-b failed:\n%s", out)
 	}
-	if strings.Contains(out, "springfield start") {
-		t.Fatalf("status must not advertise springfield start with failures in slice 1:\n%s", out)
-	}
 }
 
 func TestStatusRendersLegacySequentialBatchesWhenPlanUnitsEmpty(t *testing.T) {
@@ -158,9 +155,6 @@ func TestStatusRendersLegacySequentialBatchesWhenPlanUnitsEmpty(t *testing.T) {
 	}
 	if !strings.Contains(out, "Legacy sequential/batches") {
 		t.Fatalf("expected legacy section header:\n%s", out)
-	}
-	if strings.Contains(out, "springfield start") {
-		t.Fatalf("legacy status must not advertise springfield start in slice 1:\n%s", out)
 	}
 }
 

@@ -73,11 +73,11 @@ func TestRegistryStatusSurfacesNextStep(t *testing.T) {
 	if rs.Total != 1 || rs.Completed != 0 {
 		t.Fatalf("counts: total=%d completed=%d", rs.Total, rs.Completed)
 	}
-	if strings.Contains(rs.NextStep, "springfield start") {
-		t.Fatalf("registry status must not point at springfield start in slice 1: %q", rs.NextStep)
+	if !strings.Contains(rs.NextStep, "springfield start") {
+		t.Fatalf("registry status should now point at springfield start: %q", rs.NextStep)
 	}
-	if !strings.Contains(rs.NextStep, "does not execute") {
-		t.Fatalf("next step should explain execution lands later: %q", rs.NextStep)
+	if !strings.Contains(rs.NextStep, "worktree") {
+		t.Fatalf("next step should mention worktree-based execution: %q", rs.NextStep)
 	}
 }
 
