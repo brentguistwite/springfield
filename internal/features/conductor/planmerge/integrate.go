@@ -106,21 +106,20 @@ func Integrate(in IntegrateInput) IntegrateResult {
 	// second `git worktree remove` against an already-removed path does
 	// not falsely re-fail the cleanup status.
 	if state.Merge != nil && state.Merge.Status == conductor.MergeSucceeded {
-		progress(in.Progress, "merge %s: prior merge already succeeded; retrying cleanup\n", in.PlanID)
-		cleanup := runCleanupMatrixWithPrior(in, state, state.Merge.WorktreePath, state.Cleanup)
-		state.Cleanup = cleanup
-		saveErr := in.Project.SaveState()
-		out := IntegrateResult{
-			PlanID:  in.PlanID,
-			Merge:   state.Merge,
-			Cleanup: cleanup,
-			Reason:  ReasonMergeOK,
+		progress(in.Progress, "merge %s: prior merge already succeeded; retrying resync+cleanup as needed\n", in.PlanID)
+		// Retry source resync when the prior attempt left it failed —
+		// otherwise IsIntegrated stays false forever and the queue
+		// permanently stalls on a transient dirty-source condition.
+		if state.Merge.SourceSyncStatus == "failed" {
+			syncStatus, syncErr := resyncSourceCheckout(in.Git, in.ControlRoot, state.Merge.TargetRef, state.Merge.PostMergeHead)
+			state.Merge.SourceSyncStatus = syncStatus
+			if syncErr != nil {
+				state.Merge.SourceSyncError = syncErr.Error()
+			} else {
+				state.Merge.SourceSyncError = ""
+			}
 		}
-		if saveErr != nil {
-			out.Err = fmt.Errorf("save state after cleanup retry: %w", saveErr)
-			out.Reason = "state-save-failed"
-		}
-		return out
+		return finishSuccessfulMerge(in, state, now, state.Merge)
 	}
 
 	// Re-entry from prior refused/failed merge: a leftover merge worktree
@@ -149,6 +148,29 @@ func Integrate(in IntegrateInput) IntegrateResult {
 		merge := refused(state, "", ReasonTargetDrift,
 			fmt.Sprintf("cannot resolve target ref %s: %v", targetRef, err), now())
 		return finalize(in, state, now, merge, ReasonTargetDrift)
+	}
+
+	// Re-entry recovery: a prior Integrate may have committed update-ref
+	// but failed the post-publish SaveState. The durable Merge record
+	// still says Pending with the intended PostMergeHead recorded
+	// (persisted just before update-ref); the target ref already points
+	// at that head. Without this branch the next run would observe
+	// target_head != base_head, refuse with target-drift, and leave the
+	// plan permanently stuck on a transient write failure.
+	if state.Merge != nil &&
+		state.Merge.Status == conductor.MergePending &&
+		state.Merge.PostMergeHead != "" &&
+		currentTargetHead == state.Merge.PostMergeHead {
+		progress(in.Progress, "merge %s: prior publish detected (target at recorded post_merge_head); resuming as succeeded\n", in.PlanID)
+		// Promote to Succeeded preserving the recorded refs/SHAs; the
+		// SHAs were written before publish so they accurately describe
+		// what landed.
+		merge := *state.Merge
+		merge.Status = conductor.MergeSucceeded
+		merge.Reason = ReasonMergeOK
+		merge.Error = ""
+		state.Merge = &merge
+		return finishSuccessfulMerge(in, state, now, &merge)
 	}
 
 	if currentTargetHead != state.BaseHead {
@@ -190,6 +212,30 @@ func Integrate(in IntegrateInput) IntegrateResult {
 		return finalize(in, state, now, merge, ReasonMergeFailed)
 	}
 
+	// Persist publish-intent BEFORE update-ref. If update-ref succeeds
+	// but the post-publish SaveState fails, the durable record carries
+	// PostMergeHead so the next Integrate can detect "publish already
+	// landed" by comparing target_head against the recorded value. The
+	// status stays Pending until the publish is confirmed and the
+	// post-publish save lands.
+	state.Merge = &conductor.MergeOutcome{
+		Status:        conductor.MergePending,
+		Mode:          string(ModeFFOnly),
+		TargetRef:     targetRef,
+		TargetHead:    currentTargetHead,
+		PostMergeHead: mergedHead,
+		WorktreePath:  mergeWtPath,
+		AttemptedAt:   now(),
+	}
+	if err := in.Project.SaveState(); err != nil {
+		// Pre-publish save failure: nothing has been published; treat
+		// as a merge failure so the merge worktree stays preserved
+		// and the operator can inspect.
+		merge := failedMerge(state, currentTargetHead, mergeWtPath, ReasonMergeFailed,
+			fmt.Sprintf("save publish intent: %v", err), now())
+		return finalize(in, state, now, merge, ReasonMergeFailed)
+	}
+
 	progress(in.Progress, "merge %s: publishing %s -> %s via update-ref\n", in.PlanID, mergedHead, targetRef)
 	if err := in.Git.UpdateBranchRef(in.ControlRoot, targetRef, mergedHead, currentTargetHead); err != nil {
 		// CAS lost: the target moved between drift check and publish.
@@ -199,24 +245,27 @@ func Integrate(in IntegrateInput) IntegrateResult {
 		return finalize(in, state, now, merge, ReasonRefUpdate)
 	}
 
-	merge := &conductor.MergeOutcome{
-		Status:        conductor.MergeSucceeded,
-		Mode:          string(ModeFFOnly),
-		Reason:        ReasonMergeOK,
-		TargetRef:     targetRef,
-		TargetHead:    currentTargetHead,
-		PostMergeHead: mergedHead,
-		WorktreePath:  mergeWtPath,
-		AttemptedAt:   now(),
-	}
+	// Promote in-memory record to Succeeded; reuse the in-flight Merge
+	// so the recorded SHAs/path match what was just published.
+	merge := *state.Merge
+	merge.Status = conductor.MergeSucceeded
+	merge.Reason = ReasonMergeOK
+	state.Merge = &merge
+	return finishSuccessfulMerge(in, state, now, &merge)
+}
 
+// finishSuccessfulMerge runs the post-publish lifecycle: source resync,
+// merge-record save, cleanup matrix, cleanup save. Shared between the
+// fresh-publish path and the recovery path that detects an already-
+// published merge from a prior crashed run.
+func finishSuccessfulMerge(in IntegrateInput, state *conductor.PlanState, now func() time.Time, merge *conductor.MergeOutcome) IntegrateResult {
 	// H1: source checkout resync. update-ref advanced refs/heads/<target>
 	// without touching the source worktree or index. When the target
-	// branch is the source checkout's current HEAD, the source's status
-	// would now show every committed change as "uncommitted" because the
-	// index/worktree still reflect the pre-merge state. Sync the source
-	// to the new head so subsequent IsDirty preflights are honest.
-	syncStatus, syncErr := resyncSourceCheckout(in.Git, in.ControlRoot, targetRef, mergedHead)
+	// branch is the source checkout's current HEAD, advance the source
+	// to the new head so subsequent IsDirty preflights are honest. The
+	// resync gate explicitly re-checks dirtiness so user edits made
+	// during a long agent run cannot be silently discarded.
+	syncStatus, syncErr := resyncSourceCheckout(in.Git, in.ControlRoot, merge.TargetRef, merge.PostMergeHead)
 	merge.SourceSyncStatus = syncStatus
 	if syncErr != nil {
 		merge.SourceSyncError = syncErr.Error()
@@ -226,10 +275,10 @@ func Integrate(in IntegrateInput) IntegrateResult {
 
 	// H2: persist merge success BEFORE any destructive cleanup. If the
 	// state save fails here, the merge has been published to the source
-	// repo but the on-disk record would not reflect it; running cleanup
-	// would then erase the only artifacts an operator could use to
-	// reconstruct what happened. Abort cleanup, surface the save error,
-	// and leave every artifact preserved.
+	// repo but the on-disk record would still say Pending. Running
+	// cleanup would erase the only artifacts an operator could use to
+	// reconstruct what happened — and a failed save here is detectable
+	// by the next Integrate's recovery branch via PostMergeHead.
 	if err := in.Project.SaveState(); err != nil {
 		return IntegrateResult{
 			PlanID:  in.PlanID,
@@ -240,7 +289,7 @@ func Integrate(in IntegrateInput) IntegrateResult {
 		}
 	}
 
-	cleanup := runCleanupMatrix(in, state, mergeWtPath)
+	cleanup := runCleanupMatrixWithPrior(in, state, merge.WorktreePath, state.Cleanup)
 	state.Cleanup = cleanup
 	if err := in.Project.SaveState(); err != nil {
 		// Cleanup may have run; the affected artifacts are gone but we
@@ -273,7 +322,15 @@ func Integrate(in IntegrateInput) IntegrateResult {
 // the post-merge head when the target branch is the source's current HEAD.
 // Returns ("synced", nil) on success, ("skipped", nil) when the target
 // belongs to a different branch (or HEAD is detached/unreadable), and
-// ("failed", err) when the reset itself failed.
+// ("failed", err) when the resync would have overwritten user edits or
+// the reset itself failed.
+//
+// The dirty-source check before reset is load-bearing: slice-2's
+// preflight only verifies clean source at the start of execution, but
+// the agent run can be long, the Springfield CLI lock prevents only
+// concurrent CLI invocations, not editor edits. Without this gate a
+// successful merge could silently `reset --hard` over user changes
+// made while the agent ran.
 func resyncSourceCheckout(g Git, controlRoot, targetRef, newSHA string) (string, error) {
 	cur, err := g.CurrentBranch(controlRoot)
 	if err != nil {
@@ -284,6 +341,13 @@ func resyncSourceCheckout(g Git, controlRoot, targetRef, newSHA string) (string,
 	}
 	if cur != targetRef {
 		return "skipped", nil
+	}
+	dirty, derr := g.IsDirty(controlRoot)
+	if derr != nil {
+		return "failed", fmt.Errorf("source dirty check before resync: %w", derr)
+	}
+	if dirty {
+		return "failed", fmt.Errorf("source checkout has uncommitted changes; refusing reset --hard to avoid silent data loss. Commit or stash, then run \"springfield start\" to retry source resync.")
 	}
 	if err := g.ResetHard(controlRoot, newSHA); err != nil {
 		return "failed", err

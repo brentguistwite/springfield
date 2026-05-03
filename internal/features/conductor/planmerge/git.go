@@ -17,6 +17,12 @@ type Git interface {
 	// CurrentBranch returns the local branch name HEAD points at in dir,
 	// or an error when dir is in detached HEAD.
 	CurrentBranch(dir string) (string, error)
+	// IsDirty reports whether dir's working tree or index has uncommitted
+	// changes outside Springfield-owned bookkeeping. Used as a final
+	// safety gate before destructive operations on the source checkout
+	// (ResetHard) so user edits made during a long agent run cannot be
+	// silently discarded.
+	IsDirty(dir string) (bool, error)
 	// WorktreeAddDetached creates a new worktree at path in detached HEAD
 	// state pointing at ref. The new worktree is registered under dir.
 	WorktreeAddDetached(dir, path, ref string) error
@@ -83,16 +89,57 @@ func (g CLIGit) CurrentBranch(dir string) (string, error) {
 }
 
 // ResetHard runs `git reset --hard <sha>` inside dir, advancing HEAD,
-// index, and working tree atomically. Springfield invokes this only after
-// a slice-2 clean-source preflight has held since execution began, so the
-// destructive nature is bounded by the same invariant the slice already
-// relies on.
+// index, and working tree atomically. Springfield invokes this only
+// after IsDirty reports clean, so user edits made during a long agent
+// run cannot be silently discarded by the resync.
 func (g CLIGit) ResetHard(dir, sha string) error {
 	if sha == "" {
 		return fmt.Errorf("sha must not be empty")
 	}
 	_, err := g.run(dir, "reset", "--hard", sha)
 	return err
+}
+
+// dirtyIgnoredPrefixes lists path prefixes whose presence in
+// `git status --porcelain` is Springfield's own bookkeeping rather than
+// user-visible dirt. Mirrors planrun.CLIGit so the resync gate uses the
+// same notion of "clean" as the slice-2 preflight.
+var dirtyIgnoredPrefixes = []string{".springfield/", ".worktrees/"}
+
+// IsDirty returns true when dir has uncommitted changes outside
+// Springfield-owned prefixes.
+func (g CLIGit) IsDirty(dir string) (bool, error) {
+	out, err := g.run(dir, "status", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	if out == "" {
+		return false, nil
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if !lineIsSpringfieldOwned(line) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func lineIsSpringfieldOwned(line string) bool {
+	if len(line) < 4 {
+		return false
+	}
+	rest := line[3:]
+	if idx := strings.Index(rest, " -> "); idx >= 0 {
+		rest = rest[idx+len(" -> "):]
+	}
+	rest = strings.TrimPrefix(rest, "\"")
+	rest = strings.TrimSuffix(rest, "\"")
+	for _, p := range dirtyIgnoredPrefixes {
+		if strings.HasPrefix(rest, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // WorktreeAddDetached registers a new worktree at path with detached HEAD

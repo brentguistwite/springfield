@@ -193,6 +193,14 @@ func (s *PlanState) IsIntegrated() bool {
 	if s.Merge != nil && s.Merge.Status != MergeSucceeded {
 		return false
 	}
+	if s.Merge != nil && s.Merge.SourceSyncStatus == "failed" {
+		// Source resync left the source checkout in a phantom-dirty
+		// state. Until the operator resolves it, the next preflight
+		// would attribute its dirty-source rejection to the wrong
+		// plan; keep this plan flagged as not-integrated so the queue
+		// surface points at the real owner.
+		return false
+	}
 	if s.Cleanup != nil && s.Cleanup.Status == CleanupFailed {
 		return false
 	}

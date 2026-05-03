@@ -34,6 +34,8 @@ type fakeGit struct {
 	currentBranchByDir map[string]string
 	resetHardErr       error
 	resetHardCalls     []string
+	dirtyByDir         map[string]bool
+	isDirtyErr         error
 }
 
 func newFakeGit() *fakeGit {
@@ -123,6 +125,16 @@ func (g *fakeGit) CurrentBranch(dir string) (string, error) {
 func (g *fakeGit) ResetHard(_, sha string) error {
 	g.resetHardCalls = append(g.resetHardCalls, sha)
 	return g.resetHardErr
+}
+
+func (g *fakeGit) IsDirty(dir string) (bool, error) {
+	if g.isDirtyErr != nil {
+		return false, g.isDirtyErr
+	}
+	if g.dirtyByDir == nil {
+		return false, nil
+	}
+	return g.dirtyByDir[dir], nil
 }
 
 // projectFixture writes a minimal Springfield project with one plan unit
@@ -557,6 +569,110 @@ func TestIntegrateRecordsSourceSyncFailureWithoutDowngradingMerge(t *testing.T) 
 	}
 }
 
+// TestIntegrateRefusesResetWhenSourceIsDirty proves the data-loss gate:
+// when the source checkout has uncommitted changes (e.g. user edits made
+// during the agent run, since the slice-2 dirty preflight only fires
+// before execution), Integrate must NOT run `git reset --hard` over
+// them. SourceSyncStatus is recorded as "failed" with a descriptive
+// error; the publish itself stands.
+func TestIntegrateRefusesResetWhenSourceIsDirty(t *testing.T) {
+	root, project, wt := projectFixture(t, "alpha", "springfield/alpha", "main", "AAAA", "BBBB")
+	g := newFakeGit()
+	g.headByDir[wt] = "BBBB"
+	g.resolveByRef["main"] = "AAAA"
+	g.headByDir["branch:springfield/alpha"] = "BBBB"
+	g.currentBranchByDir = map[string]string{root: "main"}
+	g.dirtyByDir = map[string]bool{root: true}
+
+	res := planmerge.Integrate(planmerge.IntegrateInput{
+		Project: project, PlanID: "alpha", ControlRoot: root, WorktreeBase: ".worktrees", Git: g,
+	})
+	if !planmerge.IsSuccess(res) {
+		t.Fatalf("merge should still record success even when resync refused: %+v err=%v", res.Merge, res.Err)
+	}
+	if res.Merge.SourceSyncStatus != "failed" {
+		t.Fatalf("SourceSyncStatus = %q, want failed", res.Merge.SourceSyncStatus)
+	}
+	if len(g.resetHardCalls) != 0 {
+		t.Fatalf("ResetHard must not run against a dirty source: %v", g.resetHardCalls)
+	}
+}
+
+// TestIsIntegratedFalseWhenSourceSyncFailed proves the queue-correctness
+// gate: a plan whose merge succeeded but whose source resync failed must
+// not advance, otherwise the next plan trips the dirty-source preflight
+// and the queue blames the wrong owner.
+func TestIsIntegratedFalseWhenSourceSyncFailed(t *testing.T) {
+	st := &conductor.PlanState{
+		Status: conductor.StatusCompleted,
+		Merge: &conductor.MergeOutcome{
+			Status:           conductor.MergeSucceeded,
+			SourceSyncStatus: "failed",
+		},
+	}
+	if st.IsIntegrated() {
+		t.Fatalf("plan with failed source sync must not count as integrated")
+	}
+}
+
+// TestIntegrateRecoversFromUpdateRefSucceededButSaveFailed proves the
+// recovery branch: a prior Integrate published via update-ref but failed
+// the post-publish state save. The durable record is Pending with
+// PostMergeHead recorded (set by the pre-publish save); target_head now
+// equals PostMergeHead. The next Integrate must detect this and resume
+// (promote merge, run resync+cleanup) instead of refusing with target-
+// drift.
+func TestIntegrateRecoversFromUpdateRefSucceededButSaveFailed(t *testing.T) {
+	root, project, wt := projectFixture(t, "alpha", "springfield/alpha", "main", "AAAA", "BBBB")
+	prior := project.State.Plans["alpha"]
+	prior.PlanHead = "BBBB"
+	prior.Merge = &conductor.MergeOutcome{
+		Status:        conductor.MergePending,
+		Mode:          string(planmerge.ModeFFOnly),
+		TargetRef:     "main",
+		TargetHead:    "AAAA",
+		PostMergeHead: "BBBB",
+		WorktreePath:  filepath.Join(root, ".worktrees", ".merges", "alpha"),
+	}
+	if err := project.SaveState(); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+
+	g := newFakeGit()
+	g.headByDir[wt] = "BBBB"
+	// Target main is already at the post-merge head — publish landed
+	// last time but state save failed.
+	g.resolveByRef["main"] = "BBBB"
+	g.currentBranchByDir = map[string]string{root: "main"}
+
+	res := planmerge.Integrate(planmerge.IntegrateInput{
+		Project: project, PlanID: "alpha", ControlRoot: root, WorktreeBase: ".worktrees", Git: g,
+	})
+	if !planmerge.IsSuccess(res) {
+		t.Fatalf("expected recovery to promote merge to succeeded; got %+v err=%v", res.Merge, res.Err)
+	}
+	if res.Reason != planmerge.ReasonMergeOK {
+		t.Fatalf("Reason = %q, want merge-ok", res.Reason)
+	}
+	// Recovery must NOT redo update-ref / merge ff — those already happened.
+	if len(g.updateRefCalls) != 0 {
+		t.Fatalf("update-ref must not re-run on recovery: %v", g.updateRefCalls)
+	}
+	if len(g.mergeCalls) != 0 {
+		t.Fatalf("merge ff must not re-run on recovery: %v", g.mergeCalls)
+	}
+	if len(g.worktreeAddCalls) != 0 {
+		t.Fatalf("merge worktree must not be re-added on recovery: %v", g.worktreeAddCalls)
+	}
+	// Resync + cleanup DO run.
+	if res.Merge.SourceSyncStatus != "synced" {
+		t.Fatalf("resync should run during recovery, got %q", res.Merge.SourceSyncStatus)
+	}
+	if res.Cleanup == nil || res.Cleanup.Status != conductor.CleanupSucceeded {
+		t.Fatalf("cleanup should succeed on recovery: %+v", res.Cleanup)
+	}
+}
+
 // TestPlanStatePendingMergeIsNotIntegrated proves the slice-3 contract
 // that a Status=Completed plan whose Merge.Status is Pending (set by
 // planrun.SinglePlan to mark "execution done, merge not yet attempted")
@@ -643,12 +759,14 @@ func TestIntegrateReEntryAfterPartialCleanupSkipsAlreadyDeletedArtifacts(t *test
 	}
 }
 
-// TestIntegrateAbortsCleanupOnMergeStateSaveFailure verifies the H2 fix:
-// when the merge succeeds but persisting the merge record fails, cleanup
-// MUST NOT run — destructive deletion before the merge ledger is durable
-// would erase the only artifacts an operator could use to reconstruct
-// what happened.
-func TestIntegrateAbortsCleanupOnMergeStateSaveFailure(t *testing.T) {
+// TestIntegrateAbortsBeforePublishOnSaveFailure verifies that when the
+// pre-publish state save fails, the merge phase aborts BEFORE running
+// update-ref. Cleanup must not run; the publish must not happen; the
+// merge worktree may or may not exist on disk, but the source target ref
+// is unchanged. This protects the slice-3 contract that a save failure
+// either commits the merge fully (with PostMergeHead persisted for
+// recovery) or leaves the source repo untouched.
+func TestIntegrateAbortsBeforePublishOnSaveFailure(t *testing.T) {
 	root, project, wt := projectFixture(t, "alpha", "springfield/alpha", "main", "AAAA", "BBBB")
 	g := newFakeGit()
 	g.headByDir[wt] = "BBBB"
@@ -661,25 +779,20 @@ func TestIntegrateAbortsCleanupOnMergeStateSaveFailure(t *testing.T) {
 	res := planmerge.Integrate(planmerge.IntegrateInput{
 		Project: project, PlanID: "alpha", ControlRoot: root, WorktreeBase: ".worktrees", Git: g,
 	})
-	if res.Err == nil {
-		t.Fatalf("expected error from save failure")
+	if res.Err == nil && res.Reason != planmerge.ReasonMergeFailed {
+		t.Fatalf("expected merge-failed outcome from save failure; got %+v", res)
 	}
-	if res.Reason != "merge-state-save-failed" {
-		t.Fatalf("Reason = %q, want merge-state-save-failed", res.Reason)
-	}
-	// Merge succeeded in-memory; cleanup must NOT have attempted any
-	// deletions.
-	if res.Merge == nil || res.Merge.Status != conductor.MergeSucceeded {
-		t.Fatalf("merge record should still reflect success: %+v", res.Merge)
+	// Critical: update-ref must NOT have run when the pre-publish save
+	// failed. Otherwise the source target advances without a durable
+	// record.
+	if len(g.updateRefCalls) != 0 {
+		t.Fatalf("update-ref must not run before pre-publish save succeeds; got %v", g.updateRefCalls)
 	}
 	if len(g.worktreeRemoveAll) != 0 {
-		t.Fatalf("cleanup must not delete worktrees when merge save fails: %v", g.worktreeRemoveAll)
+		t.Fatalf("cleanup must not delete worktrees when save fails: %v", g.worktreeRemoveAll)
 	}
 	if len(g.branchDeleteCalls) != 0 {
-		t.Fatalf("cleanup must not delete plan branch when merge save fails: %v", g.branchDeleteCalls)
-	}
-	if res.Cleanup != nil {
-		t.Fatalf("Cleanup record must be nil when cleanup was aborted")
+		t.Fatalf("cleanup must not delete plan branch when save fails: %v", g.branchDeleteCalls)
 	}
 }
 
