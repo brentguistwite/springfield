@@ -84,6 +84,18 @@ func (m *Manager) Prepare(in PrepareInput) (PrepareDecision, error) {
 			fmt.Sprintf("Springfield requires a git repo at %s for worktree-based plan execution", in.ControlRoot))
 	}
 
+	planAbs := filepath.Join(in.ControlRoot, filepath.FromSlash(in.Unit.Path))
+	if info, statErr := os.Stat(planAbs); statErr != nil {
+		if os.IsNotExist(statErr) {
+			return PrepareDecision{}, reject("preflight-plan-missing",
+				fmt.Sprintf("plan %q file not found at %s; fix plan_units[].path before running", in.Unit.ID, planAbs))
+		}
+		return PrepareDecision{}, fmt.Errorf("stat plan file %s: %w", planAbs, statErr)
+	} else if info.IsDir() {
+		return PrepareDecision{}, reject("preflight-plan-missing",
+			fmt.Sprintf("plan %q path %s is a directory, not a file", in.Unit.ID, planAbs))
+	}
+
 	digest, err := InputDigest(in.ControlRoot, in.Unit)
 	if err != nil {
 		return PrepareDecision{}, fmt.Errorf("input digest: %w", err)

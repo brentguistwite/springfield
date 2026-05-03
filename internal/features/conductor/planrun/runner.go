@@ -203,9 +203,17 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 	in.Project.State.Plans[planID] = endState
 	saveErr := in.Project.SaveState()
 
+	// Reason carries the structured tag for the terminal transition. When
+	// the agent failed, surface "agent-failed" so callers and CLI output
+	// reflect the post-dispatch outcome rather than the pre-dispatch
+	// preflight reason ("clean-first-run" / "resume-same-inputs").
+	resultReason := decision.Reason
+	if runErr != nil {
+		resultReason = exitReason
+	}
 	out := SinglePlanResult{
 		PlanID:       planID,
-		Reason:       decision.Reason,
+		Reason:       resultReason,
 		Reused:       decision.Reuse,
 		Context:      ctx,
 		EvidencePath: evidenceDir,

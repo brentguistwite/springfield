@@ -224,6 +224,30 @@ func TestSinglePlanReturnsEmptyResultWhenAllDone(t *testing.T) {
 	}
 }
 
+func TestSinglePlanReasonReflectsAgentFailure(t *testing.T) {
+	root := projectFixture(t, "alpha")
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+	g := newFakeGit()
+	runner := &fakeAgentRunner{failure: true}
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentClaude},
+		Runner:       runner,
+		Manager:      &planrun.Manager{Git: g},
+	})
+	if res.Err == nil {
+		t.Fatalf("expected agent failure")
+	}
+	if res.Reason != "agent-failed" {
+		t.Fatalf("Reason = %q, want agent-failed (post-dispatch tag must override setup tag)", res.Reason)
+	}
+}
+
 func TestSinglePlanRecordsPreflightFailureWithoutDispatch(t *testing.T) {
 	root := projectFixture(t, "alpha")
 	project, err := conductor.LoadProject(root)

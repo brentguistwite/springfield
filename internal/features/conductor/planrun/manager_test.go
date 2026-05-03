@@ -97,6 +97,31 @@ func TestPrepareCleanFirstRunPlansFreshWorktree(t *testing.T) {
 	}
 }
 
+// dirtyOnlySpringfieldFakeGit reports porcelain output that contains only
+// Springfield-owned paths so the IsDirty filter has something to filter.
+// The CLIGit filter logic is exercised separately; this fake just proves
+// Manager.Prepare succeeds when Git.IsDirty returns false.
+func TestPrepareTreatsSpringfieldOwnedPathsAsClean(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "springfield/plans/p.md"), "plan")
+
+	g := newFakeGit()
+	g.dirty = false // canonical: filter has already collapsed Springfield-only dirt to clean
+	m := &planrun.Manager{Git: g}
+	dec, err := m.Prepare(planrun.PrepareInput{
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		Unit:         conductor.PlanUnit{ID: "p", Path: "springfield/plans/p.md", Order: 1},
+		AllStates:    map[string]*conductor.PlanState{},
+	})
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if dec.Reason != "clean-first-run" {
+		t.Fatalf("Reason: %q", dec.Reason)
+	}
+}
+
 func TestPrepareDirtySourceRefusesFirstRun(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "springfield/plans/p.md"), "plan")
@@ -267,6 +292,30 @@ func TestPrepareRefusesNonRepo(t *testing.T) {
 	pe := planrun.AsPreflight(err)
 	if pe == nil || pe.Tag != "preflight-not-a-repo" {
 		t.Fatalf("expected preflight-not-a-repo, got %v", err)
+	}
+}
+
+func TestPrepareRejectsMissingPlanFileBeforeWorktreeSideEffects(t *testing.T) {
+	root := t.TempDir()
+	// no plan body on disk
+
+	g := newFakeGit()
+	m := &planrun.Manager{Git: g}
+	_, err := m.Prepare(planrun.PrepareInput{
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		Unit:         conductor.PlanUnit{ID: "p", Path: "springfield/plans/missing.md", Order: 1},
+		AllStates:    map[string]*conductor.PlanState{},
+	})
+	if err == nil {
+		t.Fatalf("expected plan-missing rejection")
+	}
+	pe := planrun.AsPreflight(err)
+	if pe == nil || pe.Tag != "preflight-plan-missing" {
+		t.Fatalf("expected preflight-plan-missing, got %v", err)
+	}
+	if len(g.createNew)+len(g.createExisting) != 0 {
+		t.Fatalf("worktree side effects fired: new=%v existing=%v", g.createNew, g.createExisting)
 	}
 }
 

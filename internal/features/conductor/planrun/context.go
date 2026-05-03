@@ -93,26 +93,47 @@ func BranchName(unit conductor.PlanUnit) string {
 var GuidanceFiles = []string{"AGENTS.md", "CLAUDE.md", "GEMINI.md"}
 
 // InputDigest hashes the plan file plus project guidance content so resume
-// can detect drift. Missing files contribute their canonical name with an
-// empty body so adding a previously-missing guidance file invalidates the
-// prior digest. The output is "sha256:<hex>" so a future digest format
-// migration can be detected by prefix without ambiguity.
+// can detect drift. The plan file is required: a missing plan file is a
+// configuration error, not drift, and must surface before any worktree
+// side-effects are taken. Guidance files are optional; missing guidance
+// hashes as the canonical name with an empty body so adding a
+// previously-missing guidance file invalidates the prior digest. The
+// output is "sha256:<hex>" so a future digest format migration can be
+// detected by prefix without ambiguity.
 func InputDigest(controlRoot string, unit conductor.PlanUnit) (string, error) {
 	h := sha256.New()
-	if err := hashFile(h, "plan:"+unit.Path, filepath.Join(controlRoot, filepath.FromSlash(unit.Path))); err != nil {
+	planAbs := filepath.Join(controlRoot, filepath.FromSlash(unit.Path))
+	if err := hashRequiredFile(h, "plan:"+unit.Path, planAbs, unit); err != nil {
 		return "", err
 	}
 	files := append([]string(nil), GuidanceFiles...)
 	sort.Strings(files)
 	for _, name := range files {
-		if err := hashFile(h, "guidance:"+name, filepath.Join(controlRoot, name)); err != nil {
+		if err := hashOptionalFile(h, "guidance:"+name, filepath.Join(controlRoot, name)); err != nil {
 			return "", err
 		}
 	}
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func hashFile(h io.Writer, label, path string) error {
+func hashRequiredFile(h io.Writer, label, path string, unit conductor.PlanUnit) error {
+	fmt.Fprintf(h, "%s\n", label)
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("plan %q file missing at %s", unit.ID, path)
+		}
+		return fmt.Errorf("digest %s: %w", path, err)
+	}
+	defer f.Close()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("digest %s: %w", path, err)
+	}
+	fmt.Fprintf(h, "\nendfile\n")
+	return nil
+}
+
+func hashOptionalFile(h io.Writer, label, path string) error {
 	fmt.Fprintf(h, "%s\n", label)
 	f, err := os.Open(path)
 	if err != nil {

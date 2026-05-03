@@ -149,11 +149,11 @@ func initRealGitRepo(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# repo\n"), 0o644); err != nil {
 		t.Fatalf("write readme: %v", err)
 	}
-	// Springfield runtime state (and the log it tees on start) lives under
-	// .springfield/ — that directory must be gitignored so the dirty-source
-	// preflight does not fire on its own bookkeeping.
+	// Only ignore test-fixture artifacts. .springfield/ and .worktrees/ are
+	// Springfield-owned and must NOT need a user-level gitignore: the
+	// preflight already filters those prefixes from the dirty check.
 	if err := os.WriteFile(filepath.Join(dir, ".gitignore"),
-		[]byte(".springfield/\n.worktrees/\nbin/\nclaude.pwd\n"), 0o644); err != nil {
+		[]byte("bin/\nclaude.pwd\n"), 0o644); err != nil {
 		t.Fatalf("write gitignore: %v", err)
 	}
 	return dir
