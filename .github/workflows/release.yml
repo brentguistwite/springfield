@@ -51,6 +51,9 @@ jobs:
         run: |
           set -euo pipefail
           while read -r expected asset; do
+            if [[ -z "$expected" || "$expected" == \#* ]]; then
+              continue
+            fi
             asset="${asset#./}"
             if [[ ! "$asset" =~ ^springfield_[0-9]+\.[0-9]+\.[0-9]+_(darwin|linux)_(amd64|arm64)\.tar\.gz$ ]]; then
               echo "checksums.txt asset name not well-formed: $asset" >&2
@@ -127,6 +130,9 @@ jobs:
           set -euo pipefail
           tmp="$(mktemp -d)"
           while read -r expected asset; do
+            if [[ -z "$expected" || "$expected" == \#* ]]; then
+              continue
+            fi
             asset="${asset#./}"
             if [[ ! "$asset" =~ ^springfield_[0-9]+\.[0-9]+\.[0-9]+_(darwin|linux)_(amd64|arm64)\.tar\.gz$ ]]; then
               echo "checksums.txt asset name rejected: $asset" >&2
@@ -226,6 +232,9 @@ jobs:
           version="${TAG#v}"
           smoke_dir="$(mktemp -d)"
           while read -r expected asset; do
+            if [[ -z "$expected" || "$expected" == \#* ]]; then
+              continue
+            fi
             asset="${asset#./}"
             if [[ ! "$asset" =~ ^springfield_[0-9]+\.[0-9]+\.[0-9]+_(darwin|linux)_(amd64|arm64)\.tar\.gz$ ]]; then
               echo "post-publish smoke: rejecting malformed asset name: $asset" >&2

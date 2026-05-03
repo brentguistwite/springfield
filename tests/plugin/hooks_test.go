@@ -72,6 +72,10 @@ func readChecksumsManifest(t *testing.T, root string) map[string]string {
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 	entries := make(map[string]string, len(lines))
 	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
 		fields := strings.Fields(line)
 		if len(fields) != 2 {
 			t.Fatalf("invalid checksums.txt line %q", line)

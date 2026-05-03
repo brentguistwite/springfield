@@ -3,7 +3,8 @@
 // binaries built with the deterministic release flags.
 //
 // Run: go run ./cmd/release-sync
-//      go run ./cmd/release-sync -check   # fail if the working tree drifts after sync
+//
+//	go run ./cmd/release-sync -check   # fail if the working tree drifts after sync
 package main
 
 import (
@@ -183,7 +184,7 @@ func regenerateChecksums(version string, dryRun bool) (bool, error) {
 		lines = append(lines, fmt.Sprintf("%s  ./%s", sum, archive))
 	}
 
-	out := strings.Join(lines, "\n") + "\n"
+	out := "# x-release-please-start-version\n" + strings.Join(lines, "\n") + "\n# x-release-please-end\n"
 	existing, err := os.ReadFile("hooks/checksums.txt")
 	if err == nil && string(existing) == out {
 		return false, nil
