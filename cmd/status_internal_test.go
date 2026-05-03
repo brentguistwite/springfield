@@ -57,8 +57,11 @@ func TestStatusPlanRegistryWhenNoBatch(t *testing.T) {
 	if !strings.Contains(out, "feature-a") || !strings.Contains(out, "feature-b") {
 		t.Fatalf("missing plan ids:\n%s", out)
 	}
-	if !strings.Contains(out, "next plan: feature-a") {
-		t.Fatalf("expected next-action hint pointing at feature-a:\n%s", out)
+	if strings.Contains(out, "springfield start") {
+		t.Fatalf("plan-registry status must not advertise springfield start in slice 1:\n%s", out)
+	}
+	if !strings.Contains(out, "does not execute registered plans yet") {
+		t.Fatalf("expected truthful slice-1 next-step:\n%s", out)
 	}
 }
 
@@ -124,8 +127,40 @@ func TestStatusReportsCompletedAndFailedTruthfully(t *testing.T) {
 	if !strings.Contains(out, "feature-b  failed") {
 		t.Fatalf("expected feature-b failed:\n%s", out)
 	}
-	if !strings.Contains(out, "Fix failures (feature-b)") {
-		t.Fatalf("expected next step pointing at failure:\n%s", out)
+	if strings.Contains(out, "springfield start") {
+		t.Fatalf("status must not advertise springfield start with failures in slice 1:\n%s", out)
+	}
+}
+
+func TestStatusRendersLegacySequentialBatchesWhenPlanUnitsEmpty(t *testing.T) {
+	root := newStatusRoot(t)
+	cfg := map[string]any{
+		"plans_dir":                    "springfield/plans",
+		"worktree_base":                ".worktrees",
+		"max_retries":                  1,
+		"single_workstream_iterations": 10,
+		"single_workstream_timeout":    600,
+		"tool":                         "claude",
+		"sequential":                   []string{"legacy-a"},
+		"batches":                      [][]string{{"legacy-b"}},
+	}
+	writeStatusJSON(t, root, "execution/config.json", cfg)
+
+	out, err := runStatusIn(root)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if strings.Contains(out, "No plans configured") {
+		t.Fatalf("legacy plans treated as empty:\n%s", out)
+	}
+	if !strings.Contains(out, "legacy-a") || !strings.Contains(out, "legacy-b") {
+		t.Fatalf("missing legacy plan names:\n%s", out)
+	}
+	if !strings.Contains(out, "Legacy sequential/batches") {
+		t.Fatalf("expected legacy section header:\n%s", out)
+	}
+	if strings.Contains(out, "springfield start") {
+		t.Fatalf("legacy status must not advertise springfield start in slice 1:\n%s", out)
 	}
 }
 
