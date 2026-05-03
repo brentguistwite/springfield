@@ -157,15 +157,31 @@ func TestPlansAddMigratesLegacyPlansDir(t *testing.T) {
 	}
 }
 
-func TestPlansAddDoesNotExposeRefOrBranchFlags(t *testing.T) {
+func TestPlansAddPersistsRefAndPlanBranch(t *testing.T) {
 	root := newStatusRoot(t)
 	writeStatusPlan(t, root, "feature.md")
 
-	if _, err := runPlansArgs(t, "add", "--dir", root, "--id", "feature-a", "--path", "feature.md", "--ref", "main"); err == nil {
-		t.Fatalf("expected unknown-flag error for --ref")
+	if _, err := runPlansArgs(t, "add", "--dir", root, "--id", "feature-a", "--path", "feature.md", "--ref", "main", "--plan-branch", "feat/login"); err != nil {
+		t.Fatalf("add with ref+plan-branch: %v", err)
 	}
-	if _, err := runPlansArgs(t, "add", "--dir", root, "--id", "feature-a", "--path", "feature.md", "--plan-branch", "x"); err == nil {
-		t.Fatalf("expected unknown-flag error for --plan-branch")
+	data, err := os.ReadFile(filepath.Join(root, ".springfield", "execution", "config.json"))
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	units, ok := cfg["plan_units"].([]any)
+	if !ok || len(units) != 1 {
+		t.Fatalf("plan_units missing: %v", cfg["plan_units"])
+	}
+	first := units[0].(map[string]any)
+	if first["ref"] != "main" {
+		t.Fatalf("ref = %v", first["ref"])
+	}
+	if first["plan_branch"] != "feat/login" {
+		t.Fatalf("plan_branch = %v", first["plan_branch"])
 	}
 }
 

@@ -122,28 +122,56 @@ func (m *Manager) Prepare(in PrepareInput) (PrepareDecision, error) {
 	}
 
 	// Resume path: prior attempt exists for this plan with a recorded
-	// worktree path that still resolves on disk.
+	// worktree path that still resolves on disk AND is still owned by git
+	// as a registered worktree on the recorded branch. A bare directory at
+	// the recorded path — even with the right name — is not honest reuse:
+	// the path could have been deleted and recreated, or could now belong
+	// to an unrelated checkout. Both cases force a fresh attempt.
 	if in.PriorState != nil && in.PriorState.WorktreePath != "" {
 		recordedPath := in.PriorState.WorktreePath
-		if info, err := os.Stat(recordedPath); err == nil && info.IsDir() {
+		recordedBranch := firstNonEmpty(in.PriorState.Branch, branch)
+		info, statErr := os.Stat(recordedPath)
+		switch {
+		case statErr == nil && info.IsDir():
 			if in.PriorState.InputDigest != "" && in.PriorState.InputDigest != digest {
 				return PrepareDecision{}, reject("preflight-input-drift",
 					fmt.Sprintf("plan %q inputs changed since last attempt; reuse refused. Remove %s or reset the plan to re-run with new inputs.", in.Unit.ID, recordedPath))
+			}
+			registered, lerr := m.Git.WorktreeListPaths(in.ControlRoot)
+			if lerr != nil {
+				return PrepareDecision{}, fmt.Errorf("list worktrees: %w", lerr)
+			}
+			if !pathRegistered(registered, recordedPath) {
+				return PrepareDecision{}, reject("preflight-worktree-untracked",
+					fmt.Sprintf("recorded worktree %s is not a registered git worktree (deleted or recreated outside Springfield); remove the path or reset plan %q to start fresh", recordedPath, in.Unit.ID))
+			}
+			actualBranch, brErr := m.Git.CurrentBranch(recordedPath)
+			if brErr != nil {
+				return PrepareDecision{}, reject("preflight-worktree-branch-unreadable",
+					fmt.Sprintf("cannot read branch of worktree %s: %v", recordedPath, brErr))
+			}
+			if actualBranch != recordedBranch {
+				return PrepareDecision{}, reject("preflight-worktree-branch-mismatch",
+					fmt.Sprintf("worktree %s is on branch %q but plan %q recorded branch %q; refuse reuse", recordedPath, actualBranch, in.Unit.ID, recordedBranch))
 			}
 			ctx := Context{
 				Unit:         in.Unit,
 				ControlRoot:  in.ControlRoot,
 				WorktreeRoot: recordedPath,
 				PlanKey:      PlanKey(in.Unit),
-				Branch:       firstNonEmpty(in.PriorState.Branch, branch),
+				Branch:       recordedBranch,
 				BaseRef:      firstNonEmpty(in.PriorState.BaseRef, baseRef),
 				BaseHead:     in.PriorState.BaseHead,
 			}
 			return PrepareDecision{Context: ctx, InputDigest: digest, Reason: "resume-same-inputs", Reuse: true}, nil
+		case statErr == nil && !info.IsDir():
+			return PrepareDecision{}, reject("preflight-worktree-collision",
+				fmt.Sprintf("recorded worktree path %s is no longer a directory; refuse reuse for plan %q", recordedPath, in.Unit.ID))
+		default:
+			// Recorded worktree path is missing on disk — treat as first run
+			// but keep the recorded path (idempotency: same path next time).
+			wtPath = recordedPath
 		}
-		// Recorded worktree path is missing on disk — treat as first run
-		// but keep the recorded path (idempotency: same path next time).
-		wtPath = recordedPath
 	}
 
 	// First-run path: source must be clean to ensure the worktree we create
@@ -167,14 +195,7 @@ func (m *Manager) Prepare(in PrepareInput) (PrepareDecision, error) {
 		if lerr != nil {
 			return PrepareDecision{}, fmt.Errorf("list worktrees: %w", lerr)
 		}
-		owned := false
-		for _, p := range registered {
-			if equalPaths(p, wtPath) {
-				owned = true
-				break
-			}
-		}
-		if !owned {
+		if !pathRegistered(registered, wtPath) {
 			return PrepareDecision{}, reject("preflight-worktree-untracked",
 				fmt.Sprintf("worktree path %s exists but is not a registered git worktree; refuse reuse for plan %q", wtPath, in.Unit.ID))
 		}
@@ -246,6 +267,15 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func pathRegistered(registered []string, target string) bool {
+	for _, p := range registered {
+		if equalPaths(p, target) {
+			return true
+		}
+	}
+	return false
 }
 
 func equalPaths(a, b string) bool {

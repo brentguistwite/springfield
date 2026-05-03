@@ -2,6 +2,7 @@ package planrun
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -221,13 +222,27 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		Status:       finalStatus,
 		Err:          runErr,
 	}
-	if runErr == nil && saveErr != nil {
+	// SaveState failures must never be silent: the on-disk record is the
+	// only honest source of truth for the plan's state, and a swallowed
+	// save error leaves "running" stuck on disk.
+	switch {
+	case runErr != nil && saveErr != nil:
+		out.Err = errors.Join(runErr, fmt.Errorf("save state: %w", saveErr))
+		out.Reason = "agent-failed-state-save-failed"
+	case runErr == nil && saveErr != nil:
 		out.Err = fmt.Errorf("save state: %w", saveErr)
+		out.Reason = "state-save-failed"
+		out.Status = conductor.StatusFailed
 	}
-	if runErr == nil {
+	switch {
+	case out.Err == nil:
 		progress(in.Progress, "plan %s: completed\n", planID)
-	} else {
+	case runErr != nil && saveErr != nil:
+		progress(in.Progress, "plan %s: failed — agent: %s; state save also failed: %v\n", planID, runErr.Error(), saveErr)
+	case runErr != nil:
 		progress(in.Progress, "plan %s: failed — %s\n", planID, runErr.Error())
+	default:
+		progress(in.Progress, "plan %s: state save failed — %v (agent succeeded but on-disk state may be stale)\n", planID, saveErr)
 	}
 	return out
 }

@@ -17,6 +17,7 @@ type fakeGit struct {
 	repo            bool
 	dirty           bool
 	currentBranch   string
+	branchByPath    map[string]string
 	resolveOK       map[string]string
 	branches        map[string]struct{}
 	worktreePaths   []string
@@ -44,9 +45,12 @@ func (g *fakeGit) ResolveRef(_, ref string) (string, error) {
 	}
 	return sha, nil
 }
-func (g *fakeGit) CurrentBranch(string) (string, error) {
+func (g *fakeGit) CurrentBranch(dir string) (string, error) {
 	if !g.currentBranchOK {
 		return "", errors.New("detached")
+	}
+	if branch, ok := g.branchByPath[dir]; ok {
+		return branch, nil
 	}
 	return g.currentBranch, nil
 }
@@ -172,6 +176,8 @@ func TestPrepareResumeReusesWhenDigestStable(t *testing.T) {
 	// Even with dirty source, resume must still work because the dirt is
 	// in the worktree, not the control checkout.
 	g.dirty = true
+	g.worktreePaths = []string{wt}
+	g.branchByPath = map[string]string{wt: "springfield/p"}
 	m := &planrun.Manager{Git: g}
 	dec, err := m.Prepare(planrun.PrepareInput{
 		ControlRoot:  root,
@@ -188,6 +194,88 @@ func TestPrepareResumeReusesWhenDigestStable(t *testing.T) {
 	}
 	if dec.Context.WorktreeRoot != wt {
 		t.Fatalf("WorktreeRoot drift: %q vs %q", dec.Context.WorktreeRoot, wt)
+	}
+}
+
+func TestPrepareResumeRefusesUntrackedWorktreePath(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "springfield/plans/p.md"), "plan body")
+
+	unit := conductor.PlanUnit{ID: "p", Path: "springfield/plans/p.md", Order: 1}
+	wt := filepath.Join(root, ".worktrees", "p")
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatalf("mkdir wt: %v", err)
+	}
+	digest, err := planrun.InputDigest(root, unit)
+	if err != nil {
+		t.Fatalf("digest: %v", err)
+	}
+	prior := &conductor.PlanState{
+		Status:       conductor.StatusFailed,
+		WorktreePath: wt,
+		Branch:       "springfield/p",
+		InputDigest:  digest,
+	}
+
+	g := newFakeGit()
+	// path exists on disk but is NOT in `git worktree list` — was deleted
+	// and recreated outside Springfield.
+	m := &planrun.Manager{Git: g}
+	_, err = m.Prepare(planrun.PrepareInput{
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		Unit:         unit,
+		PriorState:   prior,
+		AllStates:    map[string]*conductor.PlanState{"p": prior},
+	})
+	if err == nil {
+		t.Fatalf("expected refusal for untracked recorded path")
+	}
+	pe := planrun.AsPreflight(err)
+	if pe == nil || pe.Tag != "preflight-worktree-untracked" {
+		t.Fatalf("expected preflight-worktree-untracked, got %v", err)
+	}
+}
+
+func TestPrepareResumeRefusesBranchMismatch(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "springfield/plans/p.md"), "plan body")
+
+	unit := conductor.PlanUnit{ID: "p", Path: "springfield/plans/p.md", Order: 1}
+	wt := filepath.Join(root, ".worktrees", "p")
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatalf("mkdir wt: %v", err)
+	}
+	digest, err := planrun.InputDigest(root, unit)
+	if err != nil {
+		t.Fatalf("digest: %v", err)
+	}
+	prior := &conductor.PlanState{
+		Status:       conductor.StatusFailed,
+		WorktreePath: wt,
+		Branch:       "springfield/p",
+		InputDigest:  digest,
+	}
+
+	g := newFakeGit()
+	g.worktreePaths = []string{wt}
+	// branch on the recorded path is now something else (user checked out
+	// a different branch in the worktree).
+	g.branchByPath = map[string]string{wt: "feature/other"}
+	m := &planrun.Manager{Git: g}
+	_, err = m.Prepare(planrun.PrepareInput{
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		Unit:         unit,
+		PriorState:   prior,
+		AllStates:    map[string]*conductor.PlanState{"p": prior},
+	})
+	if err == nil {
+		t.Fatalf("expected branch-mismatch refusal")
+	}
+	pe := planrun.AsPreflight(err)
+	if pe == nil || pe.Tag != "preflight-worktree-branch-mismatch" {
+		t.Fatalf("expected preflight-worktree-branch-mismatch, got %v", err)
 	}
 }
 

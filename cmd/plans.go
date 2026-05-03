@@ -34,6 +34,8 @@ func newPlansAddCommand() *cobra.Command {
 		title       string
 		description string
 		path        string
+		ref         string
+		planBranch  string
 		order       int
 	)
 
@@ -57,6 +59,8 @@ func newPlansAddCommand() *cobra.Command {
 				Title:       title,
 				Description: description,
 				Path:        path,
+				Ref:         ref,
+				PlanBranch:  planBranch,
 				Order:       order,
 			})
 			if err != nil {
@@ -67,15 +71,13 @@ func newPlansAddCommand() *cobra.Command {
 		},
 	}
 
-	// Slice 1 deliberately does not expose --ref or --plan-branch. The schema
-	// reserves the fields for parity 2+ execution work; until execution
-	// consumes them, surfacing them on the CLI would advertise behavior that
-	// does not exist yet.
 	cmd.Flags().StringVar(&dir, "dir", ".", "project root or nested path inside the Springfield project")
 	cmd.Flags().StringVar(&id, "id", "", "stable plan id (slug)")
 	cmd.Flags().StringVar(&title, "title", "", "human-friendly plan title")
 	cmd.Flags().StringVar(&description, "description", "", "optional plan description")
 	cmd.Flags().StringVar(&path, "path", "", "plan source path (project-relative or plans_dir-relative filename)")
+	cmd.Flags().StringVar(&ref, "ref", "", "base ref the plan worktree branches from (default: current branch at start time)")
+	cmd.Flags().StringVar(&planBranch, "plan-branch", "", "explicit branch name for the plan worktree (default: springfield/<id>)")
 	cmd.Flags().IntVar(&order, "order", 0, "1-based execution order; defaults to next available slot")
 	return cmd
 }
