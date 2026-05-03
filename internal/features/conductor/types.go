@@ -94,6 +94,13 @@ type PlanState struct {
 type MergeStatus string
 
 const (
+	// MergePending marks a plan whose execution finished and is awaiting
+	// merge integration. Set by planrun.SinglePlan as soon as the plan
+	// transitions to StatusCompleted so a save failure mid-Integrate
+	// leaves the durable record truthful — IsIntegrated reports false on
+	// Pending and the next start re-enters the merge phase instead of
+	// silently advancing past the plan.
+	MergePending   MergeStatus = "pending"
 	MergeRefused   MergeStatus = "refused"
 	MergeSucceeded MergeStatus = "succeeded"
 	MergeFailed    MergeStatus = "failed"

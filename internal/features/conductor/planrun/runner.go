@@ -201,6 +201,18 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		InputDigest:  decision.InputDigest,
 		ExitReason:   exitReason,
 	}
+	// On a successful execution, mark the merge integration phase as
+	// pending before persisting. If the upcoming planmerge.Integrate save
+	// fails for any reason, the durable record reflects "merge not yet
+	// done" rather than appearing as a fully integrated legacy-style
+	// completion. PlanState.IsIntegrated() returns false for any non-
+	// Succeeded merge status.
+	if finalStatus == conductor.StatusCompleted {
+		endState.Merge = &conductor.MergeOutcome{
+			Status:      conductor.MergePending,
+			AttemptedAt: now(),
+		}
+	}
 	in.Project.State.Plans[planID] = endState
 	saveErr := in.Project.SaveState()
 

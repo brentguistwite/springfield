@@ -101,10 +101,13 @@ func Integrate(in IntegrateInput) IntegrateResult {
 	// Re-entry path: prior merge already succeeded but cleanup left
 	// artifacts behind. Re-running Integrate must NOT redo the merge —
 	// the recorded base_head no longer matches the now-advanced target,
-	// so a re-merge would falsely flag drift. Retry cleanup only.
+	// so a re-merge would falsely flag drift. Retry cleanup only, and
+	// carry forward any artifact that already deleted cleanly so a
+	// second `git worktree remove` against an already-removed path does
+	// not falsely re-fail the cleanup status.
 	if state.Merge != nil && state.Merge.Status == conductor.MergeSucceeded {
 		progress(in.Progress, "merge %s: prior merge already succeeded; retrying cleanup\n", in.PlanID)
-		cleanup := runCleanupMatrix(in, state, state.Merge.WorktreePath)
+		cleanup := runCleanupMatrixWithPrior(in, state, state.Merge.WorktreePath, state.Cleanup)
 		state.Cleanup = cleanup
 		saveErr := in.Project.SaveState()
 		out := IntegrateResult{
@@ -371,32 +374,66 @@ func preserveAllCleanup(state *conductor.PlanState, mergeWtPath, reason string) 
 // Aggregate Status is "succeeded" when every artifact deleted cleanly,
 // "failed" if any deletion errored.
 func runCleanupMatrix(in IntegrateInput, state *conductor.PlanState, mergeWtPath string) *conductor.CleanupOutcome {
+	return runCleanupMatrixWithPrior(in, state, mergeWtPath, nil)
+}
+
+// runCleanupMatrixWithPrior is the cleanup re-entry helper. When prior is
+// non-nil, any artifact whose prior status is CleanupSucceeded is carried
+// forward without retrying — running `git worktree remove` against an
+// already-removed path or `git branch -D` against an already-deleted
+// branch fails, which would otherwise prevent a partially-clean re-entry
+// from ever converging back to CleanupSucceeded once the originally-
+// failing artifact is resolved.
+func runCleanupMatrixWithPrior(in IntegrateInput, state *conductor.PlanState, mergeWtPath string, prior *conductor.CleanupOutcome) *conductor.CleanupOutcome {
+	var priorMW, priorXW, priorPB *conductor.ArtifactCleanup
+	if prior != nil {
+		priorMW = prior.MergeWorktree
+		priorXW = prior.ExecutionWorktree
+		priorPB = prior.PlanBranch
+	}
+
 	out := &conductor.CleanupOutcome{Status: conductor.CleanupSucceeded}
 
-	mw := &conductor.ArtifactCleanup{Status: conductor.CleanupSucceeded, Path: mergeWtPath}
-	if err := in.Git.WorktreeRemoveForce(in.ControlRoot, mergeWtPath); err != nil {
-		mw.Status = conductor.CleanupFailed
-		mw.Error = err.Error()
+	out.MergeWorktree = retryArtifactRemove(priorMW, mergeWtPath, "", func() error {
+		return in.Git.WorktreeRemoveForce(in.ControlRoot, mergeWtPath)
+	})
+	if out.MergeWorktree.Status == conductor.CleanupFailed {
 		out.Status = conductor.CleanupFailed
 	}
-	out.MergeWorktree = mw
 
-	xw := &conductor.ArtifactCleanup{Status: conductor.CleanupSucceeded, Path: state.WorktreePath}
-	if err := in.Git.WorktreeRemoveForce(in.ControlRoot, state.WorktreePath); err != nil {
-		xw.Status = conductor.CleanupFailed
-		xw.Error = err.Error()
+	out.ExecutionWorktree = retryArtifactRemove(priorXW, state.WorktreePath, "", func() error {
+		return in.Git.WorktreeRemoveForce(in.ControlRoot, state.WorktreePath)
+	})
+	if out.ExecutionWorktree.Status == conductor.CleanupFailed {
 		out.Status = conductor.CleanupFailed
 	}
-	out.ExecutionWorktree = xw
 
-	pb := &conductor.ArtifactCleanup{Status: conductor.CleanupSucceeded, Branch: state.Branch}
-	if err := in.Git.BranchDelete(in.ControlRoot, state.Branch); err != nil {
-		pb.Status = conductor.CleanupFailed
-		pb.Error = err.Error()
+	out.PlanBranch = retryArtifactRemove(priorPB, "", state.Branch, func() error {
+		return in.Git.BranchDelete(in.ControlRoot, state.Branch)
+	})
+	if out.PlanBranch.Status == conductor.CleanupFailed {
 		out.Status = conductor.CleanupFailed
 	}
-	out.PlanBranch = pb
 
+	return out
+}
+
+// retryArtifactRemove returns the new ArtifactCleanup record. When the
+// prior record reports Succeeded, the deletion is NOT re-attempted —
+// callers can safely re-enter cleanup without git tripping on an
+// already-removed artifact.
+func retryArtifactRemove(prior *conductor.ArtifactCleanup, path, branch string, attempt func() error) *conductor.ArtifactCleanup {
+	if prior != nil && prior.Status == conductor.CleanupSucceeded {
+		// Carry forward the prior success record verbatim so re-entry
+		// converges to the same outcome.
+		copy := *prior
+		return &copy
+	}
+	out := &conductor.ArtifactCleanup{Status: conductor.CleanupSucceeded, Path: path, Branch: branch}
+	if err := attempt(); err != nil {
+		out.Status = conductor.CleanupFailed
+		out.Error = err.Error()
+	}
 	return out
 }
 

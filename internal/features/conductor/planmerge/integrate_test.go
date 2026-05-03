@@ -557,6 +557,92 @@ func TestIntegrateRecordsSourceSyncFailureWithoutDowngradingMerge(t *testing.T) 
 	}
 }
 
+// TestPlanStatePendingMergeIsNotIntegrated proves the slice-3 contract
+// that a Status=Completed plan whose Merge.Status is Pending (set by
+// planrun.SinglePlan to mark "execution done, merge not yet attempted")
+// is NOT treated as queue-integrated. A save failure mid-Integrate would
+// otherwise leave the durable record looking complete.
+func TestPlanStatePendingMergeIsNotIntegrated(t *testing.T) {
+	st := &conductor.PlanState{
+		Status: conductor.StatusCompleted,
+		Merge:  &conductor.MergeOutcome{Status: conductor.MergePending},
+	}
+	if st.IsIntegrated() {
+		t.Fatalf("Pending merge must not count as integrated")
+	}
+}
+
+// TestIntegrateReEntryAfterPartialCleanupSkipsAlreadyDeleted proves the
+// P1 fix: a prior cleanup run that succeeded on the execution worktree
+// and plan branch but failed on the merge worktree must NOT re-attempt
+// the already-deleted artifacts on the second run. Re-running git worktree
+// remove against an absent path errors out, which would falsely re-fail
+// cleanup status forever even after the original blocker was resolved.
+func TestIntegrateReEntryAfterPartialCleanupSkipsAlreadyDeletedArtifacts(t *testing.T) {
+	root, project, wt := projectFixture(t, "alpha", "springfield/alpha", "main", "AAAA", "BBBB")
+	prior := project.State.Plans["alpha"]
+	prior.PlanHead = "BBBB"
+	prior.Merge = &conductor.MergeOutcome{
+		Status:        conductor.MergeSucceeded,
+		Mode:          string(planmerge.ModeFFOnly),
+		TargetRef:     "main",
+		TargetHead:    "AAAA",
+		PostMergeHead: "BBBB",
+		WorktreePath:  filepath.Join(root, ".worktrees", ".merges", "alpha"),
+	}
+	prior.Cleanup = &conductor.CleanupOutcome{
+		Status: conductor.CleanupFailed,
+		MergeWorktree: &conductor.ArtifactCleanup{
+			Status: conductor.CleanupFailed,
+			Path:   prior.Merge.WorktreePath,
+			Error:  "busy",
+		},
+		// Execution worktree + plan branch DELETED on prior run.
+		ExecutionWorktree: &conductor.ArtifactCleanup{Status: conductor.CleanupSucceeded, Path: wt},
+		PlanBranch:        &conductor.ArtifactCleanup{Status: conductor.CleanupSucceeded, Branch: "springfield/alpha"},
+	}
+	if err := project.SaveState(); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+
+	g := newFakeGit()
+	g.headByDir[wt] = "BBBB"
+	g.resolveByRef["main"] = "BBBB"
+	g.currentBranchByDir = map[string]string{root: "main"}
+	// Real git would now fail on second worktree-remove and second
+	// branch-delete because the prior run already deleted them — simulate
+	// that.
+	g.worktreeRemoveErr[wt] = errors.New("not a working tree")
+	g.branchDeleteErr = errors.New("branch not found")
+
+	res := planmerge.Integrate(planmerge.IntegrateInput{
+		Project: project, PlanID: "alpha", ControlRoot: root, WorktreeBase: ".worktrees", Git: g,
+	})
+	if res.Err != nil {
+		t.Fatalf("re-entry returned err: %v", res.Err)
+	}
+	// Re-entry retried only the merge worktree (the failing artifact).
+	// Execution worktree + plan branch must NOT have been re-attempted
+	// since prior status was Succeeded.
+	if len(g.worktreeRemoveAll) != 1 || g.worktreeRemoveAll[0] != prior.Merge.WorktreePath {
+		t.Fatalf("expected only merge wt remove on re-entry, got %v", g.worktreeRemoveAll)
+	}
+	if len(g.branchDeleteCalls) != 0 {
+		t.Fatalf("plan branch delete must not re-run when prior status was succeeded, got %v", g.branchDeleteCalls)
+	}
+	// With merge wt now removable on re-entry, cleanup converges to
+	// succeeded (every artifact in succeeded state).
+	if res.Cleanup.Status != conductor.CleanupSucceeded {
+		t.Fatalf("re-entry cleanup should converge to succeeded, got %s", res.Cleanup.Status)
+	}
+	if res.Cleanup.ExecutionWorktree.Status != conductor.CleanupSucceeded {
+		t.Fatalf("execution wt status carried wrong: %+v", res.Cleanup.ExecutionWorktree)
+	}
+	if res.Cleanup.PlanBranch.Status != conductor.CleanupSucceeded {
+		t.Fatalf("plan branch status carried wrong: %+v", res.Cleanup.PlanBranch)
+	}
+}
+
 // TestIntegrateAbortsCleanupOnMergeStateSaveFailure verifies the H2 fix:
 // when the merge succeeds but persisting the merge record fails, cleanup
 // MUST NOT run — destructive deletion before the merge ledger is durable
