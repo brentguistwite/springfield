@@ -10,7 +10,32 @@
       "package-name": "springfield",
       "changelog-path": "CHANGELOG.md",
       "release-type": "simple",
-      "extra-files": []
+      "extra-files": [
+        {
+          "type": "json",
+          "path": ".claude-plugin/plugin.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": ".codex-plugin/plugin.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": ".claude-plugin/marketplace.json",
+          "jsonpath": "$.plugins[0].version"
+        },
+        {
+          "type": "json",
+          "path": ".agents/plugins/marketplace.json",
+          "jsonpath": "$.plugins[0].version"
+        },
+        {
+          "type": "generic",
+          "path": "hooks/checksums.txt"
+        }
+      ]
     }
   },
   "plugins": [],
