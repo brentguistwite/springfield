@@ -20,7 +20,28 @@ type Diagnosis struct {
 	Total     int
 	Done      bool
 	Failures  []PlanFailure
-	NextStep  string
+	// MergeIssues lists plans whose execution succeeded but whose merge
+	// integration was refused or failed — surfaced separately so a
+	// preserved merge worktree or refused publish doesn't hide behind a
+	// "completed" execution status.
+	MergeIssues []MergeIssue
+	NextStep    string
+}
+
+// MergeIssue describes one plan whose merge integration is not in a clean
+// success state. Cleanup failures appear here too so an operator sees the
+// preserved artifacts that need attention even when the merge itself
+// succeeded.
+type MergeIssue struct {
+	Plan         string
+	MergeStatus  MergeStatus
+	Reason       string
+	Error        string
+	TargetRef    string
+	TargetHead   string
+	BaseHead     string
+	WorktreePath string
+	Cleanup      *CleanupOutcome
 }
 
 // Diagnose inspects project state and returns internal guidance for conductor state.
@@ -33,6 +54,7 @@ func Diagnose(project *Project) *Diagnosis {
 	completed, total := schedule.Progress(project.State)
 
 	failures := make([]PlanFailure, 0)
+	mergeIssues := make([]MergeIssue, 0)
 	for _, name := range project.AllPlans() {
 		if project.PlanStatus(name) == StatusFailed {
 			failures = append(failures, PlanFailure{
@@ -43,6 +65,24 @@ func Diagnose(project *Project) *Diagnosis {
 				Attempts:     project.PlanAttempts(name),
 			})
 		}
+		ps, ok := project.State.Plans[name]
+		if !ok || ps == nil || ps.Merge == nil {
+			continue
+		}
+		if ps.Merge.Status == MergeSucceeded && (ps.Cleanup == nil || ps.Cleanup.Status != CleanupFailed) {
+			continue
+		}
+		mergeIssues = append(mergeIssues, MergeIssue{
+			Plan:         name,
+			MergeStatus:  ps.Merge.Status,
+			Reason:       ps.Merge.Reason,
+			Error:        ps.Merge.Error,
+			TargetRef:    ps.Merge.TargetRef,
+			TargetHead:   ps.Merge.TargetHead,
+			BaseHead:     ps.BaseHead,
+			WorktreePath: ps.Merge.WorktreePath,
+			Cleanup:      ps.Cleanup,
+		})
 	}
 
 	done := schedule.IsComplete(project.State)
@@ -55,13 +95,17 @@ func Diagnose(project *Project) *Diagnosis {
 	case len(failures) > 0:
 		nextStep = "Inspect failures (see status), fix the underlying cause, then re-run: springfield start"
 	}
+	if len(mergeIssues) > 0 {
+		nextStep = "Resolve merge integration issues (see status), then re-run: springfield start"
+	}
 
 	return &Diagnosis{
-		Completed: completed,
-		Total:     total,
-		Done:      done,
-		Failures:  failures,
-		NextStep:  nextStep,
+		Completed:   completed,
+		Total:       total,
+		Done:        done,
+		Failures:    failures,
+		MergeIssues: mergeIssues,
+		NextStep:    nextStep,
 	}
 }
 
@@ -75,7 +119,7 @@ func (d *Diagnosis) Report() string {
 		return builder.String()
 	}
 
-	if d.Done {
+	if d.Done && len(d.MergeIssues) == 0 {
 		builder.WriteString("Status: all plans completed\n")
 		return builder.String()
 	}
@@ -92,6 +136,26 @@ func (d *Diagnosis) Report() string {
 			}
 			if f.Attempts > 1 {
 				fmt.Fprintf(&builder, "    Attempts: %d\n", f.Attempts)
+			}
+		}
+	}
+
+	if len(d.MergeIssues) > 0 {
+		fmt.Fprintf(&builder, "\nMerge issues (%d):\n", len(d.MergeIssues))
+		for _, m := range d.MergeIssues {
+			fmt.Fprintf(&builder, "  - %s: merge %s (%s)\n", m.Plan, m.MergeStatus, m.Reason)
+			if m.Error != "" {
+				fmt.Fprintf(&builder, "    detail: %s\n", m.Error)
+			}
+			if m.TargetRef != "" {
+				fmt.Fprintf(&builder, "    target: %s; recorded base %s; observed %s\n",
+					m.TargetRef, m.BaseHead, m.TargetHead)
+			}
+			if m.WorktreePath != "" {
+				fmt.Fprintf(&builder, "    merge worktree (preserved): %s\n", m.WorktreePath)
+			}
+			if m.Cleanup != nil && m.Cleanup.Status == CleanupFailed {
+				fmt.Fprintf(&builder, "    cleanup failed; preserved artifacts remain on disk\n")
 			}
 		}
 	}

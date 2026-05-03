@@ -76,8 +76,8 @@ func newPlansAddCommand() *cobra.Command {
 	cmd.Flags().StringVar(&title, "title", "", "human-friendly plan title")
 	cmd.Flags().StringVar(&description, "description", "", "optional plan description")
 	cmd.Flags().StringVar(&path, "path", "", "plan source path (project-relative or plans_dir-relative filename)")
-	cmd.Flags().StringVar(&ref, "ref", "", "base ref the plan worktree branches from (default: current branch at start time)")
-	cmd.Flags().StringVar(&planBranch, "plan-branch", "", "explicit branch name for the plan worktree (default: springfield/<id>)")
+	cmd.Flags().StringVar(&ref, "ref", "", "local branch the plan worktree branches from and the merge phase publishes back to (default: current branch at start time). Only local branch names are accepted; refs/* shapes, pseudo-refs, and revision modifiers are rejected up front.")
+	cmd.Flags().StringVar(&planBranch, "plan-branch", "", "explicit local branch name for the plan worktree (default: springfield/<id>). Same local-branch-only constraint as --ref.")
 	cmd.Flags().IntVar(&order, "order", 0, "1-based execution order; defaults to next available slot")
 	return cmd
 }

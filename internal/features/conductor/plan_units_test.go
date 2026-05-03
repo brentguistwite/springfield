@@ -71,6 +71,39 @@ func TestValidateRefRejectsBadInput(t *testing.T) {
 	}
 }
 
+func TestValidateLocalBranchRefAcceptsBranchNames(t *testing.T) {
+	for _, ok := range []string{"main", "feature/abc", "release-1.2", ""} {
+		if err := conductor.ValidateLocalBranchRef(ok); err != nil {
+			t.Fatalf("ref %q rejected: %v", ok, err)
+		}
+	}
+}
+
+func TestValidateLocalBranchRefRejectsNonBranchShapes(t *testing.T) {
+	cases := []struct {
+		ref   string
+		wants string
+	}{
+		{"refs/heads/main", "fully-qualified"},
+		{"refs/remotes/origin/main", "fully-qualified"},
+		{"refs/tags/v1", "fully-qualified"},
+		{"HEAD", "pseudo-ref"},
+		{"FETCH_HEAD", "pseudo-ref"},
+		{"main^", "revision modifiers"},
+		{"main~3", "revision modifiers"},
+		{"main@{upstream}", "revision modifiers"},
+	}
+	for _, tc := range cases {
+		err := conductor.ValidateLocalBranchRef(tc.ref)
+		if err == nil {
+			t.Fatalf("ref %q accepted, want rejection", tc.ref)
+		}
+		if !strings.Contains(err.Error(), tc.wants) {
+			t.Fatalf("ref %q error %q missing %q", tc.ref, err, tc.wants)
+		}
+	}
+}
+
 func TestValidatePlanUnitIDRejectsBadInput(t *testing.T) {
 	for _, bad := range []string{"", "Cap", "with space", "_leading"} {
 		if err := conductor.ValidatePlanUnitID(bad); err == nil {
@@ -144,6 +177,34 @@ func TestAddPlanUnitRejectsBadRef(t *testing.T) {
 
 	if _, err := project.AddPlanUnit(conductor.PlanUnitInput{ID: "feature-a", Path: "feature.md", Ref: "bad ref"}); err == nil {
 		t.Fatalf("expected bad ref rejection")
+	}
+}
+
+// TestAddPlanUnitRejectsNonLocalBranchRef enforces the slice-3 contract
+// that --ref must name a local branch. Fully-qualified refs, pseudo-refs,
+// and revision modifiers are all rejected at registration time so they
+// never reach the merge phase.
+func TestAddPlanUnitRejectsNonLocalBranchRef(t *testing.T) {
+	root := newProjectRoot(t)
+	plansDir := writeProjectAndPlan(t, root, "feature.md")
+	project := loadProjectWithDefaults(t, root, plansDir)
+
+	for _, bad := range []string{"refs/heads/main", "refs/remotes/origin/main", "HEAD", "main^", "main@{upstream}"} {
+		if _, err := project.AddPlanUnit(conductor.PlanUnitInput{ID: "feature-" + bad[:1], Path: "feature.md", Ref: bad}); err == nil {
+			t.Fatalf("AddPlanUnit accepted ref %q, want rejection", bad)
+		}
+	}
+}
+
+// TestAddPlanUnitRejectsNonLocalBranchPlanBranch covers --plan-branch which
+// shares the same local-branch-only constraint.
+func TestAddPlanUnitRejectsNonLocalBranchPlanBranch(t *testing.T) {
+	root := newProjectRoot(t)
+	plansDir := writeProjectAndPlan(t, root, "feature.md")
+	project := loadProjectWithDefaults(t, root, plansDir)
+
+	if _, err := project.AddPlanUnit(conductor.PlanUnitInput{ID: "feature-a", Path: "feature.md", PlanBranch: "refs/heads/feat"}); err == nil {
+		t.Fatalf("expected fully-qualified plan_branch rejection")
 	}
 }
 
