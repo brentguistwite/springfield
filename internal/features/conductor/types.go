@@ -129,6 +129,19 @@ type MergeOutcome struct {
 	PostMergeHead string      `json:"post_merge_head,omitempty"`
 	WorktreePath  string      `json:"worktree_path,omitempty"`
 	AttemptedAt   time.Time   `json:"attempted_at,omitempty"`
+
+	// SourceSyncStatus records what happened to the source checkout's
+	// working tree after a successful merge. The merge phase publishes the
+	// new head via `git update-ref`, which advances refs/heads/<target>
+	// without touching the source worktree or index. When the target
+	// branch is the source checkout's currently-checked-out branch, the
+	// integration phase additionally syncs the worktree so subsequent
+	// IsDirty preflights do not see a false-positive diff.
+	//
+	// Values: "synced", "skipped" (target was a different branch),
+	// "failed" (sync attempted but git refused — see SourceSyncError).
+	SourceSyncStatus string `json:"source_sync_status,omitempty"`
+	SourceSyncError  string `json:"source_sync_error,omitempty"`
 }
 
 // ArtifactCleanup records the disposition of one cleanup artifact.

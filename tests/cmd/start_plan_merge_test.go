@@ -47,11 +47,21 @@ func TestSpringfieldStartMergesPlanBranchOnSuccess(t *testing.T) {
 	if afterMain == beforeMain {
 		t.Fatalf("main did not advance: before=%s after=%s\n%s", beforeMain, afterMain, output)
 	}
-	// Source checkout's working tree didn't have to update for this slice
-	// (we use update-ref); just verify the new commit is reachable on main.
 	logOut := gitOut(t, dir, "log", "--format=%s", "main", "-n", "1")
 	if !strings.Contains(logOut, "agent commit") {
 		t.Fatalf("agent commit not reachable on main; got: %q", logOut)
+	}
+	// H1: target was the source checkout's HEAD branch, so Springfield
+	// must have synced the source worktree to the post-merge head.
+	// Anything outside Springfield-owned paths (.springfield/, .worktrees/)
+	// would mean the next IsDirty preflight refuses a fresh start with a
+	// phantom "uncommitted changes" rejection.
+	if dirt := nonSpringfieldStatus(t, dir); dirt != "" {
+		t.Fatalf("source checkout should be clean after merge sync; got:\n%s", dirt)
+	}
+	// Agent's committed file must be present in the source worktree.
+	if _, err := os.Stat(filepath.Join(dir, "feature.txt")); err != nil {
+		t.Fatalf("expected synced feature.txt in source worktree; stat err=%v", err)
 	}
 
 	// Plan branch and worktrees should be gone.
@@ -76,11 +86,12 @@ func TestSpringfieldStartMergesPlanBranchOnSuccess(t *testing.T) {
 			Status   string `json:"status"`
 			PlanHead string `json:"plan_head"`
 			Merge    struct {
-				Status        string `json:"status"`
-				Mode          string `json:"mode"`
-				TargetRef     string `json:"target_ref"`
-				TargetHead    string `json:"target_head"`
-				PostMergeHead string `json:"post_merge_head"`
+				Status           string `json:"status"`
+				Mode             string `json:"mode"`
+				TargetRef        string `json:"target_ref"`
+				TargetHead       string `json:"target_head"`
+				PostMergeHead    string `json:"post_merge_head"`
+				SourceSyncStatus string `json:"source_sync_status"`
 			} `json:"merge"`
 			Cleanup struct {
 				Status string `json:"status"`
@@ -105,6 +116,9 @@ func TestSpringfieldStartMergesPlanBranchOnSuccess(t *testing.T) {
 	}
 	if got.Cleanup.Status != "succeeded" {
 		t.Fatalf("cleanup status: %q", got.Cleanup.Status)
+	}
+	if got.Merge.SourceSyncStatus != "synced" {
+		t.Fatalf("merge.source_sync_status = %q, want synced", got.Merge.SourceSyncStatus)
 	}
 }
 
@@ -282,6 +296,34 @@ func installCanaryAgent(t *testing.T, binDir, name, canary string) {
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write canary agent: %v", err)
 	}
+}
+
+// nonSpringfieldStatus returns the lines of `git status --porcelain` that
+// are NOT under Springfield-owned prefixes (.springfield/, .worktrees/).
+// Mirrors the slice-2 IsDirty filter so the test asserts the same notion
+// of "clean source" the preflight uses.
+func nonSpringfieldStatus(t *testing.T, dir string) string {
+	t.Helper()
+	out := gitOut(t, dir, "status", "--porcelain")
+	if out == "" {
+		return ""
+	}
+	var dirty []string
+	for _, line := range strings.Split(out, "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		path := line[3:]
+		if idx := strings.Index(path, " -> "); idx >= 0 {
+			path = path[idx+len(" -> "):]
+		}
+		path = strings.Trim(path, "\"")
+		if strings.HasPrefix(path, ".springfield/") || strings.HasPrefix(path, ".worktrees/") {
+			continue
+		}
+		dirty = append(dirty, line)
+	}
+	return strings.Join(dirty, "\n")
 }
 
 // gitOut returns trimmed stdout of a git command run in dir.

@@ -14,6 +14,9 @@ type Git interface {
 	ResolveRef(dir, ref string) (string, error)
 	// Head returns the SHA at HEAD inside the working tree at dir.
 	Head(dir string) (string, error)
+	// CurrentBranch returns the local branch name HEAD points at in dir,
+	// or an error when dir is in detached HEAD.
+	CurrentBranch(dir string) (string, error)
 	// WorktreeAddDetached creates a new worktree at path in detached HEAD
 	// state pointing at ref. The new worktree is registered under dir.
 	WorktreeAddDetached(dir, path, ref string) error
@@ -26,6 +29,10 @@ type Git interface {
 	// UpdateBranchRef performs an atomic CAS update of refs/heads/<branch>
 	// in dir from expected to newSHA.
 	UpdateBranchRef(dir, branch, newSHA, expected string) error
+	// ResetHard resets HEAD in dir to sha, syncing index and working tree.
+	// Used to advance the source checkout's worktree after a successful
+	// update-ref when the target branch is the source's current HEAD.
+	ResetHard(dir, sha string) error
 	// BranchDelete deletes the branch in dir, even when not merged into the
 	// current branch (the merge target was advanced via UpdateBranchRef so
 	// the branch is fully reachable).
@@ -61,6 +68,31 @@ func (g CLIGit) ResolveRef(dir, ref string) (string, error) {
 // Head returns the SHA at HEAD in the working tree at dir.
 func (g CLIGit) Head(dir string) (string, error) {
 	return g.run(dir, "rev-parse", "HEAD")
+}
+
+// CurrentBranch returns the local branch name HEAD points at in dir.
+func (g CLIGit) CurrentBranch(dir string) (string, error) {
+	out, err := g.run(dir, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	if out == "HEAD" {
+		return "", fmt.Errorf("repo at %s is in detached HEAD", dir)
+	}
+	return out, nil
+}
+
+// ResetHard runs `git reset --hard <sha>` inside dir, advancing HEAD,
+// index, and working tree atomically. Springfield invokes this only after
+// a slice-2 clean-source preflight has held since execution began, so the
+// destructive nature is bounded by the same invariant the slice already
+// relies on.
+func (g CLIGit) ResetHard(dir, sha string) error {
+	if sha == "" {
+		return fmt.Errorf("sha must not be empty")
+	}
+	_, err := g.run(dir, "reset", "--hard", sha)
+	return err
 }
 
 // WorktreeAddDetached registers a new worktree at path with detached HEAD

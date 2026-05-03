@@ -28,6 +28,12 @@ type fakeGit struct {
 	worktreeRemoveAll []string
 	branchDeleteErr   error
 	branchDeleteCalls []string
+	// currentBranchByDir maps a directory to the branch CurrentBranch
+	// returns. An empty entry means CurrentBranch returns an error
+	// (simulating detached HEAD or unreadable branch).
+	currentBranchByDir map[string]string
+	resetHardErr       error
+	resetHardCalls     []string
 }
 
 func newFakeGit() *fakeGit {
@@ -101,6 +107,22 @@ func (g *fakeGit) UpdateBranchRef(_, branch, newSHA, expected string) error {
 func (g *fakeGit) BranchDelete(_, branch string) error {
 	g.branchDeleteCalls = append(g.branchDeleteCalls, branch)
 	return g.branchDeleteErr
+}
+
+func (g *fakeGit) CurrentBranch(dir string) (string, error) {
+	if g.currentBranchByDir == nil {
+		return "", errors.New("no current branch configured")
+	}
+	branch, ok := g.currentBranchByDir[dir]
+	if !ok || branch == "" {
+		return "", errors.New("no current branch for " + dir)
+	}
+	return branch, nil
+}
+
+func (g *fakeGit) ResetHard(_, sha string) error {
+	g.resetHardCalls = append(g.resetHardCalls, sha)
+	return g.resetHardErr
 }
 
 // projectFixture writes a minimal Springfield project with one plan unit
@@ -451,6 +473,138 @@ func TestDiagnoseSurfacesPreservedMergeArtifacts(t *testing.T) {
 	}
 	if !strings.Contains(report, "target-drift") {
 		t.Fatalf("report should name drift reason:\n%s", report)
+	}
+}
+
+// TestIntegrateSyncsSourceCheckoutWhenTargetIsCurrentBranch verifies the
+// H1 fix: when the merge target is the source checkout's current branch,
+// `git update-ref` alone leaves the source worktree/index stale; Integrate
+// runs ResetHard against the source so a subsequent IsDirty preflight
+// does not see false-positive uncommitted changes.
+func TestIntegrateSyncsSourceCheckoutWhenTargetIsCurrentBranch(t *testing.T) {
+	root, project, wt := projectFixture(t, "alpha", "springfield/alpha", "main", "AAAA", "BBBB")
+	g := newFakeGit()
+	g.headByDir[wt] = "BBBB"
+	g.resolveByRef["main"] = "AAAA"
+	g.headByDir["branch:springfield/alpha"] = "BBBB"
+	// Source checkout is on main — same as merge target.
+	g.currentBranchByDir = map[string]string{root: "main"}
+
+	res := planmerge.Integrate(planmerge.IntegrateInput{
+		Project: project, PlanID: "alpha", ControlRoot: root, WorktreeBase: ".worktrees", Git: g,
+	})
+	if !planmerge.IsSuccess(res) {
+		t.Fatalf("merge: %+v err=%v", res.Merge, res.Err)
+	}
+	if res.Merge.SourceSyncStatus != "synced" {
+		t.Fatalf("SourceSyncStatus = %q, want synced", res.Merge.SourceSyncStatus)
+	}
+	if len(g.resetHardCalls) != 1 || g.resetHardCalls[0] != "BBBB" {
+		t.Fatalf("expected reset --hard BBBB on source, got %v", g.resetHardCalls)
+	}
+}
+
+// TestIntegrateSkipsSourceSyncWhenTargetIsDifferentBranch proves that the
+// resync only runs when the target IS the source's current HEAD; an
+// explicit --ref pointing at a different local branch must not touch the
+// source worktree.
+func TestIntegrateSkipsSourceSyncWhenTargetIsDifferentBranch(t *testing.T) {
+	root, project, wt := projectFixture(t, "alpha", "springfield/alpha", "release", "AAAA", "BBBB")
+	g := newFakeGit()
+	g.headByDir[wt] = "BBBB"
+	g.resolveByRef["release"] = "AAAA"
+	g.headByDir["branch:springfield/alpha"] = "BBBB"
+	g.currentBranchByDir = map[string]string{root: "main"}
+
+	res := planmerge.Integrate(planmerge.IntegrateInput{
+		Project: project, PlanID: "alpha", ControlRoot: root, WorktreeBase: ".worktrees", Git: g,
+	})
+	if !planmerge.IsSuccess(res) {
+		t.Fatalf("merge: %+v err=%v", res.Merge, res.Err)
+	}
+	if res.Merge.SourceSyncStatus != "skipped" {
+		t.Fatalf("SourceSyncStatus = %q, want skipped", res.Merge.SourceSyncStatus)
+	}
+	if len(g.resetHardCalls) != 0 {
+		t.Fatalf("source reset must not run when target != current branch: %v", g.resetHardCalls)
+	}
+}
+
+// TestIntegrateRecordsSourceSyncFailureWithoutDowngradingMerge proves that
+// a reset --hard error after a successful merge is recorded as a sync
+// warning, not a merge failure: the merge has been published and is
+// truthful; the source resync is a separate concern.
+func TestIntegrateRecordsSourceSyncFailureWithoutDowngradingMerge(t *testing.T) {
+	root, project, wt := projectFixture(t, "alpha", "springfield/alpha", "main", "AAAA", "BBBB")
+	g := newFakeGit()
+	g.headByDir[wt] = "BBBB"
+	g.resolveByRef["main"] = "AAAA"
+	g.headByDir["branch:springfield/alpha"] = "BBBB"
+	g.currentBranchByDir = map[string]string{root: "main"}
+	g.resetHardErr = errors.New("local changes would be overwritten")
+
+	res := planmerge.Integrate(planmerge.IntegrateInput{
+		Project: project, PlanID: "alpha", ControlRoot: root, WorktreeBase: ".worktrees", Git: g,
+	})
+	if !planmerge.IsSuccess(res) {
+		t.Fatalf("merge must remain succeeded even when resync fails; got %+v err=%v", res.Merge, res.Err)
+	}
+	if res.Merge.SourceSyncStatus != "failed" {
+		t.Fatalf("SourceSyncStatus = %q, want failed", res.Merge.SourceSyncStatus)
+	}
+	if res.Merge.SourceSyncError == "" {
+		t.Fatalf("SourceSyncError should record reset error")
+	}
+}
+
+// TestIntegrateAbortsCleanupOnMergeStateSaveFailure verifies the H2 fix:
+// when the merge succeeds but persisting the merge record fails, cleanup
+// MUST NOT run — destructive deletion before the merge ledger is durable
+// would erase the only artifacts an operator could use to reconstruct
+// what happened.
+func TestIntegrateAbortsCleanupOnMergeStateSaveFailure(t *testing.T) {
+	root, project, wt := projectFixture(t, "alpha", "springfield/alpha", "main", "AAAA", "BBBB")
+	g := newFakeGit()
+	g.headByDir[wt] = "BBBB"
+	g.resolveByRef["main"] = "AAAA"
+	g.headByDir["branch:springfield/alpha"] = "BBBB"
+	g.currentBranchByDir = map[string]string{root: "main"}
+	// Sabotage state.json so any SaveState call fails.
+	sabotageStateJSON(t, root)
+
+	res := planmerge.Integrate(planmerge.IntegrateInput{
+		Project: project, PlanID: "alpha", ControlRoot: root, WorktreeBase: ".worktrees", Git: g,
+	})
+	if res.Err == nil {
+		t.Fatalf("expected error from save failure")
+	}
+	if res.Reason != "merge-state-save-failed" {
+		t.Fatalf("Reason = %q, want merge-state-save-failed", res.Reason)
+	}
+	// Merge succeeded in-memory; cleanup must NOT have attempted any
+	// deletions.
+	if res.Merge == nil || res.Merge.Status != conductor.MergeSucceeded {
+		t.Fatalf("merge record should still reflect success: %+v", res.Merge)
+	}
+	if len(g.worktreeRemoveAll) != 0 {
+		t.Fatalf("cleanup must not delete worktrees when merge save fails: %v", g.worktreeRemoveAll)
+	}
+	if len(g.branchDeleteCalls) != 0 {
+		t.Fatalf("cleanup must not delete plan branch when merge save fails: %v", g.branchDeleteCalls)
+	}
+	if res.Cleanup != nil {
+		t.Fatalf("Cleanup record must be nil when cleanup was aborted")
+	}
+}
+
+// sabotageStateJSON makes Project.SaveState fail by replacing state.json
+// with a directory of the same name.
+func sabotageStateJSON(t *testing.T, root string) {
+	t.Helper()
+	statePath := filepath.Join(root, ".springfield", "execution", "state.json")
+	_ = os.Remove(statePath)
+	if err := os.MkdirAll(statePath, 0o755); err != nil {
+		t.Fatalf("sabotage state.json: %v", err)
 	}
 }
 

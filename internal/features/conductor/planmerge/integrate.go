@@ -206,17 +206,49 @@ func Integrate(in IntegrateInput) IntegrateResult {
 		WorktreePath:  mergeWtPath,
 		AttemptedAt:   now(),
 	}
+
+	// H1: source checkout resync. update-ref advanced refs/heads/<target>
+	// without touching the source worktree or index. When the target
+	// branch is the source checkout's current HEAD, the source's status
+	// would now show every committed change as "uncommitted" because the
+	// index/worktree still reflect the pre-merge state. Sync the source
+	// to the new head so subsequent IsDirty preflights are honest.
+	syncStatus, syncErr := resyncSourceCheckout(in.Git, in.ControlRoot, targetRef, mergedHead)
+	merge.SourceSyncStatus = syncStatus
+	if syncErr != nil {
+		merge.SourceSyncError = syncErr.Error()
+		progress(in.Progress, "merge %s: source resync failed — %v\n", in.PlanID, syncErr)
+	}
 	state.Merge = merge
 
-	cleanup := runCleanupMatrix(in, state, mergeWtPath)
-	state.Cleanup = cleanup
+	// H2: persist merge success BEFORE any destructive cleanup. If the
+	// state save fails here, the merge has been published to the source
+	// repo but the on-disk record would not reflect it; running cleanup
+	// would then erase the only artifacts an operator could use to
+	// reconstruct what happened. Abort cleanup, surface the save error,
+	// and leave every artifact preserved.
 	if err := in.Project.SaveState(); err != nil {
 		return IntegrateResult{
 			PlanID:  in.PlanID,
 			Merge:   merge,
+			Cleanup: nil,
+			Err:     fmt.Errorf("save merge state before cleanup: %w", err),
+			Reason:  "merge-state-save-failed",
+		}
+	}
+
+	cleanup := runCleanupMatrix(in, state, mergeWtPath)
+	state.Cleanup = cleanup
+	if err := in.Project.SaveState(); err != nil {
+		// Cleanup may have run; the affected artifacts are gone but we
+		// could not record their disposition. Surface loudly: the merge
+		// record on disk reflects success without the cleanup ledger.
+		return IntegrateResult{
+			PlanID:  in.PlanID,
+			Merge:   merge,
 			Cleanup: cleanup,
-			Err:     fmt.Errorf("save state after merge: %w", err),
-			Reason:  "state-save-failed",
+			Err:     fmt.Errorf("save cleanup state: %w", err),
+			Reason:  "cleanup-state-save-failed",
 		}
 	}
 
@@ -232,6 +264,28 @@ func Integrate(in IntegrateInput) IntegrateResult {
 		Cleanup: cleanup,
 		Reason:  ReasonMergeOK,
 	}
+}
+
+// resyncSourceCheckout brings the source checkout's worktree+index up to
+// the post-merge head when the target branch is the source's current HEAD.
+// Returns ("synced", nil) on success, ("skipped", nil) when the target
+// belongs to a different branch (or HEAD is detached/unreadable), and
+// ("failed", err) when the reset itself failed.
+func resyncSourceCheckout(g Git, controlRoot, targetRef, newSHA string) (string, error) {
+	cur, err := g.CurrentBranch(controlRoot)
+	if err != nil {
+		// Detached HEAD or unreadable branch: the source checkout was
+		// never on the target branch in the first place, so there is
+		// nothing to sync.
+		return "skipped", nil
+	}
+	if cur != targetRef {
+		return "skipped", nil
+	}
+	if err := g.ResetHard(controlRoot, newSHA); err != nil {
+		return "failed", err
+	}
+	return "synced", nil
 }
 
 // finalize assigns merge + preservation cleanup to state and persists it.
