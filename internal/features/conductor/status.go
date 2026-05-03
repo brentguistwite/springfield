@@ -167,7 +167,11 @@ func renderMerge(b *strings.Builder, m *MergeOutcome) {
 	if m == nil {
 		return
 	}
-	fmt.Fprintf(b, "     merge: %s (%s)\n", m.Status, m.Reason)
+	if m.Reason == "" {
+		fmt.Fprintf(b, "     merge: %s\n", m.Status)
+	} else {
+		fmt.Fprintf(b, "     merge: %s (%s)\n", m.Status, m.Reason)
+	}
 	if m.TargetRef != "" {
 		fmt.Fprintf(b, "       target: %s @ %s\n", m.TargetRef, shortSHA(m.TargetHead))
 	}

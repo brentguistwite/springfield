@@ -1026,7 +1026,11 @@ func renderMergeOutcome(w io.Writer, res planmerge.IntegrateResult) {
 		return
 	}
 	m := res.Merge
-	fmt.Fprintf(w, "Merge: %s (%s)\n", m.Status, m.Reason)
+	if m.Reason == "" {
+		fmt.Fprintf(w, "Merge: %s\n", m.Status)
+	} else {
+		fmt.Fprintf(w, "Merge: %s (%s)\n", m.Status, m.Reason)
+	}
 	if m.TargetRef != "" {
 		fmt.Fprintf(w, "  target: %s\n", m.TargetRef)
 	}

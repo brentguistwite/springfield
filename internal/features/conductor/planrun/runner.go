@@ -210,6 +210,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 	if finalStatus == conductor.StatusCompleted {
 		endState.Merge = &conductor.MergeOutcome{
 			Status:      conductor.MergePending,
+			Reason:      "awaiting-merge-integration",
 			AttemptedAt: now(),
 		}
 		// Capture plan_head from the execution worktree at the boundary

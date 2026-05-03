@@ -107,18 +107,10 @@ func Integrate(in IntegrateInput) IntegrateResult {
 	// not falsely re-fail the cleanup status.
 	if state.Merge != nil && state.Merge.Status == conductor.MergeSucceeded {
 		progress(in.Progress, "merge %s: prior merge already succeeded; retrying resync+cleanup as needed\n", in.PlanID)
-		// Retry source resync when the prior attempt left it failed —
-		// otherwise IsIntegrated stays false forever and the queue
-		// permanently stalls on a transient dirty-source condition.
-		if state.Merge.SourceSyncStatus == "failed" {
-			syncStatus, syncErr := resyncSourceCheckout(in.Git, in.ControlRoot, state.Merge.TargetRef, state.Merge.PostMergeHead)
-			state.Merge.SourceSyncStatus = syncStatus
-			if syncErr != nil {
-				state.Merge.SourceSyncError = syncErr.Error()
-			} else {
-				state.Merge.SourceSyncError = ""
-			}
-		}
+		// finishSuccessfulMerge always runs resyncSourceCheckout, so
+		// retrying a failed sync is just a normal re-entry into that
+		// path — no separate retry call needed (a redundant retry could
+		// race with a user edit between the two calls).
 		return finishSuccessfulMerge(in, state, now, state.Merge)
 	}
 
@@ -483,21 +475,18 @@ func preserveAllCleanup(state *conductor.PlanState, mergeWtPath, reason string) 
 	return out
 }
 
-// runCleanupMatrix attempts to delete the merge worktree, the execution
-// worktree, and the plan branch. Each artifact is tracked independently.
-// Aggregate Status is "succeeded" when every artifact deleted cleanly,
-// "failed" if any deletion errored.
-func runCleanupMatrix(in IntegrateInput, state *conductor.PlanState, mergeWtPath string) *conductor.CleanupOutcome {
-	return runCleanupMatrixWithPrior(in, state, mergeWtPath, nil)
-}
-
-// runCleanupMatrixWithPrior is the cleanup re-entry helper. When prior is
-// non-nil, any artifact whose prior status is CleanupSucceeded is carried
-// forward without retrying — running `git worktree remove` against an
-// already-removed path or `git branch -D` against an already-deleted
-// branch fails, which would otherwise prevent a partially-clean re-entry
-// from ever converging back to CleanupSucceeded once the originally-
-// failing artifact is resolved.
+// runCleanupMatrixWithPrior attempts to delete the merge worktree, the
+// execution worktree, and the plan branch. Each artifact is tracked
+// independently. Aggregate Status is "succeeded" when every artifact
+// deleted cleanly, "failed" when any deletion errored.
+//
+// When prior is non-nil, any artifact whose prior status is
+// CleanupSucceeded is carried forward without retrying — running
+// `git worktree remove` against an already-removed path or
+// `git branch -D` against an already-deleted branch fails, which would
+// otherwise prevent a partially-clean re-entry from ever converging
+// back to CleanupSucceeded once the originally-failing artifact is
+// resolved. Pass nil for the fresh-cleanup case.
 func runCleanupMatrixWithPrior(in IntegrateInput, state *conductor.PlanState, mergeWtPath string, prior *conductor.CleanupOutcome) *conductor.CleanupOutcome {
 	var priorMW, priorXW, priorPB *conductor.ArtifactCleanup
 	if prior != nil {
