@@ -24,6 +24,10 @@ type Diagnosis struct {
 }
 
 // Diagnose inspects project state and returns internal guidance for conductor state.
+//
+// In parity 2 the surface always points at `springfield start`: that command
+// is the user-facing execution entry point regardless of whether the project
+// is using the plan-unit registry or the legacy sequential/batches projection.
 func Diagnose(project *Project) *Diagnosis {
 	schedule := BuildSchedule(project.Config)
 	completed, total := schedule.Progress(project.State)
@@ -45,11 +49,11 @@ func Diagnose(project *Project) *Diagnosis {
 	nextStep := "Run: springfield start"
 	switch {
 	case total == 0:
-		nextStep = "No plans configured. Add plans to your Springfield execution config."
+		nextStep = "No plans configured. Run \"springfield plans add\" to register one."
 	case done:
 		nextStep = "All plans completed successfully."
 	case len(failures) > 0:
-		nextStep = "Fix failures then run: springfield start"
+		nextStep = "Inspect failures (see status), fix the underlying cause, then re-run: springfield start"
 	}
 
 	return &Diagnosis{

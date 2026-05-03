@@ -186,6 +186,11 @@ type PlanStatus struct {
 	Agent        string
 	EvidencePath string
 	Attempts     int
+	WorktreePath string
+	Branch       string
+	BaseRef      string
+	BaseHead     string
+	ExitReason   string
 }
 
 // RegistryStatus is the public plan-registry surface for `springfield status`
@@ -225,6 +230,11 @@ func LoadRegistryStatus(rootDir string) (*RegistryStatus, error) {
 			Agent:        u.Agent,
 			EvidencePath: u.EvidencePath,
 			Attempts:     u.Attempts,
+			WorktreePath: u.WorktreePath,
+			Branch:       u.Branch,
+			BaseRef:      u.BaseRef,
+			BaseHead:     u.BaseHead,
+			ExitReason:   u.ExitReason,
 		})
 	}
 	return out, nil

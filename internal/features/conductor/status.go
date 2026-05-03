@@ -29,6 +29,11 @@ type PlanUnitStatus struct {
 	Agent        string
 	EvidencePath string
 	Attempts     int
+	WorktreePath string
+	Branch       string
+	BaseRef      string
+	BaseHead     string
+	ExitReason   string
 }
 
 // LegacyPlanStatus is one legacy sequential/batches plan name annotated with
@@ -42,11 +47,9 @@ type LegacyPlanStatus struct {
 	Attempts     int
 }
 
-// nextStepNoExecution is the truthful slice-1 message: the registry is the
-// product surface; execution of registered plans is a later slice. Pointing at
-// `springfield start` here is a dead end because `start` operates on the batch
-// runtime state and rejects callers that lack an active batch.
-const nextStepNoExecution = "Plan registry recorded. Springfield does not execute registered plans yet — that lands in a later slice. Use \"springfield plans add\"/\"plans reorder\"/\"plans remove\" to manage the registry."
+// nextStepRunStart is the parity-2 message: a populated registry can be
+// executed one plan at a time via `springfield start`.
+const nextStepRunStart = "Run \"springfield start\" to execute the next registered plan in its own git worktree."
 
 // BuildRegistryStatus pairs each ordered plan unit with its mutable state and
 // computes overall counts plus the suggested next action.
@@ -116,6 +119,13 @@ func BuildRegistryStatus(project *Project) *RegistryStatus {
 			EvidencePath: project.PlanEvidencePath(id),
 			Attempts:     project.PlanAttempts(id),
 		}
+		if ps, ok := project.State.Plans[id]; ok && ps != nil {
+			entry.WorktreePath = ps.WorktreePath
+			entry.Branch = ps.Branch
+			entry.BaseRef = ps.BaseRef
+			entry.BaseHead = ps.BaseHead
+			entry.ExitReason = ps.ExitReason
+		}
 		rs.Units = append(rs.Units, entry)
 		rs.Total++
 		switch st {
@@ -137,9 +147,16 @@ func BuildRegistryStatus(project *Project) *RegistryStatus {
 	case rs.Completed == rs.Total && rs.Total > 0:
 		rs.NextStep = "All registered plans completed."
 	default:
-		rs.NextStep = nextStepNoExecution
+		rs.NextStep = nextStepRunStart
 	}
 	return rs
+}
+
+func shortSHA(s string) string {
+	if len(s) > 8 {
+		return s[:8]
+	}
+	return s
 }
 
 // legacyPlanNames flattens sequential then batches into the order BuildSchedule
@@ -190,6 +207,15 @@ func (rs *RegistryStatus) Render() string {
 			}
 			fmt.Fprintf(&b, "  %d. %s  %s  %s\n", i+1, p.Unit.ID, p.Status, title)
 			fmt.Fprintf(&b, "     path: %s\n", p.Unit.Path)
+			if p.WorktreePath != "" {
+				fmt.Fprintf(&b, "     worktree: %s\n", p.WorktreePath)
+			}
+			if p.Branch != "" {
+				fmt.Fprintf(&b, "     branch: %s (base %s @ %s)\n", p.Branch, p.BaseRef, shortSHA(p.BaseHead))
+			}
+			if p.ExitReason != "" {
+				fmt.Fprintf(&b, "     exit: %s\n", p.ExitReason)
+			}
 			if p.Error != "" {
 				fmt.Fprintf(&b, "     error: %s\n", p.Error)
 			}

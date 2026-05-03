@@ -47,6 +47,14 @@ const (
 )
 
 // PlanState tracks execution status, timing, evidence, and failure detail for a single plan.
+//
+// Parity-2 fields capture truthful per-plan worktree identity so a resumed run
+// can decide between honest reuse, refused reuse, and a fresh attempt:
+//   - WorktreePath / Branch / BaseRef / BaseHead pin the isolated checkout.
+//   - InputDigest pins the plan file + project guidance bytes used for the
+//     first attempt; drift forces a fresh attempt instead of silent reuse.
+//   - ExitReason carries a short structured tag for the most recent terminal
+//     transition (e.g. "completed", "agent-failed", "preflight-dirty-source").
 type PlanState struct {
 	Status       PlanStatus `json:"status"`
 	Error        string     `json:"error,omitempty"`
@@ -55,6 +63,13 @@ type PlanState struct {
 	Attempts     int        `json:"attempts"`
 	StartedAt    time.Time  `json:"started_at,omitempty"`
 	EndedAt      time.Time  `json:"ended_at,omitempty"`
+
+	WorktreePath string `json:"worktree_path,omitempty"`
+	Branch       string `json:"branch,omitempty"`
+	BaseRef      string `json:"base_ref,omitempty"`
+	BaseHead     string `json:"base_head,omitempty"`
+	InputDigest  string `json:"input_digest,omitempty"`
+	ExitReason   string `json:"exit_reason,omitempty"`
 }
 
 // State represents persisted conductor plan state.

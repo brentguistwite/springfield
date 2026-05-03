@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -19,14 +20,29 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"springfield/internal/core/agents"
+	"springfield/internal/core/agents/claude"
+	"springfield/internal/core/agents/codex"
+	"springfield/internal/core/agents/gemini"
 	"springfield/internal/core/config"
 	coreexec "springfield/internal/core/exec"
 	"springfield/internal/core/lock"
+	coreruntime "springfield/internal/core/runtime"
 	"springfield/internal/features/batch"
+	"springfield/internal/features/conductor"
+	"springfield/internal/features/conductor/planrun"
 	"springfield/internal/features/execution"
 	"springfield/internal/features/wakelock"
 	"springfield/internal/features/workflow"
 )
+
+// runtimeAgentRunner is a thin adapter so cmd does not need to import the
+// shared coreruntime constructor everywhere.
+type runtimeAgentRunner struct{ inner coreruntime.Runner }
+
+func (r runtimeAgentRunner) Run(ctx context.Context, req coreruntime.Request) coreruntime.Result {
+	return r.inner.Run(ctx, req)
+}
 
 // NewStartCommand runs the active Springfield batch from its saved progress.
 func NewStartCommand() *cobra.Command {
@@ -64,7 +80,14 @@ func NewStartCommand() *cobra.Command {
 			}
 
 			if !hasRun || run.ActiveBatchID == "" {
-				return fmt.Errorf("no Springfield plan found for this repo — run \"springfield plan\" first")
+				ran, runErr := tryRunSinglePlanUnit(cmd, root, loaded, noKeepAwake)
+				if runErr != nil {
+					return runErr
+				}
+				if ran {
+					return nil
+				}
+				return fmt.Errorf("no Springfield plan found for this repo — run \"springfield plan\" or \"springfield plans add\" first")
 			}
 
 			paths, err := batch.NewPaths(root, run.ActiveBatchID)
@@ -810,4 +833,107 @@ func sliceToExecutionWork(root string, b batch.Batch, s batch.Slice) execution.W
 			},
 		},
 	}
+}
+
+// tryRunSinglePlanUnit handles the parity-2 single-plan worktree flow when no
+// active batch is present. Returns (true, nil) when a plan ran (success or
+// failure with state persisted); (false, nil) when no plan-unit registry is
+// configured so the caller can fall through to its legacy "no batch" error;
+// (false, err) when something prevented even attempting plan execution.
+func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded, noKeepAwake bool) (bool, error) {
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	if project.Config == nil || len(project.Config.PlanUnits) == 0 {
+		return false, nil
+	}
+
+	w := cmd.OutOrStdout()
+
+	logsDir := filepath.Join(root, ".springfield", "logs")
+	_ = os.MkdirAll(logsDir, 0o755)
+	logPath := filepath.Join(logsDir, fmt.Sprintf("plan-run-%s.log", time.Now().UTC().Format("20060102T150405Z")))
+	if f, lerr := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); lerr == nil {
+		cmd.SetOut(io.MultiWriter(cmd.OutOrStdout(), f))
+		cmd.SetErr(io.MultiWriter(cmd.ErrOrStderr(), f))
+		defer f.Close()
+		fmt.Fprintf(cmd.OutOrStdout(), "Log: %s\n", logPath)
+	}
+
+	if !noKeepAwake && loaded.Config.KeepAwakeEnabled() {
+		releaseWakelock, wlErr := wakelock.Acquire()
+		if wlErr != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: sleep prevention unavailable: %v\n", wlErr)
+		} else {
+			fmt.Fprintf(w, "Sleep prevention: active\n")
+			defer releaseWakelock()
+		}
+	}
+
+	registry := agents.NewRegistry(
+		claude.New(exec.LookPath),
+		codex.New(exec.LookPath),
+		gemini.New(exec.LookPath),
+	)
+	if len(loaded.Config.Project.AgentPriority) == 0 {
+		return false, fmt.Errorf("project has no agents configured: agent_priority is empty. Run \"springfield init\" to select agents.")
+	}
+	agentIDs := make([]agents.ID, 0, len(loaded.Config.Project.AgentPriority))
+	for _, id := range loaded.Config.Project.AgentPriority {
+		if id == "" {
+			continue
+		}
+		agentIDs = append(agentIDs, agents.ID(id))
+	}
+
+	worktreeBase := project.Config.WorktreeBase
+	if worktreeBase == "" {
+		worktreeBase = ".worktrees"
+	}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:           project,
+		ControlRoot:       root,
+		WorktreeBase:      worktreeBase,
+		AgentIDs:          agentIDs,
+		ExecutionSettings: loaded.Config.ExecutionSettings(),
+		Runner:            runtimeAgentRunner{inner: coreruntime.NewRunner(registry)},
+		Manager:           planrun.NewManager(),
+		Progress:          w,
+	})
+
+	if res.PlanID == "" && res.Reason == "no-eligible-plan" {
+		fmt.Fprintln(w, "All registered plans completed.")
+		return true, nil
+	}
+	if res.Err != nil {
+		fmt.Fprintf(w, "Plan: %s\n", res.PlanID)
+		if res.Context.WorktreeRoot != "" {
+			fmt.Fprintf(w, "Worktree: %s (branch %s, base %s @ %s)\n",
+				res.Context.WorktreeRoot, res.Context.Branch, res.Context.BaseRef, shortSHA(res.Context.BaseHead))
+		}
+		fmt.Fprintf(w, "Status: failed (%s)\n", res.Reason)
+		fmt.Fprintf(w, "Error: %s\n", res.Err.Error())
+		return true, fmt.Errorf("plan %s failed: %w", res.PlanID, res.Err)
+	}
+
+	fmt.Fprintf(w, "Plan: %s\n", res.PlanID)
+	fmt.Fprintf(w, "Worktree: %s (branch %s, base %s @ %s)\n",
+		res.Context.WorktreeRoot, res.Context.Branch, res.Context.BaseRef, shortSHA(res.Context.BaseHead))
+	fmt.Fprintf(w, "Status: completed\n")
+	if res.EvidencePath != "" {
+		fmt.Fprintf(w, "Evidence: %s\n", res.EvidencePath)
+	}
+	return true, nil
+}
+
+func shortSHA(s string) string {
+	if len(s) > 8 {
+		return s[:8]
+	}
+	return s
 }
