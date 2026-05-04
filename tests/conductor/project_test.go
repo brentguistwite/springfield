@@ -3,7 +3,9 @@ package conductor_test
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"springfield/internal/core/config"
 	"springfield/internal/features/conductor"
@@ -334,4 +336,124 @@ func TestAllPlansFlattensSequentialThenBatches(t *testing.T) {
 			t.Fatalf("all plans[%d]: got %q want %q", i, got[i], want[i])
 		}
 	}
+}
+
+func TestNormalizeStaleRunningMarksInterruptedAndPersists(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root)
+	writeRegisteredPlanUnitConfig(t, root, []string{"alpha", "beta"})
+
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("load project: %v", err)
+	}
+
+	project.State.Plans["alpha"] = &conductor.PlanState{
+		Status:       conductor.StatusRunning,
+		Attempts:     1,
+		StartedAt:    time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC),
+		WorktreePath: filepath.Join(root, ".worktrees", "alpha"),
+		Branch:       "springfield/alpha",
+		BaseRef:      "main",
+		BaseHead:     "aaaaaaaa",
+	}
+	if err := project.SaveState(); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	at := time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC)
+	changed := project.NormalizeStaleRunning(at)
+	if len(changed) != 1 || changed[0] != "alpha" {
+		t.Fatalf("changed = %v, want [alpha]", changed)
+	}
+	if err := project.SaveState(); err != nil {
+		t.Fatalf("save normalized state: %v", err)
+	}
+
+	reloaded, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("reload project: %v", err)
+	}
+	ps := reloaded.State.Plans["alpha"]
+	if ps.Status != conductor.StatusInterrupted {
+		t.Fatalf("status = %q, want %q", ps.Status, conductor.StatusInterrupted)
+	}
+	if ps.ExitReason != conductor.ExitInterruptedProcessExit {
+		t.Fatalf("exit reason = %q, want %q", ps.ExitReason, conductor.ExitInterruptedProcessExit)
+	}
+	if !ps.EndedAt.Equal(at) {
+		t.Fatalf("ended_at = %v, want %v", ps.EndedAt, at)
+	}
+	if ps.Attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", ps.Attempts)
+	}
+
+	next := conductor.BuildSchedule(reloaded.Config).NextPlans(reloaded.State)
+	if len(next) != 1 || next[0] != "alpha" {
+		t.Fatalf("next = %v, want [alpha]", next)
+	}
+}
+
+func TestReloadedIntegratedPlanSkipsToNextIncompletePlan(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root)
+	writeRegisteredPlanUnitConfig(t, root, []string{"alpha", "beta"})
+
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("load project: %v", err)
+	}
+	project.State.Plans["alpha"] = &conductor.PlanState{
+		Status: conductor.StatusCompleted,
+		Merge: &conductor.MergeOutcome{
+			Status: conductor.MergeSucceeded,
+		},
+		Cleanup: &conductor.CleanupOutcome{
+			Status: conductor.CleanupSucceeded,
+		},
+	}
+	if err := project.SaveState(); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	reloaded, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("reload project: %v", err)
+	}
+
+	next := conductor.BuildSchedule(reloaded.Config).NextPlans(reloaded.State)
+	if len(next) != 1 || next[0] != "beta" {
+		t.Fatalf("next = %v, want [beta]", next)
+	}
+}
+
+func writeRegisteredPlanUnitConfig(t *testing.T, root string, ids []string) {
+	t.Helper()
+
+	planDir := filepath.Join(root, conductor.TrackedPlansDir)
+	if err := os.MkdirAll(planDir, 0o755); err != nil {
+		t.Fatalf("mkdir plans: %v", err)
+	}
+
+	units := make([]conductor.PlanUnit, 0, len(ids))
+	for i, id := range ids {
+		if err := os.WriteFile(filepath.Join(planDir, id+".md"), []byte("# "+id+"\n"), 0o644); err != nil {
+			t.Fatalf("write plan %s: %v", id, err)
+		}
+		units = append(units, conductor.PlanUnit{
+			ID:    id,
+			Path:  conductor.TrackedPlansDir + "/" + id + ".md",
+			Order: i + 1,
+		})
+	}
+
+	writeConductorConfig(t, root, &conductor.Config{
+		PlansDir:                   conductor.TrackedPlansDir,
+		WorktreeBase:               ".worktrees",
+		MaxRetries:                 2,
+		SingleWorkstreamIterations: 50,
+		SingleWorkstreamTimeout:    3600,
+		Tool:                       "claude",
+		PlanUnits:                  units,
+	})
 }

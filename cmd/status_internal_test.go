@@ -158,6 +158,53 @@ func TestStatusRendersLegacySequentialBatchesWhenPlanUnitsEmpty(t *testing.T) {
 	}
 }
 
+func TestStatusRewritesStaleRunningPlanToInterruptedAndGuidesResume(t *testing.T) {
+	root := newStatusRoot(t)
+	writeStatusPlan(t, root, "feature.md")
+	writeStatusConfig(t, root, []map[string]any{
+		{"id": "feature-a", "path": "springfield/plans/feature.md", "order": 1},
+		{"id": "feature-b", "path": "springfield/plans/feature.md", "order": 2},
+	})
+	wt := filepath.Join(root, ".worktrees", "feature-a")
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	writeStatusState(t, root, map[string]any{
+		"plans": map[string]any{
+			"feature-a": map[string]any{
+				"status":        "running",
+				"attempts":      1,
+				"worktree_path": wt,
+				"branch":        "springfield/feature-a",
+				"base_ref":      "main",
+				"base_head":     "aaaaaaaa",
+			},
+		},
+	})
+
+	out, err := runStatusIn(root)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(out, "feature-a  interrupted") {
+		t.Fatalf("expected interrupted status:\n%s", out)
+	}
+	if !strings.Contains(out, "resume interrupted plan \"feature-a\"") {
+		t.Fatalf("expected resume guidance:\n%s", out)
+	}
+	if !strings.Contains(out, "interrupted-process-exit") {
+		t.Fatalf("expected interruption exit reason:\n%s", out)
+	}
+
+	stateBytes, err := os.ReadFile(filepath.Join(root, ".springfield", "execution", "state.json"))
+	if err != nil {
+		t.Fatalf("read state: %v", err)
+	}
+	if !strings.Contains(string(stateBytes), "\"status\": \"interrupted\"") {
+		t.Fatalf("state not rewritten to interrupted:\n%s", stateBytes)
+	}
+}
+
 // --- helpers ---
 
 func newStatusRoot(t *testing.T) string {
@@ -226,8 +273,8 @@ func writeActiveBatch(t *testing.T, root, batchID, title string) {
 		t.Fatalf("NewPaths: %v", err)
 	}
 	b := batch.Batch{
-		ID:    batchID,
-		Title: title,
+		ID:     batchID,
+		Title:  title,
 		Phases: []batch.Phase{{Mode: batch.PhaseSerial, Slices: []string{"01"}}},
 		Slices: []batch.Slice{{ID: "01", Title: "First", Status: batch.SliceQueued}},
 	}

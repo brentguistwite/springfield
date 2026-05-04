@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"springfield/internal/core/config"
 	"springfield/internal/features/conductor"
@@ -250,6 +251,11 @@ func RenderRegistryStatus(rootDir string) (string, error) {
 			return conductor.BuildRegistryStatus(nil).Render(), nil
 		}
 		return "", err
+	}
+	if changed := project.NormalizeStaleRunning(time.Now()); len(changed) > 0 {
+		if err := project.SaveState(); err != nil {
+			return "", err
+		}
 	}
 	return conductor.BuildRegistryStatus(project).Render(), nil
 }

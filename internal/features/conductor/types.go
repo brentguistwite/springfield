@@ -40,10 +40,19 @@ type PlanUnit struct {
 type PlanStatus string
 
 const (
-	StatusPending   PlanStatus = "pending"
-	StatusRunning   PlanStatus = "running"
-	StatusCompleted PlanStatus = "completed"
-	StatusFailed    PlanStatus = "failed"
+	StatusPending     PlanStatus = "pending"
+	StatusRunning     PlanStatus = "running"
+	StatusInterrupted PlanStatus = "interrupted"
+	StatusCompleted   PlanStatus = "completed"
+	StatusFailed      PlanStatus = "failed"
+)
+
+const (
+	// ExitInterruptedProcessExit marks a plan that was durably left in
+	// running state but later observed with no owning Springfield process.
+	// Parity 4 rewrites that stale "running" into an honest interrupted
+	// state at the product boundary before status/start choose next work.
+	ExitInterruptedProcessExit = "interrupted-process-exit"
 )
 
 // PlanState tracks execution status, timing, evidence, and failure detail for a single plan.

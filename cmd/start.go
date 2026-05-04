@@ -852,6 +852,11 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 	if project.Config == nil || len(project.Config.PlanUnits) == 0 {
 		return false, nil
 	}
+	if changed := project.NormalizeStaleRunning(time.Now()); len(changed) > 0 {
+		if err := project.SaveState(); err != nil {
+			return true, err
+		}
+	}
 
 	w := cmd.OutOrStdout()
 

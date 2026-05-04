@@ -158,7 +158,7 @@ func BuildRegistryStatus(project *Project) *RegistryStatus {
 	case rs.Completed == rs.Total && rs.Total > 0:
 		rs.NextStep = "All registered plans completed."
 	default:
-		rs.NextStep = nextStepRunStart
+		rs.NextStep = nextPlannedAction(project)
 	}
 	return rs
 }
