@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"springfield/internal/core/lock"
 	"springfield/internal/features/batch"
 )
 
@@ -202,6 +203,51 @@ func TestStatusRewritesStaleRunningPlanToInterruptedAndGuidesResume(t *testing.T
 	}
 	if !strings.Contains(string(stateBytes), "\"status\": \"interrupted\"") {
 		t.Fatalf("state not rewritten to interrupted:\n%s", stateBytes)
+	}
+}
+
+func TestStatusDoesNotRewriteRunningPlanWhileStartLockHeld(t *testing.T) {
+	root := newStatusRoot(t)
+	writeStatusPlan(t, root, "feature.md")
+	writeStatusConfig(t, root, []map[string]any{
+		{"id": "feature-a", "path": "springfield/plans/feature.md", "order": 1},
+	})
+	writeStatusState(t, root, map[string]any{
+		"plans": map[string]any{
+			"feature-a": map[string]any{
+				"status":        "running",
+				"attempts":      1,
+				"worktree_path": filepath.Join(root, ".worktrees", "feature-a"),
+				"branch":        "springfield/feature-a",
+				"base_ref":      "main",
+				"base_head":     "aaaaaaaa",
+			},
+		},
+	})
+
+	lk, err := lock.Acquire(root)
+	if err != nil {
+		t.Fatalf("acquire lock: %v", err)
+	}
+	defer lk.Release()
+
+	out, err := runStatusIn(root)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(out, "feature-a  running") {
+		t.Fatalf("expected live running status:\n%s", out)
+	}
+	if !strings.Contains(out, "already running") {
+		t.Fatalf("expected live-run guidance:\n%s", out)
+	}
+
+	stateBytes, err := os.ReadFile(filepath.Join(root, ".springfield", "execution", "state.json"))
+	if err != nil {
+		t.Fatalf("read state: %v", err)
+	}
+	if !strings.Contains(string(stateBytes), "\"status\": \"running\"") {
+		t.Fatalf("state was mutated despite held lock:\n%s", stateBytes)
 	}
 }
 

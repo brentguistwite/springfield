@@ -56,7 +56,7 @@ func nextPlannedAction(project *Project) string {
 
 	switch plan.Status {
 	case StatusInterrupted:
-		return fmt.Sprintf("Run \"springfield start\" to resume interrupted plan %q from its recorded worktree.", planID)
+		return fmt.Sprintf("Run \"springfield start\" to resume interrupted plan %q.", planID)
 	case StatusFailed:
 		return fmt.Sprintf("Inspect plan %q failure above, fix the underlying cause if needed, then re-run: springfield start", planID)
 	case StatusCompleted:
