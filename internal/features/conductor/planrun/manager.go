@@ -113,6 +113,19 @@ func (m *Manager) Prepare(in PrepareInput) (PrepareDecision, error) {
 		if err != nil {
 			return PrepareDecision{}, fmt.Errorf("resolve base ref: %w", err)
 		}
+	} else {
+		// Slice-3 contract: explicit Ref must name a local branch so the
+		// merge phase can publish via `git update-ref refs/heads/<ref>`.
+		// Verify before any worktree side effects so an unknown branch is
+		// rejected up front instead of failing mid-merge.
+		exists, berr := m.Git.BranchExists(in.ControlRoot, baseRef)
+		if berr != nil {
+			return PrepareDecision{}, fmt.Errorf("check local branch %q: %w", baseRef, berr)
+		}
+		if !exists {
+			return PrepareDecision{}, reject("preflight-ref-not-local-branch",
+				fmt.Sprintf("plan %q ref %q is not a local branch in %s; merge integration requires a local branch target", in.Unit.ID, baseRef, in.ControlRoot))
+		}
 	}
 
 	existing := worktreePathsByOwner(in.AllStates, in.Unit.ID)

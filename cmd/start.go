@@ -30,6 +30,7 @@ import (
 	coreruntime "springfield/internal/core/runtime"
 	"springfield/internal/features/batch"
 	"springfield/internal/features/conductor"
+	"springfield/internal/features/conductor/planmerge"
 	"springfield/internal/features/conductor/planrun"
 	"springfield/internal/features/execution"
 	"springfield/internal/features/wakelock"
@@ -895,6 +896,16 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 		worktreeBase = ".worktrees"
 	}
 
+	// Re-run path: the next eligible plan already executed (Status=Completed)
+	// but is not yet fully integrated (merge refused/failed or cleanup
+	// failed). Skip re-execution — re-running the agent against an already
+	// completed plan would silently rewrite truthful state to "failed" and
+	// destroy the preserved evidence. Drive only the merge integration
+	// phase against the existing artifacts.
+	if planID, ok := nextNonIntegratedCompletedPlan(project); ok {
+		return runMergeIntegrationOnly(w, project, root, worktreeBase, planID)
+	}
+
 	res := planrun.SinglePlan(planrun.SinglePlanInput{
 		Project:           project,
 		ControlRoot:       root,
@@ -928,7 +939,158 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 	if res.EvidencePath != "" {
 		fmt.Fprintf(w, "Evidence: %s\n", res.EvidencePath)
 	}
+
+	// Execution succeeded → attempt merge integration through a dedicated
+	// merge worktree. A refused or failed merge is recorded truthfully and
+	// surfaced; the underlying CLI exit reflects the integration outcome
+	// so a stuck merge doesn't masquerade as a clean run.
+	mergeRes := planmerge.Integrate(planmerge.IntegrateInput{
+		Project:      project,
+		PlanID:       res.PlanID,
+		ControlRoot:  root,
+		WorktreeBase: worktreeBase,
+		Progress:     w,
+	})
+	renderMergeOutcome(w, mergeRes)
+	if mergeRes.Err != nil {
+		return true, fmt.Errorf("plan %s merge integration failed: %w", res.PlanID, mergeRes.Err)
+	}
+	if mergeRes.Merge != nil && mergeRes.Merge.Status != conductor.MergeSucceeded {
+		return true, fmt.Errorf("plan %s merge %s: %s", res.PlanID, mergeRes.Merge.Status, mergeRes.Merge.Reason)
+	}
+	// Merge succeeded but cleanup failed → plan is recorded as not fully
+	// integrated. Surface as non-zero so CI / operators do not treat the
+	// run as fully done while preserved artifacts remain on disk.
+	if mergeRes.Cleanup != nil && mergeRes.Cleanup.Status == conductor.CleanupFailed {
+		return true, fmt.Errorf("plan %s merge succeeded but cleanup failed: artifacts preserved", res.PlanID)
+	}
+	if mergeRes.Merge != nil && mergeRes.Merge.SourceSyncStatus == "failed" {
+		// State already records the plan as not integrated (per
+		// IsIntegrated rules). Surface as non-zero so the CLI exit
+		// code matches the state contract instead of misleading the
+		// operator with a clean exit while the source checkout
+		// remains stale.
+		return true, fmt.Errorf("plan %s merge succeeded but source resync failed: %s", res.PlanID, mergeRes.Merge.SourceSyncError)
+	}
 	return true, nil
+}
+
+// nextNonIntegratedCompletedPlan returns the next eligible plan ID when
+// that plan already finished execution (Status=Completed) but is not yet
+// integrated, signalling a re-run that should drive only the merge phase.
+// Returns ("", false) when the next eligible plan is fresh (or there isn't
+// one) — the caller falls through to the normal SinglePlan flow.
+func nextNonIntegratedCompletedPlan(project *conductor.Project) (string, bool) {
+	if project == nil || project.Config == nil {
+		return "", false
+	}
+	schedule := conductor.BuildSchedule(project.Config)
+	next := schedule.NextPlans(project.State)
+	if len(next) == 0 {
+		return "", false
+	}
+	planID := next[0]
+	prior := project.State.Plans[planID]
+	if prior == nil || prior.Status != conductor.StatusCompleted {
+		return "", false
+	}
+	if prior.IsIntegrated() {
+		return "", false
+	}
+	return planID, true
+}
+
+// runMergeIntegrationOnly drives only planmerge.Integrate for a plan whose
+// execution already succeeded but whose integration is incomplete. Output
+// reflects the re-entry: no fresh "Plan: ..." / "Status: completed"
+// banner, just the merge phase progress and outcome.
+func runMergeIntegrationOnly(w io.Writer, project *conductor.Project, root, worktreeBase, planID string) (bool, error) {
+	fmt.Fprintf(w, "Plan: %s (re-running merge integration)\n", planID)
+	mergeRes := planmerge.Integrate(planmerge.IntegrateInput{
+		Project:      project,
+		PlanID:       planID,
+		ControlRoot:  root,
+		WorktreeBase: worktreeBase,
+		Progress:     w,
+	})
+	renderMergeOutcome(w, mergeRes)
+	if mergeRes.Err != nil {
+		return true, fmt.Errorf("plan %s merge integration failed: %w", planID, mergeRes.Err)
+	}
+	if mergeRes.Merge != nil && mergeRes.Merge.Status != conductor.MergeSucceeded {
+		return true, fmt.Errorf("plan %s merge %s: %s", planID, mergeRes.Merge.Status, mergeRes.Merge.Reason)
+	}
+	if mergeRes.Cleanup != nil && mergeRes.Cleanup.Status == conductor.CleanupFailed {
+		return true, fmt.Errorf("plan %s merge succeeded but cleanup failed: artifacts preserved", planID)
+	}
+	if mergeRes.Merge != nil && mergeRes.Merge.SourceSyncStatus == "failed" {
+		return true, fmt.Errorf("plan %s merge succeeded but source resync failed: %s", planID, mergeRes.Merge.SourceSyncError)
+	}
+	return true, nil
+}
+
+// renderMergeOutcome prints a truthful, compact summary of the merge phase.
+// Refused/failed merges surface preserved artifacts so operators see what is
+// still on disk; clean success notes the published target head.
+func renderMergeOutcome(w io.Writer, res planmerge.IntegrateResult) {
+	if res.Merge == nil {
+		return
+	}
+	m := res.Merge
+	if m.Reason == "" {
+		fmt.Fprintf(w, "Merge: %s\n", m.Status)
+	} else {
+		fmt.Fprintf(w, "Merge: %s (%s)\n", m.Status, m.Reason)
+	}
+	if m.TargetRef != "" {
+		fmt.Fprintf(w, "  target: %s\n", m.TargetRef)
+	}
+	if m.TargetHead != "" {
+		fmt.Fprintf(w, "  target head: %s\n", shortSHA(m.TargetHead))
+	}
+	if m.PostMergeHead != "" {
+		fmt.Fprintf(w, "  post-merge head: %s\n", shortSHA(m.PostMergeHead))
+	}
+	if m.WorktreePath != "" && m.Status != conductor.MergeSucceeded {
+		fmt.Fprintf(w, "  merge worktree (preserved): %s\n", m.WorktreePath)
+	}
+	if m.Error != "" {
+		fmt.Fprintf(w, "  detail: %s\n", m.Error)
+	}
+	if res.Cleanup != nil {
+		renderCleanupOutcome(w, res.Cleanup)
+	}
+}
+
+func renderCleanupOutcome(w io.Writer, c *conductor.CleanupOutcome) {
+	fmt.Fprintf(w, "Cleanup: %s\n", c.Status)
+	pairs := []struct {
+		label    string
+		artifact *conductor.ArtifactCleanup
+	}{
+		{"merge worktree", c.MergeWorktree},
+		{"execution worktree", c.ExecutionWorktree},
+		{"plan branch", c.PlanBranch},
+	}
+	for _, p := range pairs {
+		art := p.artifact
+		if art == nil {
+			continue
+		}
+		switch art.Status {
+		case conductor.CleanupPreserved:
+			fmt.Fprintf(w, "  %s: preserved (%s)\n", p.label, displayArtifact(art))
+		case conductor.CleanupFailed:
+			fmt.Fprintf(w, "  %s: cleanup failed — %s (preserved at %s)\n", p.label, art.Error, displayArtifact(art))
+		}
+	}
+}
+
+func displayArtifact(art *conductor.ArtifactCleanup) string {
+	if art.Path != "" {
+		return art.Path
+	}
+	return art.Branch
 }
 
 func shortSHA(s string) string {

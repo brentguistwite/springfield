@@ -98,6 +98,56 @@ func ValidateRef(ref string) error {
 	return nil
 }
 
+// pseudoRefNames are git pseudo-refs that resolve to a SHA but are never
+// local branches. Slice-3 merge integration must publish back to a local
+// branch; pseudo-refs are rejected up front so a refused ref shape can
+// never reach the merge phase.
+var pseudoRefNames = map[string]struct{}{
+	"HEAD":             {},
+	"FETCH_HEAD":       {},
+	"MERGE_HEAD":       {},
+	"ORIG_HEAD":        {},
+	"CHERRY_PICK_HEAD": {},
+	"REVERT_HEAD":      {},
+}
+
+// ValidateLocalBranchRef extends [ValidateRef] with the slice-3 contract
+// that ref/plan_branch fields must name a local branch. The slice-3 merge
+// phase publishes via `git update-ref refs/heads/<ref>`, so any ref shape
+// that cannot live under refs/heads/ is rejected at registration time
+// rather than failing later inside the merge phase with a confusing
+// CAS-loss message.
+//
+// Rejected shapes:
+//
+//   - fully qualified refs (any ref starting with "refs/")
+//   - pseudo-refs (HEAD, FETCH_HEAD, MERGE_HEAD, etc.)
+//   - revision modifiers ("~", "^", "@{...}")
+//
+// Empty input is accepted: ref defaults to the current branch at execution
+// time, plan_branch defaults to springfield/<plan-key>.
+func ValidateLocalBranchRef(ref string) error {
+	if ref == "" {
+		return nil
+	}
+	// Check shape-specific rejections first so the error message names the
+	// real issue (fully-qualified, pseudo-ref, revision modifier) rather
+	// than falling through to the generic refPattern mismatch.
+	if strings.HasPrefix(ref, "refs/") {
+		return fmt.Errorf("ref %q is a fully-qualified ref; use a local branch name (e.g. \"main\")", ref)
+	}
+	if _, isPseudo := pseudoRefNames[ref]; isPseudo {
+		return fmt.Errorf("ref %q is a git pseudo-ref; use a local branch name", ref)
+	}
+	if strings.ContainsAny(ref, "~^") || strings.Contains(ref, "@{") {
+		return fmt.Errorf("ref %q contains revision modifiers; use a plain branch name", ref)
+	}
+	if err := ValidateRef(ref); err != nil {
+		return err
+	}
+	return nil
+}
+
 // ValidatePlanUnitID enforces the slug rule for plan-unit IDs.
 func ValidatePlanUnitID(id string) error {
 	if id == "" {
@@ -119,10 +169,10 @@ func ValidatePlanUnit(unit PlanUnit, rootDir, plansDir string) error {
 	if _, err := NormalizePlanPath(plansDir, unit.Path); err != nil {
 		return err
 	}
-	if err := ValidateRef(unit.Ref); err != nil {
+	if err := ValidateLocalBranchRef(unit.Ref); err != nil {
 		return fmt.Errorf("plan %q ref: %w", unit.ID, err)
 	}
-	if err := ValidateRef(unit.PlanBranch); err != nil {
+	if err := ValidateLocalBranchRef(unit.PlanBranch); err != nil {
 		return fmt.Errorf("plan %q plan_branch: %w", unit.ID, err)
 	}
 	if unit.Order < 1 {
@@ -194,10 +244,10 @@ func (p *Project) AddPlanUnit(input PlanUnitInput) (PlanUnit, error) {
 	if err != nil {
 		return PlanUnit{}, err
 	}
-	if err := ValidateRef(input.Ref); err != nil {
+	if err := ValidateLocalBranchRef(input.Ref); err != nil {
 		return PlanUnit{}, err
 	}
-	if err := ValidateRef(input.PlanBranch); err != nil {
+	if err := ValidateLocalBranchRef(input.PlanBranch); err != nil {
 		return PlanUnit{}, err
 	}
 	order := input.Order

@@ -201,6 +201,27 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		InputDigest:  decision.InputDigest,
 		ExitReason:   exitReason,
 	}
+	// On a successful execution, mark the merge integration phase as
+	// pending before persisting. If the upcoming planmerge.Integrate save
+	// fails for any reason, the durable record reflects "merge not yet
+	// done" rather than appearing as a fully integrated legacy-style
+	// completion. PlanState.IsIntegrated() returns false for any non-
+	// Succeeded merge status.
+	if finalStatus == conductor.StatusCompleted {
+		endState.Merge = &conductor.MergeOutcome{
+			Status:      conductor.MergePending,
+			Reason:      "awaiting-merge-integration",
+			AttemptedAt: now(),
+		}
+		// Capture plan_head from the execution worktree at the boundary
+		// between execution and merge phases. The slice contract names
+		// plan_head as a required ref/SHA; recording it here means the
+		// durable state is honest even if the process dies before
+		// planmerge.Integrate runs and re-captures it.
+		if planHead, err := in.Manager.Git.Head(ctx.WorktreeRoot); err == nil {
+			endState.PlanHead = planHead
+		}
+	}
 	in.Project.State.Plans[planID] = endState
 	saveErr := in.Project.SaveState()
 

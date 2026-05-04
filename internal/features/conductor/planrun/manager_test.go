@@ -59,6 +59,7 @@ func (g *fakeGit) BranchExists(_, branch string) (bool, error) {
 	return ok, nil
 }
 func (g *fakeGit) WorktreeListPaths(string) ([]string, error) { return g.worktreePaths, nil }
+func (g *fakeGit) Head(string) (string, error)                 { return "headcafef00d", nil }
 func (g *fakeGit) WorktreeAddNewBranch(_, path, branch, base string) error {
 	g.createNew = append(g.createNew, path+"|"+branch+"|"+base)
 	g.branches[branch] = struct{}{}
@@ -358,6 +359,56 @@ func TestPrepareRefusesAlreadyCompletedPlan(t *testing.T) {
 	pe := planrun.AsPreflight(err)
 	if pe == nil || pe.Tag != "preflight-already-completed" {
 		t.Fatalf("expected preflight-already-completed, got %v", err)
+	}
+}
+
+// TestPrepareRefusesUnknownLocalBranchRef verifies the slice-3 preflight
+// contract: an explicit Unit.Ref that does not name a local branch is
+// rejected up front so the merge phase never sees an unpublishable target.
+func TestPrepareRefusesUnknownLocalBranchRef(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "springfield/plans/p.md"), "plan")
+
+	g := newFakeGit()
+	// Branch "feature/missing" is NOT in g.branches → BranchExists returns false.
+	m := &planrun.Manager{Git: g}
+	_, err := m.Prepare(planrun.PrepareInput{
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		Unit:         conductor.PlanUnit{ID: "p", Path: "springfield/plans/p.md", Ref: "feature/missing", Order: 1},
+		AllStates:    map[string]*conductor.PlanState{},
+	})
+	if err == nil {
+		t.Fatalf("expected non-local-branch rejection")
+	}
+	pe := planrun.AsPreflight(err)
+	if pe == nil || pe.Tag != "preflight-ref-not-local-branch" {
+		t.Fatalf("expected preflight-ref-not-local-branch, got %v", err)
+	}
+	if len(g.createNew)+len(g.createExisting) != 0 {
+		t.Fatalf("worktree side effects must not fire on ref preflight failure")
+	}
+}
+
+func TestPrepareAcceptsExplicitLocalBranchRef(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "springfield/plans/p.md"), "plan")
+
+	g := newFakeGit()
+	g.branches["release"] = struct{}{}
+	g.resolveOK["release"] = "cafef00d"
+	m := &planrun.Manager{Git: g}
+	dec, err := m.Prepare(planrun.PrepareInput{
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		Unit:         conductor.PlanUnit{ID: "p", Path: "springfield/plans/p.md", Ref: "release", Order: 1},
+		AllStates:    map[string]*conductor.PlanState{},
+	})
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if dec.Context.BaseRef != "release" || dec.Context.BaseHead != "cafef00d" {
+		t.Fatalf("unexpected context: %+v", dec.Context)
 	}
 }
 

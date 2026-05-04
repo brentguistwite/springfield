@@ -33,7 +33,10 @@ type PlanUnitStatus struct {
 	Branch       string
 	BaseRef      string
 	BaseHead     string
+	PlanHead     string
 	ExitReason   string
+	Merge        *MergeOutcome
+	Cleanup      *CleanupOutcome
 }
 
 // LegacyPlanStatus is one legacy sequential/batches plan name annotated with
@@ -124,14 +127,22 @@ func BuildRegistryStatus(project *Project) *RegistryStatus {
 			entry.Branch = ps.Branch
 			entry.BaseRef = ps.BaseRef
 			entry.BaseHead = ps.BaseHead
+			entry.PlanHead = ps.PlanHead
 			entry.ExitReason = ps.ExitReason
+			entry.Merge = ps.Merge
+			entry.Cleanup = ps.Cleanup
 		}
 		rs.Units = append(rs.Units, entry)
 		rs.Total++
-		switch st {
-		case StatusCompleted:
+		// Completed counter reports queue-integrated plans only: a plan
+		// whose execution succeeded but whose merge was refused/failed or
+		// whose cleanup failed must not advance the counter, otherwise
+		// status would emit "all plans completed" alongside merge
+		// diagnostics that say otherwise.
+		if ps, ok := project.State.Plans[id]; ok && ps != nil && ps.IsIntegrated() {
 			rs.Completed++
-		case StatusFailed:
+		}
+		if st == StatusFailed {
 			failures = append(failures, PlanFailure{
 				Plan:         id,
 				Error:        entry.Error,
@@ -150,6 +161,76 @@ func BuildRegistryStatus(project *Project) *RegistryStatus {
 		rs.NextStep = nextStepRunStart
 	}
 	return rs
+}
+
+func renderMerge(b *strings.Builder, m *MergeOutcome) {
+	if m == nil {
+		return
+	}
+	if m.Reason == "" {
+		fmt.Fprintf(b, "     merge: %s\n", m.Status)
+	} else {
+		fmt.Fprintf(b, "     merge: %s (%s)\n", m.Status, m.Reason)
+	}
+	if m.TargetRef != "" {
+		fmt.Fprintf(b, "       target: %s @ %s\n", m.TargetRef, shortSHA(m.TargetHead))
+	}
+	if m.PostMergeHead != "" {
+		fmt.Fprintf(b, "       post-merge head: %s\n", shortSHA(m.PostMergeHead))
+	}
+	if m.WorktreePath != "" && m.Status != MergeSucceeded {
+		fmt.Fprintf(b, "       merge worktree (preserved): %s\n", m.WorktreePath)
+	}
+	if m.Error != "" {
+		fmt.Fprintf(b, "       detail: %s\n", m.Error)
+	}
+}
+
+func renderCleanup(b *strings.Builder, c *CleanupOutcome) {
+	if c == nil {
+		return
+	}
+	if c.Status == CleanupSucceeded {
+		// No need to surface the per-artifact deleted list when everything
+		// is clean — keep status output focused on what is still on disk.
+		return
+	}
+	fmt.Fprintf(b, "     cleanup: %s\n", c.Status)
+	for _, p := range cleanupArtifactPairs(c) {
+		art := p.artifact
+		if art == nil {
+			continue
+		}
+		switch art.Status {
+		case CleanupPreserved:
+			fmt.Fprintf(b, "       %s preserved: %s\n", p.label, displayArtifactRef(art))
+		case CleanupFailed:
+			fmt.Fprintf(b, "       %s cleanup failed: %s (preserved at %s)\n", p.label, art.Error, displayArtifactRef(art))
+		}
+	}
+}
+
+// cleanupArtifactPair pairs a label with one cleanup artifact in the
+// canonical render order so status / diagnose / start.go produce stable,
+// run-to-run output. A map iteration would randomize order in Go.
+type cleanupArtifactPair struct {
+	label    string
+	artifact *ArtifactCleanup
+}
+
+func cleanupArtifactPairs(c *CleanupOutcome) []cleanupArtifactPair {
+	return []cleanupArtifactPair{
+		{"merge worktree", c.MergeWorktree},
+		{"execution worktree", c.ExecutionWorktree},
+		{"plan branch", c.PlanBranch},
+	}
+}
+
+func displayArtifactRef(art *ArtifactCleanup) string {
+	if art.Path != "" {
+		return art.Path
+	}
+	return art.Branch
 }
 
 func shortSHA(s string) string {
@@ -213,6 +294,9 @@ func (rs *RegistryStatus) Render() string {
 			if p.Branch != "" {
 				fmt.Fprintf(&b, "     branch: %s (base %s @ %s)\n", p.Branch, p.BaseRef, shortSHA(p.BaseHead))
 			}
+			if p.PlanHead != "" {
+				fmt.Fprintf(&b, "     plan head: %s\n", shortSHA(p.PlanHead))
+			}
 			if p.ExitReason != "" {
 				fmt.Fprintf(&b, "     exit: %s\n", p.ExitReason)
 			}
@@ -222,6 +306,8 @@ func (rs *RegistryStatus) Render() string {
 			if p.EvidencePath != "" {
 				fmt.Fprintf(&b, "     evidence: %s\n", p.EvidencePath)
 			}
+			renderMerge(&b, p.Merge)
+			renderCleanup(&b, p.Cleanup)
 		}
 	}
 	fmt.Fprintln(&b)

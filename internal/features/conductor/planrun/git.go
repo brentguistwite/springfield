@@ -18,6 +18,11 @@ type Git interface {
 	WorktreeListPaths(dir string) ([]string, error)
 	WorktreeAddNewBranch(dir, path, branch, base string) error
 	WorktreeAddExistingBranch(dir, path, branch string) error
+	// Head returns the SHA at HEAD inside dir. Used by the runner to
+	// stamp PlanHead on the post-execution state record so the on-disk
+	// state contains the SHA the slice promises to record even if the
+	// process dies before merge integration runs.
+	Head(dir string) (string, error)
 }
 
 // CLIGit shells out to the system git binary. dir is the git repo root used
@@ -143,4 +148,9 @@ func (g CLIGit) WorktreeAddNewBranch(dir, path, branch, base string) error {
 func (g CLIGit) WorktreeAddExistingBranch(dir, path, branch string) error {
 	_, err := g.run(dir, "worktree", "add", path, branch)
 	return err
+}
+
+// Head returns the SHA at HEAD inside dir.
+func (g CLIGit) Head(dir string) (string, error) {
+	return g.run(dir, "rev-parse", "HEAD")
 }
