@@ -131,8 +131,12 @@ func TestLockFileContainsPidAndTimestamp(t *testing.T) {
 	}
 
 	pidStr := lines[0]
-	if pidStr != strconv.Itoa(os.Getpid()) {
-		t.Errorf("lock file line 1 = %q, want %q", pidStr, strconv.Itoa(os.Getpid()))
+	pid, err := strconv.Atoi(pidStr)
+	if err != nil {
+		t.Fatalf("line 1 not parseable as pid: %q: %v", pidStr, err)
+	}
+	if pid != os.Getpid() {
+		t.Errorf("lock file line 1 pid = %d, want %d", pid, os.Getpid())
 	}
 
 	ts, err := time.Parse(time.RFC3339, lines[1])
@@ -141,6 +145,26 @@ func TestLockFileContainsPidAndTimestamp(t *testing.T) {
 	}
 	if ts.Before(before) {
 		t.Errorf("timestamp %v is before test start %v", ts, before)
+	}
+}
+
+func TestInspectTreatsMalformedSentinelUnderHeldLockAsHeld(t *testing.T) {
+	root := t.TempDir()
+
+	lk, err := lock.Acquire(root)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer lk.Release()
+
+	lockPath := filepath.Join(root, ".springfield", ".lock")
+	if err := os.WriteFile(lockPath, []byte("{"), 0o600); err != nil {
+		t.Fatalf("write malformed lock file: %v", err)
+	}
+
+	held := lock.Inspect(root)
+	if held == nil {
+		t.Fatal("Inspect returned nil for malformed sentinel under held lock")
 	}
 }
 

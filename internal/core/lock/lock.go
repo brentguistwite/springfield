@@ -125,14 +125,7 @@ func Acquire(root string) (*Lock, error) {
 	// Write pid and timestamp in a single call to minimize torn-read window.
 	pid := os.Getpid()
 	ts := time.Now().UTC().Format(time.RFC3339)
-	content := strconv.Itoa(pid) + "\n" + ts + "\n"
-
-	// Truncate to avoid stale content from a previous holder.
-	if err := f.Truncate(0); err != nil {
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		f.Close()
-		return nil, fmt.Errorf("truncate lock file: %w", err)
-	}
+	content := fmt.Sprintf("%012d\n%s\n", pid, ts)
 	if _, err := f.WriteAt([]byte(content), 0); err != nil {
 		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 		f.Close()
@@ -187,12 +180,30 @@ func readHeld(path string) *ErrLockHeld {
 // or nil when no plausible active holder is present. This is a best-effort
 // liveness probe for read-only surfaces that must not take the exclusive lock.
 func Inspect(root string) *ErrLockHeld {
-	held := readHeld(lockPath(root))
+	path := lockPath(root)
+	held := readHeld(path)
 	if held.PID == 0 {
-		return nil
+		return probeMalformedLock(path)
 	}
 	if err := syscall.Kill(held.PID, 0); err != nil && err != syscall.EPERM {
 		return nil
 	}
 	return held
+}
+
+func probeMalformedLock(path string) *ErrLockHeld {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return &ErrLockHeld{}
+	}
+	defer f.Close()
+
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err == nil {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		return nil
+	}
+	return &ErrLockHeld{}
 }
