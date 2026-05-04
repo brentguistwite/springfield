@@ -146,6 +146,33 @@ func TestLoadRegistryStatusLeavesRunningWhenLockHeld(t *testing.T) {
 	}
 }
 
+func TestLoadRegistryStatusFallsBackWhenLiveRunStateReadIsPartial(t *testing.T) {
+	root := newProject(t)
+	writePlanFile(t, root, "feature.md")
+	if _, err := execution.AddPlan(root, execution.PlanInput{ID: "feature-a", Path: "feature.md"}); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	lk, err := lock.Acquire(root)
+	if err != nil {
+		t.Fatalf("acquire lock: %v", err)
+	}
+	defer lk.Release()
+
+	statePath := filepath.Join(root, ".springfield", "execution", "state.json")
+	if err := os.WriteFile(statePath, []byte("{"), 0o644); err != nil {
+		t.Fatalf("write partial state: %v", err)
+	}
+
+	rs, err := execution.LoadRegistryStatus(root)
+	if err != nil {
+		t.Fatalf("LoadRegistryStatus: %v", err)
+	}
+	if !strings.Contains(rs.NextStep, "already running") {
+		t.Fatalf("next step = %q", rs.NextStep)
+	}
+}
+
 func TestLegacyConfigStillLoads(t *testing.T) {
 	root := newProject(t)
 	// Write a config without plan_units — the pre-slice schema.

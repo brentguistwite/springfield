@@ -249,15 +249,9 @@ func RenderRegistryStatus(rootDir string) (string, error) {
 }
 
 func loadConductorRegistryStatus(rootDir string) (*conductor.RegistryStatus, error) {
-	lk, err := lock.Acquire(rootDir)
-	if err != nil {
-		var held *lock.ErrLockHeld
-		if errors.As(err, &held) {
-			return loadRegistryStatusWhileRunning(rootDir, held)
-		}
-		return nil, err
+	if held := lock.Inspect(rootDir); held != nil {
+		return loadRegistryStatusWhileRunning(rootDir, held)
 	}
-	defer lk.Release()
 
 	project, err := conductor.LoadProject(rootDir)
 	if err != nil {
@@ -278,10 +272,17 @@ func loadRegistryStatusWhileRunning(rootDir string, held *lock.ErrLockHeld) (*co
 	project, err := conductor.LoadProject(rootDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return conductor.BuildRegistryStatus(nil), nil
+			return runningRegistryStatus(nil, held), nil
 		}
-		return nil, err
+		// A live start may be replacing state/config bytes in place.
+		// Status stays truthful by falling back to a generic live-run
+		// surface instead of failing on a transient partial read.
+		return runningRegistryStatus(nil, held), nil
 	}
+	return runningRegistryStatus(project, held), nil
+}
+
+func runningRegistryStatus(project *conductor.Project, held *lock.ErrLockHeld) *conductor.RegistryStatus {
 	status := conductor.BuildRegistryStatus(project)
 	if held != nil && held.PID != 0 {
 		status.NextStep = fmt.Sprintf(
@@ -292,7 +293,7 @@ func loadRegistryStatusWhileRunning(rootDir string, held *lock.ErrLockHeld) (*co
 	} else {
 		status.NextStep = "Another springfield start is already running. Wait for it to finish, then re-run \"springfield status\"."
 	}
-	return status, nil
+	return status
 }
 
 func toUnitInput(input PlanInput) conductor.PlanUnitInput {

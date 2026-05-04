@@ -182,3 +182,17 @@ func readHeld(path string) *ErrLockHeld {
 	}
 	return &ErrLockHeld{PID: pid, Since: ts}
 }
+
+// Inspect returns the live lock holder recorded at <root>/.springfield/.lock,
+// or nil when no plausible active holder is present. This is a best-effort
+// liveness probe for read-only surfaces that must not take the exclusive lock.
+func Inspect(root string) *ErrLockHeld {
+	held := readHeld(lockPath(root))
+	if held.PID == 0 {
+		return nil
+	}
+	if err := syscall.Kill(held.PID, 0); err != nil && err != syscall.EPERM {
+		return nil
+	}
+	return held
+}

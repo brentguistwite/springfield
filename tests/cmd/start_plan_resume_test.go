@@ -74,12 +74,13 @@ func TestSpringfieldStartResumesInterruptedPlanFromRecordedWorktree(t *testing.T
 	writeConductorStateBinary(t, dir, &conductor.State{
 		Plans: map[string]*conductor.PlanState{
 			"alpha": {
-				Status:       conductor.StatusRunning,
+				Status:       conductor.StatusInterrupted,
 				Attempts:     1,
 				WorktreePath: wt,
 				Branch:       "springfield/alpha",
 				BaseRef:      "main",
 				BaseHead:     baseHead,
+				ExitReason:   conductor.ExitInterruptedProcessExit,
 			},
 		},
 	})
