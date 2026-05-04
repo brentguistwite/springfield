@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.0](https://github.com/brentguistwite/springfield/compare/v0.4.0...v0.5.0) (2026-05-04)
+
+
+### Features
+
+* **conductor:** plan-unit registry, status surface, plans CLI ([#25](https://github.com/brentguistwite/springfield/issues/25)) ([b994703](https://github.com/brentguistwite/springfield/commit/b9947032fb8e95004a13d09d4e15323a5fe271c2))
+* **conductor:** single-plan merge integration (parity 3) ([#29](https://github.com/brentguistwite/springfield/issues/29)) ([dc7aec6](https://github.com/brentguistwite/springfield/commit/dc7aec65908d5af095604fce4cf59c13840596eb))
+* **conductor:** single-plan worktree execution (parity 2) ([#27](https://github.com/brentguistwite/springfield/issues/27)) ([979bb66](https://github.com/brentguistwite/springfield/commit/979bb66a163100dd9762745c964622ea362dfebf))
+
+
+### Bug Fixes
+
+* **ci:** hydrate release PR versions before CI ([#28](https://github.com/brentguistwite/springfield/issues/28)) ([316c26c](https://github.com/brentguistwite/springfield/commit/316c26ccedfac524f8e2dc05b2b926e7f898ed3c))
+
 ## [0.4.0](https://github.com/brentguistwite/springfield/compare/v0.3.2...v0.4.0) (2026-05-02)
 
 
