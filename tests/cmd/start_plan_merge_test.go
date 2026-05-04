@@ -209,6 +209,88 @@ func TestSpringfieldStartRefusesMergeOnTargetDrift(t *testing.T) {
 	}
 }
 
+// TestSpringfieldStartFailsWhenSourceResyncIsBlockedByUserEdits proves the
+// CLI exit-code contract for source-sync failures. The agent makes a
+// commit on the plan branch; before the merge phase runs, the user
+// edits a tracked file in the source checkout (simulated by an agent
+// that touches a tracked file in the source root before exiting).
+// `springfield start` must:
+//   - publish the merge (target ref advances)
+//   - record SourceSyncStatus="failed" with a descriptive error
+//   - exit non-zero with truthful output naming source resync failure
+//   - leave the source worktree as the user left it (no silent reset)
+func TestSpringfieldStartFailsWhenSourceResyncIsBlockedByUserEdits(t *testing.T) {
+	bin := buildBinary(t)
+	dir := initRealGitRepo(t)
+	writeSpringfieldConfig(t, dir, "claude")
+	writeRegisteredPlan(t, dir, "alpha", "Implement alpha")
+
+	if err := os.WriteFile(filepath.Join(dir, "user.txt"), []byte("original\n"), 0o644); err != nil {
+		t.Fatalf("write user.txt: %v", err)
+	}
+	gitMust(t, dir, "add", ".")
+	gitMust(t, dir, "commit", "-m", "scaffold")
+	beforeMain := gitOut(t, dir, "rev-parse", "main")
+
+	fakeBinDir := filepath.Join(dir, "bin")
+	installEditingAgent(t, fakeBinDir, "claude", dir)
+
+	output, err := runBinaryInWithEnv(t, bin, dir,
+		[]string{"PATH=" + fakeBinDir + ":" + os.Getenv("PATH")},
+		"start")
+	if err == nil {
+		t.Fatalf("expected non-zero exit when source resync blocked; got success:\n%s", output)
+	}
+	if !strings.Contains(output, "source resync failed") {
+		t.Fatalf("expected source resync failure in output:\n%s", output)
+	}
+
+	afterMain := gitOut(t, dir, "rev-parse", "main")
+	if afterMain == beforeMain {
+		t.Fatalf("main should have advanced even when resync was blocked: before=%s after=%s", beforeMain, afterMain)
+	}
+
+	userBytes, err := os.ReadFile(filepath.Join(dir, "user.txt"))
+	if err != nil {
+		t.Fatalf("read user.txt: %v", err)
+	}
+	if !strings.Contains(string(userBytes), "user edit") {
+		t.Fatalf("user edit was overwritten by reset; user.txt = %q", userBytes)
+	}
+
+	stateBytes, err := os.ReadFile(filepath.Join(dir, ".springfield", "execution", "state.json"))
+	if err != nil {
+		t.Fatalf("read state: %v", err)
+	}
+	if !strings.Contains(string(stateBytes), `"source_sync_status": "failed"`) {
+		t.Fatalf("state should record source_sync_status=failed:\n%s", stateBytes)
+	}
+}
+
+// installEditingAgent installs a fake claude that commits on the plan
+// branch AND modifies a tracked file in the source root before exiting,
+// so the merge phase observes user dirt against the recorded base_head
+// when it reaches the source-resync gate.
+func installEditingAgent(t *testing.T, binDir, name, sourceRoot string) {
+	t.Helper()
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir fake bin: %v", err)
+	}
+	const positiveSignalLine = `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_fake"},{"type":"tool_result","tool_use_id":"toolu_fake","is_error":false}]}}`
+	script := "#!/bin/sh\nset -e\n" +
+		"git config user.email agent@example.com\n" +
+		"git config user.name Agent\n" +
+		"echo content > feature.txt\n" +
+		"git add feature.txt\n" +
+		"git commit -m 'plan commit' >/dev/null\n" +
+		"echo 'user edit' > " + sourceRoot + "/user.txt\n" +
+		"echo '" + positiveSignalLine + "'\n"
+	path := filepath.Join(binDir, name)
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write editing agent: %v", err)
+	}
+}
+
 // TestSpringfieldStartReRunsMergeOnlyAfterDriftRefusal proves the slice-3
 // re-run contract: after a target-drift refusal preserves the execution
 // worktree and plan branch, a second `springfield start` must skip

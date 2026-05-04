@@ -37,6 +37,11 @@ type fakeGit struct {
 	resetHardCalls     []string
 	dirtyByDir         map[string]bool
 	isDirtyErr         error
+	// dirtyAgainstByRef indexes IsDirtyAgainst answers by ref. When
+	// unset, defaults to the same value as dirtyByDir (so existing
+	// tests that only use dirtyByDir keep working).
+	dirtyAgainstByRef    map[string]bool
+	isDirtyAgainstErr    error
 }
 
 func newFakeGit() *fakeGit {
@@ -139,6 +144,16 @@ func (g *fakeGit) IsDirty(dir string) (bool, error) {
 		return false, nil
 	}
 	return g.dirtyByDir[dir], nil
+}
+
+func (g *fakeGit) IsDirtyAgainst(_, ref string) (bool, error) {
+	if g.isDirtyAgainstErr != nil {
+		return false, g.isDirtyAgainstErr
+	}
+	if g.dirtyAgainstByRef == nil {
+		return false, nil
+	}
+	return g.dirtyAgainstByRef[ref], nil
 }
 
 // projectFixture writes a minimal Springfield project with one plan unit
@@ -586,7 +601,10 @@ func TestIntegrateRefusesResetWhenSourceIsDirty(t *testing.T) {
 	g.resolveByRef["main"] = "AAAA"
 	g.headByDir["branch:springfield/alpha"] = "BBBB"
 	g.currentBranchByDir = map[string]string{root: "main"}
-	g.dirtyByDir = map[string]bool{root: true}
+	// User has tracked-file edits since the recorded base_head. The
+	// data-loss gate compares against base_head specifically — not HEAD —
+	// because update-ref will move HEAD before the resync runs.
+	g.dirtyAgainstByRef = map[string]bool{"AAAA": true}
 
 	res := planmerge.Integrate(planmerge.IntegrateInput{
 		Project: project, PlanID: "alpha", ControlRoot: root, WorktreeBase: ".worktrees", Git: g,

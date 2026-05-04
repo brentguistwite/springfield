@@ -18,11 +18,17 @@ type Git interface {
 	// or an error when dir is in detached HEAD.
 	CurrentBranch(dir string) (string, error)
 	// IsDirty reports whether dir's working tree or index has uncommitted
-	// changes outside Springfield-owned bookkeeping. Used as a final
-	// safety gate before destructive operations on the source checkout
-	// (ResetHard) so user edits made during a long agent run cannot be
-	// silently discarded.
+	// changes outside Springfield-owned bookkeeping.
 	IsDirty(dir string) (bool, error)
+	// IsDirtyAgainst reports whether dir's tracked-file working tree
+	// differs from ref's tree. Used as the source-resync data-loss gate
+	// because it survives Springfield's own update-ref movement of HEAD:
+	// after the merge has been published to refs/heads/<target>, a plain
+	// IsDirty would see the merge changes themselves as "uncommitted"
+	// (the working tree still reflects the pre-merge state until the
+	// post-publish reset). Comparing against the recorded base_head
+	// distinguishes user edits from that phantom diff.
+	IsDirtyAgainst(dir, ref string) (bool, error)
 	// WorktreeAddDetached creates a new worktree at path in detached HEAD
 	// state pointing at ref. The new worktree is registered under dir.
 	WorktreeAddDetached(dir, path, ref string) error
@@ -120,6 +126,28 @@ func (g CLIGit) IsDirty(dir string) (bool, error) {
 		if !lineIsSpringfieldOwned(line) {
 			return true, nil
 		}
+	}
+	return false, nil
+}
+
+// IsDirtyAgainst returns true when dir's tracked-file working tree or
+// index differs from ref's tree. Internally runs `git diff --quiet
+// <ref> --` which exits 0 (no diff) or 1 (diff). Untracked files do
+// not show — they are not data-loss candidates for `git reset --hard`,
+// which preserves untracked files.
+func (g CLIGit) IsDirtyAgainst(dir, ref string) (bool, error) {
+	if ref == "" {
+		return false, fmt.Errorf("ref must not be empty")
+	}
+	cmd := exec.Command("git", "-C", dir, "diff", "--quiet", ref, "--")
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			switch exitErr.ExitCode() {
+			case 1:
+				return true, nil
+			}
+		}
+		return false, fmt.Errorf("git diff --quiet %s: %w", ref, err)
 	}
 	return false, nil
 }

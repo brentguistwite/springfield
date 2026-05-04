@@ -255,7 +255,7 @@ func finishSuccessfulMerge(in IntegrateInput, state *conductor.PlanState, now fu
 	// to the new head so subsequent IsDirty preflights are honest. The
 	// resync gate explicitly re-checks dirtiness so user edits made
 	// during a long agent run cannot be silently discarded.
-	syncStatus, syncErr := resyncSourceCheckout(in.Git, in.ControlRoot, merge.TargetRef, merge.PostMergeHead)
+	syncStatus, syncErr := resyncSourceCheckout(in.Git, in.ControlRoot, merge.TargetRef, state.BaseHead, merge.PostMergeHead)
 	merge.SourceSyncStatus = syncStatus
 	if syncErr != nil {
 		merge.SourceSyncError = syncErr.Error()
@@ -315,13 +315,16 @@ func finishSuccessfulMerge(in IntegrateInput, state *conductor.PlanState, now fu
 // ("failed", err) when the resync would have overwritten user edits or
 // the reset itself failed.
 //
-// The dirty-source check before reset is load-bearing: slice-2's
-// preflight only verifies clean source at the start of execution, but
-// the agent run can be long, the Springfield CLI lock prevents only
-// concurrent CLI invocations, not editor edits. Without this gate a
-// successful merge could silently `reset --hard` over user changes
-// made while the agent ran.
-func resyncSourceCheckout(g Git, controlRoot, targetRef, newSHA string) (string, error) {
+// The dirty-source check uses IsDirtyAgainst(baseHead) rather than the
+// generic IsDirty: by the time this runs, update-ref has already
+// advanced refs/heads/<target> so HEAD points at the post-merge SHA
+// while the worktree+index still reflect the pre-merge tree. A plain
+// IsDirty would observe Springfield's own ref movement as "uncommitted
+// changes" and refuse a reset that is supposed to make the checkout
+// clean. Comparing against the recorded base_head reflects only the
+// user's true edits — which is the data-loss invariant this gate
+// protects.
+func resyncSourceCheckout(g Git, controlRoot, targetRef, baseHead, newSHA string) (string, error) {
 	cur, err := g.CurrentBranch(controlRoot)
 	if err != nil {
 		// Detached HEAD or unreadable branch: the source checkout was
@@ -332,12 +335,18 @@ func resyncSourceCheckout(g Git, controlRoot, targetRef, newSHA string) (string,
 	if cur != targetRef {
 		return "skipped", nil
 	}
-	dirty, derr := g.IsDirty(controlRoot)
+	if baseHead == "" {
+		// Without a recorded base_head we cannot distinguish phantom
+		// dirt from user dirt; refuse rather than risk silently
+		// overwriting user edits.
+		return "failed", fmt.Errorf("source resync: missing recorded base_head")
+	}
+	dirty, derr := g.IsDirtyAgainst(controlRoot, baseHead)
 	if derr != nil {
 		return "failed", fmt.Errorf("source dirty check before resync: %w", derr)
 	}
 	if dirty {
-		return "failed", fmt.Errorf("source checkout has uncommitted changes; refusing reset --hard to avoid silent data loss. Commit or stash, then run \"springfield start\" to retry source resync.")
+		return "failed", fmt.Errorf("source checkout has user changes since recorded base_head; refusing reset --hard to avoid silent data loss. Commit or stash, then run \"springfield start\" to retry source resync.")
 	}
 	if err := g.ResetHard(controlRoot, newSHA); err != nil {
 		return "failed", err

@@ -964,6 +964,14 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 	if mergeRes.Cleanup != nil && mergeRes.Cleanup.Status == conductor.CleanupFailed {
 		return true, fmt.Errorf("plan %s merge succeeded but cleanup failed: artifacts preserved", res.PlanID)
 	}
+	if mergeRes.Merge != nil && mergeRes.Merge.SourceSyncStatus == "failed" {
+		// State already records the plan as not integrated (per
+		// IsIntegrated rules). Surface as non-zero so the CLI exit
+		// code matches the state contract instead of misleading the
+		// operator with a clean exit while the source checkout
+		// remains stale.
+		return true, fmt.Errorf("plan %s merge succeeded but source resync failed: %s", res.PlanID, mergeRes.Merge.SourceSyncError)
+	}
 	return true, nil
 }
 
@@ -1014,6 +1022,9 @@ func runMergeIntegrationOnly(w io.Writer, project *conductor.Project, root, work
 	}
 	if mergeRes.Cleanup != nil && mergeRes.Cleanup.Status == conductor.CleanupFailed {
 		return true, fmt.Errorf("plan %s merge succeeded but cleanup failed: artifacts preserved", planID)
+	}
+	if mergeRes.Merge != nil && mergeRes.Merge.SourceSyncStatus == "failed" {
+		return true, fmt.Errorf("plan %s merge succeeded but source resync failed: %s", planID, mergeRes.Merge.SourceSyncError)
 	}
 	return true, nil
 }
