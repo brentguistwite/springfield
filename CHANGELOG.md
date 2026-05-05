@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/brentguistwite/springfield/compare/v0.5.0...v0.6.0) (2026-05-05)
+
+
+### Features
+
+* **conductor:** diagnose and recover failed plans (parity 5) ([#31](https://github.com/brentguistwite/springfield/issues/31)) ([598e033](https://github.com/brentguistwite/springfield/commit/598e033dd9b71f976c1844ece4f0c5bff5dc8e09))
+
 ## [0.5.0](https://github.com/brentguistwite/springfield/compare/v0.4.0...v0.5.0) (2026-05-05)
 
 
