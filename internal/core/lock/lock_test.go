@@ -168,6 +168,42 @@ func TestInspectTreatsMalformedSentinelUnderHeldLockAsHeld(t *testing.T) {
 	}
 }
 
+func TestInspectIgnoresParseableStaleMetadataWithoutHeldFlock(t *testing.T) {
+	root := t.TempDir()
+	lockDir := filepath.Join(root, ".springfield")
+	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+		t.Fatalf("mkdir lock dir: %v", err)
+	}
+
+	lockPath := filepath.Join(lockDir, ".lock")
+	stale := "000000999999\n2026-05-04T00:00:00Z\n"
+	if err := os.WriteFile(lockPath, []byte(stale), 0o600); err != nil {
+		t.Fatalf("write stale lock file: %v", err)
+	}
+
+	if held := lock.Inspect(root); held != nil {
+		t.Fatalf("Inspect returned false live holder: %+v", held)
+	}
+}
+
+func TestInspectSeesRealHeldFlockWithParseableMetadata(t *testing.T) {
+	root := t.TempDir()
+
+	lk, err := lock.Acquire(root)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer lk.Release()
+
+	held := lock.Inspect(root)
+	if held == nil {
+		t.Fatal("Inspect returned nil for held flock")
+	}
+	if held.PID != os.Getpid() {
+		t.Fatalf("Inspect PID = %d, want %d", held.PID, os.Getpid())
+	}
+}
+
 // TestLockReleaseKeepsFile asserts that Release does NOT remove the lock file.
 // Removing it would open an inode-split race: process B can flock the old inode
 // after A unlocks but before A removes, then C creates a new inode and flocks

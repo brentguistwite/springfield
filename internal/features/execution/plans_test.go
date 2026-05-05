@@ -146,6 +146,42 @@ func TestLoadRegistryStatusLeavesRunningWhenLockHeld(t *testing.T) {
 	}
 }
 
+func TestLoadRegistryStatusDoesNotTreatStaleLockMetadataAsLive(t *testing.T) {
+	root := newProject(t)
+	writePlanFile(t, root, "feature.md")
+	if _, err := execution.AddPlan(root, execution.PlanInput{ID: "feature-a", Path: "feature.md"}); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	writeState(t, root, map[string]any{
+		"plans": map[string]any{
+			"feature-a": map[string]any{
+				"status":        "running",
+				"attempts":      1,
+				"worktree_path": filepath.Join(root, ".worktrees", "feature-a"),
+				"branch":        "springfield/feature-a",
+				"base_ref":      "main",
+				"base_head":     "aaaaaaaa",
+			},
+		},
+	})
+
+	lockPath := filepath.Join(root, ".springfield", ".lock")
+	if err := os.WriteFile(lockPath, []byte("000000999999\n2026-05-04T00:00:00Z\n"), 0o600); err != nil {
+		t.Fatalf("write stale lock metadata: %v", err)
+	}
+
+	rs, err := execution.LoadRegistryStatus(root)
+	if err != nil {
+		t.Fatalf("LoadRegistryStatus: %v", err)
+	}
+	if len(rs.Plans) != 1 || rs.Plans[0].Status != "interrupted" {
+		t.Fatalf("plans = %+v, want interrupted", rs.Plans)
+	}
+	if strings.Contains(rs.NextStep, "already running") {
+		t.Fatalf("stale lock metadata suppressed normalization: %q", rs.NextStep)
+	}
+}
+
 func TestLoadRegistryStatusFallsBackWhenLiveRunStateReadIsPartial(t *testing.T) {
 	root := newProject(t)
 	writePlanFile(t, root, "feature.md")

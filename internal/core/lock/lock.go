@@ -181,18 +181,11 @@ func readHeld(path string) *ErrLockHeld {
 // liveness probe for read-only surfaces that must not take the exclusive lock.
 func Inspect(root string) *ErrLockHeld {
 	path := lockPath(root)
-	held := readHeld(path)
-	if held.PID == 0 {
-		return probeMalformedLock(path)
-	}
-	if err := syscall.Kill(held.PID, 0); err != nil && err != syscall.EPERM {
-		return nil
-	}
-	return held
+	return probeHeldLock(path)
 }
 
-func probeMalformedLock(path string) *ErrLockHeld {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+func probeHeldLock(path string) *ErrLockHeld {
+	f, err := os.OpenFile(path, os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -204,6 +197,10 @@ func probeMalformedLock(path string) *ErrLockHeld {
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err == nil {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 		return nil
+	}
+	held := readHeld(path)
+	if held.PID != 0 {
+		return held
 	}
 	return &ErrLockHeld{}
 }
