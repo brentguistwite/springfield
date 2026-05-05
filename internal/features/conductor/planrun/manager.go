@@ -292,15 +292,18 @@ func pathRegistered(registered []string, target string) bool {
 }
 
 func equalPaths(a, b string) bool {
-	ca, err := filepath.Abs(a)
+	return canonicalPath(a) == canonicalPath(b)
+}
+
+func canonicalPath(path string) string {
+	abs, err := filepath.Abs(path)
 	if err != nil {
-		ca = a
+		abs = path
 	}
-	cb, err := filepath.Abs(b)
-	if err != nil {
-		cb = b
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
 	}
-	return filepath.Clean(ca) == filepath.Clean(cb)
+	return filepath.Clean(abs)
 }
 
 // AsPreflight returns err as *PreflightError when it carries a structured tag.

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"springfield/internal/core/lock"
+	"springfield/internal/features/conductor"
 	"springfield/internal/features/execution"
 )
 
@@ -78,6 +80,132 @@ func TestRegistryStatusSurfacesNextStep(t *testing.T) {
 	}
 	if !strings.Contains(rs.NextStep, "worktree") {
 		t.Fatalf("next step should mention worktree-based execution: %q", rs.NextStep)
+	}
+}
+
+func TestLoadRegistryStatusNormalizesStaleRunningWhenUnlocked(t *testing.T) {
+	root := newProject(t)
+	writePlanFile(t, root, "feature.md")
+	if _, err := execution.AddPlan(root, execution.PlanInput{ID: "feature-a", Path: "feature.md"}); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	writeState(t, root, map[string]any{
+		"plans": map[string]any{
+			"feature-a": map[string]any{
+				"status":        "running",
+				"attempts":      1,
+				"worktree_path": filepath.Join(root, ".worktrees", "feature-a"),
+				"branch":        "springfield/feature-a",
+				"base_ref":      "main",
+				"base_head":     "aaaaaaaa",
+			},
+		},
+	})
+
+	rs, err := execution.LoadRegistryStatus(root)
+	if err != nil {
+		t.Fatalf("LoadRegistryStatus: %v", err)
+	}
+	if len(rs.Plans) != 1 || rs.Plans[0].Status != "interrupted" {
+		t.Fatalf("plans = %+v, want interrupted", rs.Plans)
+	}
+	if !strings.Contains(rs.NextStep, "resume interrupted plan") {
+		t.Fatalf("next step = %q", rs.NextStep)
+	}
+}
+
+func TestLoadRegistryStatusLeavesRunningWhenLockHeld(t *testing.T) {
+	root := newProject(t)
+	writePlanFile(t, root, "feature.md")
+	if _, err := execution.AddPlan(root, execution.PlanInput{ID: "feature-a", Path: "feature.md"}); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	writeState(t, root, map[string]any{
+		"plans": map[string]any{
+			"feature-a": map[string]any{
+				"status": "running",
+			},
+		},
+	})
+
+	lk, err := lock.Acquire(root)
+	if err != nil {
+		t.Fatalf("acquire lock: %v", err)
+	}
+	defer lk.Release()
+
+	rs, err := execution.LoadRegistryStatus(root)
+	if err != nil {
+		t.Fatalf("LoadRegistryStatus: %v", err)
+	}
+	if len(rs.Plans) != 1 || rs.Plans[0].Status != string(conductor.StatusRunning) {
+		t.Fatalf("plans = %+v, want running", rs.Plans)
+	}
+	if !strings.Contains(rs.NextStep, "already running") {
+		t.Fatalf("next step = %q", rs.NextStep)
+	}
+}
+
+func TestLoadRegistryStatusDoesNotTreatStaleLockMetadataAsLive(t *testing.T) {
+	root := newProject(t)
+	writePlanFile(t, root, "feature.md")
+	if _, err := execution.AddPlan(root, execution.PlanInput{ID: "feature-a", Path: "feature.md"}); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	writeState(t, root, map[string]any{
+		"plans": map[string]any{
+			"feature-a": map[string]any{
+				"status":        "running",
+				"attempts":      1,
+				"worktree_path": filepath.Join(root, ".worktrees", "feature-a"),
+				"branch":        "springfield/feature-a",
+				"base_ref":      "main",
+				"base_head":     "aaaaaaaa",
+			},
+		},
+	})
+
+	lockPath := filepath.Join(root, ".springfield", ".lock")
+	if err := os.WriteFile(lockPath, []byte("000000999999\n2026-05-04T00:00:00Z\n"), 0o600); err != nil {
+		t.Fatalf("write stale lock metadata: %v", err)
+	}
+
+	rs, err := execution.LoadRegistryStatus(root)
+	if err != nil {
+		t.Fatalf("LoadRegistryStatus: %v", err)
+	}
+	if len(rs.Plans) != 1 || rs.Plans[0].Status != "interrupted" {
+		t.Fatalf("plans = %+v, want interrupted", rs.Plans)
+	}
+	if strings.Contains(rs.NextStep, "already running") {
+		t.Fatalf("stale lock metadata suppressed normalization: %q", rs.NextStep)
+	}
+}
+
+func TestLoadRegistryStatusFallsBackWhenLiveRunStateReadIsPartial(t *testing.T) {
+	root := newProject(t)
+	writePlanFile(t, root, "feature.md")
+	if _, err := execution.AddPlan(root, execution.PlanInput{ID: "feature-a", Path: "feature.md"}); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	lk, err := lock.Acquire(root)
+	if err != nil {
+		t.Fatalf("acquire lock: %v", err)
+	}
+	defer lk.Release()
+
+	statePath := filepath.Join(root, ".springfield", "execution", "state.json")
+	if err := os.WriteFile(statePath, []byte("{"), 0o644); err != nil {
+		t.Fatalf("write partial state: %v", err)
+	}
+
+	rs, err := execution.LoadRegistryStatus(root)
+	if err != nil {
+		t.Fatalf("LoadRegistryStatus: %v", err)
+	}
+	if !strings.Contains(rs.NextStep, "already running") {
+		t.Fatalf("next step = %q", rs.NextStep)
 	}
 }
 
@@ -171,4 +299,19 @@ func readConfig(t *testing.T, root string) map[string]any {
 		t.Fatalf("decode config: %v", err)
 	}
 	return out
+}
+
+func writeState(t *testing.T, root string, state map[string]any) {
+	t.Helper()
+	statePath := filepath.Join(root, ".springfield", "execution", "state.json")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
+		t.Fatalf("mkdir state dir: %v", err)
+	}
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal state: %v", err)
+	}
+	if err := os.WriteFile(statePath, data, 0o644); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
 }

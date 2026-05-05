@@ -3,6 +3,7 @@ package conductor_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"springfield/internal/features/conductor"
 )
@@ -27,7 +28,7 @@ func TestDiagnosePendingProject(t *testing.T) {
 	if len(diagnosis.Failures) != 0 {
 		t.Fatalf("failures: got %d want 0", len(diagnosis.Failures))
 	}
-	if diagnosis.NextStep != "Run: springfield start" {
+	if !strings.Contains(diagnosis.NextStep, "springfield start") {
 		t.Fatalf("next step: got %q want Springfield start guidance", diagnosis.NextStep)
 	}
 }
@@ -191,5 +192,58 @@ func TestDiagnoseNoPlansUsesSpringfieldExecutionConfigWording(t *testing.T) {
 	diagnosis := conductor.Diagnose(project)
 	if got, want := diagnosis.NextStep, "No plans configured. Run \"springfield plans add\" to register one."; got != want {
 		t.Fatalf("next step = %q, want %q", got, want)
+	}
+}
+
+func TestDiagnoseInterruptedPlanGuidesResume(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root)
+	writeRegisteredPlanUnitConfig(t, root, []string{"alpha", "beta"})
+
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("load project: %v", err)
+	}
+	project.State.Plans["alpha"] = &conductor.PlanState{
+		Status:       conductor.StatusRunning,
+		Attempts:     1,
+		StartedAt:    time.Date(2026, 5, 2, 10, 0, 0, 0, time.UTC),
+		WorktreePath: root + "/.worktrees/alpha",
+		Branch:       "springfield/alpha",
+		BaseRef:      "main",
+		BaseHead:     "aaaaaaaa",
+	}
+	project.NormalizeStaleRunning(time.Date(2026, 5, 3, 12, 0, 0, 0, time.UTC))
+
+	diagnosis := conductor.Diagnose(project)
+	if !strings.Contains(diagnosis.NextStep, "resume interrupted plan \"alpha\"") {
+		t.Fatalf("next step = %q", diagnosis.NextStep)
+	}
+	report := diagnosis.Report()
+	if !strings.Contains(report, "interrupted") {
+		t.Fatalf("report missing interrupted state:\n%s", report)
+	}
+}
+
+func TestDiagnoseCompletedPendingMergeGuidesResume(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root)
+	writeRegisteredPlanUnitConfig(t, root, []string{"alpha", "beta"})
+
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("load project: %v", err)
+	}
+	project.State.Plans["alpha"] = &conductor.PlanState{
+		Status: conductor.StatusCompleted,
+		Merge: &conductor.MergeOutcome{
+			Status: conductor.MergePending,
+			Reason: "awaiting-merge-integration",
+		},
+	}
+
+	diagnosis := conductor.Diagnose(project)
+	if !strings.Contains(diagnosis.NextStep, "continue merge integration for completed plan \"alpha\"") {
+		t.Fatalf("next step = %q", diagnosis.NextStep)
 	}
 }

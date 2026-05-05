@@ -14,12 +14,22 @@ type PlanFailure struct {
 	Attempts     int
 }
 
+// PlanInterruption describes one plan whose last persisted state was stale
+// running and has been normalized into an honest interrupted state.
+type PlanInterruption struct {
+	Plan         string
+	Error        string
+	Attempts     int
+	WorktreePath string
+}
+
 // Diagnosis summarizes current conductor progress and next action.
 type Diagnosis struct {
-	Completed int
-	Total     int
-	Done      bool
-	Failures  []PlanFailure
+	Completed   int
+	Total       int
+	Done        bool
+	Failures    []PlanFailure
+	Interrupted []PlanInterruption
 	// MergeIssues lists plans whose execution succeeded but whose merge
 	// integration was refused or failed — surfaced separately so a
 	// preserved merge worktree or refused publish doesn't hide behind a
@@ -54,15 +64,25 @@ func Diagnose(project *Project) *Diagnosis {
 	completed, total := schedule.Progress(project.State)
 
 	failures := make([]PlanFailure, 0)
+	interruptions := make([]PlanInterruption, 0)
 	mergeIssues := make([]MergeIssue, 0)
 	for _, name := range project.AllPlans() {
-		if project.PlanStatus(name) == StatusFailed {
+		switch project.PlanStatus(name) {
+		case StatusFailed:
 			failures = append(failures, PlanFailure{
 				Plan:         name,
 				Error:        project.PlanError(name),
 				Agent:        project.PlanAgent(name),
 				EvidencePath: project.PlanEvidencePath(name),
 				Attempts:     project.PlanAttempts(name),
+			})
+		case StatusInterrupted:
+			ps := project.State.Plans[name]
+			interruptions = append(interruptions, PlanInterruption{
+				Plan:         name,
+				Error:        project.PlanError(name),
+				Attempts:     project.PlanAttempts(name),
+				WorktreePath: ps.WorktreePath,
 			})
 		}
 		ps, ok := project.State.Plans[name]
@@ -99,11 +119,8 @@ func Diagnose(project *Project) *Diagnosis {
 		nextStep = "No plans configured. Run \"springfield plans add\" to register one."
 	case done:
 		nextStep = "All plans completed successfully."
-	case len(failures) > 0:
-		nextStep = "Inspect failures (see status), fix the underlying cause, then re-run: springfield start"
-	}
-	if len(mergeIssues) > 0 {
-		nextStep = "Resolve merge integration issues (see status), then re-run: springfield start"
+	default:
+		nextStep = nextPlannedAction(project)
 	}
 
 	return &Diagnosis{
@@ -111,6 +128,7 @@ func Diagnose(project *Project) *Diagnosis {
 		Total:       total,
 		Done:        done,
 		Failures:    failures,
+		Interrupted: interruptions,
 		MergeIssues: mergeIssues,
 		NextStep:    nextStep,
 	}
@@ -143,6 +161,22 @@ func (d *Diagnosis) Report() string {
 			}
 			if f.Attempts > 1 {
 				fmt.Fprintf(&builder, "    Attempts: %d\n", f.Attempts)
+			}
+		}
+	}
+
+	if len(d.Interrupted) > 0 {
+		fmt.Fprintf(&builder, "\nInterrupted plans (%d):\n", len(d.Interrupted))
+		for _, p := range d.Interrupted {
+			fmt.Fprintf(&builder, "  - %s: interrupted\n", p.Plan)
+			if p.Error != "" {
+				fmt.Fprintf(&builder, "    detail: %s\n", p.Error)
+			}
+			if p.WorktreePath != "" {
+				fmt.Fprintf(&builder, "    worktree: %s\n", p.WorktreePath)
+			}
+			if p.Attempts > 0 {
+				fmt.Fprintf(&builder, "    Attempts: %d\n", p.Attempts)
 			}
 		}
 	}

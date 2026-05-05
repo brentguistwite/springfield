@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"springfield/internal/core/config"
+	"springfield/internal/core/lock"
 	"springfield/internal/features/conductor"
 )
 
@@ -207,15 +209,10 @@ type RegistryStatus struct {
 // execution config exists yet, a no-config status is returned with a next-step
 // hint pointing at the registration flow rather than a failed read error.
 func LoadRegistryStatus(rootDir string) (*RegistryStatus, error) {
-	project, err := conductor.LoadProject(rootDir)
+	rs, err := loadConductorRegistryStatus(rootDir)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			rs := conductor.BuildRegistryStatus(nil)
-			return &RegistryStatus{NextStep: rs.NextStep}, nil
-		}
 		return nil, err
 	}
-	rs := conductor.BuildRegistryStatus(project)
 	out := &RegistryStatus{
 		HasConfig: rs.HasConfig,
 		Completed: rs.Completed,
@@ -244,14 +241,59 @@ func LoadRegistryStatus(rootDir string) (*RegistryStatus, error) {
 // When no execution config exists yet, the no-config registration hint is
 // rendered instead of a read error.
 func RenderRegistryStatus(rootDir string) (string, error) {
+	rs, err := loadConductorRegistryStatus(rootDir)
+	if err != nil {
+		return "", err
+	}
+	return rs.Render(), nil
+}
+
+func loadConductorRegistryStatus(rootDir string) (*conductor.RegistryStatus, error) {
+	if held := lock.Inspect(rootDir); held != nil {
+		return loadRegistryStatusWhileRunning(rootDir, held)
+	}
+
 	project, err := conductor.LoadProject(rootDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return conductor.BuildRegistryStatus(nil).Render(), nil
+			return conductor.BuildRegistryStatus(nil), nil
 		}
-		return "", err
+		return nil, err
 	}
-	return conductor.BuildRegistryStatus(project).Render(), nil
+	if changed := project.NormalizeStaleRunning(time.Now()); len(changed) > 0 {
+		if err := project.SaveState(); err != nil {
+			return nil, err
+		}
+	}
+	return conductor.BuildRegistryStatus(project), nil
+}
+
+func loadRegistryStatusWhileRunning(rootDir string, held *lock.ErrLockHeld) (*conductor.RegistryStatus, error) {
+	project, err := conductor.LoadProject(rootDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return runningRegistryStatus(nil, held), nil
+		}
+		// A live start may be replacing state/config bytes in place.
+		// Status stays truthful by falling back to a generic live-run
+		// surface instead of failing on a transient partial read.
+		return runningRegistryStatus(nil, held), nil
+	}
+	return runningRegistryStatus(project, held), nil
+}
+
+func runningRegistryStatus(project *conductor.Project, held *lock.ErrLockHeld) *conductor.RegistryStatus {
+	status := conductor.BuildRegistryStatus(project)
+	if held != nil && held.PID != 0 {
+		status.NextStep = fmt.Sprintf(
+			"Another springfield start is already running (pid %d since %s). Wait for it to finish, then re-run \"springfield status\".",
+			held.PID,
+			held.Since.Format(time.RFC3339),
+		)
+	} else {
+		status.NextStep = "Another springfield start is already running. Wait for it to finish, then re-run \"springfield status\"."
+	}
+	return status
 }
 
 func toUnitInput(input PlanInput) conductor.PlanUnitInput {
