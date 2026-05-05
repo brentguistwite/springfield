@@ -14,8 +14,11 @@ func TestSpringfieldRecoverHelp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recover --help: %v\n%s", err, output)
 	}
-	if !strings.Contains(output, "Archive an orphaned batch") {
+	if !strings.Contains(output, "orphaned batch") {
 		t.Errorf("expected orphan wording in help, got:\n%s", output)
+	}
+	if !strings.Contains(output, "--plan") {
+		t.Errorf("expected --plan flag in help, got:\n%s", output)
 	}
 }
 

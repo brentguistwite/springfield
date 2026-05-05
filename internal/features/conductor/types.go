@@ -93,6 +93,18 @@ type PlanState struct {
 	// merge worktree, and plan branch after a merge attempt. nil until the
 	// merge phase runs.
 	Cleanup *CleanupOutcome `json:"cleanup,omitempty"`
+
+	// RecoveryHistory is an append-only log of recovery actions taken on this
+	// plan. Each entry records what was done, why, and when, so the audit
+	// trail survives across status/start/recover invocations.
+	RecoveryHistory []RecoveryAction `json:"recovery_history,omitempty"`
+}
+
+// RecoveryAction is one durable record of a recovery operation performed on a plan.
+type RecoveryAction struct {
+	Action string    `json:"action"`
+	Reason string    `json:"reason"`
+	At     time.Time `json:"at"`
 }
 
 // MergeStatus describes the outcome of a single-plan merge integration.
