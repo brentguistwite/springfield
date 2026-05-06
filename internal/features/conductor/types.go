@@ -8,15 +8,9 @@ type Config struct {
 	WorktreeBase               string     `json:"worktree_base"`
 	MaxRetries                 int        `json:"max_retries"`
 	SingleWorkstreamIterations int        `json:"single_workstream_iterations"`
-	SingleWorkstreamTimeout    int        `json:"single_workstream_timeout"`
-	Tool                       string     `json:"tool"`
-	Batches                    [][]string `json:"batches"`
-	Sequential                 []string   `json:"sequential"`
-	// PlanUnits is the explicit sequential plan-unit registry. When non-empty,
-	// it is the source of truth for execution order; Sequential/Batches are
-	// kept only as a projection for legacy in-process consumers and ignored
-	// by the scheduler.
-	PlanUnits []PlanUnit `json:"plan_units,omitempty"`
+	SingleWorkstreamTimeout int    `json:"single_workstream_timeout"`
+	Tool                    string `json:"tool"`
+	PlanUnits               []PlanUnit `json:"plan_units,omitempty"`
 }
 
 // PlanUnit is one durable Springfield plan-unit registration.

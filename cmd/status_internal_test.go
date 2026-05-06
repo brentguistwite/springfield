@@ -130,35 +130,6 @@ func TestStatusReportsCompletedAndFailedTruthfully(t *testing.T) {
 	}
 }
 
-func TestStatusRendersLegacySequentialBatchesWhenPlanUnitsEmpty(t *testing.T) {
-	root := newStatusRoot(t)
-	cfg := map[string]any{
-		"plans_dir":                    "springfield/plans",
-		"worktree_base":                ".worktrees",
-		"max_retries":                  1,
-		"single_workstream_iterations": 10,
-		"single_workstream_timeout":    600,
-		"tool":                         "claude",
-		"sequential":                   []string{"legacy-a"},
-		"batches":                      [][]string{{"legacy-b"}},
-	}
-	writeStatusJSON(t, root, "execution/config.json", cfg)
-
-	out, err := runStatusIn(root)
-	if err != nil {
-		t.Fatalf("status: %v", err)
-	}
-	if strings.Contains(out, "No plans configured") {
-		t.Fatalf("legacy plans treated as empty:\n%s", out)
-	}
-	if !strings.Contains(out, "legacy-a") || !strings.Contains(out, "legacy-b") {
-		t.Fatalf("missing legacy plan names:\n%s", out)
-	}
-	if !strings.Contains(out, "Legacy sequential/batches") {
-		t.Fatalf("expected legacy section header:\n%s", out)
-	}
-}
-
 func TestStatusRewritesStaleRunningPlanToInterruptedAndGuidesResume(t *testing.T) {
 	root := newStatusRoot(t)
 	writeStatusPlan(t, root, "feature.md")
@@ -284,10 +255,8 @@ func writeStatusConfig(t *testing.T, root string, planUnits []map[string]any) {
 		"max_retries":                  1,
 		"single_workstream_iterations": 10,
 		"single_workstream_timeout":    600,
-		"tool":                         "claude",
-		"batches":                      [][]string{},
-		"sequential":                   []string{},
-		"plan_units":                   planUnits,
+		"tool":       "claude",
+		"plan_units": planUnits,
 	}
 	writeStatusJSON(t, root, "execution/config.json", cfg)
 }

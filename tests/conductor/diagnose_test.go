@@ -11,7 +11,7 @@ import (
 func TestDiagnosePendingProject(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
-	writeConductorConfig(t, root, sequentialOnlyConfig())
+	writeRegisteredPlanUnitConfig(t, root, []string{"01-bootstrap", "02-config", "03-runtime"})
 
 	project, err := conductor.LoadProject(root)
 	if err != nil {
@@ -36,7 +36,7 @@ func TestDiagnosePendingProject(t *testing.T) {
 func TestDiagnoseFailureIncludesResumeGuidance(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
-	writeConductorConfig(t, root, sequentialOnlyConfig())
+	writeRegisteredPlanUnitConfig(t, root, []string{"01-bootstrap", "02-config", "03-runtime"})
 
 	project, err := conductor.LoadProject(root)
 	if err != nil {
@@ -64,7 +64,7 @@ func TestDiagnoseFailureIncludesResumeGuidance(t *testing.T) {
 func TestDiagnoseCompleteProject(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
-	writeConductorConfig(t, root, sequentialOnlyConfig())
+	writeRegisteredPlanUnitConfig(t, root, []string{"01-bootstrap", "02-config", "03-runtime"})
 
 	project, err := conductor.LoadProject(root)
 	if err != nil {
@@ -87,7 +87,7 @@ func TestDiagnoseCompleteProject(t *testing.T) {
 func TestDiagnoseFailureIncludesEvidenceDetails(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
-	writeConductorConfig(t, root, sequentialOnlyConfig())
+	writeRegisteredPlanUnitConfig(t, root, []string{"01-bootstrap", "02-config", "03-runtime"})
 
 	project, err := conductor.LoadProject(root)
 	if err != nil {
@@ -118,7 +118,7 @@ func TestDiagnoseFailureIncludesEvidenceDetails(t *testing.T) {
 func TestDiagnoseReportShowsEvidencePath(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
-	writeConductorConfig(t, root, sequentialOnlyConfig())
+	writeRegisteredPlanUnitConfig(t, root, []string{"01-bootstrap", "02-config", "03-runtime"})
 
 	project, err := conductor.LoadProject(root)
 	if err != nil {
@@ -140,7 +140,7 @@ func TestDiagnoseReportShowsEvidencePath(t *testing.T) {
 func TestDiagnosePartialSuccessShowsCompletedPlans(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
-	writeConductorConfig(t, root, sequentialOnlyConfig())
+	writeRegisteredPlanUnitConfig(t, root, []string{"01-bootstrap", "02-config", "03-runtime"})
 
 	project, err := conductor.LoadProject(root)
 	if err != nil {
@@ -164,7 +164,7 @@ func TestDiagnosePartialSuccessShowsCompletedPlans(t *testing.T) {
 func TestDiagnoseReportOmitsEvidenceWhenEmpty(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
-	writeConductorConfig(t, root, sequentialOnlyConfig())
+	writeRegisteredPlanUnitConfig(t, root, []string{"01-bootstrap", "02-config", "03-runtime"})
 
 	project, err := conductor.LoadProject(root)
 	if err != nil {

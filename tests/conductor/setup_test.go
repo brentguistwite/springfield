@@ -19,7 +19,6 @@ func TestSetup_GeneratesConfigWhenNoneExists(t *testing.T) {
 
 	opts := conductor.SetupDefaults()
 	opts.Tool = "claude"
-	opts.Sequential = []string{"plan-a", "plan-b"}
 
 	result, err := conductor.Setup(root, opts)
 	if err != nil {
@@ -47,21 +46,18 @@ func TestSetup_GeneratesConfigWhenNoneExists(t *testing.T) {
 	if cfg.Tool != "claude" {
 		t.Errorf("Tool = %q, want %q", cfg.Tool, "claude")
 	}
-	if len(cfg.Sequential) != 2 || cfg.Sequential[0] != "plan-a" {
-		t.Errorf("Sequential = %v, want [plan-a plan-b]", cfg.Sequential)
-	}
 	data, err := os.ReadFile(filepath.Join(root, ".springfield", "execution", "config.json"))
 	if err != nil {
 		t.Fatalf("ReadFile generated config: %v", err)
 	}
-	assertExactConfigKeys(t, data, "batches", "max_retries", "plans_dir", "sequential", "single_workstream_iterations", "single_workstream_timeout", "tool", "worktree_base")
+	assertExactConfigKeys(t, data, "max_retries", "plans_dir", "single_workstream_iterations", "single_workstream_timeout", "tool", "worktree_base")
 }
 
 func TestSetup_ReusesExistingValidConfig(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
 
-	existing := sequentialOnlyConfig()
+	existing := planUnitConfig("01-bootstrap", "02-config", "03-runtime")
 	writeConductorConfig(t, root, existing)
 
 	opts := conductor.SetupDefaults()
@@ -105,7 +101,7 @@ func TestIsReady_FalseWhenNoConfig(t *testing.T) {
 func TestIsReady_TrueWhenValidConfig(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
-	writeConductorConfig(t, root, sequentialOnlyConfig())
+	writeConductorConfig(t, root, planUnitConfig("01-bootstrap", "02-config", "03-runtime"))
 
 	ready, err := conductor.IsReady(root)
 	if err != nil {
@@ -240,7 +236,7 @@ func TestUpdateConfig_OverwritesExisting(t *testing.T) {
 	if strings.Contains(content, "ralph_iterations") {
 		t.Fatalf("did not expect legacy ralph_iterations key after update, got:\n%s", content)
 	}
-	assertExactConfigKeys(t, data, "batches", "max_retries", "plans_dir", "sequential", "single_workstream_iterations", "single_workstream_timeout", "tool", "worktree_base")
+	assertExactConfigKeys(t, data, "max_retries", "plans_dir", "single_workstream_iterations", "single_workstream_timeout", "tool", "worktree_base")
 }
 
 func TestUpdateConfig_FailsWhenNoExistingConfig(t *testing.T) {
@@ -259,38 +255,6 @@ func TestUpdateConfig_FailsWhenNoExistingConfig(t *testing.T) {
 	}
 }
 
-func TestSetup_WritesCanonicalEmptyArrays(t *testing.T) {
-	root := t.TempDir()
-	writeProjectConfig(t, root)
-
-	opts := conductor.SetupDefaults()
-	opts.Tool = "claude"
-
-	result, err := conductor.Setup(root, opts)
-	if err != nil {
-		t.Fatalf("Setup() error: %v", err)
-	}
-
-	data, err := os.ReadFile(result.Path)
-	if err != nil {
-		t.Fatalf("ReadFile(%q) error: %v", result.Path, err)
-	}
-
-	json := string(data)
-	if strings.Contains(json, `"sequential": null`) {
-		t.Fatalf("setup wrote null sequential array: %s", json)
-	}
-	if strings.Contains(json, `"batches": null`) {
-		t.Fatalf("setup wrote null batches array: %s", json)
-	}
-	if !strings.Contains(json, `"sequential": []`) {
-		t.Fatalf("setup did not write canonical empty sequential array: %s", json)
-	}
-	if !strings.Contains(json, `"batches": []`) {
-		t.Fatalf("setup did not write canonical empty batches array: %s", json)
-	}
-}
-
 func TestLoadProjectRejectsLegacyConfigPathAndTerms(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
@@ -306,9 +270,7 @@ func TestLoadProjectRejectsLegacyConfigPathAndTerms(t *testing.T) {
   "max_retries": 2,
   "ralph_iterations": 9,
   "ralph_timeout": 600,
-  "tool": "claude",
-  "sequential": ["01-bootstrap"],
-  "batches": []
+  "tool": "claude"
 }`
 	if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
 		t.Fatalf("write legacy config: %v", err)
@@ -326,7 +288,7 @@ func TestLoadProjectRejectsLegacyConfigPathAndTerms(t *testing.T) {
 func TestSetupCreatesCanonicalConfigWhenLegacyConfigExists(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
-	writeLegacyConductorConfig(t, root, sequentialOnlyConfig())
+	writeLegacyConductorConfig(t, root, planUnitConfig("01-bootstrap", "02-config", "03-runtime"))
 
 	result, err := conductor.Setup(root, conductor.SetupDefaults())
 	if err != nil {
@@ -369,7 +331,7 @@ func sortedKeys(m map[string]any) []string {
 func TestUpdateConfigRejectsLegacyConfigPath(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
-	writeLegacyConductorConfig(t, root, sequentialOnlyConfig())
+	writeLegacyConductorConfig(t, root, planUnitConfig("01-bootstrap", "02-config", "03-runtime"))
 
 	updateOpts := conductor.SetupOptions{
 		Tool:                       "codex",

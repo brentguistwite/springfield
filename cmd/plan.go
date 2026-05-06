@@ -152,7 +152,7 @@ func persistCompiledBatch(cmd *cobra.Command, root string, compiled batch.Compil
 	}
 
 	if priorBatch != nil {
-		if archiveErr := batch.ArchiveBatch(root, *priorBatch, "replaced"); archiveErr != nil {
+		if archiveErr := batch.ArchiveBatchNormalized(root, *priorBatch, "replaced"); archiveErr != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: archive prior batch %q: %v\n", priorBatch.ID, archiveErr)
 		}
 	}

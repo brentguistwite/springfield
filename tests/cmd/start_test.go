@@ -242,7 +242,7 @@ func TestSpringfieldStartCompletionWarnsWhenArchiveFails(t *testing.T) {
 	argvPath := filepath.Join(dir, "claude.argv")
 	installFakeAgentBinary(t, fakeBinDir, "claude", argvPath)
 
-	// Force ArchiveBatch's MkdirAll to fail by creating a non-directory at .springfield/archive.
+	// Force ArchiveBatchNormalized's MkdirAll to fail by creating a non-directory at .springfield/archive.
 	archivePath := filepath.Join(dir, ".springfield", "archive")
 	if err := os.MkdirAll(filepath.Join(dir, ".springfield"), 0o755); err != nil {
 		t.Fatalf("mkdir .springfield: %v", err)

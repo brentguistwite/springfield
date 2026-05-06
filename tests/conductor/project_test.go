@@ -14,7 +14,7 @@ import (
 func TestLoadProjectReadsConfigFromSpringfieldRuntime(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
-	writeConductorConfig(t, root, sequentialOnlyConfig())
+	writeRegisteredPlanUnitConfig(t, root, []string{"01-bootstrap", "02-config", "03-runtime"})
 
 	project, err := conductor.LoadProject(root)
 	if err != nil {
@@ -34,7 +34,7 @@ func TestLoadProjectUsesRepoRootWhenStartedNested(t *testing.T) {
 	root := t.TempDir()
 	nested := root + "/plans/release"
 	writeProjectConfig(t, root)
-	writeConductorConfig(t, root, sequentialOnlyConfig())
+	writeRegisteredPlanUnitConfig(t, root, []string{"01-bootstrap", "02-config", "03-runtime"})
 
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatalf("mkdir nested: %v", err)
@@ -77,7 +77,7 @@ func TestLoadProjectRequiresConductorConfig(t *testing.T) {
 func TestSaveStateRoundTrips(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
-	writeConductorConfig(t, root, sequentialOnlyConfig())
+	writeRegisteredPlanUnitConfig(t, root, []string{"01-bootstrap", "02-config", "03-runtime"})
 
 	project, err := conductor.LoadProject(root)
 	if err != nil {
@@ -107,7 +107,7 @@ func TestSaveStateRoundTrips(t *testing.T) {
 func TestLoadProjectIgnoresLegacyConductorRuntime(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
-	writeLegacyConductorConfig(t, root, sequentialOnlyConfig())
+	writeLegacyConductorConfig(t, root, planUnitConfig("01-bootstrap", "02-config", "03-runtime"))
 	writeLegacyConductorState(t, root, &conductor.State{
 		Plans: map[string]*conductor.PlanState{
 			"01-bootstrap": {
@@ -131,7 +131,7 @@ func TestLoadProjectIgnoresLegacyConductorRuntime(t *testing.T) {
 func TestMarkRunningRecordsStartedAt(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
-	writeConductorConfig(t, root, sequentialOnlyConfig())
+	writeRegisteredPlanUnitConfig(t, root, []string{"01-bootstrap", "02-config", "03-runtime"})
 
 	project, err := conductor.LoadProject(root)
 	if err != nil {
@@ -149,7 +149,7 @@ func TestMarkRunningRecordsStartedAt(t *testing.T) {
 func TestMarkCompletedRecordsEndedAtAndAgent(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
-	writeConductorConfig(t, root, sequentialOnlyConfig())
+	writeRegisteredPlanUnitConfig(t, root, []string{"01-bootstrap", "02-config", "03-runtime"})
 
 	project, err := conductor.LoadProject(root)
 	if err != nil {
@@ -177,7 +177,7 @@ func TestMarkCompletedRecordsEndedAtAndAgent(t *testing.T) {
 func TestMarkFailedRecordsEndedAtAgentAndEvidence(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
-	writeConductorConfig(t, root, sequentialOnlyConfig())
+	writeRegisteredPlanUnitConfig(t, root, []string{"01-bootstrap", "02-config", "03-runtime"})
 
 	project, err := conductor.LoadProject(root)
 	if err != nil {
@@ -205,7 +205,7 @@ func TestMarkFailedRecordsEndedAtAgentAndEvidence(t *testing.T) {
 func TestAttemptsIncrementOnRerun(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
-	writeConductorConfig(t, root, sequentialOnlyConfig())
+	writeRegisteredPlanUnitConfig(t, root, []string{"01-bootstrap", "02-config", "03-runtime"})
 
 	project, err := conductor.LoadProject(root)
 	if err != nil {
@@ -229,7 +229,7 @@ func TestAttemptsIncrementOnRerun(t *testing.T) {
 func TestExpandedStateRoundTrips(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
-	writeConductorConfig(t, root, sequentialOnlyConfig())
+	writeRegisteredPlanUnitConfig(t, root, []string{"01-bootstrap", "02-config", "03-runtime"})
 
 	project, err := conductor.LoadProject(root)
 	if err != nil {
@@ -284,7 +284,7 @@ func TestExpandedStateRoundTrips(t *testing.T) {
 func TestPlanAccessorsReturnExpandedFields(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
-	writeConductorConfig(t, root, sequentialOnlyConfig())
+	writeRegisteredPlanUnitConfig(t, root, []string{"01-bootstrap", "02-config", "03-runtime"})
 
 	project, err := conductor.LoadProject(root)
 	if err != nil {
@@ -313,28 +313,6 @@ func TestPlanAccessorsReturnExpandedFields(t *testing.T) {
 	}
 	if got := project.PlanAttempts("01-bootstrap"); got != 1 {
 		t.Fatalf("attempts: got %d want 1", got)
-	}
-}
-
-func TestAllPlansFlattensSequentialThenBatches(t *testing.T) {
-	root := t.TempDir()
-	writeProjectConfig(t, root)
-	writeConductorConfig(t, root, mixedConfig())
-
-	project, err := conductor.LoadProject(root)
-	if err != nil {
-		t.Fatalf("load project: %v", err)
-	}
-
-	want := []string{"seq-1", "seq-2", "batch-a", "batch-b", "batch-c"}
-	got := project.AllPlans()
-	if len(got) != len(want) {
-		t.Fatalf("all plans length: got %d want %d", len(got), len(want))
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("all plans[%d]: got %q want %q", i, got[i], want[i])
-		}
 	}
 }
 
@@ -425,35 +403,4 @@ func TestReloadedIntegratedPlanSkipsToNextIncompletePlan(t *testing.T) {
 	if len(next) != 1 || next[0] != "beta" {
 		t.Fatalf("next = %v, want [beta]", next)
 	}
-}
-
-func writeRegisteredPlanUnitConfig(t *testing.T, root string, ids []string) {
-	t.Helper()
-
-	planDir := filepath.Join(root, conductor.TrackedPlansDir)
-	if err := os.MkdirAll(planDir, 0o755); err != nil {
-		t.Fatalf("mkdir plans: %v", err)
-	}
-
-	units := make([]conductor.PlanUnit, 0, len(ids))
-	for i, id := range ids {
-		if err := os.WriteFile(filepath.Join(planDir, id+".md"), []byte("# "+id+"\n"), 0o644); err != nil {
-			t.Fatalf("write plan %s: %v", id, err)
-		}
-		units = append(units, conductor.PlanUnit{
-			ID:    id,
-			Path:  conductor.TrackedPlansDir + "/" + id + ".md",
-			Order: i + 1,
-		})
-	}
-
-	writeConductorConfig(t, root, &conductor.Config{
-		PlansDir:                   conductor.TrackedPlansDir,
-		WorktreeBase:               ".worktrees",
-		MaxRetries:                 2,
-		SingleWorkstreamIterations: 50,
-		SingleWorkstreamTimeout:    3600,
-		Tool:                       "claude",
-		PlanUnits:                  units,
-	})
 }

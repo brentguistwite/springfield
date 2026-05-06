@@ -7,10 +7,8 @@ import (
 	"springfield/internal/features/conductor"
 )
 
-func TestBuildScheduleHonorsPlanUnitsOverLegacy(t *testing.T) {
+func TestBuildScheduleFromPlanUnits(t *testing.T) {
 	cfg := &conductor.Config{
-		Sequential: []string{"legacy-a"},
-		Batches:    [][]string{{"legacy-b"}},
 		PlanUnits: []conductor.PlanUnit{
 			{ID: "feature-b", Path: "springfield/plans/b.md", Order: 2},
 			{ID: "feature-a", Path: "springfield/plans/a.md", Order: 1},
@@ -21,19 +19,6 @@ func TestBuildScheduleHonorsPlanUnitsOverLegacy(t *testing.T) {
 	got := schedule.NextPlans(state)
 	if len(got) != 1 || got[0] != "feature-a" {
 		t.Fatalf("got %v, want [feature-a]", got)
-	}
-}
-
-func TestBuildScheduleFallsBackToLegacy(t *testing.T) {
-	cfg := &conductor.Config{
-		Sequential: []string{"legacy-a", "legacy-b"},
-		Batches:    [][]string{{"legacy-c", "legacy-d"}},
-	}
-	schedule := conductor.BuildSchedule(cfg)
-	state := conductor.NewState()
-	got := schedule.NextPlans(state)
-	if len(got) != 1 || got[0] != "legacy-a" {
-		t.Fatalf("got %v, want [legacy-a]", got)
 	}
 }
 

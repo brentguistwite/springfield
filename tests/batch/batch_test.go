@@ -280,7 +280,7 @@ func TestCompile_SerialPhaseCoversAllSlices(t *testing.T) {
 	}
 }
 
-func TestArchiveBatch(t *testing.T) {
+func TestArchiveBatchNormalized(t *testing.T) {
 	dir := t.TempDir()
 	paths, _ := batch.NewPaths(dir, "my-batch")
 	b := batch.Batch{
@@ -294,8 +294,8 @@ func TestArchiveBatch(t *testing.T) {
 		t.Fatalf("WriteBatch: %v", err)
 	}
 
-	if err := batch.ArchiveBatch(dir, b, "replaced"); err != nil {
-		t.Fatalf("ArchiveBatch: %v", err)
+	if err := batch.ArchiveBatchNormalized(dir, b, "replaced"); err != nil {
+		t.Fatalf("ArchiveBatchNormalized: %v", err)
 	}
 
 	if _, err := os.Stat(paths.PlanDir()); !os.IsNotExist(err) {

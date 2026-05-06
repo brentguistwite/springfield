@@ -83,19 +83,8 @@ func (p *Project) SaveState() error {
 }
 
 // AllPlans returns the configured plans in execution order.
-//
-// When PlanUnits is populated, those are returned in Order/ID order; otherwise
-// the legacy Sequential then flattened-Batches projection is returned.
 func (p *Project) AllPlans() []string {
-	if len(p.Config.PlanUnits) > 0 {
-		return OrderedPlanUnitIDs(p.Config.PlanUnits)
-	}
-	plans := make([]string, 0, len(p.Config.Sequential))
-	plans = append(plans, p.Config.Sequential...)
-	for _, batch := range p.Config.Batches {
-		plans = append(plans, batch...)
-	}
-	return plans
+	return OrderedPlanUnitIDs(p.Config.PlanUnits)
 }
 
 // PlanStatus returns the current status for name, defaulting to pending.

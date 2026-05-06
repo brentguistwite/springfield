@@ -21,8 +21,6 @@ type SetupOptions struct {
 	MaxRetries                 int
 	SingleWorkstreamIterations int
 	SingleWorkstreamTimeout    int
-	Sequential                 []string
-	Batches                    [][]string
 }
 
 // SetupResult describes what happened during setup.
@@ -40,8 +38,6 @@ func SetupDefaults() SetupOptions {
 		MaxRetries:                 2,
 		SingleWorkstreamIterations: 50,
 		SingleWorkstreamTimeout:    3600,
-		Sequential:                 []string{},
-		Batches:                    [][]string{},
 	}
 }
 
@@ -73,16 +69,6 @@ func Setup(rootDir string, opts SetupOptions) (SetupResult, error) {
 	}
 
 	// Generate new config from options
-	sequential := opts.Sequential
-	if sequential == nil {
-		sequential = []string{}
-	}
-
-	batches := opts.Batches
-	if batches == nil {
-		batches = [][]string{}
-	}
-
 	cfg := &Config{
 		PlansDir:                   opts.PlansDir,
 		WorktreeBase:               opts.WorktreeBase,
@@ -90,8 +76,6 @@ func Setup(rootDir string, opts SetupOptions) (SetupResult, error) {
 		SingleWorkstreamIterations: opts.SingleWorkstreamIterations,
 		SingleWorkstreamTimeout:    opts.SingleWorkstreamTimeout,
 		Tool:                       opts.Tool,
-		Sequential:                 sequential,
-		Batches:                    batches,
 	}
 
 	if err := rt.WriteJSON(configPath, cfg); err != nil {
@@ -127,15 +111,6 @@ func UpdateConfig(rootDir string, opts SetupOptions) (UpdateResult, error) {
 		return UpdateResult{}, errors.New("no existing Springfield execution config to update; use Setup for first-run")
 	}
 
-	sequential := opts.Sequential
-	if sequential == nil {
-		sequential = []string{}
-	}
-	batches := opts.Batches
-	if batches == nil {
-		batches = [][]string{}
-	}
-
 	cfg := &Config{
 		PlansDir:                   opts.PlansDir,
 		WorktreeBase:               opts.WorktreeBase,
@@ -143,8 +118,6 @@ func UpdateConfig(rootDir string, opts SetupOptions) (UpdateResult, error) {
 		SingleWorkstreamIterations: opts.SingleWorkstreamIterations,
 		SingleWorkstreamTimeout:    opts.SingleWorkstreamTimeout,
 		Tool:                       opts.Tool,
-		Sequential:                 sequential,
-		Batches:                    batches,
 	}
 
 	if err := rt.WriteJSON(configPath, cfg); err != nil {

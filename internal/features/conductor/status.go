@@ -10,16 +10,11 @@ import (
 type RegistryStatus struct {
 	HasConfig bool
 	Units     []PlanUnitStatus
-	// LegacyPlans lists plan names projected from legacy sequential/batches
-	// when PlanUnits is empty. These are surfaced truthfully instead of
-	// claiming the registry is empty for upgraded repos that have not yet
-	// migrated to plan_units.
-	LegacyPlans []LegacyPlanStatus
-	Completed   int
-	Total       int
-	Failures    []PlanFailure
-	NextStep    string
-	Queue       *QueueState
+	Completed int
+	Total     int
+	Failures  []PlanFailure
+	NextStep  string
+	Queue     *QueueState
 }
 
 // PlanUnitStatus is one ordered plan unit annotated with its current state.
@@ -40,17 +35,6 @@ type PlanUnitStatus struct {
 	Cleanup      *CleanupOutcome
 }
 
-// LegacyPlanStatus is one legacy sequential/batches plan name annotated with
-// its current execution state.
-type LegacyPlanStatus struct {
-	Name         string
-	Status       PlanStatus
-	Error        string
-	Agent        string
-	EvidencePath string
-	Attempts     int
-}
-
 // nextStepRunStart is the parity-2 message: a populated registry can be
 // executed one plan at a time via `springfield start`.
 const nextStepRunStart = "Run \"springfield start\" to execute the next registered plan in its own git worktree."
@@ -65,41 +49,7 @@ func BuildRegistryStatus(project *Project) *RegistryStatus {
 	rs := &RegistryStatus{HasConfig: true}
 
 	if len(project.Config.PlanUnits) == 0 {
-		legacy := legacyPlanNames(project.Config)
-		if len(legacy) == 0 {
-			rs.NextStep = "No plans configured. Run \"springfield plans add\" to register one."
-			return rs
-		}
-		// Legacy sequential/batches present; surface them truthfully so an
-		// upgraded repo isn't told its existing config is empty.
-		var failures []PlanFailure
-		for _, name := range legacy {
-			st := project.PlanStatus(name)
-			entry := LegacyPlanStatus{
-				Name:         name,
-				Status:       st,
-				Error:        project.PlanError(name),
-				Agent:        project.PlanAgent(name),
-				EvidencePath: project.PlanEvidencePath(name),
-				Attempts:     project.PlanAttempts(name),
-			}
-			rs.LegacyPlans = append(rs.LegacyPlans, entry)
-			rs.Total++
-			switch st {
-			case StatusCompleted:
-				rs.Completed++
-			case StatusFailed:
-				failures = append(failures, PlanFailure{
-					Plan:         name,
-					Error:        entry.Error,
-					Agent:        entry.Agent,
-					EvidencePath: entry.EvidencePath,
-					Attempts:     entry.Attempts,
-				})
-			}
-		}
-		rs.Failures = failures
-		rs.NextStep = "Legacy sequential/batches plans detected. Run \"springfield plans add\" to register them in the new plan registry; this slice does not yet execute either surface."
+		rs.NextStep = "No plans configured. Run \"springfield plans add\" to register one."
 		return rs
 	}
 
@@ -243,17 +193,6 @@ func shortSHA(s string) string {
 	return s
 }
 
-// legacyPlanNames flattens sequential then batches into the order BuildSchedule
-// would consume.
-func legacyPlanNames(cfg *Config) []string {
-	out := make([]string, 0, len(cfg.Sequential))
-	out = append(out, cfg.Sequential...)
-	for _, b := range cfg.Batches {
-		out = append(out, b...)
-	}
-	return out
-}
-
 // Render produces a human-readable status block for the plan registry surface.
 func (rs *RegistryStatus) Render() string {
 	var b strings.Builder
@@ -284,47 +223,34 @@ func (rs *RegistryStatus) Render() string {
 	}
 	fmt.Fprintln(&b)
 
-	if len(rs.LegacyPlans) > 0 {
-		fmt.Fprintln(&b, "Legacy plan list (sequential/batches):")
-		for i, p := range rs.LegacyPlans {
-			fmt.Fprintf(&b, "  %d. %s  %s\n", i+1, p.Name, p.Status)
-			if p.Error != "" {
-				fmt.Fprintf(&b, "     error: %s\n", p.Error)
-			}
-			if p.EvidencePath != "" {
-				fmt.Fprintf(&b, "     evidence: %s\n", p.EvidencePath)
-			}
+	fmt.Fprintln(&b, "Plan registry:")
+	for i, p := range rs.Units {
+		title := p.Unit.Title
+		if title == "" {
+			title = p.Unit.ID
 		}
-	} else {
-		fmt.Fprintln(&b, "Plan registry:")
-		for i, p := range rs.Units {
-			title := p.Unit.Title
-			if title == "" {
-				title = p.Unit.ID
-			}
-			fmt.Fprintf(&b, "  %d. %s  %s  %s\n", i+1, p.Unit.ID, p.Status, title)
-			fmt.Fprintf(&b, "     path: %s\n", p.Unit.Path)
-			if p.WorktreePath != "" {
-				fmt.Fprintf(&b, "     worktree: %s\n", p.WorktreePath)
-			}
-			if p.Branch != "" {
-				fmt.Fprintf(&b, "     branch: %s (base %s @ %s)\n", p.Branch, p.BaseRef, shortSHA(p.BaseHead))
-			}
-			if p.PlanHead != "" {
-				fmt.Fprintf(&b, "     plan head: %s\n", shortSHA(p.PlanHead))
-			}
-			if p.ExitReason != "" {
-				fmt.Fprintf(&b, "     exit: %s\n", p.ExitReason)
-			}
-			if p.Error != "" {
-				fmt.Fprintf(&b, "     error: %s\n", p.Error)
-			}
-			if p.EvidencePath != "" {
-				fmt.Fprintf(&b, "     evidence: %s\n", p.EvidencePath)
-			}
-			renderMerge(&b, p.Merge)
-			renderCleanup(&b, p.Cleanup)
+		fmt.Fprintf(&b, "  %d. %s  %s  %s\n", i+1, p.Unit.ID, p.Status, title)
+		fmt.Fprintf(&b, "     path: %s\n", p.Unit.Path)
+		if p.WorktreePath != "" {
+			fmt.Fprintf(&b, "     worktree: %s\n", p.WorktreePath)
 		}
+		if p.Branch != "" {
+			fmt.Fprintf(&b, "     branch: %s (base %s @ %s)\n", p.Branch, p.BaseRef, shortSHA(p.BaseHead))
+		}
+		if p.PlanHead != "" {
+			fmt.Fprintf(&b, "     plan head: %s\n", shortSHA(p.PlanHead))
+		}
+		if p.ExitReason != "" {
+			fmt.Fprintf(&b, "     exit: %s\n", p.ExitReason)
+		}
+		if p.Error != "" {
+			fmt.Fprintf(&b, "     error: %s\n", p.Error)
+		}
+		if p.EvidencePath != "" {
+			fmt.Fprintf(&b, "     evidence: %s\n", p.EvidencePath)
+		}
+		renderMerge(&b, p.Merge)
+		renderCleanup(&b, p.Cleanup)
 	}
 	fmt.Fprintln(&b)
 	fmt.Fprintf(&b, "Next step: %s\n", rs.NextStep)

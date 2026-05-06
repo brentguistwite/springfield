@@ -77,7 +77,46 @@ func writeLegacyConductorState(t *testing.T, root string, state *conductor.State
 	}
 }
 
-func sequentialOnlyConfig() *conductor.Config {
+func writeRegisteredPlanUnitConfig(t *testing.T, root string, ids []string) {
+	t.Helper()
+
+	planDir := filepath.Join(root, conductor.TrackedPlansDir)
+	if err := os.MkdirAll(planDir, 0o755); err != nil {
+		t.Fatalf("mkdir plans: %v", err)
+	}
+
+	units := make([]conductor.PlanUnit, 0, len(ids))
+	for i, id := range ids {
+		if err := os.WriteFile(filepath.Join(planDir, id+".md"), []byte("# "+id+"\n"), 0o644); err != nil {
+			t.Fatalf("write plan %s: %v", id, err)
+		}
+		units = append(units, conductor.PlanUnit{
+			ID:    id,
+			Path:  conductor.TrackedPlansDir + "/" + id + ".md",
+			Order: i + 1,
+		})
+	}
+
+	writeConductorConfig(t, root, &conductor.Config{
+		PlansDir:                   conductor.TrackedPlansDir,
+		WorktreeBase:               ".worktrees",
+		MaxRetries:                 2,
+		SingleWorkstreamIterations: 50,
+		SingleWorkstreamTimeout:    3600,
+		Tool:                       "claude",
+		PlanUnits:                  units,
+	})
+}
+
+func planUnitConfig(ids ...string) *conductor.Config {
+	units := make([]conductor.PlanUnit, 0, len(ids))
+	for i, id := range ids {
+		units = append(units, conductor.PlanUnit{
+			ID:    id,
+			Path:  conductor.TrackedPlansDir + "/" + id + ".md",
+			Order: i + 1,
+		})
+	}
 	return &conductor.Config{
 		PlansDir:                   conductor.TrackedPlansDir,
 		WorktreeBase:               ".worktrees",
@@ -85,24 +124,7 @@ func sequentialOnlyConfig() *conductor.Config {
 		SingleWorkstreamIterations: 50,
 		SingleWorkstreamTimeout:    3600,
 		Tool:                       "claude",
-		Sequential: []string{
-			"01-bootstrap",
-			"02-config",
-			"03-runtime",
-		},
-	}
-}
-
-func mixedConfig() *conductor.Config {
-	return &conductor.Config{
-		PlansDir:                   conductor.TrackedPlansDir,
-		WorktreeBase:               ".worktrees",
-		MaxRetries:                 1,
-		SingleWorkstreamIterations: 30,
-		SingleWorkstreamTimeout:    1800,
-		Tool:                       "claude",
-		Batches:                    [][]string{{"batch-a", "batch-b"}, {"batch-c"}},
-		Sequential:                 []string{"seq-1", "seq-2"},
+		PlanUnits:                  units,
 	}
 }
 

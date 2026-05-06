@@ -17,7 +17,6 @@ import (
 	coreexec "springfield/internal/core/exec"
 	coreruntime "springfield/internal/core/runtime"
 	"springfield/internal/features/batch"
-	"springfield/internal/features/conductor"
 )
 
 const (
@@ -235,20 +234,16 @@ type runtimeMultiExecutor struct {
 }
 
 func (e runtimeMultiExecutor) Run(root string, work Work) (Report, error) {
-	schedule := conductor.BuildSchedule(&conductor.Config{
-		Batches: [][]string{workstreamNames(work)},
-	})
-	state := conductor.NewState()
-	seedConductorState(state, work)
-
-	next := schedule.NextPlans(state)
+	names := workstreamNames(work)
 	results := make(map[string]WorkstreamRun, len(work.Workstreams))
 	var runErr error
 	firstError := ""
+	allCompleted := true
 
-	for _, name := range next {
-		workstream, ok := findWorkstream(work, name)
+	for _, name := range names {
+		ws, ok := findWorkstream(work, name)
 		if !ok {
+			allCompleted = false
 			if runErr == nil {
 				runErr = fmt.Errorf("workstream %q not found", name)
 			}
@@ -258,25 +253,22 @@ func (e runtimeMultiExecutor) Run(root string, work Work) (Report, error) {
 			results[name] = WorkstreamRun{Name: name, Status: statusFailed, Error: runErr.Error()}
 			continue
 		}
+		if ws.Status == statusCompleted {
+			continue
+		}
 
-		outcome, err := e.executeWorkstream(root, work, workstream)
+		outcome, err := e.executeWorkstream(root, work, ws)
 		results[name] = outcome
 		if err != nil {
+			allCompleted = false
 			if runErr == nil {
 				runErr = err
 			}
 			if firstError == "" {
 				firstError = outcome.Error
 			}
-			state.Plans[name] = &conductor.PlanState{
-				Status:       conductor.StatusFailed,
-				Error:        outcome.Error,
-				EvidencePath: outcome.EvidencePath,
-			}
 			continue
 		}
-
-		state.Plans[name] = &conductor.PlanState{Status: conductor.StatusCompleted}
 	}
 
 	ordered := make([]WorkstreamRun, 0, len(work.Workstreams))
@@ -293,7 +285,7 @@ func (e runtimeMultiExecutor) Run(root string, work Work) (Report, error) {
 	}
 
 	status := statusCompleted
-	if !schedule.IsComplete(state) {
+	if !allCompleted {
 		status = statusFailed
 		if firstError == "" {
 			firstError = "execution failed"
@@ -357,15 +349,6 @@ func workstreamNames(work Work) []string {
 		names = append(names, workstream.Name)
 	}
 	return names
-}
-
-func seedConductorState(state *conductor.State, work Work) {
-	for _, workstream := range work.Workstreams {
-		if workstream.Status != statusCompleted {
-			continue
-		}
-		state.Plans[workstream.Name] = &conductor.PlanState{Status: conductor.StatusCompleted}
-	}
 }
 
 func findWorkstream(work Work, name string) (Workstream, bool) {

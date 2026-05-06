@@ -68,15 +68,6 @@ func ClearRun(rootDir string) error {
 	return nil
 }
 
-// ArchiveBatch writes a compact archive entry and removes the plan dir.
-//
-// Deprecated: prefer ArchiveBatchNormalized, which normalizes non-terminal slice
-// statuses to SliceAborted so archives never record a "running" slice alongside
-// a terminal reason.
-func ArchiveBatch(rootDir string, b Batch, reason string) error {
-	return ArchiveBatchNormalized(rootDir, b, reason)
-}
-
 // ArchiveBatchNormalized rewrites any non-terminal slice status to SliceAborted,
 // then atomically writes the archive entry (exactly once per batch id) and
 // removes the plan directory.
