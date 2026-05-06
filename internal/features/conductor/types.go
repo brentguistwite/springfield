@@ -238,9 +238,32 @@ func (s *PlanState) IsIntegrated() bool {
 	return true
 }
 
+// QueueStatus describes the lifecycle of a multi-plan queue run.
+type QueueStatus string
+
+const (
+	QueueIdle      QueueStatus = ""
+	QueueRunning   QueueStatus = "running"
+	QueueCompleted QueueStatus = "completed"
+	QueueHalted    QueueStatus = "halted"
+	QueueStopped   QueueStatus = "stopped"
+)
+
+// QueueState tracks the lifecycle of a sequential queue run across all
+// registered plan units. Nil when no queue run has been attempted.
+type QueueState struct {
+	Status       QueueStatus `json:"status"`
+	ActivePlanID string      `json:"active_plan_id,omitempty"`
+	StopReason   string      `json:"stop_reason,omitempty"`
+	Heartbeat    time.Time   `json:"heartbeat,omitempty"`
+	StartedAt    time.Time   `json:"started_at,omitempty"`
+	EndedAt      time.Time   `json:"ended_at,omitempty"`
+}
+
 // State represents persisted conductor plan state.
 type State struct {
 	Plans map[string]*PlanState `json:"plans"`
+	Queue *QueueState           `json:"queue,omitempty"`
 }
 
 // NewState builds an empty conductor state.

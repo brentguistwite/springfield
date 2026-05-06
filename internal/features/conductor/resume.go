@@ -18,6 +18,12 @@ func (p *Project) NormalizeStaleRunning(at time.Time) []string {
 		at = time.Now()
 	}
 
+	if q := p.State.Queue; q != nil && q.Status == QueueRunning {
+		q.Status = QueueIdle
+		q.ActivePlanID = ""
+		q.EndedAt = at
+	}
+
 	changed := make([]string, 0)
 	for name, plan := range p.State.Plans {
 		if plan == nil || plan.Status != StatusRunning {
