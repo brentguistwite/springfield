@@ -1,6 +1,6 @@
 # x-release-please-start-version
-366cb85c7f25a8e400f76f6cf6d6992e82e84d9fcc4a66a59af0232ed04c01a9  ./springfield_0.6.0_darwin_amd64.tar.gz
-96236fac1323425acdc164a67b9f6b90425357d4d26f1fdf24f08583aeb39746  ./springfield_0.6.0_darwin_arm64.tar.gz
-8a2ac7f1370210fd4b9ec6a55275533529a548720a2f85491fad9139ac59fcb3  ./springfield_0.6.0_linux_amd64.tar.gz
-fa08043d4f7e1ff214faa80b76478de677b0c6efbccea484925fb5d8660fe937  ./springfield_0.6.0_linux_arm64.tar.gz
+366cb85c7f25a8e400f76f6cf6d6992e82e84d9fcc4a66a59af0232ed04c01a9  ./springfield_0.7.0_darwin_amd64.tar.gz
+96236fac1323425acdc164a67b9f6b90425357d4d26f1fdf24f08583aeb39746  ./springfield_0.7.0_darwin_arm64.tar.gz
+8a2ac7f1370210fd4b9ec6a55275533529a548720a2f85491fad9139ac59fcb3  ./springfield_0.7.0_linux_amd64.tar.gz
+fa08043d4f7e1ff214faa80b76478de677b0c6efbccea484925fb5d8660fe937  ./springfield_0.7.0_linux_arm64.tar.gz
 # x-release-please-end
