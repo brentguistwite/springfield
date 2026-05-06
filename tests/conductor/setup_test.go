@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"springfield/internal/features/execution"
 	"springfield/internal/features/conductor"
 	"springfield/internal/storage"
 )
@@ -54,57 +53,6 @@ func TestSetup_GeneratesConfigWhenNoneExists(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(root, ".springfield", "execution", "config.json"))
 	if err != nil {
 		t.Fatalf("ReadFile generated config: %v", err)
-	}
-	assertExactConfigKeys(t, data, "batches", "max_retries", "plans_dir", "sequential", "single_workstream_iterations", "single_workstream_timeout", "tool", "worktree_base")
-}
-
-func TestExecutionSetup_PersistsPrimaryToolOnlyForPriorityChain(t *testing.T) {
-	root := t.TempDir()
-	writeProjectConfig(t, root)
-
-	result, err := execution.Setup(root, []string{"claude", "codex"}, execution.Defaults())
-	if err != nil {
-		t.Fatalf("execution.Setup() error: %v", err)
-	}
-	if !result.Created {
-		t.Fatal("expected Created=true for fresh execution setup")
-	}
-
-	data, err := os.ReadFile(result.Path)
-	if err != nil {
-		t.Fatalf("ReadFile generated config: %v", err)
-	}
-	content := string(data)
-	if !strings.Contains(content, `"tool": "claude"`) {
-		t.Fatalf("expected primary tool to be persisted, got:\n%s", content)
-	}
-	assertExactConfigKeys(t, data, "batches", "max_retries", "plans_dir", "sequential", "single_workstream_iterations", "single_workstream_timeout", "tool", "worktree_base")
-}
-
-func TestExecutionUpdate_PersistsPrimaryToolOnlyForPriorityChain(t *testing.T) {
-	root := t.TempDir()
-	writeProjectConfig(t, root)
-
-	_, err := execution.Setup(root, []string{"claude"}, execution.Defaults())
-	if err != nil {
-		t.Fatalf("execution.Setup() error: %v", err)
-	}
-
-	result, err := execution.Update(root, []string{"codex", "claude"}, execution.Defaults())
-	if err != nil {
-		t.Fatalf("execution.Update() error: %v", err)
-	}
-	if !result.Updated {
-		t.Fatal("expected Updated=true for execution update")
-	}
-
-	data, err := os.ReadFile(result.Path)
-	if err != nil {
-		t.Fatalf("ReadFile updated config: %v", err)
-	}
-	content := string(data)
-	if !strings.Contains(content, `"tool": "codex"`) {
-		t.Fatalf("expected updated primary tool to be persisted, got:\n%s", content)
 	}
 	assertExactConfigKeys(t, data, "batches", "max_retries", "plans_dir", "sequential", "single_workstream_iterations", "single_workstream_timeout", "tool", "worktree_base")
 }

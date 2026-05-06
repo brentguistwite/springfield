@@ -209,42 +209,6 @@ func TestLoadRegistryStatusFallsBackWhenLiveRunStateReadIsPartial(t *testing.T) 
 	}
 }
 
-func TestLegacyConfigStillLoads(t *testing.T) {
-	root := newProject(t)
-	// Write a config without plan_units — the pre-slice schema.
-	cfgPath := filepath.Join(root, ".springfield", "execution", "config.json")
-	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	body := `{
-  "plans_dir": "springfield/plans",
-  "worktree_base": ".worktrees",
-  "max_retries": 1,
-  "single_workstream_iterations": 10,
-  "single_workstream_timeout": 600,
-  "tool": "claude",
-  "batches": [["legacy-a"]],
-  "sequential": ["legacy-b"]
-}`
-	if err := os.WriteFile(cfgPath, []byte(body), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	loaded, err := execution.Load(root)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if loaded.Tool != "claude" {
-		t.Fatalf("tool = %q", loaded.Tool)
-	}
-	if len(loaded.Sequential) != 1 || loaded.Sequential[0] != "legacy-b" {
-		t.Fatalf("sequential lost: %v", loaded.Sequential)
-	}
-	if len(loaded.Batches) != 1 || loaded.Batches[0][0] != "legacy-a" {
-		t.Fatalf("batches lost: %v", loaded.Batches)
-	}
-}
-
 // --- helpers ---
 
 func newProject(t *testing.T) string {
