@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/brentguistwite/springfield/compare/v0.6.0...v0.7.0) (2026-05-06)
+
+
+### Features
+
+* **conductor:** sequential multi-plan queue loop ([#33](https://github.com/brentguistwite/springfield/issues/33)) ([15b4876](https://github.com/brentguistwite/springfield/commit/15b4876187bfa65b60aeda2390b2e45221ce547e))
+
 ## [0.6.0](https://github.com/brentguistwite/springfield/compare/v0.5.0...v0.6.0) (2026-05-05)
 
 
