@@ -19,6 +19,7 @@ type RegistryStatus struct {
 	Total       int
 	Failures    []PlanFailure
 	NextStep    string
+	Queue       *QueueState
 }
 
 // PlanUnitStatus is one ordered plan unit annotated with its current state.
@@ -154,6 +155,8 @@ func BuildRegistryStatus(project *Project) *RegistryStatus {
 	}
 	rs.Failures = failures
 
+	rs.Queue = project.State.Queue
+
 	switch {
 	case rs.Completed == rs.Total && rs.Total > 0:
 		rs.NextStep = "All registered plans completed."
@@ -266,6 +269,19 @@ func (rs *RegistryStatus) Render() string {
 
 	fmt.Fprintln(&b, "No active Springfield batch.")
 	fmt.Fprintf(&b, "Plans: %d configured, %d completed\n", rs.Total, rs.Completed)
+	if rs.Queue != nil && rs.Queue.Status != QueueIdle {
+		fmt.Fprintf(&b, "Queue: %s", rs.Queue.Status)
+		if rs.Queue.ActivePlanID != "" {
+			fmt.Fprintf(&b, " (%d of %d)", rs.Completed, rs.Total)
+		}
+		fmt.Fprintln(&b)
+		if rs.Queue.ActivePlanID != "" {
+			fmt.Fprintf(&b, "Active plan: %s\n", rs.Queue.ActivePlanID)
+		}
+		if rs.Queue.StopReason != "" {
+			fmt.Fprintf(&b, "Stop reason: %s\n", rs.Queue.StopReason)
+		}
+	}
 	fmt.Fprintln(&b)
 
 	if len(rs.LegacyPlans) > 0 {

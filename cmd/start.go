@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -901,14 +902,79 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 		worktreeBase = ".worktrees"
 	}
 
-	// Re-run path: the next eligible plan already executed (Status=Completed)
-	// but is not yet fully integrated (merge refused/failed or cleanup
-	// failed). Skip re-execution — re-running the agent against an already
-	// completed plan would silently rewrite truthful state to "failed" and
-	// destroy the preserved evidence. Drive only the merge integration
-	// phase against the existing artifacts.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	schedule := conductor.BuildSchedule(project.Config)
+
+	if project.State.Queue == nil {
+		project.State.Queue = &conductor.QueueState{}
+	}
+	project.State.Queue.Status = conductor.QueueRunning
+	if project.State.Queue.StartedAt.IsZero() {
+		project.State.Queue.StartedAt = time.Now()
+	}
+	project.State.Queue.EndedAt = time.Time{}
+	project.State.Queue.StopReason = ""
+	if err := project.SaveState(); err != nil {
+		return true, err
+	}
+
+	saveQueueState := func() {
+		if err := project.SaveState(); err != nil {
+			fmt.Fprintf(w, "warning: failed to persist queue state: %v\n", err)
+		}
+	}
+
+	for {
+		if err := ctx.Err(); err != nil {
+			project.State.Queue.Status = conductor.QueueStopped
+			project.State.Queue.StopReason = "interrupted by signal"
+			project.State.Queue.EndedAt = time.Now()
+			saveQueueState()
+			fmt.Fprintln(w, "Queue stopped: interrupted by signal")
+			return true, nil
+		}
+
+		next := schedule.NextPlans(project.State)
+		if len(next) == 0 {
+			break
+		}
+
+		project.State.Queue.ActivePlanID = next[0]
+		project.State.Queue.Heartbeat = time.Now()
+		saveQueueState()
+
+		planErr := runOnePlan(w, project, root, worktreeBase, agentIDs, loaded, registry)
+		if planErr != nil {
+			project.State.Queue.Status = conductor.QueueHalted
+			project.State.Queue.StopReason = planErr.Error()
+			project.State.Queue.EndedAt = time.Now()
+			project.State.Queue.ActivePlanID = ""
+			saveQueueState()
+			return true, planErr
+		}
+	}
+
+	project.State.Queue.Status = conductor.QueueCompleted
+	project.State.Queue.ActivePlanID = ""
+	project.State.Queue.EndedAt = time.Now()
+	saveQueueState()
+
+	completed, total := schedule.Progress(project.State)
+	fmt.Fprintf(w, "Queue completed: %d of %d plans integrated\n", completed, total)
+	return true, nil
+}
+
+// runOnePlan executes or merge-integrates the next eligible plan. Returns nil
+// on success, error on failure/merge-refused/cleanup-failed.
+func runOnePlan(w io.Writer, project *conductor.Project, root, worktreeBase string, agentIDs []agents.ID, loaded config.Loaded, registry agents.Registry) error {
 	if planID, ok := nextNonIntegratedCompletedPlan(project); ok {
-		return runMergeIntegrationOnly(w, project, root, worktreeBase, planID)
+		_, err := runMergeIntegrationOnly(w, project, root, worktreeBase, planID)
+		if err != nil {
+			return err
+		}
+		return nil
 	}
 
 	res := planrun.SinglePlan(planrun.SinglePlanInput{
@@ -923,8 +989,7 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 	})
 
 	if res.PlanID == "" && res.Reason == "no-eligible-plan" {
-		fmt.Fprintln(w, "All registered plans completed.")
-		return true, nil
+		return nil
 	}
 	if res.Err != nil {
 		fmt.Fprintf(w, "Plan: %s\n", res.PlanID)
@@ -934,7 +999,7 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 		}
 		fmt.Fprintf(w, "Status: failed (%s)\n", res.Reason)
 		fmt.Fprintf(w, "Error: %s\n", res.Err.Error())
-		return true, fmt.Errorf("plan %s failed: %w", res.PlanID, res.Err)
+		return fmt.Errorf("plan %s failed: %w", res.PlanID, res.Err)
 	}
 
 	fmt.Fprintf(w, "Plan: %s\n", res.PlanID)
@@ -945,10 +1010,6 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 		fmt.Fprintf(w, "Evidence: %s\n", res.EvidencePath)
 	}
 
-	// Execution succeeded → attempt merge integration through a dedicated
-	// merge worktree. A refused or failed merge is recorded truthfully and
-	// surfaced; the underlying CLI exit reflects the integration outcome
-	// so a stuck merge doesn't masquerade as a clean run.
 	mergeRes := planmerge.Integrate(planmerge.IntegrateInput{
 		Project:      project,
 		PlanID:       res.PlanID,
@@ -958,26 +1019,18 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 	})
 	renderMergeOutcome(w, mergeRes)
 	if mergeRes.Err != nil {
-		return true, fmt.Errorf("plan %s merge integration failed: %w", res.PlanID, mergeRes.Err)
+		return fmt.Errorf("plan %s merge integration failed: %w", res.PlanID, mergeRes.Err)
 	}
 	if mergeRes.Merge != nil && mergeRes.Merge.Status != conductor.MergeSucceeded {
-		return true, fmt.Errorf("plan %s merge %s: %s", res.PlanID, mergeRes.Merge.Status, mergeRes.Merge.Reason)
+		return fmt.Errorf("plan %s merge %s: %s", res.PlanID, mergeRes.Merge.Status, mergeRes.Merge.Reason)
 	}
-	// Merge succeeded but cleanup failed → plan is recorded as not fully
-	// integrated. Surface as non-zero so CI / operators do not treat the
-	// run as fully done while preserved artifacts remain on disk.
 	if mergeRes.Cleanup != nil && mergeRes.Cleanup.Status == conductor.CleanupFailed {
-		return true, fmt.Errorf("plan %s merge succeeded but cleanup failed: artifacts preserved", res.PlanID)
+		return fmt.Errorf("plan %s merge succeeded but cleanup failed: artifacts preserved", res.PlanID)
 	}
 	if mergeRes.Merge != nil && mergeRes.Merge.SourceSyncStatus == "failed" {
-		// State already records the plan as not integrated (per
-		// IsIntegrated rules). Surface as non-zero so the CLI exit
-		// code matches the state contract instead of misleading the
-		// operator with a clean exit while the source checkout
-		// remains stale.
-		return true, fmt.Errorf("plan %s merge succeeded but source resync failed: %s", res.PlanID, mergeRes.Merge.SourceSyncError)
+		return fmt.Errorf("plan %s merge succeeded but source resync failed: %s", res.PlanID, mergeRes.Merge.SourceSyncError)
 	}
-	return true, nil
+	return nil
 }
 
 // nextNonIntegratedCompletedPlan returns the next eligible plan ID when

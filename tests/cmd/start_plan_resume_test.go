@@ -11,7 +11,7 @@ import (
 	"springfield/internal/features/conductor"
 )
 
-func TestSpringfieldStartSkipsCompletedPlanAfterRestart(t *testing.T) {
+func TestSpringfieldStartRunsAllPlansInQueue(t *testing.T) {
 	bin := buildBinary(t)
 	dir := initRealGitRepo(t)
 	writeSpringfieldConfig(t, dir, "claude")
@@ -28,21 +28,16 @@ func TestSpringfieldStartSkipsCompletedPlanAfterRestart(t *testing.T) {
 
 	out1, err := runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + fakeBinDir + ":" + os.Getenv("PATH")}, "start")
 	if err != nil {
-		t.Fatalf("first start: %v\n%s", err, out1)
+		t.Fatalf("start: %v\n%s", err, out1)
 	}
 	if !strings.Contains(out1, "Plan: alpha") {
-		t.Fatalf("expected alpha on first run:\n%s", out1)
+		t.Fatalf("expected alpha:\n%s", out1)
 	}
-
-	out2, err := runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + fakeBinDir + ":" + os.Getenv("PATH")}, "start")
-	if err != nil {
-		t.Fatalf("second start: %v\n%s", err, out2)
+	if !strings.Contains(out1, "Plan: beta") {
+		t.Fatalf("expected beta:\n%s", out1)
 	}
-	if strings.Contains(out2, "Plan: alpha") {
-		t.Fatalf("alpha reran on restart:\n%s", out2)
-	}
-	if !strings.Contains(out2, "Plan: beta") {
-		t.Fatalf("expected beta on second run:\n%s", out2)
+	if !strings.Contains(out1, "Queue completed") {
+		t.Fatalf("expected queue completed:\n%s", out1)
 	}
 
 	state := readPlanStateFile(t, dir)
@@ -54,6 +49,15 @@ func TestSpringfieldStartSkipsCompletedPlanAfterRestart(t *testing.T) {
 	}
 	if state.Plans["alpha"].Status != "completed" || state.Plans["beta"].Status != "completed" {
 		t.Fatalf("unexpected statuses: %+v", state.Plans)
+	}
+
+	// Second start: all plans already integrated → queue completed immediately
+	out2, err := runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + fakeBinDir + ":" + os.Getenv("PATH")}, "start")
+	if err != nil {
+		t.Fatalf("second start: %v\n%s", err, out2)
+	}
+	if !strings.Contains(out2, "Queue completed") {
+		t.Fatalf("expected queue completed on restart:\n%s", out2)
 	}
 }
 
