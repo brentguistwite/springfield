@@ -5,7 +5,6 @@
 
 # Repo-local orchestration state
 .ralph/
-.conductor/
 
 # Local worktrees
 .worktrees/

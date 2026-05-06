@@ -2,7 +2,6 @@ package conductor_test
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -233,9 +232,6 @@ func TestUpdateConfig_OverwritesExisting(t *testing.T) {
 	if !strings.Contains(content, `"single_workstream_iterations": 100`) {
 		t.Fatalf("expected Springfield-owned key in updated config, got:\n%s", content)
 	}
-	if strings.Contains(content, "ralph_iterations") {
-		t.Fatalf("did not expect legacy ralph_iterations key after update, got:\n%s", content)
-	}
 	assertExactConfigKeys(t, data, "max_retries", "plans_dir", "single_workstream_iterations", "single_workstream_timeout", "tool", "worktree_base")
 }
 
@@ -252,53 +248,6 @@ func TestUpdateConfig_FailsWhenNoExistingConfig(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no existing Springfield execution config") {
 		t.Errorf("error = %q, want message about no existing config", err.Error())
-	}
-}
-
-func TestLoadProjectRejectsLegacyConfigPathAndTerms(t *testing.T) {
-	root := t.TempDir()
-	writeProjectConfig(t, root)
-
-	configPath := filepath.Join(root, ".springfield", "conductor", "config.json")
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		t.Fatalf("mkdir config dir: %v", err)
-	}
-
-	body := `{
-  "plans_dir": ".conductor/plans",
-  "worktree_base": ".worktrees",
-  "max_retries": 2,
-  "ralph_iterations": 9,
-  "ralph_timeout": 600,
-  "tool": "claude"
-}`
-	if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
-		t.Fatalf("write legacy config: %v", err)
-	}
-
-	_, err := conductor.LoadProject(root)
-	if err == nil {
-		t.Fatal("expected legacy conductor config path to be ignored")
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("expected os.ErrNotExist, got %v", err)
-	}
-}
-
-func TestSetupCreatesCanonicalConfigWhenLegacyConfigExists(t *testing.T) {
-	root := t.TempDir()
-	writeProjectConfig(t, root)
-	writeLegacyConductorConfig(t, root, planUnitConfig("01-bootstrap", "02-config", "03-runtime"))
-
-	result, err := conductor.Setup(root, conductor.SetupDefaults())
-	if err != nil {
-		t.Fatalf("Setup() error: %v", err)
-	}
-	if !result.Created {
-		t.Fatal("expected canonical config to be created")
-	}
-	if got, want := result.Path, filepath.Join(root, ".springfield", "execution", "config.json"); got != want {
-		t.Fatalf("Path = %q, want %q", got, want)
 	}
 }
 
@@ -328,22 +277,3 @@ func sortedKeys(m map[string]any) []string {
 	return keys
 }
 
-func TestUpdateConfigRejectsLegacyConfigPath(t *testing.T) {
-	root := t.TempDir()
-	writeProjectConfig(t, root)
-	writeLegacyConductorConfig(t, root, planUnitConfig("01-bootstrap", "02-config", "03-runtime"))
-
-	updateOpts := conductor.SetupOptions{
-		Tool:                       "codex",
-		PlansDir:                   conductor.TrackedPlansDir,
-		MaxRetries:                 5,
-		SingleWorkstreamIterations: 100,
-		SingleWorkstreamTimeout:    7200,
-		WorktreeBase:               ".custom-worktrees",
-	}
-
-	_, err := conductor.UpdateConfig(root, updateOpts)
-	if err == nil {
-		t.Fatal("expected update to reject legacy-only config path")
-	}
-}

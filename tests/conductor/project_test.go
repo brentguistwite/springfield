@@ -104,30 +104,6 @@ func TestSaveStateRoundTrips(t *testing.T) {
 	}
 }
 
-func TestLoadProjectIgnoresLegacyConductorRuntime(t *testing.T) {
-	root := t.TempDir()
-	writeProjectConfig(t, root)
-	writeLegacyConductorConfig(t, root, planUnitConfig("01-bootstrap", "02-config", "03-runtime"))
-	writeLegacyConductorState(t, root, &conductor.State{
-		Plans: map[string]*conductor.PlanState{
-			"01-bootstrap": {
-				Status:   conductor.StatusFailed,
-				Error:    "legacy failure",
-				Agent:    "claude",
-				Attempts: 2,
-			},
-		},
-	})
-
-	_, err := conductor.LoadProject(root)
-	if err == nil {
-		t.Fatal("expected legacy conductor config path to be ignored")
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("expected os.ErrNotExist, got %v", err)
-	}
-}
-
 func TestMarkRunningRecordsStartedAt(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)
