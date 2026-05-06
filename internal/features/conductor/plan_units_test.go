@@ -12,41 +12,41 @@ import (
 )
 
 func TestNormalizePlanPathAcceptsBareFilename(t *testing.T) {
-	got, err := conductor.NormalizePlanPath("springfield/plans", "feature.md")
+	got, err := conductor.NormalizePlanPath(".springfield/plans", "feature.md")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != "springfield/plans/feature.md" {
+	if got != ".springfield/plans/feature.md" {
 		t.Fatalf("got %q", got)
 	}
 }
 
 func TestNormalizePlanPathAcceptsRelativeUnderPlansDir(t *testing.T) {
-	got, err := conductor.NormalizePlanPath("springfield/plans", "springfield/plans/sub/feature.md")
+	got, err := conductor.NormalizePlanPath(".springfield/plans", ".springfield/plans/sub/feature.md")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != "springfield/plans/sub/feature.md" {
+	if got != ".springfield/plans/sub/feature.md" {
 		t.Fatalf("got %q", got)
 	}
 }
 
 func TestNormalizePlanPathRejectsAbsolute(t *testing.T) {
-	_, err := conductor.NormalizePlanPath("springfield/plans", "/etc/plan.md")
+	_, err := conductor.NormalizePlanPath(".springfield/plans", "/etc/plan.md")
 	if err == nil || !strings.Contains(err.Error(), "absolute") {
 		t.Fatalf("expected absolute rejection, got %v", err)
 	}
 }
 
 func TestNormalizePlanPathRejectsEscape(t *testing.T) {
-	_, err := conductor.NormalizePlanPath("springfield/plans", "../etc/plan.md")
+	_, err := conductor.NormalizePlanPath(".springfield/plans", "../etc/plan.md")
 	if err == nil || !strings.Contains(err.Error(), "escapes") {
 		t.Fatalf("expected escape rejection, got %v", err)
 	}
 }
 
 func TestNormalizePlanPathRejectsOutsidePlansDir(t *testing.T) {
-	_, err := conductor.NormalizePlanPath("springfield/plans", "other/loc/plan.md")
+	_, err := conductor.NormalizePlanPath(".springfield/plans", "other/loc/plan.md")
 	if err == nil {
 		t.Fatalf("expected rejection for path outside plans_dir")
 	}
@@ -129,11 +129,11 @@ func TestAddPlanUnitWritesConfigAndAssignsOrder(t *testing.T) {
 	if first.Order != 1 {
 		t.Fatalf("first order = %d, want 1", first.Order)
 	}
-	if first.Path != "springfield/plans/feature.md" {
+	if first.Path != ".springfield/plans/feature.md" {
 		t.Fatalf("path = %q", first.Path)
 	}
 
-	writeFile(t, filepath.Join(root, "springfield/plans/second.md"), "# second")
+	writeFile(t, filepath.Join(root, ".springfield/plans/second.md"), "# second")
 	second, err := project.AddPlanUnit(conductor.PlanUnitInput{
 		ID:    "feature-b",
 		Title: "Feature B",
@@ -226,7 +226,7 @@ func TestAddPlanUnitRejectsExplicitOrderClash(t *testing.T) {
 	if _, err := project.AddPlanUnit(conductor.PlanUnitInput{ID: "a", Path: "feature.md", Order: 1}); err != nil {
 		t.Fatalf("add: %v", err)
 	}
-	writeFile(t, filepath.Join(root, "springfield/plans/second.md"), "# second")
+	writeFile(t, filepath.Join(root, ".springfield/plans/second.md"), "# second")
 	if _, err := project.AddPlanUnit(conductor.PlanUnitInput{ID: "b", Path: "second.md", Order: 1}); err == nil {
 		t.Fatalf("expected duplicate order rejection")
 	}
@@ -235,7 +235,7 @@ func TestAddPlanUnitRejectsExplicitOrderClash(t *testing.T) {
 func TestReorderPlanUnits(t *testing.T) {
 	root := newProjectRoot(t)
 	plansDir := writeProjectAndPlan(t, root, "feature.md")
-	writeFile(t, filepath.Join(root, "springfield/plans/second.md"), "# second")
+	writeFile(t, filepath.Join(root, ".springfield/plans/second.md"), "# second")
 	project := loadProjectWithDefaults(t, root, plansDir)
 
 	if _, err := project.AddPlanUnit(conductor.PlanUnitInput{ID: "a", Path: "feature.md"}); err != nil {
@@ -291,10 +291,10 @@ func TestRemovePlanUnitClearsState(t *testing.T) {
 func TestLoadProjectRejectsDuplicatePlanUnitOrder(t *testing.T) {
 	root := newProjectRoot(t)
 	plansDir := writeProjectAndPlan(t, root, "feature.md")
-	writeFile(t, filepath.Join(root, "springfield/plans/second.md"), "# second")
+	writeFile(t, filepath.Join(root, ".springfield/plans/second.md"), "# second")
 	writeOnDiskConfigJSON(t, root, plansDir, []map[string]any{
-		{"id": "a", "path": "springfield/plans/feature.md", "order": 1},
-		{"id": "b", "path": "springfield/plans/second.md", "order": 1},
+		{"id": "a", "path": ".springfield/plans/feature.md", "order": 1},
+		{"id": "b", "path": ".springfield/plans/second.md", "order": 1},
 	})
 
 	_, err := conductor.LoadProject(root)
@@ -307,7 +307,7 @@ func TestLoadProjectRejectsMissingPlanFile(t *testing.T) {
 	root := newProjectRoot(t)
 	plansDir := writeProjectAndPlan(t, root, "feature.md")
 	writeOnDiskConfigJSON(t, root, plansDir, []map[string]any{
-		{"id": "a", "path": "springfield/plans/ghost.md", "order": 1},
+		{"id": "a", "path": ".springfield/plans/ghost.md", "order": 1},
 	})
 
 	_, err := conductor.LoadProject(root)
@@ -320,7 +320,7 @@ func TestLoadProjectRejectsBadRef(t *testing.T) {
 	root := newProjectRoot(t)
 	plansDir := writeProjectAndPlan(t, root, "feature.md")
 	writeOnDiskConfigJSON(t, root, plansDir, []map[string]any{
-		{"id": "a", "path": "springfield/plans/feature.md", "order": 1, "ref": "bad ref"},
+		{"id": "a", "path": ".springfield/plans/feature.md", "order": 1, "ref": "bad ref"},
 	})
 
 	_, err := conductor.LoadProject(root)
@@ -348,7 +348,7 @@ func TestSaveConfigRejectsInvalidPlanUnits(t *testing.T) {
 	project := loadProjectWithDefaults(t, root, plansDir)
 
 	project.Config.PlanUnits = []conductor.PlanUnit{
-		{ID: "BAD ID", Path: "springfield/plans/feature.md", Order: 1},
+		{ID: "BAD ID", Path: ".springfield/plans/feature.md", Order: 1},
 	}
 	if err := project.SaveConfig(); err == nil || !strings.Contains(err.Error(), "invalid plan unit id") {
 		t.Fatalf("expected invalid-id rejection, got %v", err)
@@ -357,10 +357,10 @@ func TestSaveConfigRejectsInvalidPlanUnits(t *testing.T) {
 
 func TestValidateConfigPlanUnitsDuplicateOrder(t *testing.T) {
 	cfg := &conductor.Config{
-		PlansDir: "springfield/plans",
+		PlansDir: ".springfield/plans",
 		PlanUnits: []conductor.PlanUnit{
-			{ID: "a", Path: "springfield/plans/a.md", Order: 1},
-			{ID: "b", Path: "springfield/plans/b.md", Order: 1},
+			{ID: "a", Path: ".springfield/plans/a.md", Order: 1},
+			{ID: "b", Path: ".springfield/plans/b.md", Order: 1},
 		},
 	}
 	if err := conductor.ValidateConfigPlanUnits(cfg, ""); err == nil || !strings.Contains(err.Error(), "duplicate plan unit order") {
@@ -382,7 +382,7 @@ agent_priority = ["claude"]
 
 func writeProjectAndPlan(t *testing.T, root, planFile string) string {
 	t.Helper()
-	plansDir := "springfield/plans"
+	plansDir := ".springfield/plans"
 	if err := os.MkdirAll(filepath.Join(root, plansDir), 0o755); err != nil {
 		t.Fatalf("mkdir plans: %v", err)
 	}

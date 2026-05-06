@@ -171,7 +171,7 @@ func gitMust(t *testing.T, dir string, args ...string) {
 // registers it as the sole plan unit.
 func writeRegisteredPlan(t *testing.T, root, id, title string) {
 	t.Helper()
-	planDir := filepath.Join(root, "springfield", "plans")
+	planDir := filepath.Join(root, ".springfield", "plans")
 	if err := os.MkdirAll(planDir, 0o755); err != nil {
 		t.Fatalf("mkdir plans: %v", err)
 	}
@@ -180,12 +180,12 @@ func writeRegisteredPlan(t *testing.T, root, id, title string) {
 		t.Fatalf("write plan body: %v", err)
 	}
 	cfg := map[string]any{
-		"plans_dir":     "springfield/plans",
+		"plans_dir":     ".springfield/plans",
 		"worktree_base": ".worktrees",
 		"max_retries":   1,
 		"tool":          "claude",
 		"plan_units": []map[string]any{
-			{"id": id, "title": title, "path": "springfield/plans/" + id + ".md", "order": 1},
+			{"id": id, "title": title, "path": ".springfield/plans/" + id + ".md", "order": 1},
 		},
 	}
 	cfgPath := filepath.Join(root, ".springfield", "execution", "config.json")

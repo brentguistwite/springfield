@@ -86,10 +86,10 @@ func NewInitCommand() *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), ".springfield/ already exists, skipping")
 			}
 
-			if added, err := ensureGitignoreEntry(dir, ".springfield/"); err != nil {
+			if added, err := ensureSpringfieldGitignore(dir); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to update .gitignore: %v\n", err)
 			} else if added {
-				fmt.Fprintln(cmd.OutOrStdout(), "Added .springfield/ to .gitignore")
+				fmt.Fprintln(cmd.OutOrStdout(), "Added Springfield patterns to .gitignore")
 			}
 
 			for _, name := range []string{"CLAUDE.md", "AGENTS.md"} {
@@ -464,13 +464,18 @@ func parseAndValidateModels(raw string, priority []string) (map[string]string, e
 	return models, nil
 }
 
-// gitignoreComment explains the Springfield entry to anyone browsing .gitignore.
-const gitignoreComment = "# Springfield runtime state (batches, run.json, logs, archive) — local only; safe to delete."
+const springfieldGitignoreBlock = `# Springfield — plans tracked; runtime state local-only
+.springfield/*
+!.springfield/plans/
+.springfield/plans/*/
+`
 
-// ensureGitignoreEntry adds entry to <dir>/.gitignore if not already listed.
-// Creates the file when missing. Idempotent across path-variant spellings
-// (.springfield, .springfield/, /.springfield, /.springfield/).
-func ensureGitignoreEntry(dir, entry string) (added bool, err error) {
+// ensureSpringfieldGitignore writes the selective Springfield gitignore
+// block to <dir>/.gitignore. Creates the file when missing. Idempotent:
+// skips when ".springfield/*" is already present. Replaces the old blanket
+// ".springfield/" pattern if found (directory-level ignore prevents child
+// un-ignores from working).
+func ensureSpringfieldGitignore(dir string) (added bool, err error) {
 	path := filepath.Join(dir, ".gitignore")
 
 	data, err := os.ReadFile(path)
@@ -478,24 +483,21 @@ func ensureGitignoreEntry(dir, entry string) (added bool, err error) {
 		return false, fmt.Errorf("read .gitignore: %w", err)
 	}
 
-	if containsGitignoreEntry(data, entry) {
+	if bytes.Contains(data, []byte(".springfield/*")) {
 		return false, nil
 	}
 
+	cleaned := stripGitignoreLine(data, ".springfield")
+
 	var out bytes.Buffer
-	out.Write(data)
-	if len(data) > 0 && !bytes.HasSuffix(data, []byte("\n")) {
+	out.Write(cleaned)
+	if len(cleaned) > 0 && !bytes.HasSuffix(cleaned, []byte("\n")) {
 		out.WriteByte('\n')
 	}
-	// Blank line before the section so it visually separates from prior entries
-	// in a non-empty file. Skip for fresh files (leading blank line looks odd).
-	if len(data) > 0 {
+	if len(cleaned) > 0 {
 		out.WriteByte('\n')
 	}
-	out.WriteString(gitignoreComment)
-	out.WriteByte('\n')
-	out.WriteString(entry)
-	out.WriteByte('\n')
+	out.WriteString(springfieldGitignoreBlock)
 
 	if err := os.WriteFile(path, out.Bytes(), 0o644); err != nil {
 		return false, fmt.Errorf("write .gitignore: %w", err)
@@ -503,21 +505,21 @@ func ensureGitignoreEntry(dir, entry string) (added bool, err error) {
 	return true, nil
 }
 
-func containsGitignoreEntry(content []byte, entry string) bool {
-	target := normalizeGitignorePattern(entry)
-	for _, raw := range strings.Split(string(content), "\n") {
-		stripped := strings.TrimSpace(raw)
+// stripGitignoreLine removes lines whose normalized pattern matches target.
+func stripGitignoreLine(data []byte, normalized string) []byte {
+	lines := strings.Split(string(data), "\n")
+	var out []string
+	for _, line := range lines {
+		stripped := strings.TrimSpace(line)
 		if idx := strings.Index(stripped, "#"); idx >= 0 {
 			stripped = strings.TrimSpace(stripped[:idx])
 		}
-		if stripped == "" {
+		if stripped != "" && normalizeGitignorePattern(stripped) == normalized {
 			continue
 		}
-		if normalizeGitignorePattern(stripped) == target {
-			return true
-		}
+		out = append(out, line)
 	}
-	return false
+	return []byte(strings.Join(out, "\n"))
 }
 
 func normalizeGitignorePattern(s string) string {

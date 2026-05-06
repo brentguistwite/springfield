@@ -1,5 +1,7 @@
-# Runtime state (generated files, caches)
-.springfield/
+# Springfield — plans tracked; runtime state local-only
+.springfield/*
+!.springfield/plans/
+.springfield/plans/*/
 
 # Repo-local orchestration state
 .ralph/

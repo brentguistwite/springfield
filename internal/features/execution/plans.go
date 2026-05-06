@@ -39,16 +39,8 @@ type Plan struct {
 // execution config exists yet, a minimal default config is bootstrapped from
 // springfield.toml so first-time registration does not require a separate
 // setup command.
-//
-// For upgraded repos whose existing config still points at the legacy local
-// plans dir (`.springfield/execution/plans`), the registration path also
-// normalizes plans_dir to the tracked location. Plan files belong with
-// project source, not under .springfield/ runtime state.
 func AddPlan(rootDir string, input PlanInput) (Plan, error) {
 	if err := ensureExecutionConfig(rootDir); err != nil {
-		return Plan{}, err
-	}
-	if err := normalizeLegacyPlansDir(rootDir); err != nil {
 		return Plan{}, err
 	}
 	project, err := conductor.LoadProject(rootDir)
@@ -63,34 +55,6 @@ func AddPlan(rootDir string, input PlanInput) (Plan, error) {
 		return Plan{}, fmt.Errorf("save execution config: %w", err)
 	}
 	return fromUnit(unit), nil
-}
-
-// normalizeLegacyPlansDir migrates an existing execution config that still
-// uses the legacy `.springfield/execution/plans` dir over to the tracked
-// `springfield/plans` location. Only applies when:
-//   - config exists (bootstrap handles the missing case),
-//   - plans_dir is exactly the legacy local path,
-//   - no PlanUnits have been registered yet (so no path canonicalization
-//     work needs to be redone for existing entries).
-//
-// One-shot, idempotent. After migration plans_dir is the tracked location and
-// future calls observe the migrated state and become no-ops.
-func normalizeLegacyPlansDir(rootDir string) error {
-	project, err := conductor.LoadProjectRaw(rootDir)
-	if err != nil {
-		return err
-	}
-	if project.Config.PlansDir != conductor.LocalPlansDir {
-		return nil
-	}
-	if len(project.Config.PlanUnits) > 0 {
-		return nil
-	}
-	project.Config.PlansDir = conductor.TrackedPlansDir
-	if err := project.SaveConfigUnchecked(); err != nil {
-		return fmt.Errorf("migrate plans_dir to tracked location: %w", err)
-	}
-	return nil
 }
 
 // ensureExecutionConfig writes a minimal default execution config when none
@@ -113,9 +77,6 @@ func ensureExecutionConfig(rootDir string) error {
 	}
 	opts := conductor.SetupDefaults()
 	opts.Tool = tool
-	// Bootstrap into the tracked plans dir so plan files live in a shareable,
-	// project-relative location rather than .springfield/ runtime state.
-	opts.PlansDir = conductor.TrackedPlansDir
 	if _, err := conductor.Setup(rootDir, opts); err != nil {
 		return fmt.Errorf("bootstrap execution config: %w", err)
 	}

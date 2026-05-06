@@ -86,7 +86,7 @@ func TestBranchNameUsesPlanBranchOverride(t *testing.T) {
 
 func TestInputDigestStableWhenInputsUnchanged(t *testing.T) {
 	root := t.TempDir()
-	planRel := "springfield/plans/p.md"
+	planRel := ".springfield/plans/p.md"
 	mustWrite(t, filepath.Join(root, planRel), "plan body")
 	mustWrite(t, filepath.Join(root, "AGENTS.md"), "agents body")
 
@@ -109,7 +109,7 @@ func TestInputDigestStableWhenInputsUnchanged(t *testing.T) {
 
 func TestInputDigestChangesWhenPlanFileChanges(t *testing.T) {
 	root := t.TempDir()
-	planRel := "springfield/plans/p.md"
+	planRel := ".springfield/plans/p.md"
 	mustWrite(t, filepath.Join(root, planRel), "plan body v1")
 
 	unit := conductor.PlanUnit{ID: "p", Path: planRel}
@@ -129,7 +129,7 @@ func TestInputDigestChangesWhenPlanFileChanges(t *testing.T) {
 
 func TestInputDigestChangesWhenGuidanceAdded(t *testing.T) {
 	root := t.TempDir()
-	planRel := "springfield/plans/p.md"
+	planRel := ".springfield/plans/p.md"
 	mustWrite(t, filepath.Join(root, planRel), "plan")
 	unit := conductor.PlanUnit{ID: "p", Path: planRel}
 	before, err := planrun.InputDigest(root, unit)

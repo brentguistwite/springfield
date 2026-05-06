@@ -10,8 +10,8 @@ import (
 func TestBuildScheduleFromPlanUnits(t *testing.T) {
 	cfg := &conductor.Config{
 		PlanUnits: []conductor.PlanUnit{
-			{ID: "feature-b", Path: "springfield/plans/b.md", Order: 2},
-			{ID: "feature-a", Path: "springfield/plans/a.md", Order: 1},
+			{ID: "feature-b", Path: ".springfield/plans/b.md", Order: 2},
+			{ID: "feature-a", Path: ".springfield/plans/a.md", Order: 1},
 		},
 	}
 	schedule := conductor.BuildSchedule(cfg)
@@ -25,9 +25,9 @@ func TestBuildScheduleFromPlanUnits(t *testing.T) {
 func TestProjectAllPlansFromPlanUnits(t *testing.T) {
 	cfg := &conductor.Config{
 		PlanUnits: []conductor.PlanUnit{
-			{ID: "z", Path: "springfield/plans/z.md", Order: 3},
-			{ID: "a", Path: "springfield/plans/a.md", Order: 1},
-			{ID: "m", Path: "springfield/plans/m.md", Order: 2},
+			{ID: "z", Path: ".springfield/plans/z.md", Order: 3},
+			{ID: "a", Path: ".springfield/plans/a.md", Order: 1},
+			{ID: "m", Path: ".springfield/plans/m.md", Order: 2},
 		},
 	}
 	project := &conductor.Project{Config: cfg, State: conductor.NewState()}

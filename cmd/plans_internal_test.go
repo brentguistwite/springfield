@@ -88,7 +88,7 @@ func TestPlansAddPersistsCanonicalPath(t *testing.T) {
 	}
 	units := cfg["plan_units"].([]any)
 	first := units[0].(map[string]any)
-	if first["path"] != "springfield/plans/feature.md" {
+	if first["path"] != ".springfield/plans/feature.md" {
 		t.Fatalf("path not canonicalized: %v", first["path"])
 	}
 }
@@ -117,45 +117,6 @@ func TestPlansAddBootstrapsExecutionConfigWhenMissing(t *testing.T) {
 	}
 }
 
-func TestPlansAddMigratesLegacyPlansDir(t *testing.T) {
-	root := newStatusRoot(t)
-	writeStatusPlan(t, root, "feature.md")
-
-	// Simulate an upgraded repo whose existing config still uses the legacy
-	// .springfield/execution/plans path.
-	cfg := map[string]any{
-		"plans_dir":                    ".springfield/execution/plans",
-		"worktree_base":                ".worktrees",
-		"max_retries":                  1,
-		"single_workstream_iterations": 10,
-		"single_workstream_timeout":    600,
-		"tool":                         "claude",
-		"sequential":                   []string{},
-		"batches":                      [][]string{},
-	}
-	writeStatusJSON(t, root, "execution/config.json", cfg)
-
-	if out, err := runPlansArgs(t, "add", "--dir", root, "--id", "feature-a", "--path", "feature.md"); err != nil {
-		t.Fatalf("add: %v\n%s", err, out)
-	}
-
-	data, err := os.ReadFile(filepath.Join(root, ".springfield", "execution", "config.json"))
-	if err != nil {
-		t.Fatalf("read config: %v", err)
-	}
-	var got map[string]any
-	if err := json.Unmarshal(data, &got); err != nil {
-		t.Fatalf("decode config: %v", err)
-	}
-	if got["plans_dir"] != "springfield/plans" {
-		t.Fatalf("plans_dir not migrated: %v", got["plans_dir"])
-	}
-	units := got["plan_units"].([]any)
-	first := units[0].(map[string]any)
-	if first["path"] != "springfield/plans/feature.md" {
-		t.Fatalf("path not canonicalized to tracked dir: %v", first["path"])
-	}
-}
 
 func TestPlansAddPersistsRefAndPlanBranch(t *testing.T) {
 	root := newStatusRoot(t)
@@ -193,7 +154,7 @@ func TestPlansRemoveRepairsMissingPlanFile(t *testing.T) {
 		t.Fatalf("add: %v", err)
 	}
 	// Simulate the user deleting the plan file out from under Springfield.
-	if err := os.Remove(filepath.Join(root, "springfield", "plans", "feature.md")); err != nil {
+	if err := os.Remove(filepath.Join(root, ".springfield", "plans", "feature.md")); err != nil {
 		t.Fatalf("rm plan file: %v", err)
 	}
 

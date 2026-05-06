@@ -68,7 +68,7 @@ func projectFixture(t *testing.T, planID string) string {
 		[]byte("[project]\nagent_priority = [\"claude\"]\n"), 0o644); err != nil {
 		t.Fatalf("toml: %v", err)
 	}
-	planDir := filepath.Join(root, "springfield", "plans")
+	planDir := filepath.Join(root, ".springfield", "plans")
 	if err := os.MkdirAll(planDir, 0o755); err != nil {
 		t.Fatalf("mkdir plans: %v", err)
 	}
@@ -76,12 +76,12 @@ func projectFixture(t *testing.T, planID string) string {
 		t.Fatalf("plan body: %v", err)
 	}
 	cfg := map[string]any{
-		"plans_dir":     "springfield/plans",
+		"plans_dir":     ".springfield/plans",
 		"worktree_base": ".worktrees",
 		"max_retries":   1,
 		"tool":          "claude",
 		"plan_units": []map[string]any{
-			{"id": planID, "path": "springfield/plans/" + planID + ".md", "order": 1},
+			{"id": planID, "path": ".springfield/plans/" + planID + ".md", "order": 1},
 		},
 	}
 	cfgPath := filepath.Join(root, ".springfield", "execution", "config.json")
@@ -103,7 +103,7 @@ func TestSinglePlanRunsExactlyOneEligiblePlan(t *testing.T) {
 	}
 	// Add a second plan to prove only one runs per call.
 	project.Config.PlanUnits = append(project.Config.PlanUnits, conductor.PlanUnit{
-		ID: "beta", Path: "springfield/plans/alpha.md", Order: 2,
+		ID: "beta", Path: ".springfield/plans/alpha.md", Order: 2,
 	})
 	if err := project.SaveConfig(); err != nil {
 		t.Fatalf("SaveConfig: %v", err)

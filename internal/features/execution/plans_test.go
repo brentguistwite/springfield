@@ -33,7 +33,7 @@ func TestAddPlanPersistsToConfig(t *testing.T) {
 	if first["id"] != "feature-a" {
 		t.Fatalf("id = %v", first["id"])
 	}
-	if first["path"] != "springfield/plans/feature.md" {
+	if first["path"] != ".springfield/plans/feature.md" {
 		t.Fatalf("path = %v", first["path"])
 	}
 }
@@ -218,7 +218,7 @@ func newProject(t *testing.T) string {
 		t.Fatalf("write toml: %v", err)
 	}
 	cfg := map[string]any{
-		"plans_dir":                    "springfield/plans",
+		"plans_dir":                    ".springfield/plans",
 		"worktree_base":                ".worktrees",
 		"max_retries":                  1,
 		"single_workstream_iterations": 10,
@@ -243,7 +243,7 @@ func newProject(t *testing.T) string {
 
 func writePlanFile(t *testing.T, root, file string) {
 	t.Helper()
-	dir := filepath.Join(root, "springfield", "plans")
+	dir := filepath.Join(root, ".springfield", "plans")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir plans: %v", err)
 	}

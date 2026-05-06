@@ -165,16 +165,16 @@ func writeRegisteredPlansBinary(t *testing.T, root string, plans []registeredPla
 
 	units := make([]conductor.PlanUnit, 0, len(plans))
 	for _, plan := range plans {
-		writePlanFileBinary(t, root, "springfield/plans", plan.ID, "# "+plan.Title+"\n\nDo the thing.\n")
+		writePlanFileBinary(t, root, ".springfield/plans", plan.ID, "# "+plan.Title+"\n\nDo the thing.\n")
 		units = append(units, conductor.PlanUnit{
 			ID:    plan.ID,
 			Title: plan.Title,
-			Path:  "springfield/plans/" + plan.ID + ".md",
+			Path:  ".springfield/plans/" + plan.ID + ".md",
 			Order: plan.Order,
 		})
 	}
 	writeConductorConfigBinary(t, root, &conductor.Config{
-		PlansDir:     "springfield/plans",
+		PlansDir:     ".springfield/plans",
 		WorktreeBase: ".worktrees",
 		MaxRetries:   1,
 		Tool:         "claude",

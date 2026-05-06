@@ -172,22 +172,22 @@ func projectFixture(t *testing.T, planID, branch, baseRef, baseHead, planHead st
 		t.Fatalf("toml: %v", err)
 	}
 	cfg := map[string]any{
-		"plans_dir":     "springfield/plans",
+		"plans_dir":     ".springfield/plans",
 		"worktree_base": ".worktrees",
 		"max_retries":   1,
 		"tool":          "claude",
 		"plan_units": []map[string]any{
-			{"id": planID, "path": "springfield/plans/" + planID + ".md", "order": 1},
+			{"id": planID, "path": ".springfield/plans/" + planID + ".md", "order": 1},
 		},
 	}
 	cfgPath := filepath.Join(root, ".springfield", "execution", "config.json")
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
 		t.Fatalf("mkdir cfg: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, "springfield", "plans"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, ".springfield", "plans"), 0o755); err != nil {
 		t.Fatalf("mkdir plans: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "springfield", "plans", planID+".md"), []byte("# plan\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".springfield", "plans", planID+".md"), []byte("# plan\n"), 0o644); err != nil {
 		t.Fatalf("plan body: %v", err)
 	}
 	data, _ := json.MarshalIndent(cfg, "", "  ")

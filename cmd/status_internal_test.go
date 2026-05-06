@@ -44,8 +44,8 @@ func TestStatusPlanRegistryWhenNoBatch(t *testing.T) {
 	root := newStatusRoot(t)
 	writeStatusPlan(t, root, "feature.md")
 	writeStatusConfig(t, root, []map[string]any{
-		{"id": "feature-a", "title": "Feature A", "path": "springfield/plans/feature.md", "order": 1},
-		{"id": "feature-b", "title": "Feature B", "path": "springfield/plans/feature.md", "order": 2},
+		{"id": "feature-a", "title": "Feature A", "path": ".springfield/plans/feature.md", "order": 1},
+		{"id": "feature-b", "title": "Feature B", "path": ".springfield/plans/feature.md", "order": 2},
 	})
 
 	out, err := runStatusIn(root)
@@ -70,7 +70,7 @@ func TestStatusActiveBatchWinsArbitration(t *testing.T) {
 	root := newStatusRoot(t)
 	writeStatusPlan(t, root, "feature.md")
 	writeStatusConfig(t, root, []map[string]any{
-		{"id": "feature-a", "path": "springfield/plans/feature.md", "order": 1},
+		{"id": "feature-a", "path": ".springfield/plans/feature.md", "order": 1},
 	})
 	writeActiveBatch(t, root, "batch-001", "Active Batch")
 
@@ -108,8 +108,8 @@ func TestStatusReportsCompletedAndFailedTruthfully(t *testing.T) {
 	root := newStatusRoot(t)
 	writeStatusPlan(t, root, "feature.md")
 	writeStatusConfig(t, root, []map[string]any{
-		{"id": "feature-a", "path": "springfield/plans/feature.md", "order": 1},
-		{"id": "feature-b", "path": "springfield/plans/feature.md", "order": 2},
+		{"id": "feature-a", "path": ".springfield/plans/feature.md", "order": 1},
+		{"id": "feature-b", "path": ".springfield/plans/feature.md", "order": 2},
 	})
 	writeStatusState(t, root, map[string]any{
 		"plans": map[string]any{
@@ -134,8 +134,8 @@ func TestStatusRewritesStaleRunningPlanToInterruptedAndGuidesResume(t *testing.T
 	root := newStatusRoot(t)
 	writeStatusPlan(t, root, "feature.md")
 	writeStatusConfig(t, root, []map[string]any{
-		{"id": "feature-a", "path": "springfield/plans/feature.md", "order": 1},
-		{"id": "feature-b", "path": "springfield/plans/feature.md", "order": 2},
+		{"id": "feature-a", "path": ".springfield/plans/feature.md", "order": 1},
+		{"id": "feature-b", "path": ".springfield/plans/feature.md", "order": 2},
 	})
 	wt := filepath.Join(root, ".worktrees", "feature-a")
 	if err := os.MkdirAll(wt, 0o755); err != nil {
@@ -181,7 +181,7 @@ func TestStatusDoesNotRewriteRunningPlanWhileStartLockHeld(t *testing.T) {
 	root := newStatusRoot(t)
 	writeStatusPlan(t, root, "feature.md")
 	writeStatusConfig(t, root, []map[string]any{
-		{"id": "feature-a", "path": "springfield/plans/feature.md", "order": 1},
+		{"id": "feature-a", "path": ".springfield/plans/feature.md", "order": 1},
 	})
 	writeStatusState(t, root, map[string]any{
 		"plans": map[string]any{
@@ -238,7 +238,7 @@ agent_priority = ["claude"]
 
 func writeStatusPlan(t *testing.T, root, file string) {
 	t.Helper()
-	dir := filepath.Join(root, "springfield", "plans")
+	dir := filepath.Join(root, ".springfield", "plans")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -250,7 +250,7 @@ func writeStatusPlan(t *testing.T, root, file string) {
 func writeStatusConfig(t *testing.T, root string, planUnits []map[string]any) {
 	t.Helper()
 	cfg := map[string]any{
-		"plans_dir":                    "springfield/plans",
+		"plans_dir":                    ".springfield/plans",
 		"worktree_base":                ".worktrees",
 		"max_retries":                  1,
 		"single_workstream_iterations": 10,

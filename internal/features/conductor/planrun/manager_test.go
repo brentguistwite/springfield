@@ -72,14 +72,14 @@ func (g *fakeGit) WorktreeAddExistingBranch(_, path, branch string) error {
 
 func TestPrepareCleanFirstRunPlansFreshWorktree(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "springfield/plans/p.md"), "plan")
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan")
 
 	g := newFakeGit()
 	m := &planrun.Manager{Git: g}
 	dec, err := m.Prepare(planrun.PrepareInput{
 		ControlRoot:  root,
 		WorktreeBase: ".worktrees",
-		Unit:         conductor.PlanUnit{ID: "feature-a", Path: "springfield/plans/p.md", Order: 1},
+		Unit:         conductor.PlanUnit{ID: "feature-a", Path: ".springfield/plans/p.md", Order: 1},
 		AllStates:    map[string]*conductor.PlanState{},
 	})
 	if err != nil {
@@ -108,7 +108,7 @@ func TestPrepareCleanFirstRunPlansFreshWorktree(t *testing.T) {
 // Manager.Prepare succeeds when Git.IsDirty returns false.
 func TestPrepareTreatsSpringfieldOwnedPathsAsClean(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "springfield/plans/p.md"), "plan")
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan")
 
 	g := newFakeGit()
 	g.dirty = false // canonical: filter has already collapsed Springfield-only dirt to clean
@@ -116,7 +116,7 @@ func TestPrepareTreatsSpringfieldOwnedPathsAsClean(t *testing.T) {
 	dec, err := m.Prepare(planrun.PrepareInput{
 		ControlRoot:  root,
 		WorktreeBase: ".worktrees",
-		Unit:         conductor.PlanUnit{ID: "p", Path: "springfield/plans/p.md", Order: 1},
+		Unit:         conductor.PlanUnit{ID: "p", Path: ".springfield/plans/p.md", Order: 1},
 		AllStates:    map[string]*conductor.PlanState{},
 	})
 	if err != nil {
@@ -129,7 +129,7 @@ func TestPrepareTreatsSpringfieldOwnedPathsAsClean(t *testing.T) {
 
 func TestPrepareDirtySourceRefusesFirstRun(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "springfield/plans/p.md"), "plan")
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan")
 
 	g := newFakeGit()
 	g.dirty = true
@@ -137,7 +137,7 @@ func TestPrepareDirtySourceRefusesFirstRun(t *testing.T) {
 	_, err := m.Prepare(planrun.PrepareInput{
 		ControlRoot:  root,
 		WorktreeBase: ".worktrees",
-		Unit:         conductor.PlanUnit{ID: "p", Path: "springfield/plans/p.md", Order: 1},
+		Unit:         conductor.PlanUnit{ID: "p", Path: ".springfield/plans/p.md", Order: 1},
 		AllStates:    map[string]*conductor.PlanState{},
 	})
 	if err == nil {
@@ -151,9 +151,9 @@ func TestPrepareDirtySourceRefusesFirstRun(t *testing.T) {
 
 func TestPrepareResumeReusesWhenDigestStable(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "springfield/plans/p.md"), "plan body v1")
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan body v1")
 
-	unit := conductor.PlanUnit{ID: "p", Path: "springfield/plans/p.md", Order: 1}
+	unit := conductor.PlanUnit{ID: "p", Path: ".springfield/plans/p.md", Order: 1}
 	wt := filepath.Join(root, ".worktrees", "p")
 	if err := os.MkdirAll(wt, 0o755); err != nil {
 		t.Fatalf("mkdir wt: %v", err)
@@ -200,9 +200,9 @@ func TestPrepareResumeReusesWhenDigestStable(t *testing.T) {
 
 func TestPrepareResumeRefusesUntrackedWorktreePath(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "springfield/plans/p.md"), "plan body")
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan body")
 
-	unit := conductor.PlanUnit{ID: "p", Path: "springfield/plans/p.md", Order: 1}
+	unit := conductor.PlanUnit{ID: "p", Path: ".springfield/plans/p.md", Order: 1}
 	wt := filepath.Join(root, ".worktrees", "p")
 	if err := os.MkdirAll(wt, 0o755); err != nil {
 		t.Fatalf("mkdir wt: %v", err)
@@ -240,9 +240,9 @@ func TestPrepareResumeRefusesUntrackedWorktreePath(t *testing.T) {
 
 func TestPrepareResumeRefusesBranchMismatch(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "springfield/plans/p.md"), "plan body")
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan body")
 
-	unit := conductor.PlanUnit{ID: "p", Path: "springfield/plans/p.md", Order: 1}
+	unit := conductor.PlanUnit{ID: "p", Path: ".springfield/plans/p.md", Order: 1}
 	wt := filepath.Join(root, ".worktrees", "p")
 	if err := os.MkdirAll(wt, 0o755); err != nil {
 		t.Fatalf("mkdir wt: %v", err)
@@ -282,9 +282,9 @@ func TestPrepareResumeRefusesBranchMismatch(t *testing.T) {
 
 func TestPrepareResumeRefusesOnInputDrift(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "springfield/plans/p.md"), "plan body v1")
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan body v1")
 
-	unit := conductor.PlanUnit{ID: "p", Path: "springfield/plans/p.md", Order: 1}
+	unit := conductor.PlanUnit{ID: "p", Path: ".springfield/plans/p.md", Order: 1}
 	wt := filepath.Join(root, ".worktrees", "p")
 	if err := os.MkdirAll(wt, 0o755); err != nil {
 		t.Fatalf("mkdir wt: %v", err)
@@ -316,7 +316,7 @@ func TestPrepareResumeRefusesOnInputDrift(t *testing.T) {
 
 func TestPrepareRefusesUntrackedWorktreeOnDisk(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "springfield/plans/p.md"), "plan")
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan")
 	wt := filepath.Join(root, ".worktrees", "p")
 	if err := os.MkdirAll(wt, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
@@ -328,7 +328,7 @@ func TestPrepareRefusesUntrackedWorktreeOnDisk(t *testing.T) {
 	_, err := m.Prepare(planrun.PrepareInput{
 		ControlRoot:  root,
 		WorktreeBase: ".worktrees",
-		Unit:         conductor.PlanUnit{ID: "p", Path: "springfield/plans/p.md", Order: 1},
+		Unit:         conductor.PlanUnit{ID: "p", Path: ".springfield/plans/p.md", Order: 1},
 		AllStates:    map[string]*conductor.PlanState{},
 	})
 	if err == nil {
@@ -342,14 +342,14 @@ func TestPrepareRefusesUntrackedWorktreeOnDisk(t *testing.T) {
 
 func TestPrepareRefusesAlreadyCompletedPlan(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "springfield/plans/p.md"), "plan")
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan")
 
 	g := newFakeGit()
 	m := &planrun.Manager{Git: g}
 	_, err := m.Prepare(planrun.PrepareInput{
 		ControlRoot:  root,
 		WorktreeBase: ".worktrees",
-		Unit:         conductor.PlanUnit{ID: "p", Path: "springfield/plans/p.md", Order: 1},
+		Unit:         conductor.PlanUnit{ID: "p", Path: ".springfield/plans/p.md", Order: 1},
 		PriorState:   &conductor.PlanState{Status: conductor.StatusCompleted},
 		AllStates:    map[string]*conductor.PlanState{"p": {Status: conductor.StatusCompleted}},
 	})
@@ -367,7 +367,7 @@ func TestPrepareRefusesAlreadyCompletedPlan(t *testing.T) {
 // rejected up front so the merge phase never sees an unpublishable target.
 func TestPrepareRefusesUnknownLocalBranchRef(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "springfield/plans/p.md"), "plan")
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan")
 
 	g := newFakeGit()
 	// Branch "feature/missing" is NOT in g.branches → BranchExists returns false.
@@ -375,7 +375,7 @@ func TestPrepareRefusesUnknownLocalBranchRef(t *testing.T) {
 	_, err := m.Prepare(planrun.PrepareInput{
 		ControlRoot:  root,
 		WorktreeBase: ".worktrees",
-		Unit:         conductor.PlanUnit{ID: "p", Path: "springfield/plans/p.md", Ref: "feature/missing", Order: 1},
+		Unit:         conductor.PlanUnit{ID: "p", Path: ".springfield/plans/p.md", Ref: "feature/missing", Order: 1},
 		AllStates:    map[string]*conductor.PlanState{},
 	})
 	if err == nil {
@@ -392,7 +392,7 @@ func TestPrepareRefusesUnknownLocalBranchRef(t *testing.T) {
 
 func TestPrepareAcceptsExplicitLocalBranchRef(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "springfield/plans/p.md"), "plan")
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan")
 
 	g := newFakeGit()
 	g.branches["release"] = struct{}{}
@@ -401,7 +401,7 @@ func TestPrepareAcceptsExplicitLocalBranchRef(t *testing.T) {
 	dec, err := m.Prepare(planrun.PrepareInput{
 		ControlRoot:  root,
 		WorktreeBase: ".worktrees",
-		Unit:         conductor.PlanUnit{ID: "p", Path: "springfield/plans/p.md", Ref: "release", Order: 1},
+		Unit:         conductor.PlanUnit{ID: "p", Path: ".springfield/plans/p.md", Ref: "release", Order: 1},
 		AllStates:    map[string]*conductor.PlanState{},
 	})
 	if err != nil {
@@ -414,7 +414,7 @@ func TestPrepareAcceptsExplicitLocalBranchRef(t *testing.T) {
 
 func TestPrepareRefusesNonRepo(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "springfield/plans/p.md"), "plan")
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan")
 
 	g := newFakeGit()
 	g.repo = false
@@ -422,7 +422,7 @@ func TestPrepareRefusesNonRepo(t *testing.T) {
 	_, err := m.Prepare(planrun.PrepareInput{
 		ControlRoot:  root,
 		WorktreeBase: ".worktrees",
-		Unit:         conductor.PlanUnit{ID: "p", Path: "springfield/plans/p.md", Order: 1},
+		Unit:         conductor.PlanUnit{ID: "p", Path: ".springfield/plans/p.md", Order: 1},
 		AllStates:    map[string]*conductor.PlanState{},
 	})
 	if err == nil {
@@ -443,7 +443,7 @@ func TestPrepareRejectsMissingPlanFileBeforeWorktreeSideEffects(t *testing.T) {
 	_, err := m.Prepare(planrun.PrepareInput{
 		ControlRoot:  root,
 		WorktreeBase: ".worktrees",
-		Unit:         conductor.PlanUnit{ID: "p", Path: "springfield/plans/missing.md", Order: 1},
+		Unit:         conductor.PlanUnit{ID: "p", Path: ".springfield/plans/missing.md", Order: 1},
 		AllStates:    map[string]*conductor.PlanState{},
 	})
 	if err == nil {

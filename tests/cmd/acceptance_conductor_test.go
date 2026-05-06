@@ -22,7 +22,7 @@ func TestAcceptance_FullHappyPath(t *testing.T) {
 
 	// Create plan files on disk
 	for _, id := range []string{"alpha", "beta", "gamma"} {
-		writePlanFileBinary(t, dir, "springfield/plans", id, "# "+id+"\n\nDo the thing.\n")
+		writePlanFileBinary(t, dir, ".springfield/plans", id, "# "+id+"\n\nDo the thing.\n")
 	}
 
 	gitMust(t, dir, "add", ".")
@@ -32,7 +32,7 @@ func TestAcceptance_FullHappyPath(t *testing.T) {
 	for i, id := range []string{"alpha", "beta", "gamma"} {
 		out, err := runBinaryIn(t, bin, dir, "plans", "add",
 			"--id", id,
-			"--path", "springfield/plans/"+id+".md",
+			"--path", ".springfield/plans/"+id+".md",
 			"--order", itoa(i+1))
 		if err != nil {
 			t.Fatalf("plans add %s: %v\n%s", id, err, out)
@@ -555,20 +555,20 @@ func TestAcceptance_PlanRegistryManagement(t *testing.T) {
 
 	// Create plan files
 	for _, id := range []string{"alpha", "beta"} {
-		writePlanFileBinary(t, dir, "springfield/plans", id, "# "+id+"\n")
+		writePlanFileBinary(t, dir, ".springfield/plans", id, "# "+id+"\n")
 	}
 
 	gitMust(t, dir, "add", ".")
 	gitMust(t, dir, "commit", "-m", "scaffold")
 
 	// Add alpha
-	out, err := runBinaryIn(t, bin, dir, "plans", "add", "--id", "alpha", "--path", "springfield/plans/alpha.md", "--order", "1")
+	out, err := runBinaryIn(t, bin, dir, "plans", "add", "--id", "alpha", "--path", ".springfield/plans/alpha.md", "--order", "1")
 	if err != nil {
 		t.Fatalf("add alpha: %v\n%s", err, out)
 	}
 
 	// Add beta
-	out, err = runBinaryIn(t, bin, dir, "plans", "add", "--id", "beta", "--path", "springfield/plans/beta.md", "--order", "2")
+	out, err = runBinaryIn(t, bin, dir, "plans", "add", "--id", "beta", "--path", ".springfield/plans/beta.md", "--order", "2")
 	if err != nil {
 		t.Fatalf("add beta: %v\n%s", err, out)
 	}
@@ -588,7 +588,7 @@ func TestAcceptance_PlanRegistryManagement(t *testing.T) {
 	}
 
 	// Duplicate ID → error
-	dupOut, err := runBinaryIn(t, bin, dir, "plans", "add", "--id", "alpha", "--path", "springfield/plans/alpha.md")
+	dupOut, err := runBinaryIn(t, bin, dir, "plans", "add", "--id", "alpha", "--path", ".springfield/plans/alpha.md")
 	if err == nil {
 		t.Fatalf("expected duplicate ID error:\n%s", dupOut)
 	}

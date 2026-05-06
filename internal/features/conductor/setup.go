@@ -8,10 +8,7 @@ import (
 	"springfield/internal/storage"
 )
 
-const (
-	LocalPlansDir   = ".springfield/execution/plans"
-	TrackedPlansDir = "springfield/plans"
-)
+const TrackedPlansDir = ".springfield/plans"
 
 // SetupOptions holds guided inputs for conductor config generation.
 type SetupOptions struct {
@@ -33,7 +30,7 @@ type SetupResult struct {
 // SetupDefaults returns reasonable defaults for conductor config generation.
 func SetupDefaults() SetupOptions {
 	return SetupOptions{
-		PlansDir:                   LocalPlansDir,
+		PlansDir:                   TrackedPlansDir,
 		WorktreeBase:               ".worktrees",
 		MaxRetries:                 2,
 		SingleWorkstreamIterations: 50,
