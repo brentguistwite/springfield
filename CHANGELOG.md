@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/brentguistwite/springfield/compare/v0.7.0...v0.7.1) (2026-05-08)
+
+
+### Bug Fixes
+
+* **start:** re-read batch before archive so slice statuses are preserved ([9905a91](https://github.com/brentguistwite/springfield/commit/9905a913d69ef81d8d2d21aa1ce9bb7ca5530c40))
+
 ## [0.7.0](https://github.com/brentguistwite/springfield/compare/v0.6.0...v0.7.0) (2026-05-06)
 
 
