@@ -984,14 +984,15 @@ func runOnePlan(w io.Writer, project *conductor.Project, root, worktreeBase stri
 	}
 
 	res := planrun.SinglePlan(planrun.SinglePlanInput{
-		Project:           project,
-		ControlRoot:       root,
-		WorktreeBase:      worktreeBase,
-		AgentIDs:          agentIDs,
-		ExecutionSettings: loaded.Config.ExecutionSettings(),
-		Runner:            runtimeAgentRunner{inner: coreruntime.NewRunner(registry)},
-		Manager:           planrun.NewManager(),
-		Progress:          w,
+		Project:              project,
+		ControlRoot:          root,
+		WorktreeBase:         worktreeBase,
+		AgentIDs:             agentIDs,
+		ExecutionSettings:    loaded.Config.ExecutionSettings(),
+		Runner:               runtimeAgentRunner{inner: coreruntime.NewRunner(registry)},
+		Manager:              planrun.NewManager(),
+		Progress:             w,
+		EnforceProtectedBase: !loaded.Config.Project.AllowProtectedBase,
 	})
 
 	if res.PlanID == "" && res.Reason == "no-eligible-plan" {

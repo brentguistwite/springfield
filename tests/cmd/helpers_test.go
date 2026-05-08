@@ -27,7 +27,10 @@ func (f fakeDetector) Detect(id agents.ID) agents.DetectionStatus {
 func writeSpringfieldConfig(t *testing.T, dir string, agent string) {
 	t.Helper()
 
-	content := "[project]\nagent_priority = [\"" + agent + "\"]\n"
+	// allow_protected_base = true so the guard does not block integration
+	// tests that init their tempdir repos on the default "main" branch.
+	// The guard itself is exercised in planrun manager tests.
+	content := "[project]\nagent_priority = [\"" + agent + "\"]\nallow_protected_base = true\n"
 	path := filepath.Join(dir, "springfield.toml")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write springfield.toml: %v", err)

@@ -54,6 +54,12 @@ func (c Config) AgentForPlan(planID string) string {
 // ProjectConfig stores project-wide defaults.
 type ProjectConfig struct {
 	AgentPriority []string `toml:"agent_priority,omitempty"`
+	// AllowProtectedBase opts out of the protected-base preflight guard.
+	// Default false: Springfield refuses to ff-merge into "main" or "master"
+	// so the local source branch is not silently advanced past origin.
+	// Recommended workflow is to run from a feature branch and push that
+	// branch when the batch finishes.
+	AllowProtectedBase bool `toml:"allow_protected_base,omitempty"`
 }
 
 // ExecutionSettingsForAgent resolves adapter-specific execution settings for

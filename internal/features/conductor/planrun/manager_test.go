@@ -412,6 +412,102 @@ func TestPrepareAcceptsExplicitLocalBranchRef(t *testing.T) {
 	}
 }
 
+func TestPrepareRefusesProtectedBaseByDefault(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan")
+
+	g := newFakeGit() // currentBranch defaults to "main"
+	m := &planrun.Manager{Git: g}
+	_, err := m.Prepare(planrun.PrepareInput{
+		ControlRoot:          root,
+		WorktreeBase:         ".worktrees",
+		Unit:                 conductor.PlanUnit{ID: "p", Path: ".springfield/plans/p.md", Order: 1},
+		AllStates:            map[string]*conductor.PlanState{},
+		EnforceProtectedBase: true,
+	})
+	if err == nil {
+		t.Fatal("expected protected-base rejection")
+	}
+	pe := planrun.AsPreflight(err)
+	if pe == nil || pe.Tag != "preflight-protected-base" {
+		t.Fatalf("expected preflight-protected-base, got %v", err)
+	}
+	if !strings.Contains(pe.Message, "allow_protected_base") {
+		t.Fatalf("error must point at the opt-out, got: %q", pe.Message)
+	}
+	if len(g.createNew)+len(g.createExisting) != 0 {
+		t.Fatalf("worktree side effects must not fire on protected-base rejection")
+	}
+}
+
+func TestPrepareRefusesProtectedBaseFromExplicitRef(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan")
+
+	g := newFakeGit()
+	g.branches["master"] = struct{}{}
+	g.resolveOK["master"] = "cafef00d"
+	m := &planrun.Manager{Git: g}
+	_, err := m.Prepare(planrun.PrepareInput{
+		ControlRoot:          root,
+		WorktreeBase:         ".worktrees",
+		Unit:                 conductor.PlanUnit{ID: "p", Path: ".springfield/plans/p.md", Ref: "master", Order: 1},
+		AllStates:            map[string]*conductor.PlanState{},
+		EnforceProtectedBase: true,
+	})
+	if err == nil {
+		t.Fatal("expected protected-base rejection on explicit master")
+	}
+	pe := planrun.AsPreflight(err)
+	if pe == nil || pe.Tag != "preflight-protected-base" {
+		t.Fatalf("expected preflight-protected-base, got %v", err)
+	}
+}
+
+func TestPrepareAllowsProtectedBaseWhenGuardOff(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan")
+
+	g := newFakeGit() // currentBranch=main
+	m := &planrun.Manager{Git: g}
+	dec, err := m.Prepare(planrun.PrepareInput{
+		ControlRoot:          root,
+		WorktreeBase:         ".worktrees",
+		Unit:                 conductor.PlanUnit{ID: "p", Path: ".springfield/plans/p.md", Order: 1},
+		AllStates:            map[string]*conductor.PlanState{},
+		EnforceProtectedBase: false,
+	})
+	if err != nil {
+		t.Fatalf("Prepare with guard off should succeed: %v", err)
+	}
+	if dec.Context.BaseRef != "main" {
+		t.Fatalf("BaseRef: %q", dec.Context.BaseRef)
+	}
+}
+
+func TestPrepareAllowsNonProtectedBaseUnderGuard(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan")
+
+	g := newFakeGit()
+	g.currentBranch = "feat/redesign"
+	g.resolveOK["feat/redesign"] = "feedface"
+	m := &planrun.Manager{Git: g}
+	dec, err := m.Prepare(planrun.PrepareInput{
+		ControlRoot:          root,
+		WorktreeBase:         ".worktrees",
+		Unit:                 conductor.PlanUnit{ID: "p", Path: ".springfield/plans/p.md", Order: 1},
+		AllStates:            map[string]*conductor.PlanState{},
+		EnforceProtectedBase: true,
+	})
+	if err != nil {
+		t.Fatalf("feat/redesign must pass guard: %v", err)
+	}
+	if dec.Context.BaseRef != "feat/redesign" {
+		t.Fatalf("BaseRef: %q", dec.Context.BaseRef)
+	}
+}
+
 func TestPrepareRefusesNonRepo(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan")

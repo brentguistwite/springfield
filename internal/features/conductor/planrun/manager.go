@@ -20,6 +20,27 @@ type PrepareInput struct {
 	// plans so a sanitized-key collision doesn't overwrite a sibling's
 	// worktree. Pass project.State.Plans directly.
 	AllStates map[string]*conductor.PlanState
+	// EnforceProtectedBase refuses preflight when the resolved base ref is in
+	// [ProtectedBases]. Off by default so library-level callers stay
+	// minimal; cmd/start enables it unless the project opts out via
+	// allow_protected_base = true.
+	EnforceProtectedBase bool
+}
+
+// ProtectedBases is the list of branch names Springfield refuses to ff-merge
+// into when EnforceProtectedBase is set. Hardcoded conservatively: most
+// teams ship from a feature branch, and an accidental local advance of
+// main/master past origin is a sharp foot-gun.
+var ProtectedBases = []string{"main", "master"}
+
+// isProtectedBase reports whether ref names a hardcoded protected branch.
+func isProtectedBase(ref string) bool {
+	for _, p := range ProtectedBases {
+		if ref == p {
+			return true
+		}
+	}
+	return false
 }
 
 // PrepareDecision describes what Prepare resolved without yet touching disk.
@@ -126,6 +147,12 @@ func (m *Manager) Prepare(in PrepareInput) (PrepareDecision, error) {
 			return PrepareDecision{}, reject("preflight-ref-not-local-branch",
 				fmt.Sprintf("plan %q ref %q is not a local branch in %s; merge integration requires a local branch target", in.Unit.ID, baseRef, in.ControlRoot))
 		}
+	}
+
+	if in.EnforceProtectedBase && isProtectedBase(baseRef) {
+		return PrepareDecision{}, reject("preflight-protected-base",
+			fmt.Sprintf("plan %q would ff-merge into protected branch %q. Springfield refuses by default so the local %s is not silently advanced past origin. Recommended: switch to a feature branch (git switch -c feat/<name>) before running, or set [project] allow_protected_base = true in springfield.toml to opt out.",
+				in.Unit.ID, baseRef, baseRef))
 	}
 
 	existing := worktreePathsByOwner(in.AllStates, in.Unit.ID)

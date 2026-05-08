@@ -168,7 +168,37 @@ Notes:
 - Primary end-user install is the Claude marketplace or Codex plugin/catalog flow.
 - `springfield install` is the local sync/bootstrap/fallback path after `init`.
 - Re-running `init` preserves existing config, only filling in missing recommended defaults and agent priority. Use `springfield init --reset` to back up the current config and rewrite it from scratch.
+- `allow_protected_base = false` (default) refuses to ff-merge plan results into `main` or `master`. See [Recommended Workflow](#recommended-workflow) for the work-branch pattern.
 - Runtime state under `.springfield/` is local project state and should not be committed.
+
+## Recommended Workflow
+
+Springfield runs each plan in an isolated git worktree, then ff-merges the result back into a base branch on your **local** clone. Nothing is pushed and no PR is opened — that step is yours.
+
+The base branch defaults to whatever you have checked out when `springfield start` runs. Because most teams gate `main` and `master` behind PR review, Springfield refuses to ff-merge into either by default with `preflight-protected-base`.
+
+The recommended pattern is one feature branch per batch:
+
+```bash
+git switch -c feat/redesign           # create work branch off main
+springfield plan --slices payload.json # register plans (each branches from feat/redesign)
+springfield start                     # plans run, each ff-merges back into feat/redesign
+git push -u origin feat/redesign      # ship the whole batch as one PR
+gh pr create --base main
+```
+
+Each plan still gets its own `springfield/<plan-key>` branch and its own `.worktrees/<plan-key>` worktree; the merges just land on `feat/redesign` instead of `main`. Reviewers see clean ff-merged history on the feature branch and review the batch as a unit.
+
+To opt out of the protected-base guard (e.g. on a personal repo), set:
+
+```toml
+[project]
+allow_protected_base = true
+```
+
+Per-plan override: set `Ref = "feat/other"` on a `PlanUnit` to integrate that one plan into a different feature branch.
+
+> Drift caveat: ff-only merge refuses if the base branch advanced between plan start and integrate. Pick a base branch you control during the run; don't `git pull` mid-batch.
 
 ## Runtime Flow
 
