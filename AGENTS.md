@@ -1,6 +1,6 @@
 # Springfield Agent Instructions
 
-Build a shareable, local-first product that unifies the current Ralph script/skill and Ralph Conductor script/skill behind a simpler UX.
+Build a shareable, local-first conductor that turns a plan into a sequential batch of agent runs across Claude Code, Codex, and Gemini, with isolated worktrees and per-slice evidence. Surface power-user capability through a simple plugin-first UX.
 
 ## Product Priorities
 
@@ -31,4 +31,4 @@ Strict boundaries between modules. Tests should target the exported package inte
 - Design around public module contracts first, then internals.
 - In Go, prefer small cohesive packages with explicit exported APIs over grab-bag utility packages.
 - Prefer stable project-local state over hidden global machine state.
-- Keep docs and examples good enough for a teammate with no prior Ralph context.
+- Keep docs and examples good enough for a teammate with no prior Springfield context.

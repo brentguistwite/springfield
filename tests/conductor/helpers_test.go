@@ -38,19 +38,6 @@ func writeConductorConfig(t *testing.T, root string, cfg *conductor.Config) {
 	}
 }
 
-func writeConductorState(t *testing.T, root string, state *conductor.State) {
-	t.Helper()
-
-	runtime, err := storage.FromRoot(root)
-	if err != nil {
-		t.Fatalf("build runtime: %v", err)
-	}
-
-	if err := runtime.WriteJSON("execution/state.json", state); err != nil {
-		t.Fatalf("write conductor state: %v", err)
-	}
-}
-
 func writeRegisteredPlanUnitConfig(t *testing.T, root string, ids []string) {
 	t.Helper()
 
@@ -102,8 +89,3 @@ func planUnitConfig(ids ...string) *conductor.Config {
 	}
 }
 
-func hideAgentBinariesFromPath(t *testing.T) {
-	t.Helper()
-
-	t.Setenv("PATH", t.TempDir())
-}

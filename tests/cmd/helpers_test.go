@@ -65,11 +65,3 @@ func writePlanFileBinary(t *testing.T, root, plansDir, name, content string) {
 	}
 }
 
-func containsArg(args []string, want string) bool {
-	for _, arg := range args {
-		if arg == want {
-			return true
-		}
-	}
-	return false
-}
