@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"springfield/internal/features/conductor"
 )
 
 // TestSpringfieldStartMergesPlanBranchOnSuccess is the parity-3 happy-path
@@ -463,5 +465,88 @@ func installDriftingAgent(t *testing.T, binDir, name, sourceRoot string) {
 	path := filepath.Join(binDir, name)
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake agent: %v", err)
+	}
+}
+
+// TestSpringfieldStartRefusesProtectedBaseByDefault asserts the end-to-end
+// command surface enforces the protected-base guard when the project config
+// does not opt out. Default config + a tempdir repo on "main" must refuse
+// before any worktree is created, with output that points at the opt-out.
+func TestSpringfieldStartRefusesProtectedBaseByDefault(t *testing.T) {
+	bin := buildBinary(t)
+	dir := initRealGitRepo(t)
+	writeSpringfieldConfigStrict(t, dir, "claude")
+	writeRegisteredPlan(t, dir, "alpha", "Implement alpha")
+
+	gitMust(t, dir, "add", ".")
+	gitMust(t, dir, "commit", "-m", "scaffold")
+
+	output, err := runBinaryIn(t, bin, dir, "start")
+	if err == nil {
+		t.Fatalf("expected start to refuse on protected base; got success:\n%s", output)
+	}
+	if !strings.Contains(output, "preflight-protected-base") {
+		t.Errorf("expected preflight-protected-base tag in output:\n%s", output)
+	}
+	if !strings.Contains(output, "allow_protected_base") {
+		t.Errorf("expected opt-out hint in output:\n%s", output)
+	}
+	// Worktree must NOT have been created — guard fires before side effects.
+	if _, err := os.Stat(filepath.Join(dir, ".worktrees", "alpha")); !os.IsNotExist(err) {
+		t.Fatalf("worktree must not be created on protected-base refusal, stat err=%v", err)
+	}
+}
+
+// TestSpringfieldStartRefusesProtectedBaseOnMergeReentry covers the
+// merge-only re-entry path: a plan that already finished execution but
+// whose merge is pending (e.g. crash between exec and merge, or prior
+// target-drift refusal) still flows through `runMergeIntegrationOnly`,
+// which bypasses planrun.Prepare entirely. The guard must re-apply at the
+// command layer using the persisted BaseRef so a resume cannot silently
+// fast-forward a protected branch.
+func TestSpringfieldStartRefusesProtectedBaseOnMergeReentry(t *testing.T) {
+	bin := buildBinary(t)
+	dir := initRealGitRepo(t)
+	writeSpringfieldConfigStrict(t, dir, "claude")
+	writeRegisteredPlan(t, dir, "alpha", "Implement alpha")
+
+	gitMust(t, dir, "add", ".")
+	gitMust(t, dir, "commit", "-m", "scaffold")
+
+	// Seed a completed-but-not-integrated state: prior execution finished,
+	// prior merge was refused (target-drift simulated), recorded BaseRef
+	// is the protected branch. nextNonIntegratedCompletedPlan picks this
+	// up and sends it to runMergeIntegrationOnly.
+	writeConductorStateBinary(t, dir, &conductor.State{
+		Plans: map[string]*conductor.PlanState{
+			"alpha": {
+				Status:       conductor.StatusCompleted,
+				WorktreePath: filepath.Join(dir, ".worktrees", "alpha"),
+				Branch:       "springfield/alpha",
+				BaseRef:      "main",
+				BaseHead:     "deadbeefcafef00d",
+				Merge: &conductor.MergeOutcome{
+					Status: conductor.MergeRefused,
+					Reason: "target-drift",
+				},
+			},
+		},
+	})
+
+	output, err := runBinaryIn(t, bin, dir, "start")
+	if err == nil {
+		t.Fatalf("expected merge re-entry to refuse on protected base; got success:\n%s", output)
+	}
+	if !strings.Contains(output, "preflight-protected-base") {
+		t.Errorf("expected preflight-protected-base tag on merge re-entry:\n%s", output)
+	}
+	if !strings.Contains(output, "allow_protected_base") {
+		t.Errorf("expected opt-out hint on merge re-entry:\n%s", output)
+	}
+	// Source main must not have advanced — guard fires before update-ref.
+	headAfter := gitOut(t, dir, "rev-parse", "main")
+	scaffoldHead := gitOut(t, dir, "log", "-1", "--format=%H")
+	if headAfter != scaffoldHead {
+		t.Fatalf("main advanced despite protected-base refusal: head=%s scaffold=%s", headAfter, scaffoldHead)
 	}
 }

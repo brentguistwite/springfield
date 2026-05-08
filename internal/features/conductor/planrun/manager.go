@@ -33,8 +33,11 @@ type PrepareInput struct {
 // main/master past origin is a sharp foot-gun.
 var ProtectedBases = []string{"main", "master"}
 
-// isProtectedBase reports whether ref names a hardcoded protected branch.
-func isProtectedBase(ref string) bool {
+// IsProtectedBase reports whether ref names a hardcoded protected branch.
+// Exported so the merge-only re-entry path in cmd/start can apply the same
+// guard before invoking planmerge.Integrate on a previously-completed plan
+// whose state already records BaseRef.
+func IsProtectedBase(ref string) bool {
 	for _, p := range ProtectedBases {
 		if ref == p {
 			return true
@@ -149,7 +152,7 @@ func (m *Manager) Prepare(in PrepareInput) (PrepareDecision, error) {
 		}
 	}
 
-	if in.EnforceProtectedBase && isProtectedBase(baseRef) {
+	if in.EnforceProtectedBase && IsProtectedBase(baseRef) {
 		return PrepareDecision{}, reject("preflight-protected-base",
 			fmt.Sprintf("plan %q would ff-merge into protected branch %q. Springfield refuses by default so the local %s is not silently advanced past origin. Recommended: switch to a feature branch (git switch -c feat/<name>) before running, or set [project] allow_protected_base = true in springfield.toml to opt out.",
 				in.Unit.ID, baseRef, baseRef))

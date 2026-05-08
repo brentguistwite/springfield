@@ -29,8 +29,23 @@ func writeSpringfieldConfig(t *testing.T, dir string, agent string) {
 
 	// allow_protected_base = true so the guard does not block integration
 	// tests that init their tempdir repos on the default "main" branch.
-	// The guard itself is exercised in planrun manager tests.
+	// The guard itself is exercised in planrun manager tests and in the
+	// dedicated end-to-end protected-base tests via writeSpringfieldConfigStrict.
 	content := "[project]\nagent_priority = [\"" + agent + "\"]\nallow_protected_base = true\n"
+	path := filepath.Join(dir, "springfield.toml")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write springfield.toml: %v", err)
+	}
+}
+
+// writeSpringfieldConfigStrict writes a project config that does NOT opt out
+// of the protected-base guard. Used by end-to-end tests that exercise the
+// default behavior of `springfield start` on a tempdir repo initialized on
+// the "main" branch.
+func writeSpringfieldConfigStrict(t *testing.T, dir string, agent string) {
+	t.Helper()
+
+	content := "[project]\nagent_priority = [\"" + agent + "\"]\n"
 	path := filepath.Join(dir, "springfield.toml")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write springfield.toml: %v", err)
