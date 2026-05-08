@@ -1,8 +1,8 @@
 # Springfield
 
-Local-first, plugin-distributed conductor for multi-agent code work.
+Plugin-first, local-state conductor for multi-agent code work.
 
-Springfield turns a plan (file or prompt) into a sequential batch of agent runs, executes each slice in an isolated worktree, captures per-slice evidence, and falls through `agent_priority` (Claude → Codex → Gemini) when a run is retryable. State lives under `.springfield/` in the repo; install ships through Claude Code / Codex marketplace plugins.
+Springfield turns a plan (file or prompt) into a sequential batch of agent runs, executes each slice in an isolated worktree, captures per-slice evidence, and falls through `agent_priority` (Claude → Codex → Gemini) when a run is retryable. State lives under `.springfield/` in the repo; install ships through Claude Code and Codex marketplace plugins.
 
 ## Status
 
