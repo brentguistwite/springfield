@@ -1,8 +1,17 @@
 # Springfield
 
-Plugin-first, agent-native Springfield with a thin local CLI.
+Local-first, plugin-distributed conductor for multi-agent code work.
 
-Springfield keeps project-local state in the repo, distributes end-user setup through host plugins/catalogs first, and keeps a thin local CLI for project bootstrap, local host sync, and runtime execution.
+Springfield turns a plan (file or prompt) into a sequential batch of agent runs, executes each slice in an isolated worktree, captures per-slice evidence, and falls through `agent_priority` (Claude → Codex → Gemini) when a run is retryable. State lives under `.springfield/` in the repo; install ships through Claude Code / Codex marketplace plugins.
+
+## Status
+
+- Conductor parity 1–7 ✅ — sequential queue, isolated worktree execution, merge integration, resume + skip, diagnose/recover, end-to-end acceptance tests.
+- Multi-agent fallback ✅ — adapter `ClassifyError` + `agent_priority` chain.
+- Per-slice evidence ✅ — surfaced in `springfield status` and `springfield recover --diagnose`.
+- Sleep prevention ✅ — wakelock acquired during `start`.
+
+Pre-1.0: no external users yet, so no migration shims for breaking config changes. Verify still pre-launch before relying on this.
 
 ## Public CLI
 
