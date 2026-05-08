@@ -6,6 +6,16 @@ Springfield turns a plan (file or prompt) into a sequential batch of agent runs,
 
 > Pre-1.0. Config and state layout may change without migration shims.
 
+## Prerequisites
+
+- A git repository for the project Springfield runs against.
+- At least one supported agent CLI installed and authenticated:
+  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`)
+  - [Codex CLI](https://github.com/openai/codex)
+  - [Gemini CLI](https://github.com/google-gemini/gemini-cli) (opt-in; set `GEMINI_API_KEY` or sign in headless)
+- macOS or Linux (amd64/arm64) for the plugin auto-install path. Windows installs via [Alternate Install Paths](#alternate-install-paths).
+- `~/.local/bin` on `PATH` if installing through the Claude marketplace plugin (the SessionStart hook symlinks the binary there).
+
 ## Public CLI
 
 ```bash
@@ -185,16 +195,18 @@ springfield start
 springfield status
 ```
 
+When you run `springfield start`, Springfield will:
+
+1. Load the active batch from `.springfield/run.json`.
+2. Pick the next `queued` slice in the active phase.
+3. Snapshot the control plane (`batch.json`, `run.json`, `source.md`) for tamper detection.
+4. Spawn a fresh agent run for that slice using the first id in `agent_priority`.
+5. Stream the agent's output to `.springfield/plans/<batch-id>/evidence/<slice-id>/`.
+6. If the agent fails with a retryable error, fall through to the next id in `agent_priority`. Fatal failures stop the batch immediately.
+7. Mark the slice `done` (or `failed`) and persist the result to disk.
+8. Repeat until every slice is terminal, then archive the batch and clear the run cursor.
+
 Execution is serial by default. Parallel execution only happens when the batch explicitly marks independent phases — this is rare and must be intentional.
-
-When an agent run fails, Springfield consults the adapter classifier. Retryable failures fall through to the next id in `agent_priority`; fatal failures stop immediately. There is no separate legacy fallback config key.
-
-Each slice run writes evidence under `.springfield/plans/<batch-id>/evidence/<slice-id>/`:
-
-- `meta.json` with agent, exit code, timing, and error metadata
-- `events.jsonl` with the full stdout/stderr event stream
-- `assistant_text.txt` with the human-readable stdout tail
-- `prompt.txt` with the exact prompt sent to the agent
 
 `springfield status` shows the per-slice evidence path after a run settles, and `springfield recover --diagnose` points at the batch evidence directory for orphaned runs.
 
@@ -206,6 +218,22 @@ springfield plan --append  --slices extra-slices.json
 ```
 
 Use `springfield doctor` whenever local agent tooling looks unhealthy or a host CLI is missing.
+
+## Key Files
+
+| Path | Tracked | Purpose |
+|------|---------|---------|
+| `springfield.toml` | yes | Project config: `agent_priority`, per-agent model, execution settings |
+| `.springfield/plans/<id>.md` | yes | Plan source files registered with `springfield plans add` |
+| `.springfield/run.json` | no | Active run cursor: which batch + phase is in flight |
+| `.springfield/plans/<batch-id>/batch.json` | no | Compiled batch state (per-slice statuses) |
+| `.springfield/plans/<batch-id>/source.md` | no | Frozen plan source for the batch |
+| `.springfield/plans/<batch-id>/evidence/<slice-id>/` | no | Per-slice agent output: `meta.json`, `events.jsonl`, `assistant_text.txt`, `prompt.txt` |
+| `.springfield/archive/<batch-id>.json` | no | Compact summary written when a batch completes or is replaced |
+| `.springfield/execution/config.json` | no | Internal conductor config (derived from `springfield.toml`) |
+| `.springfield/.lock` | no | Process lock for the active run |
+
+Tracked files commit alongside your code; runtime files live under `.springfield/` and are gitignored except `.springfield/plans/<id>.md`.
 
 ## Release Assets
 
