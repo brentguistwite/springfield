@@ -4,14 +4,7 @@ Plugin-first, local-state conductor for multi-agent code work.
 
 Springfield turns a plan (file or prompt) into a sequential batch of agent runs, executes each slice in an isolated worktree, captures per-slice evidence, and falls through `agent_priority` (Claude → Codex → Gemini) when a run is retryable. State lives under `.springfield/` in the repo; install ships through Claude Code and Codex marketplace plugins.
 
-## Status
-
-- Conductor parity 1–7 ✅ — sequential queue, isolated worktree execution, merge integration, resume + skip, diagnose/recover, end-to-end acceptance tests.
-- Multi-agent fallback ✅ — adapter `ClassifyError` + `agent_priority` chain.
-- Per-slice evidence ✅ — surfaced in `springfield status` and `springfield recover --diagnose`.
-- Sleep prevention ✅ — wakelock acquired during `start`.
-
-Pre-1.0: no external users yet, so no migration shims for breaking config changes. Verify still pre-launch before relying on this.
+> Pre-1.0. Config and state layout may change without migration shims.
 
 ## Public CLI
 
