@@ -156,6 +156,12 @@ func NewStartCommand() *cobra.Command {
 				return fmt.Errorf("batch %s failed", b.ID)
 			}
 
+			// Re-read batch from disk so archive reflects slice statuses
+			// written by runBatch (the caller's b is passed by value and stale).
+			if fresh, readErr := batch.ReadBatch(paths); readErr == nil {
+				b = fresh
+			}
+
 			// Atomic archive write is durable before we clear the cursor, so
 			// archive first. If the process dies between archive-rename and
 			// ClearRun, the next start sees run.json pointing at an already-

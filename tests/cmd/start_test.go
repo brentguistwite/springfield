@@ -1,6 +1,7 @@
 package cmd_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -153,14 +154,28 @@ func TestSpringfieldStartRunsBatchSlices(t *testing.T) {
 		t.Error("expected run.json to be cleared after completion")
 	}
 
-	// Archive should contain the completed batch.
+	// Archive should contain the completed batch with done slices.
 	archiveDir := filepath.Join(dir, ".springfield", "archive")
 	entries, err := os.ReadDir(archiveDir)
 	if err != nil {
 		t.Fatalf("read archive: %v", err)
 	}
 	if len(entries) == 0 {
-		t.Error("expected archive entry after completed batch")
+		t.Fatal("expected archive entry after completed batch")
+	}
+
+	archiveData, err := os.ReadFile(filepath.Join(archiveDir, entries[0].Name()))
+	if err != nil {
+		t.Fatalf("read archive entry: %v", err)
+	}
+	var archive batch.ArchiveEntry
+	if err := json.Unmarshal(archiveData, &archive); err != nil {
+		t.Fatalf("decode archive entry: %v", err)
+	}
+	for _, s := range archive.Slices {
+		if s.Status != batch.SliceDone {
+			t.Errorf("archived slice %q has status %q, want %q", s.ID, s.Status, batch.SliceDone)
+		}
 	}
 }
 
