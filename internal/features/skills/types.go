@@ -251,11 +251,3 @@ func localCatalog() []LocalTarget {
 	return out
 }
 
-func lookupLocalTarget(name string) (LocalTarget, error) {
-	for _, host := range localTargets {
-		if host.Name == name {
-			return host, nil
-		}
-	}
-	return LocalTarget{}, fmt.Errorf("unknown Springfield install target %q", name)
-}

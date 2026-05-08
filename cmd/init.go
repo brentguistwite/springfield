@@ -164,7 +164,7 @@ func resolvePriorityWithReader(agentsFlag string, interactive bool, in *bufio.Re
 			"non-interactive init requires --agents flag (e.g. --agents claude,codex,gemini)")
 	}
 
-	return promptForAgentsWithReader(in, out)
+	return promptForAgentsWithDetectionReader(in, out, newRegistryDetector(exec.LookPath))
 }
 
 func resolveModels(
@@ -329,18 +329,6 @@ func promptForAgentModelsWithReader(
 	}
 
 	return models, nil
-}
-
-// promptForAgents runs the interactive picker against real adapter detection.
-// Internal wrapper around PromptForAgentsWithDetection — it constructs a
-// production registryDetector backed by os/exec.LookPath so call sites in
-// resolvePriority don't need to know about the Detector seam.
-func promptForAgents(in io.Reader, out io.Writer) ([]string, error) {
-	return promptForAgentsWithReader(bufferedReader(in), out)
-}
-
-func promptForAgentsWithReader(in *bufio.Reader, out io.Writer) ([]string, error) {
-	return promptForAgentsWithDetectionReader(in, out, newRegistryDetector(exec.LookPath))
 }
 
 func bufferedReader(in io.Reader) *bufio.Reader {

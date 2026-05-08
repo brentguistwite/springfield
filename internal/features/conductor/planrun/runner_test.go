@@ -18,7 +18,6 @@ import (
 // fakeAgentRunner is an in-memory AgentRunner for SinglePlan tests.
 type fakeAgentRunner struct {
 	calls       []coreruntime.Request
-	result      coreruntime.Result
 	failure     bool
 	beforeReply func()
 }

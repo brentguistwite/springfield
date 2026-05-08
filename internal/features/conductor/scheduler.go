@@ -92,10 +92,3 @@ func planIntegrated(name string, state *State) bool {
 	return plan.IsIntegrated()
 }
 
-func planStatus(name string, state *State) PlanStatus {
-	if plan, ok := state.Plans[name]; ok {
-		return plan.Status
-	}
-
-	return StatusPending
-}

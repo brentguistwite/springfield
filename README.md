@@ -26,8 +26,10 @@ springfield init       # Scaffold springfield.toml and .springfield/
 springfield install    # Sync local Claude Code/Codex host artifacts
 springfield doctor     # Check local agent CLI availability
 springfield plan       # Compile a work request into a runnable batch
+springfield plans      # Manage the registered plan-unit registry
 springfield start      # Execute the active batch from its saved cursor
 springfield status     # Inspect the active batch or work
+springfield recover    # Recover from a failed plan or orphaned batch
 springfield version    # Print build version
 ```
 
@@ -148,7 +150,7 @@ model = "claude-sonnet-4-6"
 permission_mode = "bypassPermissions"
 
 [agents.codex]
-model = "gpt-5.4"
+model = "gpt-5-codex"
 sandbox_mode = "danger-full-access"
 approval_policy = "never"
 
@@ -263,4 +265,4 @@ Springfield uses [release-please](https://github.com/googleapis/release-please) 
 
 ## License
 
-Private. All rights reserved.
+MIT — see [LICENSE](LICENSE).
