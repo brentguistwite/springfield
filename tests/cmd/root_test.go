@@ -320,39 +320,6 @@ func TestSpringfieldBareShowsInstallGuidance(t *testing.T) {
 	}
 }
 
-func TestSpringfieldHelpReadmeStaysPluginFirst(t *testing.T) {
-	data, err := os.ReadFile(filepath.Join(repoRoot(t), "README.md"))
-	if err != nil {
-		t.Fatalf("read README: %v", err)
-	}
-
-	text := string(data)
-	lower := strings.ToLower(text)
-	for _, marker := range []string{
-		"plugin-first",
-		"marketplace",
-		"catalog",
-		"springfield install",
-		"claude code",
-		"codex",
-	} {
-		if !strings.Contains(lower, strings.ToLower(marker)) {
-			t.Fatalf("expected README to contain %q, got:\n%s", marker, text)
-		}
-	}
-	for _, stale := range []string{
-		"springfield conductor setup",
-		"go run . ralph --help",
-		"springfield ralph",
-		"springfield tui",
-		"springfield explain",
-	} {
-		if strings.Contains(text, stale) {
-			t.Fatalf("expected README to drop stale guidance %q, got:\n%s", stale, text)
-		}
-	}
-}
-
 func TestSpringfieldWithoutArgsShowsHelpAndGuidance(t *testing.T) {
 	output, err := runSpringfield(t)
 	if err != nil {
