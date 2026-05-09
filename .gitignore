@@ -34,3 +34,6 @@ springfield.toml.bak-*
 
 # Claude Code runtime state
 .claude/
+
+.CLAUDE.md
+.AGENTS.md
