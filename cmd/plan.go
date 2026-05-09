@@ -105,6 +105,12 @@ func NewPlanCommand() *cobra.Command {
 					if err := batch.ArchiveBatchNormalized(rootDir, *priorBatch, "replaced"); err != nil {
 						return fmt.Errorf("archive prior batch: %w", err)
 					}
+					// Clear run.json immediately after archive so there is no window
+					// where run.json still points at the now-deleted prior batch.
+					// The brief no-active-batch window is acceptable here.
+					if err := batch.ClearRun(rootDir); err != nil {
+						return fmt.Errorf("clear run after archive: %w", err)
+					}
 					// Remove prior batch's plan units from conductor config.
 					for _, id := range priorBatch.PlanIDs {
 						_ = project.RemovePlanUnit(id) // best-effort; may not be registered
@@ -112,7 +118,7 @@ func NewPlanCommand() *cobra.Command {
 					priorBatch = nil
 
 				case appendMode:
-					return runAppend(cmd, rootDir, project, *priorBatch, run, env, payload)
+					return runAppend(cmd, rootDir, project, *priorBatch, run, env)
 
 				default:
 					return fmt.Errorf(
@@ -183,7 +189,7 @@ func NewPlanCommand() *cobra.Command {
 }
 
 // runAppend adds plans from the new envelope to an existing batch.
-func runAppend(cmd *cobra.Command, rootDir string, project *conductor.Project, prior batch.Batch, run batch.Run, env prd.BatchPRDEnvelope, _ []byte) error {
+func runAppend(cmd *cobra.Command, rootDir string, project *conductor.Project, prior batch.Batch, run batch.Run, env prd.BatchPRDEnvelope) error {
 	// Build collision check.
 	existingIDs := make(map[string]struct{}, len(prior.PlanIDs))
 	for _, id := range prior.PlanIDs {

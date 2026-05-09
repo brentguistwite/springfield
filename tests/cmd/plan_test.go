@@ -526,6 +526,36 @@ func TestPlanRejectsInvalidEnvelope(t *testing.T) {
 			},
 			wantInErr: "plan-dup",
 		},
+		{
+			name: "cross-plan dep (dep belongs to another plan)",
+			env: prd.BatchPRDEnvelope{
+				Title:  "cross-dep",
+				Source: "src",
+				Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-a", "plan-b"}}},
+				Plans: []prd.BatchPRDPlan{
+					{
+						PRD: prd.PRD{
+							ID:    "plan-a",
+							Title: "Plan A",
+							UserStories: []prd.UserStory{
+								// US-002 exists only in plan-b, not plan-a
+								{ID: "US-001", Title: "Story 1", Priority: 1, AcceptanceCriteria: []string{"ok"}, Deps: []string{"US-002"}},
+							},
+						},
+					},
+					{
+						PRD: prd.PRD{
+							ID:    "plan-b",
+							Title: "Plan B",
+							UserStories: []prd.UserStory{
+								{ID: "US-002", Title: "Story 2", Priority: 1, AcceptanceCriteria: []string{"ok"}},
+							},
+						},
+					},
+				},
+			},
+			wantInErr: "US-002",
+		},
 	}
 
 	for _, tc := range cases {

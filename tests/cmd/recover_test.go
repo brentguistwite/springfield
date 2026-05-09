@@ -1,12 +1,14 @@
 package cmd_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"springfield/internal/features/batch"
+	"springfield/internal/features/prd"
 )
 
 func TestSpringfieldRecoverHelp(t *testing.T) {
@@ -71,13 +73,19 @@ func TestSpringfieldRecoverIdempotent(t *testing.T) {
 }
 
 func TestSpringfieldRecoverOnLiveBatchIsNoop(t *testing.T) {
-	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
 	bin := buildBinary(t)
 	dir := t.TempDir()
-	writeSpringfieldConfig(t, dir, "claude")
+	writeProjectConfig(t, dir, "claude")
 
-	// Compile a real batch — batch.json is live.
-	if _, err := singleSlicePlan(t, bin, dir, "Implement login"); err != nil {
+	// Compile a real batch via planWithPRD — batch.json is live.
+	env := prd.BatchPRDEnvelope{
+		Title:  "live-batch",
+		Source: "src",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-login"}}},
+		Plans:  []prd.BatchPRDPlan{minPRDPlan("plan-login", "Implement login")},
+	}
+	envJSON, _ := json.MarshalIndent(env, "", "  ")
+	if _, err := planWithPRD(t, bin, dir, string(envJSON)); err != nil {
 		t.Fatalf("plan: %v", err)
 	}
 
@@ -100,18 +108,24 @@ func TestSpringfieldRecoverOnLiveBatchIsNoop(t *testing.T) {
 // cannot complete (e.g. permission-denied) must fail closed so live state is
 // never destroyed on a degraded read.
 func TestSpringfieldRecoverFailsClosedOnStatPermissionError(t *testing.T) {
-	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
 	if os.Geteuid() == 0 {
 		t.Skip("chmod-based permission test does not apply when running as root")
 	}
 	bin := buildBinary(t)
 	dir := t.TempDir()
-	writeSpringfieldConfig(t, dir, "claude")
+	writeProjectConfig(t, dir, "claude")
 
-	if _, err := singleSlicePlan(t, bin, dir, "Implement login"); err != nil {
+	env := prd.BatchPRDEnvelope{
+		Title:  "perm-batch",
+		Source: "src",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-login"}}},
+		Plans:  []prd.BatchPRDPlan{minPRDPlan("plan-login", "Implement login")},
+	}
+	envJSON, _ := json.MarshalIndent(env, "", "  ")
+	if _, err := planWithPRD(t, bin, dir, string(envJSON)); err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	// Make the plan dir un-statable (remove execute bit on parent) so
+	// Make the plans dir un-statable (remove execute bit on parent) so
 	// stat(batch.json) returns EACCES rather than ENOENT.
 	plansDir := filepath.Join(dir, ".springfield", "plans")
 	if err := os.Chmod(plansDir, 0o000); err != nil {
