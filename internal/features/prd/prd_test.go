@@ -112,6 +112,20 @@ func TestParseMissingTitle(t *testing.T) {
 	}
 }
 
+// TestValidateMissingSource validates envelope-level error for empty source.
+func TestValidateMissingSource(t *testing.T) {
+	r := strings.NewReader(validEnvelopeJSON())
+	env, err := prd.ParseEnvelope(r)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	env.Source = ""
+	result := prd.Validate(env)
+	if !result.HasErrors() {
+		t.Fatal("expected errors for missing source, got none")
+	}
+}
+
 // TestParseUnknownField ensures DisallowUnknownFields rejects unknown keys.
 func TestParseUnknownField(t *testing.T) {
 	raw := `{
@@ -446,6 +460,33 @@ func TestValidateNonConformingStoryID(t *testing.T) {
 	}
 	if len(result.Warnings) == 0 {
 		t.Error("expected warning for non-conforming story id, got none")
+	}
+}
+
+// TestValidateBadPlanID ensures a plan ID violating ^[a-z0-9][a-z0-9-]*$ produces an error.
+func TestValidateBadPlanID(t *testing.T) {
+	raw := `{
+		"title": "t",
+		"source": "s",
+		"phases": [{"mode": "serial", "plans": ["My Plan"]}],
+		"plans": [
+			{
+				"id": "My Plan",
+				"title": "Plan 1",
+				"description": "d",
+				"user_stories": [
+					{"id": "US-001", "title": "Story", "description": "d", "acceptance_criteria": ["ok"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
+				]
+			}
+		]
+	}`
+	env, err := prd.ParseEnvelope(strings.NewReader(raw))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	result := prd.Validate(env)
+	if !result.HasErrors() {
+		t.Fatal("expected errors for invalid plan id, got none")
 	}
 }
 
