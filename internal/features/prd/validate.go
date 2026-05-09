@@ -1,0 +1,125 @@
+package prd
+
+import (
+	"fmt"
+	"regexp"
+	"strings"
+)
+
+const (
+	contextMDWarnLimit  = 32 * 1024  // 32 KB ≈ 8K tokens
+	contextMDErrorLimit = 256 * 1024 // 256 KB hard limit
+)
+
+var (
+	planIDPattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+	storyIDPattern = regexp.MustCompile(`^US-\d{3,}$`)
+)
+
+// Validate checks a BatchPRDEnvelope for structural correctness and returns
+// all errors and warnings found. It never bails early — callers receive the
+// full aggregated result so every problem can be reported at once.
+func Validate(env BatchPRDEnvelope) ValidationResult {
+	var res ValidationResult
+
+	// Envelope-level checks.
+	if strings.TrimSpace(env.Title) == "" {
+		res.Errors = append(res.Errors, fmt.Errorf("envelope: title is required"))
+	}
+	if strings.TrimSpace(env.Source) == "" {
+		res.Errors = append(res.Errors, fmt.Errorf("envelope: source is required"))
+	}
+	if len(env.Plans) == 0 {
+		res.Errors = append(res.Errors, fmt.Errorf("envelope: at least one plan is required"))
+	}
+	if len(env.Phases) == 0 {
+		res.Errors = append(res.Errors, fmt.Errorf("envelope: at least one phase is required"))
+	}
+
+	// Build plan ID set for phase and dep resolution.
+	planIDs := make(map[string]bool, len(env.Plans))
+	seenPlanIDs := make(map[string]bool, len(env.Plans))
+	for _, p := range env.Plans {
+		if seenPlanIDs[p.ID] {
+			res.Errors = append(res.Errors, fmt.Errorf("envelope: duplicate plan id %q", p.ID))
+		}
+		seenPlanIDs[p.ID] = true
+		planIDs[p.ID] = true
+	}
+
+	// Phase plan ID resolution.
+	for i, phase := range env.Phases {
+		for _, pid := range phase.Plans {
+			if !planIDs[pid] {
+				res.Errors = append(res.Errors, fmt.Errorf("phase[%d]: plan id %q not found in plans", i, pid))
+			}
+		}
+	}
+
+	// Plan-level and story-level checks.
+	for _, plan := range env.Plans {
+		validatePlan(plan, &res)
+	}
+
+	return res
+}
+
+func validatePlan(plan BatchPRDPlan, res *ValidationResult) {
+	prefix := fmt.Sprintf("plan %q", plan.ID)
+
+	if !planIDPattern.MatchString(plan.ID) {
+		res.Errors = append(res.Errors, fmt.Errorf("%s: id must match ^[a-z0-9][a-z0-9-]*$", prefix))
+	}
+	if strings.TrimSpace(plan.Title) == "" {
+		res.Errors = append(res.Errors, fmt.Errorf("%s: title is required", prefix))
+	}
+	if len(plan.UserStories) == 0 {
+		res.Errors = append(res.Errors, fmt.Errorf("%s: at least one user story is required", prefix))
+	}
+
+	// context_md size checks.
+	ctxLen := len(plan.ContextMD)
+	if ctxLen > contextMDErrorLimit {
+		res.Errors = append(res.Errors, fmt.Errorf("%s: context_md exceeds 256 KB hard limit (%d bytes)", prefix, ctxLen))
+	} else if ctxLen > contextMDWarnLimit {
+		res.Warnings = append(res.Warnings, fmt.Sprintf("%s: context_md is large (%d bytes, recommend ≤32 KB)", prefix, ctxLen))
+	}
+
+	// Build story ID set within this plan for dep validation.
+	storyIDs := make(map[string]bool, len(plan.UserStories))
+	seenStoryIDs := make(map[string]bool, len(plan.UserStories))
+	for _, s := range plan.UserStories {
+		if seenStoryIDs[s.ID] {
+			res.Errors = append(res.Errors, fmt.Errorf("%s: duplicate story id %q", prefix, s.ID))
+		}
+		seenStoryIDs[s.ID] = true
+		storyIDs[s.ID] = true
+	}
+
+	for _, story := range plan.UserStories {
+		validateStory(story, plan.ID, storyIDs, res)
+	}
+}
+
+func validateStory(story UserStory, planID string, planStoryIDs map[string]bool, res *ValidationResult) {
+	prefix := fmt.Sprintf("plan %q story %q", planID, story.ID)
+
+	if !storyIDPattern.MatchString(story.ID) {
+		res.Warnings = append(res.Warnings, fmt.Sprintf("%s: id does not match ^US-\\d{3,}$ (got %q)", prefix, story.ID))
+	}
+	if strings.TrimSpace(story.Title) == "" {
+		res.Errors = append(res.Errors, fmt.Errorf("%s: title is required", prefix))
+	}
+	if story.Priority < 1 {
+		res.Errors = append(res.Errors, fmt.Errorf("%s: priority must be >= 1 (got %d)", prefix, story.Priority))
+	}
+	if len(story.AcceptanceCriteria) == 0 {
+		res.Errors = append(res.Errors, fmt.Errorf("%s: at least one acceptance criterion is required", prefix))
+	}
+
+	for _, dep := range story.Deps {
+		if !planStoryIDs[dep] {
+			res.Errors = append(res.Errors, fmt.Errorf("%s: dep %q not found in same plan's stories", prefix, dep))
+		}
+	}
+}
