@@ -27,6 +27,7 @@ Run `springfield status` to get the current Springfield batch state, then summar
 - The active batch id and title
 - The current phase
 - Which slices are done, running, blocked, or queued
+- Per-plan story progress: e.g. "Plan 03: 5/8 stories pass; failed at US-006"
 - The last known error if any
 - The clearest next action for the user
 
