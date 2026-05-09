@@ -200,6 +200,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		completedNormally bool
 		exitReason        = "completed"
 		lastAgent         agents.ID
+		iterCount         int
 	)
 
 	for iter := 1; iter <= iterCap; iter++ {
@@ -221,6 +222,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			break
 		}
 
+		iterCount++
 		progress(in.Progress, "plan %s: iteration %d (story=%s)\n", planID, iter, story.ID)
 		_ = AppendProgress(progressPath, fmt.Sprintf("%s iteration %d start (story=%s)",
 			now().UTC().Format(time.RFC3339), iter, story.ID))
@@ -302,7 +304,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		terminalStatus = "failed"
 	}
 	summary := iterationSummary{
-		IterationCount: iterCap, // capped; actual iters counted inside loop
+		IterationCount: iterCount,
 		TerminalStatus: terminalStatus,
 		ExitReason:     exitReason,
 	}

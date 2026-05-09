@@ -200,10 +200,3 @@ func TestBuildPromptProjectGuidanceSection(t *testing.T) {
 		t.Errorf("missing guidance text")
 	}
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

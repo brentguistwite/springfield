@@ -214,10 +214,21 @@ func TestSinglePlanIterationThreeStoryFullPass(t *testing.T) {
 		}
 	}
 
-	// Check summary.json.
+	// Check summary.json has iteration_count == 3 (actual, not cap).
 	summaryPath := filepath.Join(evidenceDir, "summary.json")
-	if _, err := os.Stat(summaryPath); err != nil {
-		t.Errorf("missing summary.json: %v", err)
+	summaryData, err := os.ReadFile(summaryPath)
+	if err != nil {
+		t.Fatalf("read summary.json: %v", err)
+	}
+	var summary struct {
+		IterationCount int    `json:"iteration_count"`
+		TerminalStatus string `json:"terminal_status"`
+	}
+	if err := json.Unmarshal(summaryData, &summary); err != nil {
+		t.Fatalf("unmarshal summary.json: %v", err)
+	}
+	if summary.IterationCount != 3 {
+		t.Errorf("summary.json iteration_count = %d, want 3", summary.IterationCount)
 	}
 
 	// Check MergePending is set.
@@ -484,5 +495,95 @@ func TestSinglePlanIterationAgentFailure(t *testing.T) {
 	}
 	if res.Status != conductor.StatusFailed {
 		t.Fatalf("status = %s, want failed", res.Status)
+	}
+}
+
+func TestSinglePlanIterationAgentFailureExitCodeZero(t *testing.T) {
+	// Agent with StatusFailed but ExitCode 0 must still cause plan failure and
+	// abort the loop after 1 iteration.
+	p := prd.PRD{
+		ID:    "feat",
+		Title: "Feature Plan",
+		UserStories: []prd.UserStory{
+			{ID: "US-001", Title: "Story 1", Priority: 1, Passes: false},
+		},
+	}
+
+	root, project := projectFixtureWithPRD(t, "feat", p)
+	g := newFakeGit()
+	runner := &iterScriptRunner{
+		replies: []coreruntime.Result{
+			{
+				Agent:    agents.AgentClaude,
+				Status:   coreruntime.StatusFailed,
+				ExitCode: 0,
+			},
+		},
+	}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentClaude},
+		Runner:       runner,
+		Manager:      &planrun.Manager{Git: g},
+		ProjectRoot:  root,
+	})
+
+	if res.Err == nil {
+		t.Fatal("expected failure when agent status is StatusFailed (even with ExitCode 0)")
+	}
+	if res.Status != conductor.StatusFailed {
+		t.Fatalf("status = %s, want failed", res.Status)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("expected loop to abort after 1 iter, got %d calls", runner.calls)
+	}
+}
+
+func TestSinglePlanIterationAppendProgressNonFatal(t *testing.T) {
+	// progress.md read-only must not cause plan failure — loop continues.
+	p := prd.PRD{
+		ID:    "feat",
+		Title: "Feature Plan",
+		UserStories: []prd.UserStory{
+			{ID: "US-001", Title: "Story 1", Priority: 1, Passes: false},
+		},
+	}
+
+	root, project := projectFixtureWithPRD(t, "feat", p)
+	g := newFakeGit()
+	runner := &iterScriptRunner{
+		replies: []coreruntime.Result{
+			makePassAndCompleteResult("US-001"),
+		},
+	}
+
+	// Create progress.md as read-only before running.
+	progressPath := filepath.Join(root, ".springfield", "plans", "feat", "progress.md")
+	if err := os.MkdirAll(filepath.Dir(progressPath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(progressPath, []byte("existing\n"), 0o444); err != nil {
+		t.Fatalf("write progress read-only: %v", err)
+	}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentClaude},
+		Runner:       runner,
+		Manager:      &planrun.Manager{Git: g},
+		ProjectRoot:  root,
+	})
+
+	// AppendProgress errors must not propagate as plan failure.
+	if res.Err != nil {
+		t.Fatalf("SinglePlan failed despite read-only progress.md: %v", res.Err)
+	}
+	if res.Status != conductor.StatusCompleted {
+		t.Fatalf("status = %s, want completed", res.Status)
 	}
 }
