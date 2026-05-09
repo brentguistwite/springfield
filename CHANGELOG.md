@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0](https://github.com/brentguistwite/springfield/compare/v0.7.1...v0.8.0) (2026-05-09)
+
+
+### Features
+
+* refuse ff-merge into main/master by default ([#41](https://github.com/brentguistwite/springfield/issues/41)) ([ac74625](https://github.com/brentguistwite/springfield/commit/ac746258073784516a5c4df1ac88da29b25bb879))
+
+
+### Bug Fixes
+
+* git ignore ([798cbc0](https://github.com/brentguistwite/springfield/commit/798cbc0dce59930be531184e645c9bd009c9175f))
+
 ## [0.7.1](https://github.com/brentguistwite/springfield/compare/v0.7.0...v0.7.1) (2026-05-08)
 
 
