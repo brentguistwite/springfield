@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"springfield/internal/core/agents"
+	coreexec "springfield/internal/core/exec"
 	coreruntime "springfield/internal/core/runtime"
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/conductor/planrun"
@@ -20,6 +21,8 @@ type fakeAgentRunner struct {
 	calls       []coreruntime.Request
 	failure     bool
 	beforeReply func()
+	// events are injected into the success result for marker scanning.
+	events []coreexec.Event
 }
 
 func (f *fakeAgentRunner) Run(_ context.Context, req coreruntime.Request) coreruntime.Result {
@@ -39,6 +42,7 @@ func (f *fakeAgentRunner) Run(_ context.Context, req coreruntime.Request) coreru
 		Agent:     agents.AgentClaude,
 		Status:    coreruntime.StatusPassed,
 		ExitCode:  0,
+		Events:    f.events,
 		StartedAt: time.Now().Add(-time.Second),
 		EndedAt:   time.Now(),
 	}
@@ -60,27 +64,54 @@ func sabotageStateJSON(t *testing.T, root string) {
 
 // projectFixture writes a minimal Springfield project with one plan unit so
 // LoadProject succeeds and SinglePlan picks the plan up via BuildSchedule.
+// The plan unit points to a prd.json with a single pre-passed story so the
+// iteration loop completes immediately without needing agent marker output.
 func projectFixture(t *testing.T, planID string) string {
+	t.Helper()
+	return projectFixtureOpts(t, planID, true)
+}
+
+// projectFixtureWithUnpassedStory writes a project fixture where the single
+// story is NOT yet passed, so the iteration loop will invoke the agent.
+func projectFixtureWithUnpassedStory(t *testing.T, planID string) string {
+	t.Helper()
+	return projectFixtureOpts(t, planID, false)
+}
+
+// projectFixtureOpts is the shared implementation for projectFixture variants.
+// passed controls whether the single story is pre-marked as passed.
+func projectFixtureOpts(t *testing.T, planID string, passed bool) string {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "springfield.toml"),
 		[]byte("[project]\nagent_priority = [\"claude\"]\n"), 0o644); err != nil {
 		t.Fatalf("toml: %v", err)
 	}
-	planDir := filepath.Join(root, ".springfield", "plans")
-	if err := os.MkdirAll(planDir, 0o755); err != nil {
-		t.Fatalf("mkdir plans: %v", err)
+
+	planSubDir := filepath.Join(root, ".springfield", "plans", planID)
+	if err := os.MkdirAll(planSubDir, 0o755); err != nil {
+		t.Fatalf("mkdir plan subdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(planDir, planID+".md"), []byte("# plan body\n"), 0o644); err != nil {
-		t.Fatalf("plan body: %v", err)
+	prdData := map[string]any{
+		"id":    planID,
+		"title": "Test Plan",
+		"user_stories": []map[string]any{
+			{"id": "US-001", "title": "Story", "passes": passed, "priority": 1, "deps": []string{}, "acceptance_criteria": []string{}},
+		},
 	}
+	prdBytes, _ := json.MarshalIndent(prdData, "", "  ")
+	prdPath := filepath.Join(planSubDir, "prd.json")
+	if err := os.WriteFile(prdPath, prdBytes, 0o644); err != nil {
+		t.Fatalf("write prd.json: %v", err)
+	}
+
 	cfg := map[string]any{
 		"plans_dir":     ".springfield/plans",
 		"worktree_base": ".worktrees",
 		"max_retries":   1,
 		"tool":          "claude",
 		"plan_units": []map[string]any{
-			{"id": planID, "path": ".springfield/plans/" + planID + ".md", "order": 1},
+			{"id": planID, "path": ".springfield/plans/" + planID + "/prd.json", "order": 1},
 		},
 	}
 	cfgPath := filepath.Join(root, ".springfield", "execution", "config.json")
@@ -95,21 +126,40 @@ func projectFixture(t *testing.T, planID string) string {
 }
 
 func TestSinglePlanRunsExactlyOneEligiblePlan(t *testing.T) {
-	root := projectFixture(t, "alpha")
+	// Use unpassed story so the agent is actually dispatched once.
+	root := projectFixtureWithUnpassedStory(t, "alpha")
 	project, err := conductor.LoadProject(root)
 	if err != nil {
 		t.Fatalf("LoadProject: %v", err)
 	}
-	// Add a second plan to prove only one runs per call.
+	// Add a second plan (beta) with its own prd.json to prove only one runs per call.
+	betaDir := filepath.Join(root, ".springfield", "plans", "beta")
+	if err := os.MkdirAll(betaDir, 0o755); err != nil {
+		t.Fatalf("mkdir beta: %v", err)
+	}
+	betaPRD := map[string]any{
+		"id": "beta", "title": "Beta",
+		"user_stories": []map[string]any{
+			{"id": "US-001", "title": "S", "passes": false, "priority": 1, "deps": []string{}, "acceptance_criteria": []string{}},
+		},
+	}
+	betaBytes, _ := json.MarshalIndent(betaPRD, "", "  ")
+	if err := os.WriteFile(filepath.Join(betaDir, "prd.json"), betaBytes, 0o644); err != nil {
+		t.Fatalf("write beta prd: %v", err)
+	}
 	project.Config.PlanUnits = append(project.Config.PlanUnits, conductor.PlanUnit{
-		ID: "beta", Path: ".springfield/plans/alpha.md", Order: 2,
+		ID: "beta", Path: ".springfield/plans/beta/prd.json", Order: 2,
 	})
 	if err := project.SaveConfig(); err != nil {
 		t.Fatalf("SaveConfig: %v", err)
 	}
 
 	g := newFakeGit()
+	// Agent emits story-pass marker so iteration loop can complete.
 	runner := &fakeAgentRunner{}
+	runner.events = []coreexec.Event{
+		{Type: coreexec.EventStdout, Data: "<story-pass>US-001</story-pass><promise>COMPLETE</promise>"},
+	}
 	res := planrun.SinglePlan(planrun.SinglePlanInput{
 		Project:      project,
 		ControlRoot:  root,
@@ -180,7 +230,8 @@ func TestSinglePlanRecordsTruthfulCompletedState(t *testing.T) {
 }
 
 func TestSinglePlanRecordsFailureTruthfully(t *testing.T) {
-	root := projectFixture(t, "alpha")
+	// Use unpassed story so agent is dispatched and can fail.
+	root := projectFixtureWithUnpassedStory(t, "alpha")
 	project, err := conductor.LoadProject(root)
 	if err != nil {
 		t.Fatalf("LoadProject: %v", err)
@@ -243,7 +294,7 @@ func TestSinglePlanReturnsEmptyResultWhenAllDone(t *testing.T) {
 }
 
 func TestSinglePlanReasonReflectsAgentFailure(t *testing.T) {
-	root := projectFixture(t, "alpha")
+	root := projectFixtureWithUnpassedStory(t, "alpha")
 	project, err := conductor.LoadProject(root)
 	if err != nil {
 		t.Fatalf("LoadProject: %v", err)
@@ -267,7 +318,10 @@ func TestSinglePlanReasonReflectsAgentFailure(t *testing.T) {
 }
 
 func TestSinglePlanReportsTerminalSaveFailureOnAgentSuccess(t *testing.T) {
-	root := projectFixture(t, "alpha")
+	// Need unpassed story so agent runs; sabotage happens in beforeReply.
+	// Agent emits story-pass + COMPLETE so the iteration completes normally,
+	// then save fails.
+	root := projectFixtureWithUnpassedStory(t, "alpha")
 	project, err := conductor.LoadProject(root)
 	if err != nil {
 		t.Fatalf("LoadProject: %v", err)
@@ -275,6 +329,9 @@ func TestSinglePlanReportsTerminalSaveFailureOnAgentSuccess(t *testing.T) {
 	g := newFakeGit()
 	runner := &fakeAgentRunner{
 		beforeReply: func() { sabotageStateJSON(t, root) },
+		events: []coreexec.Event{
+			{Type: coreexec.EventStdout, Data: "<story-pass>US-001</story-pass><promise>COMPLETE</promise>"},
+		},
 	}
 	res := planrun.SinglePlan(planrun.SinglePlanInput{
 		Project:      project,
@@ -299,7 +356,7 @@ func TestSinglePlanReportsTerminalSaveFailureOnAgentSuccess(t *testing.T) {
 }
 
 func TestSinglePlanReportsTerminalSaveFailureOnAgentFailure(t *testing.T) {
-	root := projectFixture(t, "alpha")
+	root := projectFixtureWithUnpassedStory(t, "alpha")
 	project, err := conductor.LoadProject(root)
 	if err != nil {
 		t.Fatalf("LoadProject: %v", err)
