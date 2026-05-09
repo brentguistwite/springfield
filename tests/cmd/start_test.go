@@ -44,10 +44,9 @@ func TestSpringfieldStartFailsWithNoBatch(t *testing.T) {
 }
 
 func TestSpringfieldStatusShowsBatchState(t *testing.T) {
-	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
 	bin := buildBinary(t)
 	dir := t.TempDir()
-	writeSpringfieldConfig(t, dir, "claude")
+	writeProjectConfig(t, dir, "claude")
 
 	// Create a batch via plan command.
 	_, err := singleSlicePlan(t, bin, dir, "Implement login")
@@ -63,7 +62,7 @@ func TestSpringfieldStatusShowsBatchState(t *testing.T) {
 	for _, marker := range []string{
 		"Batch:",
 		"Title:",
-		"Slices:",
+		"Plans:",
 	} {
 		if !strings.Contains(output, marker) {
 			t.Fatalf("expected status output to contain %q, got:\n%s", marker, output)
@@ -86,7 +85,7 @@ func TestSpringfieldStatusNoStateReportsCleanly(t *testing.T) {
 }
 
 func TestSpringfieldStatusShowsEvidencePathForFailedSlice(t *testing.T) {
-	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
+	t.Skip("TODO(phase-8) story-aware status: evidence path not surfaced in status command")
 	bin := buildBinary(t)
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
@@ -123,10 +122,11 @@ func TestSpringfieldStatusShowsEvidencePathForFailedSlice(t *testing.T) {
 }
 
 func TestSpringfieldStartRunsBatchSlices(t *testing.T) {
-	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
 	bin := buildBinary(t)
-	dir := t.TempDir()
+	dir := initRealGitRepo(t)
 	writeSpringfieldConfig(t, dir, "claude")
+	gitMust(t, dir, "add", ".")
+	gitMust(t, dir, "commit", "-m", "scaffold")
 
 	// Compile a batch first.
 	_, planErr := singleSlicePlan(t, bin, dir, "Implement login flow")
@@ -134,14 +134,13 @@ func TestSpringfieldStartRunsBatchSlices(t *testing.T) {
 		t.Fatalf("plan failed: %v", planErr)
 	}
 
-	// Install fake claude binary.
+	// Install PRD-aware fake claude binary that emits story-pass + COMPLETE.
 	fakeBinDir := filepath.Join(dir, "bin")
-	argvPath := filepath.Join(dir, "claude.argv")
-	installFakeAgentBinary(t, fakeBinDir, "claude", argvPath)
+	installPRDFakeAgentBinary(t, fakeBinDir, "claude", []string{"US-001"})
 
 	output, err := runBinaryInWithEnv(
 		t, bin, dir,
-		[]string{"PATH=" + fakeBinDir},
+		[]string{"PATH=" + fakeBinDir + ":" + os.Getenv("PATH")},
 		"start",
 	)
 	if err != nil {
@@ -175,7 +174,6 @@ func TestSpringfieldStartRunsBatchSlices(t *testing.T) {
 	if err := json.Unmarshal(archiveData, &archive); err != nil {
 		t.Fatalf("decode archive entry: %v", err)
 	}
-	// TODO(phase-3): archive.Plans check pending PRD rewrite
 	_ = archive
 }
 
@@ -185,20 +183,20 @@ func TestSpringfieldStartRunsBatchSlices(t *testing.T) {
 // already-archived batch id; the next springfield start must recover
 // idempotently (archive already exists → skip, clear cursor, exit 0).
 func TestSpringfieldStartRecoversFromPostArchiveCrash(t *testing.T) {
-	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
 	bin := buildBinary(t)
-	dir := t.TempDir()
+	dir := initRealGitRepo(t)
 	writeSpringfieldConfig(t, dir, "claude")
+	gitMust(t, dir, "add", ".")
+	gitMust(t, dir, "commit", "-m", "scaffold")
 
 	if _, err := singleSlicePlan(t, bin, dir, "Implement login flow"); err != nil {
 		t.Fatalf("plan failed: %v", err)
 	}
 	fakeBinDir := filepath.Join(dir, "bin")
-	argvPath := filepath.Join(dir, "claude.argv")
-	installFakeAgentBinary(t, fakeBinDir, "claude", argvPath)
+	installPRDFakeAgentBinary(t, fakeBinDir, "claude", []string{"US-001"})
 
 	// Run to completion normally.
-	if _, err := runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + fakeBinDir}, "start"); err != nil {
+	if _, err := runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + fakeBinDir + ":" + os.Getenv("PATH")}, "start"); err != nil {
 		t.Fatalf("start failed: %v", err)
 	}
 	// Confirm normal completion state: archive present, no run.json.
@@ -230,7 +228,7 @@ func TestSpringfieldStartRecoversFromPostArchiveCrash(t *testing.T) {
 	}
 
 	// Next start: expect orphan recovery path (exits 0, clears run.json).
-	output, err := runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + fakeBinDir}, "start")
+	output, err := runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + fakeBinDir + ":" + os.Getenv("PATH")}, "start")
 	if err != nil {
 		t.Fatalf("expected orphan recovery to exit 0, got err=%v\n%s", err, output)
 	}
@@ -243,21 +241,21 @@ func TestSpringfieldStartRecoversFromPostArchiveCrash(t *testing.T) {
 }
 
 func TestSpringfieldStartCompletionWarnsWhenArchiveFails(t *testing.T) {
-	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
 	if os.Geteuid() == 0 {
 		t.Skip("chmod-based write-failure test does not apply when running as root")
 	}
 	bin := buildBinary(t)
-	dir := t.TempDir()
+	dir := initRealGitRepo(t)
 	writeSpringfieldConfig(t, dir, "claude")
+	gitMust(t, dir, "add", ".")
+	gitMust(t, dir, "commit", "-m", "scaffold")
 
 	if _, err := singleSlicePlan(t, bin, dir, "Implement login flow"); err != nil {
 		t.Fatalf("plan failed: %v", err)
 	}
 
 	fakeBinDir := filepath.Join(dir, "bin")
-	argvPath := filepath.Join(dir, "claude.argv")
-	installFakeAgentBinary(t, fakeBinDir, "claude", argvPath)
+	installPRDFakeAgentBinary(t, fakeBinDir, "claude", []string{"US-001"})
 
 	// Force ArchiveBatchNormalized's MkdirAll to fail by creating a non-directory at .springfield/archive.
 	archivePath := filepath.Join(dir, ".springfield", "archive")
@@ -270,7 +268,7 @@ func TestSpringfieldStartCompletionWarnsWhenArchiveFails(t *testing.T) {
 
 	output, err := runBinaryInWithEnv(
 		t, bin, dir,
-		[]string{"PATH=" + fakeBinDir},
+		[]string{"PATH=" + fakeBinDir + ":" + os.Getenv("PATH")},
 		"start",
 	)
 	if err != nil {
@@ -294,7 +292,7 @@ func TestSpringfieldStartCompletionWarnsWhenArchiveFails(t *testing.T) {
 //
 //	another springfield start is already running (pid <N> since <ts>)
 func TestStartCommandRejectsSecondInvocationWithPid(t *testing.T) {
-	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
+	t.Skip("TODO(phase-lock) needs conductor dispatch to exercise lock contention; vacuous completion races are too fast")
 	bin := buildBinary(t)
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")

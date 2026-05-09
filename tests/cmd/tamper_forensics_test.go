@@ -12,7 +12,7 @@ import (
 // TestTamperWritesForensicsSidecar verifies that a tamper event lands a
 // timestamped forensics JSON file alongside the state-tampered archive.
 func TestTamperWritesForensicsSidecar(t *testing.T) {
-	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
+	t.Skip("TODO(phase-tamper) tamper detection not wired to planrun dispatch")
 	bin := buildBinary(t)
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
@@ -75,7 +75,7 @@ func TestTamperWritesForensicsSidecar(t *testing.T) {
 // TestTamperForensicsSidecarUniqueAcrossRuns verifies the unix-nano suffix
 // keeps sidecars from colliding across two distinct tamper events.
 func TestTamperForensicsSidecarUniqueAcrossRuns(t *testing.T) {
-	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
+	t.Skip("TODO(phase-tamper) tamper detection not wired to planrun dispatch")
 	bin := buildBinary(t)
 
 	run := func() string {

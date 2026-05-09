@@ -30,7 +30,7 @@ func findPlanDir(t *testing.T, root string) string {
 // malicious) must cause the pre-agent snapshot to fail with a non-regular
 // entry error, surfaced as a snapshot error on start.
 func TestSnapshotRejectsSymlink(t *testing.T) {
-	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
+	t.Skip("TODO(phase-tamper) snapshot not taken before planrun dispatch")
 	bin := buildBinary(t)
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
@@ -69,7 +69,7 @@ func TestSnapshotRejectsSymlink(t *testing.T) {
 // sized plan docs. 2 MiB is well above any realistic source.md but below
 // the per-file cap, proving the cap doesn't reject legitimate plans.
 func TestSnapshotAcceptsLargePlanFile(t *testing.T) {
-	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
+	t.Skip("TODO(phase-tamper) snapshot not taken before planrun dispatch")
 	bin := buildBinary(t)
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
@@ -106,7 +106,7 @@ func TestSnapshotAcceptsLargePlanFile(t *testing.T) {
 // inputs (accidental gigabyte blob in the plan dir) without rejecting any
 // real plan doc.
 func TestSnapshotRejectsOversizeFile(t *testing.T) {
-	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
+	t.Skip("TODO(phase-tamper) snapshot not taken before planrun dispatch")
 	bin := buildBinary(t)
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
@@ -142,7 +142,7 @@ func TestSnapshotRejectsOversizeFile(t *testing.T) {
 // 100 MiB total cap must cause the snapshot to fail, even when each
 // individual file is under the per-file cap. 120 × 1 MiB = 120 MiB.
 func TestSnapshotRejectsOversizeTree(t *testing.T) {
-	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
+	t.Skip("TODO(phase-tamper) snapshot not taken before planrun dispatch")
 	bin := buildBinary(t)
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
@@ -179,7 +179,7 @@ func TestSnapshotRejectsOversizeTree(t *testing.T) {
 // TestSnapshotAcceptsNormalTree — the happy path: plan dir contains only
 // batch.json + source.md at sane sizes, noop agent passes.
 func TestSnapshotAcceptsNormalTree(t *testing.T) {
-	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
+	t.Skip("TODO(phase-tamper) snapshot not taken before planrun dispatch")
 	bin := buildBinary(t)
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
