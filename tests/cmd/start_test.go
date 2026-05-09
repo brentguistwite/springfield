@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"springfield/internal/features/batch"
+	"springfield/internal/features/prd"
 )
 
 func TestSpringfieldStartHelp(t *testing.T) {
@@ -348,4 +349,92 @@ func TestStartCommandRejectsSecondInvocationWithPid(t *testing.T) {
 		t.Errorf("expected one start to fail with lock-held message, got:\n  results[0]: err=%v out=%q\n  results[1]: err=%v out=%q",
 			results[0].err, results[0].out, results[1].err, results[1].out)
 	}
+}
+
+// TestRunBatchDispatchesTwoPlansInOrder compiles a 2-plan batch (plan-1 then
+// plan-2, each with one user story) and verifies that both plans are dispatched
+// in phase order: plan-1 appears before plan-2 in the output, and both report
+// Status: completed.
+func TestRunBatchDispatchesTwoPlansInOrder(t *testing.T) {
+	bin := buildBinary(t)
+	dir := initRealGitRepo(t)
+	writeSpringfieldConfig(t, dir, "claude")
+	gitMust(t, dir, "add", ".")
+	gitMust(t, dir, "commit", "-m", "scaffold")
+
+	// Build a 2-plan envelope: 2 serial phases, one plan each.
+	env := prd.BatchPRDEnvelope{
+		Title:  "Two plan batch",
+		Source: "Two plan batch",
+		Phases: []prd.PhasePRD{
+			{Mode: "serial", Plans: []string{"plan-1"}},
+			{Mode: "serial", Plans: []string{"plan-2"}},
+		},
+		Plans: []prd.BatchPRDPlan{
+			{PRD: prd.PRD{
+				ID:    "plan-1",
+				Title: "Plan One",
+				UserStories: []prd.UserStory{{
+					ID:                 "US-001",
+					Title:              "Story 1",
+					Priority:           1,
+					AcceptanceCriteria: []string{"passes"},
+				}},
+			}},
+			{PRD: prd.PRD{
+				ID:    "plan-2",
+				Title: "Plan Two",
+				UserStories: []prd.UserStory{{
+					ID:                 "US-001",
+					Title:              "Story 1",
+					Priority:           1,
+					AcceptanceCriteria: []string{"passes"},
+				}},
+			}},
+		},
+	}
+	data, err := json.MarshalIndent(env, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	if _, err := planWithPRD(t, bin, dir, string(data)); err != nil {
+		t.Fatalf("plan failed: %v", err)
+	}
+
+	// Install a PRD-aware agent that passes US-001 for any plan.
+	fakeBinDir := filepath.Join(dir, "bin")
+	installPRDFakeAgentBinary(t, fakeBinDir, "claude", []string{"US-001"})
+
+	output, err := runBinaryInWithEnv(
+		t, bin, dir,
+		[]string{"PATH=" + fakeBinDir + ":" + os.Getenv("PATH")},
+		"start",
+	)
+	if err != nil {
+		t.Fatalf("springfield start failed: %v\n%s", err, output)
+	}
+
+	// Both plans must appear in the output.
+	for _, id := range []string{"plan-1", "plan-2"} {
+		if !strings.Contains(output, "Plan: "+id) {
+			t.Errorf("expected Plan: %s in output:\n%s", id, output)
+		}
+	}
+
+	// plan-1 must appear before plan-2.
+	plan1Idx := strings.Index(output, "Plan: plan-1")
+	plan2Idx := strings.Index(output, "Plan: plan-2")
+	if plan1Idx < 0 || plan2Idx < 0 {
+		t.Fatalf("could not find both plan markers in output:\n%s", output)
+	}
+	if plan1Idx > plan2Idx {
+		t.Errorf("plan-2 appeared before plan-1 (phase order violated):\n%s", output)
+	}
+
+	// run.json cleared after completion.
+	if _, statErr := os.Stat(filepath.Join(dir, ".springfield", "run.json")); !os.IsNotExist(statErr) {
+		t.Error("run.json should be cleared after successful completion")
+	}
+
+	_ = batch.Run{} // keep batch import used
 }

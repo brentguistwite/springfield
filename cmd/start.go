@@ -33,7 +33,6 @@ import (
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/conductor/planmerge"
 	"springfield/internal/features/conductor/planrun"
-	"springfield/internal/features/execution"
 	"springfield/internal/features/wakelock"
 )
 
@@ -267,6 +266,7 @@ func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, log
 			Manager:           planrun.NewManager(),
 			OnEvent:           traceHandler,
 			Progress:          progress,
+			TargetPlanID:      planID,
 		})
 		if res.PlanID == "" && res.Reason == "no-eligible-plan" {
 			break
@@ -848,25 +848,6 @@ func openAgentTrace(root, batchID string) (coreexec.EventHandler, func()) {
 		_, _ = f.Write(append(data, '\n'))
 	}
 	return handler, closer
-}
-
-// planToExecutionWork builds an execution.Work from batch metadata and the
-// plan's source.md. When source.md is missing, RequestBody is empty and
-// execution falls back to the plan title.
-func planToExecutionWork(root string, b batch.Batch, planID string) execution.Work {
-	paths, err := batch.NewPaths(root, b.ID)
-	if err != nil {
-		return execution.Work{ID: planID, Title: planID}
-	}
-	requestBody := ""
-	if data, err := os.ReadFile(paths.SourcePath()); err == nil {
-		requestBody = string(data)
-	}
-	return execution.Work{
-		ID:          planID,
-		Title:       planID,
-		RequestBody: requestBody,
-	}
 }
 
 // tryRunSinglePlanUnit handles the parity-2 single-plan worktree flow when no

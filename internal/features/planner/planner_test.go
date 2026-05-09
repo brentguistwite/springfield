@@ -142,10 +142,9 @@ func TestSessionNextBuildsPlanningPromptAndParsesResponse(t *testing.T) {
 			"mode":"draft",
 			"work_id":"wave-b",
 			"title":"Wave B planning surface",
-			"summary":"Add the planning surface.",
 			"split":"single",
 			"workstreams":[
-				{"name":"01","title":"Implement Wave B","summary":"One workstream."}
+				{"name":"01","title":"Implement Wave B"}
 			]
 		}`,
 	}
@@ -236,10 +235,9 @@ func TestSessionNextCarriesInitialRequestIntoFollowUpTurns(t *testing.T) {
 				"mode":"draft",
 				"work_id":"wave-c1",
 				"title":"Wave C1 planning loop",
-				"summary":"Connect the planning flow to the real planner session.",
 				"split":"single",
 				"workstreams":[
-					{"name":"01","title":"Implement Wave C1","summary":"Keep it in one stream."}
+					{"name":"01","title":"Implement Wave C1"}
 				]
 			}`,
 		},
@@ -287,7 +285,7 @@ func TestSessionNextStillRejectsInvalidPlannerResponseAfterQuestion(t *testing.T
 	runner := &fakeRunner{
 		outputs: []string{
 			`{"mode":"question","question":"Which workflow surface should ship first?"}`,
-			`{"mode":"draft","work_id":" ","title":"Broken","summary":"still broken","split":"single","workstreams":[{"name":"01","title":"Broken"}]}`,
+			`{"mode":"draft","work_id":" ","title":"Broken","split":"single","workstreams":[{"name":"01","title":"Broken"}]}`,
 		},
 	}
 	session := &planner.Session{

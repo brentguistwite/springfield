@@ -28,9 +28,8 @@ type Response struct {
 
 // Workstream describes one unit of approved work in a draft response.
 type Workstream struct {
-	Name    string `json:"name"`
-	Title   string `json:"title"`
-	Summary string `json:"summary,omitempty"`
+	Name  string `json:"name"`
+	Title string `json:"title"`
 }
 
 // Conversation is the narrow planning conversation boundary.

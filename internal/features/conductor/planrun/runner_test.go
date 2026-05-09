@@ -424,3 +424,90 @@ func TestSinglePlanRecordsPreflightFailureWithoutDispatch(t *testing.T) {
 		t.Fatalf("preflight tag not persisted: %+v", st)
 	}
 }
+
+// TestTargetPlanIDOverridesDefaultSelection verifies that when TargetPlanID is
+// set, SinglePlan dispatches that specific eligible plan instead of whichever
+// plan would be next[0] from the schedule. The test sets TargetPlanID="alpha"
+// on a project where "alpha" is the sole eligible plan; the critical check is
+// that the field is honoured (no "no-eligible-plan" return, correct PlanID).
+// A companion sub-test asserts that TargetPlanID for an ineligible (already-
+// completed) plan returns "no-eligible-plan" rather than an unexpected run.
+func TestTargetPlanIDOverridesDefaultSelection(t *testing.T) {
+	t.Run("eligible target is dispatched", func(t *testing.T) {
+		// "alpha" is the only plan and is eligible.
+		root := projectFixtureWithUnpassedStory(t, "alpha")
+		project, err := conductor.LoadProject(root)
+		if err != nil {
+			t.Fatalf("LoadProject: %v", err)
+		}
+
+		g := newFakeGit()
+		runner := &fakeAgentRunner{
+			events: []coreexec.Event{
+				{Type: coreexec.EventStdout, Data: "<story-pass>US-001</story-pass><promise>COMPLETE</promise>"},
+			},
+		}
+
+		res := planrun.SinglePlan(planrun.SinglePlanInput{
+			Project:      project,
+			ControlRoot:  root,
+			WorktreeBase: ".worktrees",
+			AgentIDs:     []agents.ID{agents.AgentClaude},
+			Runner:       runner,
+			Manager:      &planrun.Manager{Git: g},
+			TargetPlanID: "alpha",
+		})
+
+		if res.Err != nil {
+			t.Fatalf("SinglePlan: %v", res.Err)
+		}
+		if res.PlanID != "alpha" {
+			t.Fatalf("dispatched %q, want alpha", res.PlanID)
+		}
+		if len(runner.calls) != 1 {
+			t.Fatalf("expected 1 agent call, got %d", len(runner.calls))
+		}
+	})
+
+	t.Run("ineligible target returns no-eligible-plan", func(t *testing.T) {
+		// "alpha" is already completed+merged → not in NextPlans.
+		root := projectFixture(t, "alpha")
+		project, err := conductor.LoadProject(root)
+		if err != nil {
+			t.Fatalf("LoadProject: %v", err)
+		}
+		// Mark alpha as integrated so NextPlans returns nothing.
+		// IsIntegrated requires Completed + MergeSucceeded + Cleanup != nil.
+		project.State.Plans["alpha"] = &conductor.PlanState{
+			Status:  conductor.StatusCompleted,
+			Merge:   &conductor.MergeOutcome{Status: conductor.MergeSucceeded},
+			Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupSucceeded},
+		}
+		if err := project.SaveState(); err != nil {
+			t.Fatalf("SaveState: %v", err)
+		}
+
+		g := newFakeGit()
+		runner := &fakeAgentRunner{}
+
+		res := planrun.SinglePlan(planrun.SinglePlanInput{
+			Project:      project,
+			ControlRoot:  root,
+			WorktreeBase: ".worktrees",
+			AgentIDs:     []agents.ID{agents.AgentClaude},
+			Runner:       runner,
+			Manager:      &planrun.Manager{Git: g},
+			TargetPlanID: "alpha",
+		})
+
+		if res.Err != nil {
+			t.Fatalf("unexpected err: %v", res.Err)
+		}
+		if res.Reason != "no-eligible-plan" {
+			t.Fatalf("Reason = %q, want no-eligible-plan", res.Reason)
+		}
+		if len(runner.calls) != 0 {
+			t.Fatalf("agent must not be dispatched for ineligible target")
+		}
+	})
+}

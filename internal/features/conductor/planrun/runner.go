@@ -58,6 +58,12 @@ type SinglePlanInput struct {
 	// prompt templates. Caller passes the same path used for config.LoadFrom.
 	// MUST NOT fall back to os.Getwd inside BuildPromptForPlan.
 	ProjectRoot string
+	// TargetPlanID pins which plan to dispatch. When non-empty, SinglePlan
+	// uses this ID instead of next[0] from the schedule, provided the target
+	// is still eligible (present in NextPlans). Callers that filter by batch
+	// membership set this field so outside-batch plans don't accidentally run.
+	// Zero value falls back to next[0] for legacy callers.
+	TargetPlanID string
 }
 
 // SinglePlanResult summarizes the outcome.
@@ -102,6 +108,23 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		return SinglePlanResult{Reason: "no-eligible-plan"}
 	}
 	planID := next[0]
+	if in.TargetPlanID != "" {
+		// Verify the requested plan is actually eligible before overriding.
+		found := false
+		for _, id := range next {
+			if id == in.TargetPlanID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return SinglePlanResult{
+				PlanID: in.TargetPlanID,
+				Reason: "no-eligible-plan",
+			}
+		}
+		planID = in.TargetPlanID
+	}
 	unit, ok := in.Project.PlanUnitByID(planID)
 	if !ok {
 		return SinglePlanResult{PlanID: planID, Err: fmt.Errorf("plan %q is scheduled but not registered", planID)}
