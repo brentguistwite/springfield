@@ -366,11 +366,6 @@ func executionPrompt(root string, work Work, workstream Workstream) (string, err
 	b.WriteString("\n# Slice\n")
 	fmt.Fprintf(&b, "- ID: %s\n", workstream.Name)
 	fmt.Fprintf(&b, "- Title: %s\n", workstream.Title)
-	if strings.TrimSpace(workstream.Summary) != "" {
-		b.WriteString("- Body:\n")
-		b.WriteString(strings.TrimSpace(workstream.Summary))
-		b.WriteString("\n")
-	}
 	b.WriteString("\n# Batch context\n")
 	fmt.Fprintf(&b, "Title: %s\n", work.Title)
 	if strings.TrimSpace(work.RequestBody) != "" {

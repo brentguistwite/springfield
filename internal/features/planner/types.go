@@ -22,7 +22,6 @@ type Response struct {
 	Question    string       `json:"question,omitempty"`
 	WorkID      string       `json:"work_id,omitempty"`
 	Title       string       `json:"title,omitempty"`
-	Summary     string       `json:"summary,omitempty"`
 	Split       Split        `json:"split,omitempty"`
 	Workstreams []Workstream `json:"workstreams,omitempty"`
 }
@@ -41,16 +40,14 @@ type Conversation interface {
 
 // WorkstreamSummary is the package-safe projection of a planned workstream.
 type WorkstreamSummary struct {
-	Name    string
-	Title   string
-	Summary string
+	Name  string
+	Title string
 }
 
 // Draft is the package-safe review model for one planner-produced draft.
 type Draft struct {
 	WorkID      string
 	Title       string
-	Summary     string
 	Split       Split
 	Workstreams []WorkstreamSummary
 }

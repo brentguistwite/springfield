@@ -20,9 +20,6 @@ func Validate(resp Response) error {
 		if strings.TrimSpace(resp.Title) == "" {
 			return fmt.Errorf("draft mode requires title")
 		}
-		if strings.TrimSpace(resp.Summary) == "" {
-			return fmt.Errorf("draft mode requires summary")
-		}
 		if len(resp.Workstreams) == 0 {
 			return fmt.Errorf("draft mode requires at least one workstream")
 		}

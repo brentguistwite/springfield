@@ -28,9 +28,8 @@ type workIndexEntry struct {
 }
 
 type workstreamFile struct {
-	Name    string `json:"name"`
-	Title   string `json:"title"`
-	Summary string `json:"summary,omitempty"`
+	Name  string `json:"name"`
+	Title string `json:"title"`
 }
 
 type runStateFile struct {
@@ -79,9 +78,8 @@ func WriteDraft(root string, draft Draft) error {
 	for _, workstream := range draft.Response.Workstreams {
 		workstreamNames = append(workstreamNames, workstream.Name)
 		if err := writeJSONFile(work.WorkstreamPath(workstream.Name), workstreamFile{
-			Name:    workstream.Name,
-			Title:   workstream.Title,
-			Summary: workstream.Summary,
+			Name:  workstream.Name,
+			Title: workstream.Title,
 		}); err != nil {
 			return err
 		}

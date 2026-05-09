@@ -193,13 +193,122 @@ type BatchRunResult struct {
 }
 
 func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string) (BatchRunResult, error) {
-	// TODO(phase-5): batch runtime pending PRD rewrite.
-	_ = root
-	_ = run
-	_ = b
-	_ = progress
-	_ = logPath
-	return BatchRunResult{Error: "cmd/start: batch runtime pending Phase 5 rewrite"}, errors.New("cmd/start: batch runtime pending Phase 5 rewrite")
+	loaded, err := config.LoadFrom(root)
+	if err != nil {
+		return BatchRunResult{Error: err.Error()}, err
+	}
+	if len(loaded.Config.Project.AgentPriority) == 0 {
+		e := fmt.Errorf("project has no agents configured: agent_priority is empty")
+		return BatchRunResult{Error: e.Error()}, e
+	}
+
+	registry := agents.NewRegistry(
+		claude.New(exec.LookPath),
+		codex.New(exec.LookPath),
+		gemini.New(exec.LookPath),
+	)
+	agentIDs := make([]agents.ID, 0, len(loaded.Config.Project.AgentPriority))
+	for _, id := range loaded.Config.Project.AgentPriority {
+		if id != "" {
+			agentIDs = append(agentIDs, agents.ID(id))
+		}
+	}
+
+	worktreeBase := ".worktrees"
+
+	traceHandler, closeTrace := openAgentTrace(root, b.ID)
+	defer closeTrace()
+
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return BatchRunResult{Error: err.Error()}, err
+		}
+		// No conductor project: no eligible plans. Batch completes vacuously.
+		return BatchRunResult{}, nil
+	}
+
+	// Build an index of plan IDs in this batch so we only dispatch plans that
+	// belong to the batch. Conductor plans outside the batch are not touched.
+	batchPlanSet := make(map[string]bool, len(b.PlanIDs))
+	for _, id := range b.PlanIDs {
+		batchPlanSet[id] = true
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	for {
+		if ctx.Err() != nil {
+			break
+		}
+		schedule := conductor.BuildSchedule(project.Config)
+		next := schedule.NextPlans(project.State)
+		// Only dispatch the first eligible plan that belongs to this batch.
+		planID := ""
+		for _, id := range next {
+			if batchPlanSet[id] {
+				planID = id
+				break
+			}
+		}
+		if planID == "" {
+			break
+		}
+
+		res := planrun.SinglePlan(planrun.SinglePlanInput{
+			Project:           project,
+			ControlRoot:       root,
+			ProjectRoot:       root,
+			WorktreeBase:      worktreeBase,
+			AgentIDs:          agentIDs,
+			ExecutionSettings: loaded.Config.ExecutionSettings(),
+			Runner:            runtimeAgentRunner{inner: coreruntime.NewRunner(registry)},
+			Manager:           planrun.NewManager(),
+			OnEvent:           traceHandler,
+			Progress:          progress,
+		})
+		if res.PlanID == "" && res.Reason == "no-eligible-plan" {
+			break
+		}
+		if res.Err != nil {
+			fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
+			fmt.Fprintf(progress, "Status: failed (%s)\n", res.Reason)
+			fmt.Fprintf(progress, "Error: %s\n", res.Err.Error())
+			return BatchRunResult{Error: res.Err.Error()}, res.Err
+		}
+		fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
+		fmt.Fprintf(progress, "Status: completed\n")
+		if res.EvidencePath != "" {
+			fmt.Fprintf(progress, "Evidence: %s\n", res.EvidencePath)
+		}
+
+		mergeRes := planmerge.Integrate(planmerge.IntegrateInput{
+			Project:      project,
+			PlanID:       res.PlanID,
+			ControlRoot:  root,
+			WorktreeBase: worktreeBase,
+			Progress:     progress,
+		})
+		renderMergeOutcome(progress, mergeRes)
+		if mergeRes.Err != nil {
+			e := fmt.Errorf("plan %s merge integration failed: %w", res.PlanID, mergeRes.Err)
+			return BatchRunResult{Error: e.Error()}, e
+		}
+		if mergeRes.Merge != nil && mergeRes.Merge.Status != conductor.MergeSucceeded {
+			e := fmt.Errorf("plan %s merge %s: %s", res.PlanID, mergeRes.Merge.Status, mergeRes.Merge.Reason)
+			return BatchRunResult{Error: e.Error()}, e
+		}
+		if mergeRes.Cleanup != nil && mergeRes.Cleanup.Status == conductor.CleanupFailed {
+			e := fmt.Errorf("plan %s merge succeeded but cleanup failed: artifacts preserved", res.PlanID)
+			return BatchRunResult{Error: e.Error()}, e
+		}
+		if mergeRes.Merge != nil && mergeRes.Merge.SourceSyncStatus == "failed" {
+			e := fmt.Errorf("plan %s merge succeeded but source resync failed: %s", res.PlanID, mergeRes.Merge.SourceSyncError)
+			return BatchRunResult{Error: e.Error()}, e
+		}
+	}
+	return BatchRunResult{}, nil
 }
 
 // controlPlaneSnapshot captures every Springfield-owned file under
@@ -225,7 +334,6 @@ const (
 	snapshotTreeMaxBytes = 100 * 1024 * 1024 // 100 MiB cumulative
 )
 
-// TODO(phase-5): revive once start runtime is rewritten for PRD plan units
 func snapshotControlPlane(root string, paths batch.Paths) (controlPlaneSnapshot, error) {
 	tree, err := snapshotPlanTree(paths.PlanDir())
 	if err != nil {
@@ -316,7 +424,6 @@ type tamperForensicsContext struct {
 // run.json is cleared. A forensics sidecar is written into the archive dir
 // regardless of whether the archive write itself was a no-op (e.g. already
 // archived from a prior call under the same reason).
-// TODO(phase-5): revive once start runtime is rewritten for PRD plan units
 func detectAndRecoverTamper(root string, paths batch.Paths, snap controlPlaneSnapshot, forensics tamperForensicsContext) error {
 	reason := compareControlPlane(root, paths, snap, allowedEvidenceRelPaths(forensics.sliceID))
 	if reason == "" {
@@ -717,7 +824,6 @@ func writeTamperBlobs(root string, ctx tamperForensicsContext, pre, post []byte)
 // appends events as JSON lines and a closer. On open failure returns nil
 // handler (events discarded) and a noop closer — trace is best-effort
 // diagnostic, not load-bearing.
-// TODO(phase-5): revive once start runtime is rewritten for PRD plan units
 func openAgentTrace(root, batchID string) (coreexec.EventHandler, func()) {
 	logsDir := filepath.Join(root, ".springfield", "logs")
 	if err := os.MkdirAll(logsDir, 0o755); err != nil {
@@ -744,13 +850,23 @@ func openAgentTrace(root, batchID string) (coreexec.EventHandler, func()) {
 	return handler, closer
 }
 
-// sliceToExecutionWork is a stub pending Phase 5 rewrite.
-// TODO(phase-5): revive once start runtime is rewritten for PRD plan units
-func sliceToExecutionWork(root string, b batch.Batch, planID string) execution.Work {
-	_ = root
-	_ = b
-	_ = planID
-	return execution.Work{}
+// planToExecutionWork builds an execution.Work from batch metadata and the
+// plan's source.md. When source.md is missing, RequestBody is empty and
+// execution falls back to the plan title.
+func planToExecutionWork(root string, b batch.Batch, planID string) execution.Work {
+	paths, err := batch.NewPaths(root, b.ID)
+	if err != nil {
+		return execution.Work{ID: planID, Title: planID}
+	}
+	requestBody := ""
+	if data, err := os.ReadFile(paths.SourcePath()); err == nil {
+		requestBody = string(data)
+	}
+	return execution.Work{
+		ID:          planID,
+		Title:       planID,
+		RequestBody: requestBody,
+	}
 }
 
 // tryRunSinglePlanUnit handles the parity-2 single-plan worktree flow when no

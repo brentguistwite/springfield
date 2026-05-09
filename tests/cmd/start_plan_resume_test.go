@@ -113,7 +113,6 @@ func TestSpringfieldStartResumesInterruptedPlanFromRecordedWorktree(t *testing.T
 }
 
 func TestSpringfieldStartBatchRuntimeWinsOverConductorState(t *testing.T) {
-	t.Skip("TODO(phase-5) batch runtime pending PRD rewrite")
 	bin := buildBinary(t)
 	dir := initRealGitRepo(t)
 	writeSpringfieldConfig(t, dir, "claude")

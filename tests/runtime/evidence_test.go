@@ -33,7 +33,7 @@ exit 1
 		Title:       "Evidence capture",
 		RequestBody: "Implement evidence capture.",
 		Split:       "single",
-		Workstreams: []execution.Workstream{{Name: "slice-001", Title: "Slice 001", Summary: "fail once"}},
+		Workstreams: []execution.Workstream{{Name: "slice-001", Title: "Slice 001"}},
 	})
 	if runErr == nil {
 		t.Fatal("expected runtime failure")
@@ -75,7 +75,7 @@ exit 0
 		Title:       "Evidence capture",
 		RequestBody: "Implement evidence capture.",
 		Split:       "single",
-		Workstreams: []execution.Workstream{{Name: "slice-002", Title: "Slice 002", Summary: "succeed once"}},
+		Workstreams: []execution.Workstream{{Name: "slice-002", Title: "Slice 002"}},
 	})
 	if runErr != nil {
 		t.Fatalf("unexpected runtime failure: %v", runErr)

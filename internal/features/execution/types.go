@@ -13,7 +13,6 @@ type Work struct {
 type Workstream struct {
 	Name         string
 	Title        string
-	Summary      string
 	Status       string
 	Error        string
 	EvidencePath string

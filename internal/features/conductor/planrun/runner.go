@@ -57,7 +57,6 @@ type SinglePlanInput struct {
 	// ProjectRoot is the project's config root used to resolve operator-override
 	// prompt templates. Caller passes the same path used for config.LoadFrom.
 	// MUST NOT fall back to os.Getwd inside BuildPromptForPlan.
-	// TODO(phase-5): wire this from cmd/start.go.
 	ProjectRoot string
 }
 

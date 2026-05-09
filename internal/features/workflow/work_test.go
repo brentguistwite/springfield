@@ -41,16 +41,14 @@ func TestWriteDraftWritesApprovedSingleDraft(t *testing.T) {
 	draft := workflow.Draft{
 		RequestBody: "Add the Wave B planning surface.",
 		Response: planner.Response{
-			Mode:    planner.ModeDraft,
-			WorkID:  "wave-b",
-			Title:   "Wave B planning surface",
-			Summary: "Keep planning and review in Springfield.",
-			Split:   planner.SplitSingle,
+			Mode:   planner.ModeDraft,
+			WorkID: "wave-b",
+			Title:  "Wave B planning surface",
+			Split:  planner.SplitSingle,
 			Workstreams: []planner.Workstream{
 				{
-					Name:    "01",
-					Title:   "Implement Wave B",
-					Summary: "One workstream.",
+					Name:  "01",
+					Title: "Implement Wave B",
 				},
 			},
 		},
@@ -93,11 +91,10 @@ func TestWriteDraftWritesMultipleWorkstreamsForMultiSplit(t *testing.T) {
 	draft := workflow.Draft{
 		RequestBody: "Split Wave B into core and UI workstreams.",
 		Response: planner.Response{
-			Mode:    planner.ModeDraft,
-			WorkID:  "wave-b",
-			Title:   "Wave B planning surface",
-			Summary: "Split planner core and review UI.",
-			Split:   planner.SplitMulti,
+			Mode:   planner.ModeDraft,
+			WorkID: "wave-b",
+			Title:  "Wave B planning surface",
+			Split:  planner.SplitMulti,
 			Workstreams: []planner.Workstream{
 				{Name: "01", Title: "Planner core"},
 				{Name: "02", Title: "Review UI"},
@@ -122,11 +119,10 @@ func TestWriteDraftUpdatesExistingIndexEntry(t *testing.T) {
 	first := workflow.Draft{
 		RequestBody: "First request.",
 		Response: planner.Response{
-			Mode:    planner.ModeDraft,
-			WorkID:  "wave-b",
-			Title:   "Old title",
-			Summary: "Old summary.",
-			Split:   planner.SplitSingle,
+			Mode:   planner.ModeDraft,
+			WorkID: "wave-b",
+			Title:  "Old title",
+			Split:  planner.SplitSingle,
 			Workstreams: []planner.Workstream{
 				{Name: "01", Title: "Initial workstream"},
 			},
@@ -135,11 +131,10 @@ func TestWriteDraftUpdatesExistingIndexEntry(t *testing.T) {
 	second := workflow.Draft{
 		RequestBody: "Second request.",
 		Response: planner.Response{
-			Mode:    planner.ModeDraft,
-			WorkID:  "wave-b",
-			Title:   "New title",
-			Summary: "New summary.",
-			Split:   planner.SplitMulti,
+			Mode:   planner.ModeDraft,
+			WorkID: "wave-b",
+			Title:  "New title",
+			Split:  planner.SplitMulti,
 			Workstreams: []planner.Workstream{
 				{Name: "01", Title: "Planner core"},
 				{Name: "02", Title: "Review UI"},

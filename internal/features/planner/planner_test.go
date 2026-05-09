@@ -44,16 +44,14 @@ func TestValidateAcceptsQuestionResponse(t *testing.T) {
 
 func TestValidateAcceptsSingleDraft(t *testing.T) {
 	resp := planner.Response{
-		Mode:    planner.ModeDraft,
-		WorkID:  "wave-b",
-		Title:   "Wave B planning surface",
-		Summary: "Add planner contract, session loop, writer, explain, and review flow.",
-		Split:   planner.SplitSingle,
+		Mode:   planner.ModeDraft,
+		WorkID: "wave-b",
+		Title:  "Wave B planning surface",
+		Split:  planner.SplitSingle,
 		Workstreams: []planner.Workstream{
 			{
-				Name:    "01",
-				Title:   "Implement Wave B",
-				Summary: "Keep the planning surface in one workstream.",
+				Name:  "01",
+				Title: "Implement Wave B",
 			},
 		},
 	}
@@ -65,21 +63,18 @@ func TestValidateAcceptsSingleDraft(t *testing.T) {
 
 func TestValidateAcceptsMultiDraft(t *testing.T) {
 	resp := planner.Response{
-		Mode:    planner.ModeDraft,
-		WorkID:  "wave-b",
-		Title:   "Wave B planning surface",
-		Summary: "Split UI from planner core work.",
-		Split:   planner.SplitMulti,
+		Mode:   planner.ModeDraft,
+		WorkID: "wave-b",
+		Title:  "Wave B planning surface",
+		Split:  planner.SplitMulti,
 		Workstreams: []planner.Workstream{
 			{
-				Name:    "01",
-				Title:   "Planner core",
-				Summary: "Add planner types and session.",
+				Name:  "01",
+				Title: "Planner core",
 			},
 			{
-				Name:    "02",
-				Title:   "Draft review",
-				Summary: "Add Springfield-first review flow.",
+				Name:  "02",
+				Title: "Draft review",
 			},
 		},
 	}
@@ -101,10 +96,9 @@ func TestValidateRejectsEmptyQuestion(t *testing.T) {
 
 func TestValidateRejectsEmptyWorkID(t *testing.T) {
 	resp := planner.Response{
-		Mode:    planner.ModeDraft,
-		Title:   "Wave B planning surface",
-		Summary: "Missing work id should fail.",
-		Split:   planner.SplitSingle,
+		Mode:  planner.ModeDraft,
+		Title: "Wave B planning surface",
+		Split: planner.SplitSingle,
 		Workstreams: []planner.Workstream{
 			{
 				Name:  "01",
@@ -120,11 +114,10 @@ func TestValidateRejectsEmptyWorkID(t *testing.T) {
 
 func TestValidateRejectsWorkstreamWithoutTitle(t *testing.T) {
 	resp := planner.Response{
-		Mode:    planner.ModeDraft,
-		WorkID:  "wave-b",
-		Title:   "Wave B planning surface",
-		Summary: "Missing workstream title should fail.",
-		Split:   planner.SplitSingle,
+		Mode:   planner.ModeDraft,
+		WorkID: "wave-b",
+		Title:  "Wave B planning surface",
+		Split:  planner.SplitSingle,
 		Workstreams: []planner.Workstream{
 			{
 				Name: "01",

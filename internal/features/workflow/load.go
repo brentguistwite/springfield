@@ -22,7 +22,6 @@ type Work struct {
 type Workstream struct {
 	Name         string
 	Title        string
-	Summary      string
 	Status       string
 	Error        string
 	EvidencePath string
@@ -91,7 +90,6 @@ func LoadWork(root, workID string) (Work, error) {
 		workstreams = append(workstreams, Workstream{
 			Name:         file.Name,
 			Title:        file.Title,
-			Summary:      file.Summary,
 			Status:       currentWorkstreamStatus(name, state, workstreamState),
 			Error:        workstreamState[name].Error,
 			EvidencePath: workstreamState[name].EvidencePath,

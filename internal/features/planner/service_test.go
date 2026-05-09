@@ -35,13 +35,12 @@ func TestServicePlanReturnsQuestionAndDraft(t *testing.T) {
 		responses: []planner.Response{
 			{Mode: planner.ModeQuestion, Question: "Which workflow surface should ship first?"},
 			{
-				Mode:    planner.ModeDraft,
-				WorkID:  "wave-c1",
-				Title:   "Wave C1 planning loop",
-				Summary: "Connect the planning flow to the real planner session.",
-				Split:   planner.SplitSingle,
+				Mode:   planner.ModeDraft,
+				WorkID: "wave-c1",
+				Title:  "Wave C1 planning loop",
+				Split:  planner.SplitSingle,
 				Workstreams: []planner.Workstream{
-					{Name: "01", Title: "Implement Wave C1", Summary: "Keep it in one stream."},
+					{Name: "01", Title: "Implement Wave C1"},
 				},
 			},
 		},
@@ -81,13 +80,12 @@ func TestServiceApproveWritesWorkflowDraft(t *testing.T) {
 			return &fakeConversation{
 				responses: []planner.Response{
 					{
-						Mode:    planner.ModeDraft,
-						WorkID:  "wave-c1",
-						Title:   "Wave C1 planning loop",
-						Summary: "Connect the planner to the runtime flow.",
-						Split:   planner.SplitSingle,
+						Mode:   planner.ModeDraft,
+						WorkID: "wave-c1",
+						Title:  "Wave C1 planning loop",
+						Split:  planner.SplitSingle,
 						Workstreams: []planner.Workstream{
-							{Name: "01", Title: "Implement Wave C1", Summary: "Keep it in one stream."},
+							{Name: "01", Title: "Implement Wave C1"},
 						},
 					},
 				},
@@ -122,11 +120,10 @@ func TestServiceRegenerateReplaysAnswers(t *testing.T) {
 			responses: []planner.Response{
 				{Mode: planner.ModeQuestion, Question: "Which workflow surface should ship first?"},
 				{
-					Mode:    planner.ModeDraft,
-					WorkID:  "wave-c1",
-					Title:   "Original",
-					Summary: "Original draft.",
-					Split:   planner.SplitSingle,
+					Mode:   planner.ModeDraft,
+					WorkID: "wave-c1",
+					Title:  "Original",
+					Split:  planner.SplitSingle,
 					Workstreams: []planner.Workstream{
 						{Name: "01", Title: "Original"},
 					},
@@ -137,11 +134,10 @@ func TestServiceRegenerateReplaysAnswers(t *testing.T) {
 			responses: []planner.Response{
 				{Mode: planner.ModeQuestion, Question: "Which workflow surface should ship first?"},
 				{
-					Mode:    planner.ModeDraft,
-					WorkID:  "wave-c1b",
-					Title:   "Regenerated",
-					Summary: "Regenerated draft.",
-					Split:   planner.SplitSingle,
+					Mode:   planner.ModeDraft,
+					WorkID: "wave-c1b",
+					Title:  "Regenerated",
+					Split:  planner.SplitSingle,
 					Workstreams: []planner.Workstream{
 						{Name: "01", Title: "Regenerated"},
 					},
