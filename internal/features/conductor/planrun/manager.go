@@ -20,6 +20,30 @@ type PrepareInput struct {
 	// plans so a sanitized-key collision doesn't overwrite a sibling's
 	// worktree. Pass project.State.Plans directly.
 	AllStates map[string]*conductor.PlanState
+	// EnforceProtectedBase refuses preflight when the resolved base ref is in
+	// [ProtectedBases]. Off by default so library-level callers stay
+	// minimal; cmd/start enables it unless the project opts out via
+	// allow_protected_base = true.
+	EnforceProtectedBase bool
+}
+
+// ProtectedBases is the list of branch names Springfield refuses to ff-merge
+// into when EnforceProtectedBase is set. Hardcoded conservatively: most
+// teams ship from a feature branch, and an accidental local advance of
+// main/master past origin is a sharp foot-gun.
+var ProtectedBases = []string{"main", "master"}
+
+// IsProtectedBase reports whether ref names a hardcoded protected branch.
+// Exported so the merge-only re-entry path in cmd/start can apply the same
+// guard before invoking planmerge.Integrate on a previously-completed plan
+// whose state already records BaseRef.
+func IsProtectedBase(ref string) bool {
+	for _, p := range ProtectedBases {
+		if ref == p {
+			return true
+		}
+	}
+	return false
 }
 
 // PrepareDecision describes what Prepare resolved without yet touching disk.
@@ -126,6 +150,23 @@ func (m *Manager) Prepare(in PrepareInput) (PrepareDecision, error) {
 			return PrepareDecision{}, reject("preflight-ref-not-local-branch",
 				fmt.Sprintf("plan %q ref %q is not a local branch in %s; merge integration requires a local branch target", in.Unit.ID, baseRef, in.ControlRoot))
 		}
+	}
+
+	// effectiveBaseRef is the base the merge phase will actually publish into.
+	// On a resume that reuses a worktree, the recorded PriorState.BaseRef
+	// wins (matches the firstNonEmpty(...) used to populate Context.BaseRef
+	// further down). Computing the same expression here keeps the guard
+	// honest about resumes: a plan anchored to a feature branch is not
+	// refused just because the operator's current checkout happens to be
+	// main/master.
+	effectiveBaseRef := baseRef
+	if in.PriorState != nil && in.PriorState.BaseRef != "" {
+		effectiveBaseRef = in.PriorState.BaseRef
+	}
+	if in.EnforceProtectedBase && IsProtectedBase(effectiveBaseRef) {
+		return PrepareDecision{}, reject("preflight-protected-base",
+			fmt.Sprintf("plan %q would ff-merge into protected branch %q. Springfield refuses by default so the local %s is not silently advanced past origin. Recommended: switch to a feature branch (git switch -c feat/<name>) before running, or set [project] allow_protected_base = true in springfield.toml to opt out.",
+				in.Unit.ID, effectiveBaseRef, effectiveBaseRef))
 	}
 
 	existing := worktreePathsByOwner(in.AllStates, in.Unit.ID)

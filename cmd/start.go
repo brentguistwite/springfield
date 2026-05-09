@@ -975,7 +975,31 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 // runOnePlan executes or merge-integrates the next eligible plan. Returns nil
 // on success, error on failure/merge-refused/cleanup-failed.
 func runOnePlan(w io.Writer, project *conductor.Project, root, worktreeBase string, agentIDs []agents.ID, loaded config.Loaded, registry agents.Registry) error {
+	enforceProtected := !loaded.Config.Project.AllowProtectedBase
+
 	if planID, ok := nextNonIntegratedCompletedPlan(project); ok {
+		// The fresh-execution path is gated by planrun.Prepare, but a
+		// previously-completed plan that has not yet integrated reaches
+		// planmerge.Integrate without going back through Prepare. Re-apply
+		// the guard here against the recorded BaseRef so a resume after
+		// crash, target-drift refusal, or post-completion config flip cannot
+		// silently advance a protected branch past origin.
+		if enforceProtected {
+			if prior := project.State.Plans[planID]; prior != nil && planrun.IsProtectedBase(prior.BaseRef) {
+				fmt.Fprintf(w, "Plan: %s\n", planID)
+				fmt.Fprintf(w, "Status: failed (preflight-protected-base)\n")
+				// Recovery path: the recorded BaseRef cannot be rewritten
+				// from the CLI today, so the supported way to unstick a
+				// plan that completed under an earlier opted-in config is
+				// to set allow_protected_base = true, run start to land
+				// the merge, then revert the setting. State editing is the
+				// fallback if the user does not want to flip global config.
+				err := fmt.Errorf("plan %q recorded base %q is protected; refusing merge re-entry. To finish integrating this plan, set [project] allow_protected_base = true in springfield.toml (you can revert the setting after the merge lands)",
+					planID, prior.BaseRef)
+				fmt.Fprintf(w, "Error: %s\n", err.Error())
+				return err
+			}
+		}
 		_, err := runMergeIntegrationOnly(w, project, root, worktreeBase, planID)
 		if err != nil {
 			return err
@@ -984,14 +1008,15 @@ func runOnePlan(w io.Writer, project *conductor.Project, root, worktreeBase stri
 	}
 
 	res := planrun.SinglePlan(planrun.SinglePlanInput{
-		Project:           project,
-		ControlRoot:       root,
-		WorktreeBase:      worktreeBase,
-		AgentIDs:          agentIDs,
-		ExecutionSettings: loaded.Config.ExecutionSettings(),
-		Runner:            runtimeAgentRunner{inner: coreruntime.NewRunner(registry)},
-		Manager:           planrun.NewManager(),
-		Progress:          w,
+		Project:              project,
+		ControlRoot:          root,
+		WorktreeBase:         worktreeBase,
+		AgentIDs:             agentIDs,
+		ExecutionSettings:    loaded.Config.ExecutionSettings(),
+		Runner:               runtimeAgentRunner{inner: coreruntime.NewRunner(registry)},
+		Manager:              planrun.NewManager(),
+		Progress:             w,
+		EnforceProtectedBase: enforceProtected,
 	})
 
 	if res.PlanID == "" && res.Reason == "no-eligible-plan" {

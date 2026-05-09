@@ -48,6 +48,10 @@ type SinglePlanInput struct {
 	// Now is injected for deterministic state timestamps in tests; nil
 	// defaults to time.Now.
 	Now func() time.Time
+	// EnforceProtectedBase refuses to run a plan that would ff-merge into a
+	// protected branch (see [ProtectedBases]). Threaded through to
+	// PrepareInput; cmd/start enables this by default.
+	EnforceProtectedBase bool
 }
 
 // SinglePlanResult summarizes the outcome.
@@ -95,11 +99,12 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 
 	prior := in.Project.State.Plans[planID]
 	decision, err := in.Manager.Prepare(PrepareInput{
-		ControlRoot:  in.ControlRoot,
-		WorktreeBase: in.WorktreeBase,
-		Unit:         unit,
-		PriorState:   prior,
-		AllStates:    in.Project.State.Plans,
+		ControlRoot:          in.ControlRoot,
+		WorktreeBase:         in.WorktreeBase,
+		Unit:                 unit,
+		PriorState:           prior,
+		AllStates:            in.Project.State.Plans,
+		EnforceProtectedBase: in.EnforceProtectedBase,
 	})
 	if err != nil {
 		tag := "preflight-error"
