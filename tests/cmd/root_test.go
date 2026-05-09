@@ -12,20 +12,20 @@ import (
 	"testing"
 )
 
-// planWithSlices and singleSlicePlan are stub helpers that skip the calling test.
-// SlicePayload/SliceRequest were dropped in Phase 2; Phase 3 will reintroduce
-// equivalents using --prd.
-// TODO(phase-3): rewrite planWithSlices using --prd flag
-func planWithSlices(t *testing.T, _, _, _, _ string, _ []string, _ ...string) (string, error) {
+// singleSlicePlan and planWithSlices are stubs kept for compile compatibility:
+// tests that call them are all blocked on Phase 5 (cmd/start rewrite) and
+// guarded by t.Skip. They can be rewritten using planWithPRD once Phase 5
+// updates the test bodies.
+// TODO(phase-5): rewrite callers using planWithPRD + real PRD envelopes.
+func singleSlicePlan(t *testing.T, _, _, _ string, _ ...string) (string, error) {
 	t.Helper()
-	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
+	t.Skip("TODO(phase-5) start command rewrite pending")
 	return "", nil
 }
 
-// TODO(phase-3): rewrite singleSlicePlan using --prd flag
-func singleSlicePlan(t *testing.T, _, _, _ string, _ ...string) (string, error) {
+func planWithSlices(t *testing.T, _, _, _, _ string, _ []string, _ ...string) (string, error) {
 	t.Helper()
-	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
+	t.Skip("TODO(phase-5) start command rewrite pending")
 	return "", nil
 }
 

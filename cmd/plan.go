@@ -1,43 +1,284 @@
 package cmd
 
 import (
-	"errors"
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
+	"os"
+	"time"
 
 	"github.com/spf13/cobra"
+
+	"springfield/internal/core/config"
+	"springfield/internal/features/batch"
+	"springfield/internal/features/conductor"
+	"springfield/internal/features/execution"
+	"springfield/internal/features/prd"
 )
 
-// NewPlanCommand compiles a Springfield batch from a caller-provided slice payload.
-// TODO(phase-3): full rewrite pending PRD ingest.
+const legacyPayloadSnippetLen = 200
+
+// NewPlanCommand compiles a Springfield batch from a caller-provided PRD envelope.
 func NewPlanCommand() *cobra.Command {
 	var dir string
-	var slicesArg string
+	var prdArg string
 	var replace bool
 	var appendMode bool
 
 	cmd := &cobra.Command{
 		Use:   "plan",
 		Short: "Compile a Springfield plan into a runnable batch.",
-		Long: "Compile a Springfield plan from a caller-provided slice payload.\n\n" +
-			"Use --slices <path> to read a JSON payload from a file, or --slices - to read from stdin.\n" +
-			"The springfield:plan skill emits this payload. Run \"springfield start\" to execute.",
+		Long: "Compile a Springfield plan from a caller-provided PRD envelope.\n\n" +
+			"Use --prd <path> to read a JSON envelope from a file, or --prd - to read from stdin.\n" +
+			"The springfield:plan skill emits this envelope. Run \"springfield start\" to execute.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if slicesArg == "" {
-				return fmt.Errorf("--slices is required (path to JSON payload, or \"-\" for stdin)")
+			if prdArg == "" {
+				return fmt.Errorf("--prd is required (path to PRD envelope JSON, or \"-\" for stdin)")
 			}
-			_ = dir
-			_ = replace
-			_ = appendMode
-			// TODO(phase-3): batch ingest pending PRD rewrite
-			return errors.New("cmd/plan: pending Phase 3 rewrite")
+
+			// Load project root.
+			loaded, err := config.LoadFrom(dir)
+			if err != nil {
+				return err
+			}
+			rootDir := loaded.RootDir
+
+			// Read payload bytes.
+			payload, err := readPayload(prdArg)
+			if err != nil {
+				return err
+			}
+
+			// Two-pass legacy detection: check for "slices" key before strict decode.
+			if isLegacySlicePayload(payload) {
+				return fmt.Errorf(
+					"legacy single-slice batch detected; this format is no longer supported. " +
+						"Re-author with the PRD shape (see docs/prd-format.md).",
+				)
+			}
+
+			// Strict parse via prd.ParseEnvelope.
+			env, err := prd.ParseEnvelope(bytes.NewReader(payload))
+			if err != nil {
+				snippet := payload
+				if len(snippet) > legacyPayloadSnippetLen {
+					snippet = snippet[:legacyPayloadSnippetLen]
+				}
+				return fmt.Errorf("parse PRD envelope: %w\n(first %d bytes: %s)", err, len(snippet), snippet)
+			}
+
+			// Ensure execution config exists.
+			if err := execution.EnsureExecutionConfig(rootDir); err != nil {
+				return err
+			}
+
+			// Load conductor project for config access.
+			project, err := conductor.LoadProjectRaw(rootDir)
+			if err != nil {
+				return fmt.Errorf("load conductor project: %w", err)
+			}
+
+			// Handle active batch.
+			run, hasRun, err := batch.ReadRun(rootDir)
+			if err != nil {
+				return fmt.Errorf("read run state: %w", err)
+			}
+			var priorBatch *batch.Batch
+			if hasRun && run.ActiveBatchID != "" {
+				paths, err := batch.NewPaths(rootDir, run.ActiveBatchID)
+				if err != nil {
+					return fmt.Errorf("resolve batch paths: %w", err)
+				}
+				b, err := batch.ReadBatch(paths)
+				if err == nil {
+					priorBatch = &b
+				} else if !batch.IsMissingBatchError(err) {
+					return fmt.Errorf("read active batch: %w", err)
+				}
+			}
+
+			if priorBatch != nil {
+				switch {
+				case replace:
+					if err := batch.ArchiveBatchNormalized(rootDir, *priorBatch, "replaced"); err != nil {
+						return fmt.Errorf("archive prior batch: %w", err)
+					}
+					// Remove prior batch's plan units from conductor config.
+					for _, id := range priorBatch.PlanIDs {
+						_ = project.RemovePlanUnit(id) // best-effort; may not be registered
+					}
+					priorBatch = nil
+
+				case appendMode:
+					return runAppend(cmd, rootDir, project, *priorBatch, run, env, payload)
+
+				default:
+					return fmt.Errorf(
+						"active batch %q exists; use --replace to archive it or --append to add new plans",
+						priorBatch.ID,
+					)
+				}
+			}
+
+			// Compile new batch.
+			out, err := batch.Compile(batch.CompileInput{Envelope: env})
+			if err != nil {
+				return err
+			}
+
+			// Surface warnings to stderr.
+			for _, w := range out.Warnings {
+				fmt.Fprintf(cmd.ErrOrStderr(), "[warn] %s\n", w)
+			}
+
+			// Write batch to disk.
+			paths, err := batch.NewPaths(rootDir, out.Batch.ID)
+			if err != nil {
+				return fmt.Errorf("resolve batch paths: %w", err)
+			}
+			if err := batch.WriteBatch(paths, out.Batch, out.Source, out.Plans); err != nil {
+				return fmt.Errorf("write batch: %w", err)
+			}
+
+			// Register plan units in conductor config.
+			for _, unit := range out.Units {
+				if _, err := project.AddPlanUnit(conductor.PlanUnitInput{
+					ID:    unit.ID,
+					Title: unit.Title,
+					Path:  unit.Path,
+					Order: unit.Order,
+				}); err != nil {
+					return fmt.Errorf("register plan unit %q: %w", unit.ID, err)
+				}
+			}
+
+			if err := project.SaveConfig(); err != nil {
+				return fmt.Errorf("save execution config: %w", err)
+			}
+
+			// Write run.json cursor.
+			newRun := batch.Run{
+				ActiveBatchID:  out.Batch.ID,
+				ActivePhaseIdx: 0,
+				ActivePlanIDs:  nil,
+				LastCheckpoint: time.Now().UTC(),
+			}
+			if err := batch.WriteRun(rootDir, newRun); err != nil {
+				return fmt.Errorf("write run.json: %w", err)
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Compiled batch %q with %d plan(s).\n", out.Batch.ID, len(out.Plans))
+			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&dir, "dir", ".", "project root or nested path inside the Springfield project")
-	cmd.Flags().StringVar(&slicesArg, "slices", "", "path to slice payload JSON, or \"-\" to read from stdin")
+	cmd.Flags().StringVar(&prdArg, "prd", "", "path to PRD envelope JSON, or \"-\" to read from stdin")
 	cmd.Flags().BoolVar(&replace, "replace", false, "archive the current active batch and replace it with this one")
-	cmd.Flags().BoolVar(&appendMode, "append", false, "add new slices to the end of the current active batch")
+	cmd.Flags().BoolVar(&appendMode, "append", false, "add new plans to the end of the current active batch")
 
 	return cmd
+}
+
+// runAppend adds plans from the new envelope to an existing batch.
+func runAppend(cmd *cobra.Command, rootDir string, project *conductor.Project, prior batch.Batch, run batch.Run, env prd.BatchPRDEnvelope, _ []byte) error {
+	// Build collision check.
+	existingIDs := make(map[string]struct{}, len(prior.PlanIDs))
+	for _, id := range prior.PlanIDs {
+		existingIDs[id] = struct{}{}
+	}
+
+	// Compile only the new envelope's plans — reject if any collide.
+	for _, p := range env.Plans {
+		if _, exists := existingIDs[p.ID]; exists {
+			return fmt.Errorf("append failed: plan %q already exists in batch %q", p.ID, prior.ID)
+		}
+	}
+
+	// Compile new envelope to get WrittenPlans and Units.
+	newOut, err := batch.Compile(batch.CompileInput{
+		Envelope:    env,
+		ExistingIDs: existingIDs,
+	})
+	if err != nil {
+		return err
+	}
+
+	// Surface warnings.
+	for _, w := range newOut.Warnings {
+		fmt.Fprintf(cmd.ErrOrStderr(), "[warn] %s\n", w)
+	}
+
+	// Merge plan IDs into existing batch and rewrite batch.json.
+	prior.PlanIDs = append(prior.PlanIDs, newOut.Batch.PlanIDs...)
+	for _, ph := range newOut.Batch.Phases {
+		prior.Phases = append(prior.Phases, ph)
+	}
+
+	paths, err := batch.NewPaths(rootDir, prior.ID)
+	if err != nil {
+		return fmt.Errorf("resolve batch paths: %w", err)
+	}
+
+	// Rewrite batch.json (source stays from original batch).
+	if err := batch.WriteBatch(paths, prior, newOut.Source, newOut.Plans); err != nil {
+		return fmt.Errorf("write appended batch: %w", err)
+	}
+
+	// Register new plan units; use Order=0 so AddPlanUnit assigns next slot
+	// (avoids collision with existing units from the prior batch).
+	for _, unit := range newOut.Units {
+		if _, err := project.AddPlanUnit(conductor.PlanUnitInput{
+			ID:    unit.ID,
+			Title: unit.Title,
+			Path:  unit.Path,
+			Order: 0, // auto-assign next available order
+		}); err != nil {
+			return fmt.Errorf("register plan unit %q: %w", unit.ID, err)
+		}
+	}
+
+	if err := project.SaveConfig(); err != nil {
+		return fmt.Errorf("save execution config: %w", err)
+	}
+
+	// Update run.json cursor (keep active batch ID unchanged).
+	run.LastCheckpoint = time.Now().UTC()
+	if err := batch.WriteRun(rootDir, run); err != nil {
+		return fmt.Errorf("write run.json: %w", err)
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Appended %d plan(s) to batch %q.\n", len(newOut.Plans), prior.ID)
+	return nil
+}
+
+// readPayload reads the full payload bytes from a file path or stdin ("-").
+func readPayload(src string) ([]byte, error) {
+	if src == "-" {
+		return io.ReadAll(os.Stdin)
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return nil, fmt.Errorf("read PRD file %q: %w", src, err)
+	}
+	return data, nil
+}
+
+// isLegacySlicePayload does a lenient pre-decode into map[string]json.RawMessage
+// and checks if the "slices" key exists with an array value. This must run before
+// prd.ParseEnvelope so the error message is human-readable rather than opaque.
+func isLegacySlicePayload(data []byte) bool {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return false // not even valid JSON; let ParseEnvelope handle it
+	}
+	slicesVal, ok := raw["slices"]
+	if !ok {
+		return false
+	}
+	// Verify the value is an array.
+	var arr []json.RawMessage
+	return json.Unmarshal(slicesVal, &arr) == nil
 }

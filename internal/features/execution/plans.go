@@ -38,7 +38,7 @@ type Plan struct {
 // springfield.toml so first-time registration does not require a separate
 // setup command.
 func AddPlan(rootDir string, input PlanInput) (Plan, error) {
-	if err := ensureExecutionConfig(rootDir); err != nil {
+	if err := EnsureExecutionConfig(rootDir); err != nil {
 		return Plan{}, err
 	}
 	project, err := conductor.LoadProject(rootDir)
@@ -55,10 +55,10 @@ func AddPlan(rootDir string, input PlanInput) (Plan, error) {
 	return fromUnit(unit), nil
 }
 
-// ensureExecutionConfig writes a minimal default execution config when none
+// EnsureExecutionConfig writes a minimal default execution config when none
 // exists, seeded with the project's primary agent priority from
 // springfield.toml. Idempotent: existing config is reused unchanged.
-func ensureExecutionConfig(rootDir string) error {
+func EnsureExecutionConfig(rootDir string) error {
 	loaded, err := config.LoadFrom(rootDir)
 	if err != nil {
 		return err
