@@ -8,6 +8,13 @@ import (
 // RecoverRetry resets a failed or interrupted plan to pending for re-execution.
 // The recovery action is appended to the plan's history; the caller must persist
 // via SaveState.
+//
+// prd.json preservation invariant: RecoverRetry intentionally does NOT touch
+// prd.json or progress.md. The durable per-story passes state in prd.json is
+// the source of truth across retries. On re-entry, the runner's NextStory
+// automatically skips already-passed stories, so work completed before the
+// failure is not repeated. Any code path that modifies prd.json during recovery
+// would destroy this invariant and force the runner to re-execute completed work.
 func (p *Project) RecoverRetry(planID string) (*RecoveryAction, error) {
 	ps, ok := p.State.Plans[planID]
 	if !ok {

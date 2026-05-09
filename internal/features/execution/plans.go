@@ -198,11 +198,20 @@ func LoadRegistryStatus(rootDir string) (*RegistryStatus, error) {
 
 // RenderRegistryStatus returns a human-readable plan-registry status block.
 // When no execution config exists yet, the no-config registration hint is
-// rendered instead of a read error.
+// rendered instead of a read error. Story rollups from prd.json are merged in
+// so the output includes per-plan pass counts and an aggregate summary.
 func RenderRegistryStatus(rootDir string) (string, error) {
 	rs, err := loadConductorRegistryStatus(rootDir)
 	if err != nil {
 		return "", err
+	}
+	if len(rs.Units) > 0 {
+		units := make([]conductor.PlanUnit, len(rs.Units))
+		for i, u := range rs.Units {
+			units[i] = u.Unit
+		}
+		rollups := conductor.LoadStoryRollups(units, rootDir)
+		rs.MergeStoryRollups(rollups)
 	}
 	return rs.Render(), nil
 }
