@@ -82,4 +82,3 @@ func writePlanFileBinary(t *testing.T, root, plansDir, name, content string) {
 		t.Fatalf("write plan file: %v", err)
 	}
 }
-

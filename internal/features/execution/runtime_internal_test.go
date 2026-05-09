@@ -354,9 +354,9 @@ func TestRuntimeSingleExecutorRejectsOversizedGuidanceFile(t *testing.T) {
 		workDir: t.TempDir(),
 	}
 	_, err := executor.Run(root, Work{
-		ID:    "x",
-		Title: "x",
-		Split: "single",
+		ID:          "x",
+		Title:       "x",
+		Split:       "single",
 		Workstreams: []Workstream{{Name: "01", Title: "T"}},
 	})
 	if err == nil {
@@ -380,9 +380,9 @@ func TestRuntimeMultiExecutorRejectsOversizedGuidanceFile(t *testing.T) {
 		workDir: t.TempDir(),
 	}
 	report, err := executor.Run(root, Work{
-		ID:    "x",
-		Title: "x",
-		Split: "parallel",
+		ID:          "x",
+		Title:       "x",
+		Split:       "parallel",
 		Workstreams: []Workstream{{Name: "01", Title: "T"}},
 	})
 	if err == nil {
@@ -414,9 +414,9 @@ func TestRuntimeSingleExecutorRejectsUnreadableGuidanceFile(t *testing.T) {
 		workDir: t.TempDir(),
 	}
 	_, err := executor.Run(root, Work{
-		ID:    "x",
-		Title: "x",
-		Split: "single",
+		ID:          "x",
+		Title:       "x",
+		Split:       "single",
 		Workstreams: []Workstream{{Name: "01", Title: "T"}},
 	})
 	if err == nil {

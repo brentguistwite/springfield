@@ -1,10 +1,12 @@
 package conductor_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
 	"springfield/internal/features/batch"
+	"springfield/internal/features/conductor"
 	"springfield/internal/features/prd"
 )
 
@@ -12,6 +14,19 @@ import (
 // batch.Compile produces one PlanUnit per envelope plan with:
 //   - Path ending in /prd.json
 //   - Order matching first-phase-appearance index.
+func minStory() prd.UserStory {
+	return prd.UserStory{
+		ID:                 "US-001",
+		Title:              "placeholder",
+		Priority:           1,
+		AcceptanceCriteria: []string{"passes"},
+	}
+}
+
+func minPlan(id, title string) prd.BatchPRDPlan {
+	return prd.BatchPRDPlan{PRD: prd.PRD{ID: id, Title: title, UserStories: []prd.UserStory{minStory()}}}
+}
+
 func TestCompile_ThreePlansYieldThreeUnitsWithCorrectPathAndOrder(t *testing.T) {
 	env := prd.BatchPRDEnvelope{
 		Title:  "three plans",
@@ -21,9 +36,9 @@ func TestCompile_ThreePlansYieldThreeUnitsWithCorrectPathAndOrder(t *testing.T) 
 			{Mode: "serial", Plans: []string{"beta", "gamma"}}, // beta already seen
 		},
 		Plans: []prd.BatchPRDPlan{
-			{PRD: prd.PRD{ID: "alpha", Title: "Alpha"}},
-			{PRD: prd.PRD{ID: "beta", Title: "Beta"}},
-			{PRD: prd.PRD{ID: "gamma", Title: "Gamma"}},
+			minPlan("alpha", "Alpha"),
+			minPlan("beta", "Beta"),
+			minPlan("gamma", "Gamma"),
 		},
 	}
 
@@ -76,34 +91,11 @@ func TestCompile_ThreePlansYieldThreeUnitsWithCorrectPathAndOrder(t *testing.T) 
 // TestPlanUnitDescriptionFieldDropped verifies that the Description field was
 // removed from PlanUnit (Phase 2 spec: drop Description field entirely).
 func TestPlanUnitDescriptionFieldDropped(t *testing.T) {
-	// This is a compile-time test: if Description is present on PlanUnit,
-	// this test can reference it. The test ensures the field is NOT accessible.
-	// We do this by building a PlanUnit struct literal without Description —
-	// if the field existed and was required, the compiler would complain.
-	// Since Go doesn't allow this as a runtime assertion, we just confirm
-	// PlanUnit is buildable without a Description field.
-	_ = batch.CompileInput{} // import used
-	env := prd.BatchPRDEnvelope{
-		Title:  "desc test",
-		Source: "test",
-		Phases: []prd.PhasePRD{{Plans: []string{"p"}}},
-		Plans:  []prd.BatchPRDPlan{{PRD: prd.PRD{ID: "p", Title: "P"}}},
+	_ = batch.CompileInput{} // keep batch import used
+	typ := reflect.TypeOf(conductor.PlanUnit{})
+	for i := 0; i < typ.NumField(); i++ {
+		if typ.Field(i).Name == "Description" {
+			t.Errorf("PlanUnit.Description field re-introduced; was dropped per Phase 2 spec")
+		}
 	}
-	out, err := batch.Compile(batch.CompileInput{Envelope: env})
-	if err != nil {
-		t.Fatalf("Compile: %v", err)
-	}
-	if len(out.Units) != 1 {
-		t.Fatalf("Units count = %d, want 1", len(out.Units))
-	}
-	// Confirm the PlanUnit has the expected exported fields by accessing them
-	u := out.Units[0]
-	_ = u.ID
-	_ = u.Title
-	_ = u.Path
-	_ = u.Order
-	_ = u.Ref
-	_ = u.PlanBranch
-	// If Description were here, this test would reference it — its absence
-	// confirms the field was dropped.
 }

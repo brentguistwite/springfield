@@ -255,8 +255,8 @@ func writeStatusConfig(t *testing.T, root string, planUnits []map[string]any) {
 		"max_retries":                  1,
 		"single_workstream_iterations": 10,
 		"single_workstream_timeout":    600,
-		"tool":       "claude",
-		"plan_units": planUnits,
+		"tool":                         "claude",
+		"plan_units":                   planUnits,
 	}
 	writeStatusJSON(t, root, "execution/config.json", cfg)
 }

@@ -42,8 +42,8 @@ type PlanDiagnosis struct {
 	Merge   *MergeOutcome
 	Cleanup *CleanupOutcome
 
-	RecoveryHistory []RecoveryAction
-	Worktree        *WorktreeInspection
+	RecoveryHistory  []RecoveryAction
+	Worktree         *WorktreeInspection
 	AvailableActions []RecoveryOption
 }
 

@@ -54,11 +54,22 @@ func makeEnvelope(title string, phases []prd.PhasePRD, plans []prd.BatchPRDPlan)
 	}
 }
 
+// minStory returns a minimal valid user story for test envelopes.
+func minStory() prd.UserStory {
+	return prd.UserStory{
+		ID:                 "US-001",
+		Title:              "placeholder",
+		Priority:           1,
+		AcceptanceCriteria: []string{"passes"},
+	}
+}
+
 func makePlan(id, ptitle string) prd.BatchPRDPlan {
 	return prd.BatchPRDPlan{
 		PRD: prd.PRD{
-			ID:    id,
-			Title: ptitle,
+			ID:          id,
+			Title:       ptitle,
+			UserStories: []prd.UserStory{minStory()},
 		},
 	}
 }
@@ -66,8 +77,9 @@ func makePlan(id, ptitle string) prd.BatchPRDPlan {
 func makePlanWithContext(id, ptitle, ctx string) prd.BatchPRDPlan {
 	return prd.BatchPRDPlan{
 		PRD: prd.PRD{
-			ID:    id,
-			Title: ptitle,
+			ID:          id,
+			Title:       ptitle,
+			UserStories: []prd.UserStory{minStory()},
 		},
 		ContextMD: ctx,
 	}
@@ -326,6 +338,24 @@ func TestCompile_EmptyEnvelopeTitle(t *testing.T) {
 	}
 }
 
+// TestCompile_PhaseReferencesUnknownPlanReturnsError: phase referencing a plan
+// ID not present in the Plans list must return an error (not silently drop it).
+func TestCompile_PhaseReferencesUnknownPlanReturnsError(t *testing.T) {
+	env := makeEnvelope("unknown ref",
+		[]prd.PhasePRD{
+			{Mode: "serial", Plans: []string{"known", "ghost"}},
+		},
+		[]prd.BatchPRDPlan{
+			makePlan("known", "Known Plan"),
+			// "ghost" is referenced in phase but missing from plans list
+		},
+	)
+	_, err := batch.Compile(batch.CompileInput{Envelope: env})
+	if err == nil {
+		t.Fatal("expected error when phase references unknown plan ID")
+	}
+}
+
 // TestCompile_EmptyPlansReturnsError: envelope with no plans returns error.
 func TestCompile_EmptyPlansReturnsError(t *testing.T) {
 	env := makeEnvelope("test",
@@ -572,10 +602,62 @@ func TestArchiveBatchNormalizedConvertsNonTerminalPlansToAborted(t *testing.T) {
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	// Phase 2: ArchiveEntry.Plans carries ArchivePlan entries
+	// Phase 2: ArchiveBatchNormalized stores batch metadata only; plan status
+	// tracking is not yet wired, so Plans is empty.
 	if len(got.Plans) != 0 {
-		// Plans in archive come from Batch.PlanIDs only when explicitly passed — this batch has no plan status tracking yet
-		// The archive just stores the batch metadata
+		t.Errorf("expected archive Plans to be empty (no status tracking yet), got %d entries", len(got.Plans))
+	}
+}
+
+// TestWriteBatchRollbackOnPartialFailure verifies that WriteBatch removes the
+// first plan's dir when writing the second plan's dir fails.
+func TestWriteBatchRollbackOnPartialFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("file-collision test does not apply when running as root")
+	}
+	dir := t.TempDir()
+	paths, err := batch.NewPaths(dir, "rollback-batch")
+	if err != nil {
+		t.Fatalf("NewPaths: %v", err)
+	}
+
+	b := batch.Batch{
+		ID:      "rollback-batch",
+		Title:   "Rollback Test",
+		PlanIDs: []string{"plan-first", "plan-second"},
+		Phases:  []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"plan-first", "plan-second"}}},
+	}
+
+	// Pre-create the second plan's dir path as a regular file so MkdirAll
+	// fails with a "not a directory" error when WriteBatch tries to create it.
+	secondPlanDir := batch.PlanDirByID(dir, "plan-second")
+	if err := os.MkdirAll(filepath.Dir(secondPlanDir), 0o755); err != nil {
+		t.Fatalf("mkdirall parent: %v", err)
+	}
+	if err := os.WriteFile(secondPlanDir, []byte("collision"), 0o644); err != nil {
+		t.Fatalf("write collision file: %v", err)
+	}
+
+	plans := []batch.WrittenPlan{
+		{
+			ID:       "plan-first",
+			PRDBytes: []byte(`{"id":"plan-first","title":"First","description":"","tags":null,"user_stories":null}`),
+		},
+		{
+			ID:       "plan-second",
+			PRDBytes: []byte(`{"id":"plan-second","title":"Second","description":"","tags":null,"user_stories":null}`),
+		},
+	}
+
+	err = batch.WriteBatch(paths, b, "src", plans)
+	if err == nil {
+		t.Fatal("expected WriteBatch to fail due to collision on second plan dir")
+	}
+
+	// Rollback: first plan's dir should have been removed.
+	firstPlanDir := batch.PlanDirByID(dir, "plan-first")
+	if _, statErr := os.Stat(firstPlanDir); !os.IsNotExist(statErr) {
+		t.Errorf("rollback failed: first plan dir still exists at %s", firstPlanDir)
 	}
 }
 

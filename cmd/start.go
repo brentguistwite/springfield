@@ -225,6 +225,7 @@ const (
 	snapshotTreeMaxBytes = 100 * 1024 * 1024 // 100 MiB cumulative
 )
 
+// TODO(phase-5): revive once start runtime is rewritten for PRD plan units
 func snapshotControlPlane(root string, paths batch.Paths) (controlPlaneSnapshot, error) {
 	tree, err := snapshotPlanTree(paths.PlanDir())
 	if err != nil {
@@ -315,6 +316,7 @@ type tamperForensicsContext struct {
 // run.json is cleared. A forensics sidecar is written into the archive dir
 // regardless of whether the archive write itself was a no-op (e.g. already
 // archived from a prior call under the same reason).
+// TODO(phase-5): revive once start runtime is rewritten for PRD plan units
 func detectAndRecoverTamper(root string, paths batch.Paths, snap controlPlaneSnapshot, forensics tamperForensicsContext) error {
 	reason := compareControlPlane(root, paths, snap, allowedEvidenceRelPaths(forensics.sliceID))
 	if reason == "" {
@@ -715,6 +717,7 @@ func writeTamperBlobs(root string, ctx tamperForensicsContext, pre, post []byte)
 // appends events as JSON lines and a closer. On open failure returns nil
 // handler (events discarded) and a noop closer — trace is best-effort
 // diagnostic, not load-bearing.
+// TODO(phase-5): revive once start runtime is rewritten for PRD plan units
 func openAgentTrace(root, batchID string) (coreexec.EventHandler, func()) {
 	logsDir := filepath.Join(root, ".springfield", "logs")
 	if err := os.MkdirAll(logsDir, 0o755); err != nil {
@@ -742,7 +745,7 @@ func openAgentTrace(root, batchID string) (coreexec.EventHandler, func()) {
 }
 
 // sliceToExecutionWork is a stub pending Phase 5 rewrite.
-// TODO(phase-5): rewrite to use plan-based execution (prd.json + context.md).
+// TODO(phase-5): revive once start runtime is rewritten for PRD plan units
 func sliceToExecutionWork(root string, b batch.Batch, planID string) execution.Work {
 	_ = root
 	_ = b

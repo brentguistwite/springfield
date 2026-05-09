@@ -91,4 +91,3 @@ func planIntegrated(name string, state *State) bool {
 	}
 	return plan.IsIntegrated()
 }
-

@@ -36,7 +36,7 @@ func newFakeGit() *fakeGit {
 	}
 }
 
-func (g *fakeGit) IsRepo(string) (bool, error) { return g.repo, nil }
+func (g *fakeGit) IsRepo(string) (bool, error)  { return g.repo, nil }
 func (g *fakeGit) IsDirty(string) (bool, error) { return g.dirty, nil }
 func (g *fakeGit) ResolveRef(_, ref string) (string, error) {
 	sha, ok := g.resolveOK[ref]
@@ -59,7 +59,7 @@ func (g *fakeGit) BranchExists(_, branch string) (bool, error) {
 	return ok, nil
 }
 func (g *fakeGit) WorktreeListPaths(string) ([]string, error) { return g.worktreePaths, nil }
-func (g *fakeGit) Head(string) (string, error)                 { return "headcafef00d", nil }
+func (g *fakeGit) Head(string) (string, error)                { return "headcafef00d", nil }
 func (g *fakeGit) WorktreeAddNewBranch(_, path, branch, base string) error {
 	g.createNew = append(g.createNew, path+"|"+branch+"|"+base)
 	g.branches[branch] = struct{}{}

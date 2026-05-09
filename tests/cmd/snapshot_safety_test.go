@@ -176,7 +176,6 @@ func TestSnapshotRejectsOversizeTree(t *testing.T) {
 	}
 }
 
-
 // TestSnapshotAcceptsNormalTree — the happy path: plan dir contains only
 // batch.json + source.md at sane sizes, noop agent passes.
 func TestSnapshotAcceptsNormalTree(t *testing.T) {

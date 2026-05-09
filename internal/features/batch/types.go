@@ -17,14 +17,14 @@ type Phase struct {
 }
 
 // Batch is the compile-time state for one Springfield work batch.
-// PlanIDs is the ordered-unique union of all plan IDs referenced across
-// phases[].plans, preserving first-seen order. It is the canonical superset
-// for fast existence checks.
 type Batch struct {
-	ID      string    `json:"id"`
-	Title   string    `json:"title"`
-	Phases  []Phase   `json:"phases"`
-	PlanIDs []string  `json:"plan_ids"`
+	ID     string  `json:"id"`
+	Title  string  `json:"title"`
+	Phases []Phase `json:"phases"`
+	// PlanIDs is the ordered-unique union of all plan IDs referenced across
+	// phases[].plans, preserving first-seen order. Derived by Compile; callers
+	// must not mutate it. Used as the canonical superset for fast existence checks.
+	PlanIDs []string `json:"plan_ids"`
 }
 
 // Run is the runtime-only cursor state for the active batch.

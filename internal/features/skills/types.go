@@ -250,4 +250,3 @@ func localCatalog() []LocalTarget {
 	copy(out, localTargets)
 	return out
 }
-

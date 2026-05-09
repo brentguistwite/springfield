@@ -40,8 +40,8 @@ type fakeGit struct {
 	// dirtyAgainstByRef indexes IsDirtyAgainst answers by ref. When
 	// unset, defaults to the same value as dirtyByDir (so existing
 	// tests that only use dirtyByDir keep working).
-	dirtyAgainstByRef    map[string]bool
-	isDirtyAgainstErr    error
+	dirtyAgainstByRef map[string]bool
+	isDirtyAgainstErr error
 }
 
 func newFakeGit() *fakeGit {

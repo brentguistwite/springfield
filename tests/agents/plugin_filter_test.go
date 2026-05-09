@@ -62,7 +62,7 @@ func TestClaudeAdapterDisablesSpringfieldAndSuperpowersPlugins(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	writeSettingsJSON(t, homeDir, map[string]bool{
-		"springfield@brentguistwite":       true,
+		"springfield@brentguistwite":          true,
 		"superpowers@claude-plugins-official": true,
 	})
 
@@ -250,12 +250,12 @@ func TestClaudeAdapterKeepsUnrelatedPluginsAlone(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	writeSettingsJSON(t, homeDir, map[string]bool{
-		"atlassian@atlassian":          true,
-		"context7@upstash":             true,
-		"codex@openai":                 true,
-		"caveman@example":              true,
-		"example-skills@example":       true,
-		"springfield@brentguistwite":   true,
+		"atlassian@atlassian":        true,
+		"context7@upstash":           true,
+		"codex@openai":               true,
+		"caveman@example":            true,
+		"example-skills@example":     true,
+		"springfield@brentguistwite": true,
 	})
 
 	var warnBuf bytes.Buffer

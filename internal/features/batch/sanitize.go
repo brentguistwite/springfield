@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	reUnsafe  = regexp.MustCompile(`[^a-z0-9-]+`)
+	reUnsafe   = regexp.MustCompile(`[^a-z0-9-]+`)
 	reCollapse = regexp.MustCompile(`-+`)
 )
 

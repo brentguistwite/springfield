@@ -8,9 +8,9 @@ type Config struct {
 	WorktreeBase               string     `json:"worktree_base"`
 	MaxRetries                 int        `json:"max_retries"`
 	SingleWorkstreamIterations int        `json:"single_workstream_iterations"`
-	SingleWorkstreamTimeout int    `json:"single_workstream_timeout"`
-	Tool                    string `json:"tool"`
-	PlanUnits               []PlanUnit `json:"plan_units,omitempty"`
+	SingleWorkstreamTimeout    int        `json:"single_workstream_timeout"`
+	Tool                       string     `json:"tool"`
+	PlanUnits                  []PlanUnit `json:"plan_units,omitempty"`
 }
 
 // PlanUnit is one durable Springfield plan-unit registration.

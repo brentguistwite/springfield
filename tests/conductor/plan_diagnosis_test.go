@@ -86,9 +86,9 @@ func TestDiagnosePlanMergeRefused(t *testing.T) {
 	project.State.Plans["alpha"] = &conductor.PlanState{
 		Status: conductor.StatusCompleted,
 		Merge: &conductor.MergeOutcome{
-			Status:    conductor.MergeRefused,
-			Reason:    "target-drift",
-			TargetRef: "main",
+			Status:     conductor.MergeRefused,
+			Reason:     "target-drift",
+			TargetRef:  "main",
 			TargetHead: "cccccccc",
 		},
 		BaseHead: "aaaa",

@@ -27,23 +27,29 @@ type WrittenPlan struct {
 // CompileOutput is the result of compiling a batch from a PRD envelope.
 // Plans carries per-plan serialized content (one entry per envelope plan).
 // Units is the PlanUnit registrations (one per plan) ordered by first-appearance.
+// Warnings carries non-fatal validation warnings (e.g. large context_md). Phase 3
+// surfaces these to the caller; for now they are available but not printed.
 type CompileOutput struct {
-	Batch  Batch
-	Source string
-	Plans  []WrittenPlan
-	Units  []conductor.PlanUnit
+	Batch    Batch
+	Source   string
+	Plans    []WrittenPlan
+	Units    []conductor.PlanUnit
+	Warnings []string
 }
 
 // Compile turns a CompileInput (PRD envelope) into a ready-to-persist Batch.
 // PlanIDs is the ordered-unique union of all plan IDs referenced across
 // phases[].plans, preserving first-seen order.
+//
+// Compile calls prd.Validate before compiling; any hard error (phase references
+// unknown plan, invalid plan ID slug, etc.) causes an immediate return. Warnings
+// are collected into CompileOutput.Warnings for the caller to surface.
 func Compile(in CompileInput) (CompileOutput, error) {
 	env := in.Envelope
-	if strings.TrimSpace(env.Title) == "" {
-		return CompileOutput{}, fmt.Errorf("envelope title must not be empty")
-	}
-	if len(env.Plans) == 0 {
-		return CompileOutput{}, fmt.Errorf("at least one plan required")
+
+	result := prd.Validate(env)
+	if result.HasErrors() {
+		return CompileOutput{}, result.Errors[0]
 	}
 
 	existingIDs := in.ExistingIDs
@@ -86,7 +92,7 @@ func Compile(in CompileInput) (CompileOutput, error) {
 	for _, id := range planIDs {
 		ep, ok := planByID[id]
 		if !ok {
-			// Plan referenced in phase but not in plans list — skip gracefully.
+			// prd.Validate already rejected unknown plan refs; this cannot happen.
 			continue
 		}
 
@@ -136,9 +142,10 @@ func Compile(in CompileInput) (CompileOutput, error) {
 	}
 
 	return CompileOutput{
-		Batch:  batch,
-		Source: env.Source,
-		Plans:  writtenPlans,
-		Units:  units,
+		Batch:    batch,
+		Source:   env.Source,
+		Plans:    writtenPlans,
+		Units:    units,
+		Warnings: result.Warnings,
 	}, nil
 }
