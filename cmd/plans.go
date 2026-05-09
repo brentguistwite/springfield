@@ -29,14 +29,13 @@ func NewPlansCommand() *cobra.Command {
 
 func newPlansAddCommand() *cobra.Command {
 	var (
-		dir         string
-		id          string
-		title       string
-		description string
-		path        string
-		ref         string
-		planBranch  string
-		order       int
+		dir        string
+		id         string
+		title      string
+		path       string
+		ref        string
+		planBranch string
+		order      int
 	)
 
 	cmd := &cobra.Command{
@@ -55,13 +54,12 @@ func newPlansAddCommand() *cobra.Command {
 				return err
 			}
 			plan, err := execution.AddPlan(loaded.RootDir, execution.PlanInput{
-				ID:          id,
-				Title:       title,
-				Description: description,
-				Path:        path,
-				Ref:         ref,
-				PlanBranch:  planBranch,
-				Order:       order,
+				ID:         id,
+				Title:      title,
+				Path:       path,
+				Ref:        ref,
+				PlanBranch: planBranch,
+				Order:      order,
 			})
 			if err != nil {
 				return err
@@ -74,7 +72,6 @@ func newPlansAddCommand() *cobra.Command {
 	cmd.Flags().StringVar(&dir, "dir", ".", "project root or nested path inside the Springfield project")
 	cmd.Flags().StringVar(&id, "id", "", "stable plan id (slug)")
 	cmd.Flags().StringVar(&title, "title", "", "human-friendly plan title")
-	cmd.Flags().StringVar(&description, "description", "", "optional plan description")
 	cmd.Flags().StringVar(&path, "path", "", "plan source path (project-relative or plans_dir-relative filename)")
 	cmd.Flags().StringVar(&ref, "ref", "", "local branch the plan worktree branches from and the merge phase publishes back to (default: current branch at start time). Only local branch names are accepted; refs/* shapes, pseudo-refs, and revision modifiers are rejected up front.")
 	cmd.Flags().StringVar(&planBranch, "plan-branch", "", "explicit local branch name for the plan worktree (default: springfield/<id>). Same local-branch-only constraint as --ref.")

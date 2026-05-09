@@ -367,9 +367,6 @@ func buildPrompt(controlRoot string, unit conductor.PlanUnit) (string, error) {
 	if title := strings.TrimSpace(unit.Title); title != "" {
 		fmt.Fprintf(&b, "- Title: %s\n", title)
 	}
-	if desc := strings.TrimSpace(unit.Description); desc != "" {
-		fmt.Fprintf(&b, "- Description: %s\n", desc)
-	}
 	fmt.Fprintf(&b, "- Path: %s\n", unit.Path)
 	b.WriteString("\n# Plan body\n")
 	b.WriteString(string(planBytes))

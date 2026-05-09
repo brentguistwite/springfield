@@ -35,7 +35,6 @@ import (
 	"springfield/internal/features/conductor/planrun"
 	"springfield/internal/features/execution"
 	"springfield/internal/features/wakelock"
-	"springfield/internal/features/workflow"
 )
 
 // runtimeAgentRunner is a thin adapter so cmd does not need to import the
@@ -194,91 +193,13 @@ type BatchRunResult struct {
 }
 
 func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string) (BatchRunResult, error) {
-	// Agent trace sink: every stream-json event from claude/codex/gemini
-	// gets appended to a per-batch trace file so we can post-mortem exactly
-	// which tool calls ran (and which got blocked by hooks).
-	traceSink, traceCloser := openAgentTrace(root, b.ID)
-	defer traceCloser()
-
-	runner, err := workflow.NewRuntimeRunner(root, exec.LookPath, traceSink)
-	if err != nil {
-		return BatchRunResult{Error: err.Error()}, err
-	}
-
-	phase, ok := b.ActivePhase(run.ActivePhaseIdx)
-	if !ok {
-		return BatchRunResult{Status: "completed"}, nil
-	}
-
-	batchPaths, pathErr := batch.NewPaths(root, b.ID)
-	if pathErr != nil {
-		return BatchRunResult{Error: pathErr.Error()}, pathErr
-	}
-
-	for _, sliceID := range phase.Slices {
-		s, found := b.SliceByID(sliceID)
-		if !found {
-			return BatchRunResult{Error: fmt.Sprintf("slice %q not found in batch", sliceID)}, nil
-		}
-		if s.Status == batch.SliceDone {
-			continue
-		}
-
-		fmt.Fprintf(progress, "  slice %s start — %s\n", s.ID, s.Title)
-
-		s.Status = batch.SliceRunning
-		if err := batch.UpdateBatchSlice(batchPaths, s); err != nil {
-			return BatchRunResult{Error: err.Error()}, err
-		}
-
-		// Snapshot the entire Springfield control plane before the agent
-		// runs: batch.json, run.json, source.md. The agent is not expected
-		// to touch any of them; any byte-level difference is tamper.
-		snap, snapErr := snapshotControlPlane(root, batchPaths)
-		if snapErr != nil {
-			return BatchRunResult{Error: fmt.Sprintf("snapshot control plane: %v", snapErr)}, snapErr
-		}
-
-		report, runErr := runner.Executor.Run(root, sliceToExecutionWork(root, b, s))
-
-		forensics := tamperForensicsContext{
-			batchID:      b.ID,
-			sliceID:      s.ID,
-			agentID:      report.AgentID,
-			agentLogPath: logPath,
-			exitCode:     report.ExitCode,
-		}
-		if tamperErr := detectAndRecoverTamper(root, batchPaths, snap, forensics); tamperErr != nil {
-			return BatchRunResult{Error: tamperErr.Error(), RunStateCleared: true}, tamperErr
-		}
-
-		if runErr != nil || report.Status == "failed" {
-			s.Status = batch.SliceFailed
-			s.Error = report.Error
-			if len(report.Workstreams) > 0 {
-				s.EvidencePath = report.Workstreams[0].EvidencePath
-			}
-			if runErr != nil && s.Error == "" {
-				s.Error = runErr.Error()
-			}
-			if err := batch.UpdateBatchSlice(batchPaths, s); err != nil {
-				return BatchRunResult{Error: s.Error}, fmt.Errorf("%s; also failed to persist slice status: %w", s.Error, err)
-			}
-			fmt.Fprintf(progress, "  slice %s failed — %s\n", s.ID, s.Error)
-			return BatchRunResult{Error: s.Error}, runErr
-		}
-
-		s.Status = batch.SliceDone
-		if len(report.Workstreams) > 0 {
-			s.EvidencePath = report.Workstreams[0].EvidencePath
-		}
-		if err := batch.UpdateBatchSlice(batchPaths, s); err != nil {
-			return BatchRunResult{Error: err.Error()}, err
-		}
-		fmt.Fprintf(progress, "  slice %s done\n", s.ID)
-	}
-
-	return BatchRunResult{Status: "completed"}, nil
+	// TODO(phase-5): batch runtime pending PRD rewrite.
+	_ = root
+	_ = run
+	_ = b
+	_ = progress
+	_ = logPath
+	return BatchRunResult{Error: "cmd/start: batch runtime pending Phase 5 rewrite"}, errors.New("cmd/start: batch runtime pending Phase 5 rewrite")
 }
 
 // controlPlaneSnapshot captures every Springfield-owned file under
@@ -820,27 +741,13 @@ func openAgentTrace(root, batchID string) (coreexec.EventHandler, func()) {
 	return handler, closer
 }
 
-// sliceToExecutionWork converts a batch slice into an execution.Work for the runtime adapter.
-// It reads source.md from the batch plan directory best-effort; missing file yields empty RequestBody.
-func sliceToExecutionWork(root string, b batch.Batch, s batch.Slice) execution.Work {
-	var requestBody string
-	if paths, err := batch.NewPaths(root, b.ID); err == nil {
-		data, _ := os.ReadFile(paths.SourcePath())
-		requestBody = string(data)
-	}
-	return execution.Work{
-		ID:          b.ID + "-" + s.ID,
-		Title:       s.Title,
-		RequestBody: requestBody,
-		Split:       "single",
-		Workstreams: []execution.Workstream{
-			{
-				Name:    s.ID,
-				Title:   s.Title,
-				Summary: s.Summary,
-			},
-		},
-	}
+// sliceToExecutionWork is a stub pending Phase 5 rewrite.
+// TODO(phase-5): rewrite to use plan-based execution (prd.json + context.md).
+func sliceToExecutionWork(root string, b batch.Batch, planID string) execution.Work {
+	_ = root
+	_ = b
+	_ = planID
+	return execution.Work{}
 }
 
 // tryRunSinglePlanUnit handles the parity-2 single-plan worktree flow when no

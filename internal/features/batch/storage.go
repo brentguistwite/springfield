@@ -10,8 +10,16 @@ import (
 	"time"
 )
 
-// WriteBatch persists the compiled batch and source to disk.
-func WriteBatch(paths Paths, b Batch, source string) error {
+// WriteBatch persists the compiled batch, source, and per-plan files to disk.
+// For each WrittenPlan, writes:
+//   - <root>/.springfield/plans/<plan-id>/prd.json  (atomic)
+//   - <root>/.springfield/plans/<plan-id>/context.md (atomic; only if ContextBytes non-empty)
+//
+// Rollback on partial failure: tracks each successfully created per-plan dir;
+// on any error mid-write, removes each created per-plan dir (best-effort),
+// then returns the original error. The batch dir itself is not removed unless
+// its files also failed to write.
+func WriteBatch(paths Paths, b Batch, source string, plans []WrittenPlan) error {
 	if err := os.MkdirAll(paths.PlanDir(), 0o755); err != nil {
 		return fmt.Errorf("create plan dir: %w", err)
 	}
@@ -20,7 +28,43 @@ func WriteBatch(paths Paths, b Batch, source string) error {
 		return fmt.Errorf("write source: %w", err)
 	}
 
-	return writeJSON(paths.BatchPath(), b)
+	if err := writeJSON(paths.BatchPath(), b); err != nil {
+		return err
+	}
+
+	// Write per-plan files; track created dirs for rollback.
+	var createdPlanDirs []string
+	for _, wp := range plans {
+		planDir := PlanDirByID(paths.rootDir, wp.ID)
+		if err := os.MkdirAll(planDir, 0o755); err != nil {
+			rollbackPlanDirs(createdPlanDirs)
+			return fmt.Errorf("create plan dir for %q: %w", wp.ID, err)
+		}
+		createdPlanDirs = append(createdPlanDirs, planDir)
+
+		prdPath := PlanPRDPath(paths.rootDir, wp.ID)
+		if err := writeFileAtomic(prdPath, wp.PRDBytes, 0o644); err != nil {
+			rollbackPlanDirs(createdPlanDirs)
+			return fmt.Errorf("write prd.json for plan %q: %w", wp.ID, err)
+		}
+
+		if len(wp.ContextBytes) > 0 {
+			ctxPath := PlanContextPath(paths.rootDir, wp.ID)
+			if err := writeFileAtomic(ctxPath, wp.ContextBytes, 0o644); err != nil {
+				rollbackPlanDirs(createdPlanDirs)
+				return fmt.Errorf("write context.md for plan %q: %w", wp.ID, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// rollbackPlanDirs removes each plan dir created during WriteBatch (best-effort).
+func rollbackPlanDirs(dirs []string) {
+	for _, d := range dirs {
+		_ = os.RemoveAll(d)
+	}
 }
 
 // ReadBatch reads the compiled batch for the given batch id.
@@ -68,9 +112,8 @@ func ClearRun(rootDir string) error {
 	return nil
 }
 
-// ArchiveBatchNormalized rewrites any non-terminal slice status to SliceAborted,
-// then atomically writes the archive entry (exactly once per batch id) and
-// removes the plan directory.
+// ArchiveBatchNormalized writes the archive entry (exactly once per batch id)
+// and removes the plan directory.
 //
 // Single-writer contract: the archive path is a stable per-batch id
 // (StableArchivePath); the archive entry is created with O_EXCL so two
@@ -88,31 +131,19 @@ func ArchiveBatchNormalized(rootDir string, b Batch, reason string) error {
 		return fmt.Errorf("create archive dir: %w", err)
 	}
 
-	slices := make([]ArchiveSlice, 0, len(b.Slices))
-	for _, s := range b.Slices {
-		status := s.Status
-		if !status.IsTerminal() {
-			status = SliceAborted
-		}
-		slices = append(slices, ArchiveSlice{ID: s.ID, Title: s.Title, Status: status})
-	}
-
 	entry := ArchiveEntry{
 		BatchID:    b.ID,
 		Title:      b.Title,
 		ArchivedAt: time.Now().UTC(),
 		Reason:     reason,
-		Slices:     slices,
 	}
 
 	existed, err := writeJSONExclusive(archivePath, entry)
 	if err != nil {
 		return err
 	}
-	// On collision, compare reasons. A distinct reason (e.g. an earlier
-	// "replaced" stub vs. a subsequent "state-tampered" entry) is forensically
-	// valuable and must not be dropped on the floor; write a timestamped
-	// sibling so both records survive.
+	// On collision, compare reasons. A distinct reason is forensically
+	// valuable and must not be dropped; write a timestamped sibling so both records survive.
 	if existed {
 		if err := maybeWriteArchiveSibling(archivePath, entry); err != nil {
 			return err
@@ -166,16 +197,6 @@ func RecoverOrphan(rootDir string, run Run) error {
 // ReadBatch's fmt.Errorf %w wrapping.
 func IsMissingBatchError(err error) bool {
 	return errors.Is(err, fs.ErrNotExist)
-}
-
-// UpdateBatchSlice reads the batch, updates one slice, and writes it back.
-func UpdateBatchSlice(paths Paths, updated Slice) error {
-	b, err := ReadBatch(paths)
-	if err != nil {
-		return err
-	}
-	b.UpdateSlice(updated)
-	return writeJSON(paths.BatchPath(), b)
 }
 
 // archiveSiblingRetryAttempts / archiveSiblingRetryDelay govern the

@@ -56,6 +56,7 @@ func NewStatusCommand() *cobra.Command {
 }
 
 func printBatchStatus(w io.Writer, b batch.Batch, run batch.Run) error {
+	// TODO(phase-5): status not yet wired to PRD
 	fmt.Fprintf(w, "Batch: %s\n", b.ID)
 	fmt.Fprintf(w, "Title: %s\n", b.Title)
 	fmt.Fprintf(w, "Phase: %d of %d\n", run.ActivePhaseIdx+1, len(b.Phases))
@@ -69,15 +70,10 @@ func printBatchStatus(w io.Writer, b batch.Batch, run batch.Run) error {
 		}
 	}
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Slices:")
-	for _, s := range b.Slices {
-		fmt.Fprintf(w, "  %s  %s  %s\n", s.ID, s.Status, s.Title)
-		if s.Error != "" {
-			fmt.Fprintf(w, "    Error: %s\n", s.Error)
-		}
-		if s.EvidencePath != "" {
-			fmt.Fprintf(w, "    Evidence: %s\n", s.EvidencePath)
-		}
+	fmt.Fprintln(w, "TODO Phase 5: status not yet wired to PRD")
+	fmt.Fprintln(w, "Plans:")
+	for _, id := range b.PlanIDs {
+		fmt.Fprintf(w, "  %s\n", id)
 	}
 	return nil
 }

@@ -14,24 +14,22 @@ import (
 // PlanInput describes a plan unit to register through Springfield's public
 // execution boundary.
 type PlanInput struct {
-	ID          string
-	Title       string
-	Description string
-	Path        string
-	Ref         string
-	PlanBranch  string
-	Order       int
+	ID         string
+	Title      string
+	Path       string
+	Ref        string
+	PlanBranch string
+	Order      int
 }
 
 // Plan is the public projection of a registered plan unit.
 type Plan struct {
-	ID          string
-	Title       string
-	Description string
-	Path        string
-	Ref         string
-	PlanBranch  string
-	Order       int
+	ID         string
+	Title      string
+	Path       string
+	Ref        string
+	PlanBranch string
+	Order      int
 }
 
 // AddPlan registers a new plan unit under the project's execution config.
@@ -259,24 +257,22 @@ func runningRegistryStatus(project *conductor.Project, held *lock.ErrLockHeld) *
 
 func toUnitInput(input PlanInput) conductor.PlanUnitInput {
 	return conductor.PlanUnitInput{
-		ID:          input.ID,
-		Title:       input.Title,
-		Description: input.Description,
-		Path:        input.Path,
-		Ref:         input.Ref,
-		PlanBranch:  input.PlanBranch,
-		Order:       input.Order,
+		ID:         input.ID,
+		Title:      input.Title,
+		Path:       input.Path,
+		Ref:        input.Ref,
+		PlanBranch: input.PlanBranch,
+		Order:      input.Order,
 	}
 }
 
 func fromUnit(u conductor.PlanUnit) Plan {
 	return Plan{
-		ID:          u.ID,
-		Title:       u.Title,
-		Description: u.Description,
-		Path:        u.Path,
-		Ref:         u.Ref,
-		PlanBranch:  u.PlanBranch,
-		Order:       u.Order,
+		ID:         u.ID,
+		Title:      u.Title,
+		Path:       u.Path,
+		Ref:        u.Ref,
+		PlanBranch: u.PlanBranch,
+		Order:      u.Order,
 	}
 }

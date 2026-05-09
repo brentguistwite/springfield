@@ -12,14 +12,10 @@ import (
 
 func makeBatchForArchive(id string) batch.Batch {
 	return batch.Batch{
-		ID:    id,
-		Title: "Archive collision test",
-		Phases: []batch.Phase{
-			{Slices: []string{"00"}},
-		},
-		Slices: []batch.Slice{
-			{ID: "00", Title: "only", Status: batch.SliceQueued},
-		},
+		ID:      id,
+		Title:   "Archive collision test",
+		Phases:  []batch.Phase{{Plans: []string{"00"}}},
+		PlanIDs: []string{"00"},
 	}
 }
 

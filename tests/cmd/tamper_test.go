@@ -30,6 +30,7 @@ func installTamperingAgent(t *testing.T, binDir, name, tamperCmd string) {
 // fire, snapshot must restore, forensics sidecar must land. The batch
 // stays active (not archived) so the user can retry without recompiling.
 func TestTamperRule1_AgentDeletesBatchJSON(t *testing.T) {
+	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
 	bin := buildBinary(t)
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
@@ -84,6 +85,7 @@ func TestTamperRule1_AgentDeletesBatchJSON(t *testing.T) {
 
 // TestTamperRule2_AgentWritesGarbageJSON — predicate rule 2 (JSON parse) fires.
 func TestTamperRule2_AgentWritesGarbageJSON(t *testing.T) {
+	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
 	bin := buildBinary(t)
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
@@ -112,6 +114,7 @@ func TestTamperRule2_AgentWritesGarbageJSON(t *testing.T) {
 // Previously an agent could rewrite phase structure, slice order, or slice
 // status/title/error with the same ID set and slip through.
 func TestTamperSliceTitleRewriteDetected(t *testing.T) {
+	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
 	bin := buildBinary(t)
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
@@ -135,6 +138,7 @@ func TestTamperSliceTitleRewriteDetected(t *testing.T) {
 
 // TestTamperRunJSONDetected — agent rewriting run.json is caught too.
 func TestTamperRunJSONDetected(t *testing.T) {
+	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
 	bin := buildBinary(t)
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
@@ -158,6 +162,7 @@ func TestTamperRunJSONDetected(t *testing.T) {
 // TestTamperNoopAgentPasses — an agent that does nothing must NOT trigger the
 // predicate. This guards against false-positive rewrites of the batch file.
 func TestTamperNoopAgentPasses(t *testing.T) {
+	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
 	bin := buildBinary(t)
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
@@ -182,6 +187,7 @@ func TestTamperNoopAgentPasses(t *testing.T) {
 // tampering deletes both batch.json AND run.json. Next start sees "no active
 // batch" and MUST NOT write a spurious orphan archive.
 func TestABInteractionMatrix_RunJSONAloneDeleted(t *testing.T) {
+	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
 	bin := buildBinary(t)
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")

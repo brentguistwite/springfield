@@ -22,13 +22,12 @@ var (
 // PlanUnitInput is the validated input shape for registering or updating a
 // plan unit. Fields mirror PlanUnit minus computed Order.
 type PlanUnitInput struct {
-	ID          string
-	Title       string
-	Description string
-	Path        string
-	Ref         string
-	PlanBranch  string
-	Order       int
+	ID         string
+	Title      string
+	Path       string
+	Ref        string
+	PlanBranch string
+	Order      int
 }
 
 // OrderedPlanUnitIDs returns the IDs in ascending Order, ties broken by ID.
@@ -264,13 +263,12 @@ func (p *Project) AddPlanUnit(input PlanUnitInput) (PlanUnit, error) {
 	}
 
 	unit := PlanUnit{
-		ID:          input.ID,
-		Title:       strings.TrimSpace(input.Title),
-		Description: strings.TrimSpace(input.Description),
-		Path:        canonicalPath,
-		Ref:         input.Ref,
-		PlanBranch:  input.PlanBranch,
-		Order:       order,
+		ID:         input.ID,
+		Title:      strings.TrimSpace(input.Title),
+		Path:       canonicalPath,
+		Ref:        input.Ref,
+		PlanBranch: input.PlanBranch,
+		Order:      order,
 	}
 
 	full := filepath.Join(p.runtime.RootDir, filepath.FromSlash(canonicalPath))

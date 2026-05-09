@@ -17,10 +17,13 @@ type Config struct {
 // Mutable runtime data (status, attempts, timestamps, evidence, error) lives
 // in [PlanState] under [State]; PlanUnit is config-only.
 type PlanUnit struct {
-	ID          string `json:"id"`
-	Title       string `json:"title,omitempty"`
-	Description string `json:"description,omitempty"`
-	// Path is the canonical project-relative location of the plan source file.
+	ID    string `json:"id"`
+	Title string `json:"title,omitempty"`
+	// Path is the canonical project-relative path to the plan's prd.json,
+	// e.g. ".springfield/plans/<plan-id>/prd.json".
+	// Sibling files are derived from the same directory:
+	//   context.md  = filepath.Join(filepath.Dir(unit.Path), "context.md")
+	//   progress.md = filepath.Join(filepath.Dir(unit.Path), "progress.md")
 	Path string `json:"path"`
 	// Ref is the optional base ref the plan should branch from.
 	Ref string `json:"ref,omitempty"`

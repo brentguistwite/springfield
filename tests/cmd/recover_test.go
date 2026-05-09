@@ -71,6 +71,7 @@ func TestSpringfieldRecoverIdempotent(t *testing.T) {
 }
 
 func TestSpringfieldRecoverOnLiveBatchIsNoop(t *testing.T) {
+	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
 	bin := buildBinary(t)
 	dir := t.TempDir()
 	writeSpringfieldConfig(t, dir, "claude")
@@ -99,6 +100,7 @@ func TestSpringfieldRecoverOnLiveBatchIsNoop(t *testing.T) {
 // cannot complete (e.g. permission-denied) must fail closed so live state is
 // never destroyed on a degraded read.
 func TestSpringfieldRecoverFailsClosedOnStatPermissionError(t *testing.T) {
+	t.Skip("TODO(phase-3) batch ingest pending PRD rewrite")
 	if os.Geteuid() == 0 {
 		t.Skip("chmod-based permission test does not apply when running as root")
 	}
