@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -23,6 +24,7 @@ const legacyPayloadSnippetLen = 200
 func NewPlanCommand() *cobra.Command {
 	var dir string
 	var prdArg string
+	var fromDir string
 	var replace bool
 	var appendMode bool
 
@@ -31,11 +33,22 @@ func NewPlanCommand() *cobra.Command {
 		Short: "Compile a Springfield plan into a runnable batch.",
 		Long: "Compile a Springfield plan from a caller-provided PRD envelope.\n\n" +
 			"Use --prd <path> to read a JSON envelope from a file, or --prd - to read from stdin.\n" +
+			"Use --from-dir <path> to load <path>/batch.json as the envelope.\n" +
 			"The springfield:plan skill emits this envelope. Run \"springfield start\" to execute.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if prdArg == "" {
+			// Mutual exclusion: --prd and --from-dir cannot both be set.
+			if prdArg != "" && fromDir != "" {
+				return fmt.Errorf("--prd and --from-dir are mutually exclusive; use one or the other")
+			}
+
+			if prdArg == "" && fromDir == "" {
 				return fmt.Errorf("--prd is required (path to PRD envelope JSON, or \"-\" for stdin)")
+			}
+
+			// Resolve payload source: --from-dir reads <path>/batch.json.
+			if fromDir != "" {
+				prdArg = filepath.Join(fromDir, "batch.json")
 			}
 
 			// Load project root.
@@ -182,6 +195,7 @@ func NewPlanCommand() *cobra.Command {
 
 	cmd.Flags().StringVar(&dir, "dir", ".", "project root or nested path inside the Springfield project")
 	cmd.Flags().StringVar(&prdArg, "prd", "", "path to PRD envelope JSON, or \"-\" to read from stdin")
+	cmd.Flags().StringVar(&fromDir, "from-dir", "", "directory containing batch.json (operator-authored PRD); mutually exclusive with --prd")
 	cmd.Flags().BoolVar(&replace, "replace", false, "archive the current active batch and replace it with this one")
 	cmd.Flags().BoolVar(&appendMode, "append", false, "add new plans to the end of the current active batch")
 
