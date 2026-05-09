@@ -485,6 +485,94 @@ func TestPrepareAllowsProtectedBaseWhenGuardOff(t *testing.T) {
 	}
 }
 
+func TestPrepareGuardUsesPriorStateBaseRefOnResume(t *testing.T) {
+	// Resume case: plan was originally anchored to a feature branch and
+	// has a reusable worktree on disk. The operator's current checkout
+	// happens to be a protected branch (e.g. they switched to main to
+	// pull). The guard must consult PriorState.BaseRef rather than the
+	// caller's current branch so the resume isn't falsely refused.
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan")
+
+	wtPath := filepath.Join(root, ".worktrees", "p")
+	if err := os.MkdirAll(wtPath, 0o755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	g := newFakeGit() // currentBranch = "main"
+	g.branches["springfield/p"] = struct{}{}
+	g.worktreePaths = []string{wtPath}
+	g.branchByPath = map[string]string{wtPath: "springfield/p"}
+	g.resolveOK["feat/redesign"] = "feedface"
+
+	priorDigest, err := planrun.InputDigest(root, conductor.PlanUnit{ID: "p", Path: ".springfield/plans/p.md"})
+	if err != nil {
+		t.Fatalf("digest: %v", err)
+	}
+
+	m := &planrun.Manager{Git: g}
+	dec, err := m.Prepare(planrun.PrepareInput{
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		Unit:         conductor.PlanUnit{ID: "p", Path: ".springfield/plans/p.md", Order: 1},
+		PriorState: &conductor.PlanState{
+			Status:       conductor.StatusFailed,
+			WorktreePath: wtPath,
+			Branch:       "springfield/p",
+			BaseRef:      "feat/redesign",
+			BaseHead:     "feedface",
+			InputDigest:  priorDigest,
+		},
+		AllStates:            map[string]*conductor.PlanState{},
+		EnforceProtectedBase: true,
+	})
+	if err != nil {
+		t.Fatalf("resume on feature branch must pass guard even when current checkout is main; got: %v", err)
+	}
+	if !dec.Reuse {
+		t.Fatalf("expected reuse on resume, got fresh: %+v", dec)
+	}
+	if dec.Context.BaseRef != "feat/redesign" {
+		t.Fatalf("Context.BaseRef should reflect prior anchor, got %q", dec.Context.BaseRef)
+	}
+}
+
+func TestPrepareGuardRefusesWhenPriorBaseIsProtected(t *testing.T) {
+	// Symmetric to the resume case: if PriorState.BaseRef itself is
+	// protected, the guard must still fire even when the operator's
+	// current checkout is a feature branch (e.g. config flipped from
+	// allow_protected_base = true to false between runs).
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan")
+
+	g := newFakeGit()
+	g.currentBranch = "feat/redesign"
+	g.resolveOK["feat/redesign"] = "feedface"
+
+	m := &planrun.Manager{Git: g}
+	_, err := m.Prepare(planrun.PrepareInput{
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		Unit:         conductor.PlanUnit{ID: "p", Path: ".springfield/plans/p.md", Order: 1},
+		PriorState: &conductor.PlanState{
+			Status:  conductor.StatusFailed,
+			BaseRef: "main",
+		},
+		AllStates:            map[string]*conductor.PlanState{},
+		EnforceProtectedBase: true,
+	})
+	if err == nil {
+		t.Fatal("expected guard to refuse when PriorState.BaseRef is protected")
+	}
+	pe := planrun.AsPreflight(err)
+	if pe == nil || pe.Tag != "preflight-protected-base" {
+		t.Fatalf("expected preflight-protected-base, got %v", err)
+	}
+	if !strings.Contains(pe.Message, "main") {
+		t.Fatalf("error must mention the recorded base, got: %q", pe.Message)
+	}
+}
+
 func TestPrepareAllowsNonProtectedBaseUnderGuard(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan")

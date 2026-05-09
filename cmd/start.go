@@ -988,7 +988,14 @@ func runOnePlan(w io.Writer, project *conductor.Project, root, worktreeBase stri
 			if prior := project.State.Plans[planID]; prior != nil && planrun.IsProtectedBase(prior.BaseRef) {
 				fmt.Fprintf(w, "Plan: %s\n", planID)
 				fmt.Fprintf(w, "Status: failed (preflight-protected-base)\n")
-				err := fmt.Errorf("plan %q recorded base %q is protected; refusing merge re-entry. Set [project] allow_protected_base = true in springfield.toml to opt out, or rebase the plan onto a feature branch", planID, prior.BaseRef)
+				// Recovery path: the recorded BaseRef cannot be rewritten
+				// from the CLI today, so the supported way to unstick a
+				// plan that completed under an earlier opted-in config is
+				// to set allow_protected_base = true, run start to land
+				// the merge, then revert the setting. State editing is the
+				// fallback if the user does not want to flip global config.
+				err := fmt.Errorf("plan %q recorded base %q is protected; refusing merge re-entry. To finish integrating this plan, set [project] allow_protected_base = true in springfield.toml (you can revert the setting after the merge lands)",
+					planID, prior.BaseRef)
 				fmt.Fprintf(w, "Error: %s\n", err.Error())
 				return err
 			}
