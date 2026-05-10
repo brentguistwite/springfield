@@ -141,6 +141,98 @@ func TestInitGuardrailFreshFileDefaultMode(t *testing.T) {
 	}
 }
 
+// TestInitPreservesClaudeMdSymlinkToAgents verifies that when CLAUDE.md is a
+// symlink to AGENTS.md (the keep-agents-md-canonical convention), init writes
+// the guardrail to the canonical target and leaves the symlink intact.
+//
+// Regression: previously, ensureGuardrailBlock called through
+// writeFileReplacingNonRegular which detected the symlink as non-regular,
+// removed it, and wrote a divergent regular file at CLAUDE.md — silently
+// breaking the operator's setup.
+func TestInitPreservesClaudeMdSymlinkToAgents(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	// Seed canonical AGENTS.md + symlink CLAUDE.md -> AGENTS.md.
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	if err := os.WriteFile(agentsPath, []byte("# Agent Instructions\n"), 0o644); err != nil {
+		t.Fatalf("seed AGENTS.md: %v", err)
+	}
+	claudePath := filepath.Join(dir, "CLAUDE.md")
+	if err := os.Symlink("AGENTS.md", claudePath); err != nil {
+		t.Fatalf("symlink CLAUDE.md: %v", err)
+	}
+
+	if _, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude,codex"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	// CLAUDE.md must still be a symlink.
+	info, err := os.Lstat(claudePath)
+	if err != nil {
+		t.Fatalf("lstat CLAUDE.md: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("CLAUDE.md is no longer a symlink: mode=%v", info.Mode())
+	}
+
+	// AGENTS.md must have the guardrail marker exactly once.
+	data, err := os.ReadFile(agentsPath)
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+	count := strings.Count(string(data), guardrailMarker)
+	if count != 1 {
+		t.Errorf("AGENTS.md has %d guardrail markers, want 1", count)
+	}
+
+	// Reading CLAUDE.md (follows symlink) must return the same content.
+	via, err := os.ReadFile(claudePath)
+	if err != nil {
+		t.Fatalf("read CLAUDE.md: %v", err)
+	}
+	if string(via) != string(data) {
+		t.Errorf("CLAUDE.md and AGENTS.md diverged after init")
+	}
+}
+
+// TestInitPreservesAgentsMdSymlinkToClaude verifies the reverse-direction
+// symlink (AGENTS.md -> CLAUDE.md) is also respected.
+func TestInitPreservesAgentsMdSymlinkToClaude(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	claudePath := filepath.Join(dir, "CLAUDE.md")
+	if err := os.WriteFile(claudePath, []byte("# Agent Instructions\n"), 0o644); err != nil {
+		t.Fatalf("seed CLAUDE.md: %v", err)
+	}
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	if err := os.Symlink("CLAUDE.md", agentsPath); err != nil {
+		t.Fatalf("symlink AGENTS.md: %v", err)
+	}
+
+	if _, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude,codex"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	info, err := os.Lstat(agentsPath)
+	if err != nil {
+		t.Fatalf("lstat AGENTS.md: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("AGENTS.md is no longer a symlink: mode=%v", info.Mode())
+	}
+
+	data, err := os.ReadFile(claudePath)
+	if err != nil {
+		t.Fatalf("read CLAUDE.md: %v", err)
+	}
+	count := strings.Count(string(data), guardrailMarker)
+	if count != 1 {
+		t.Errorf("CLAUDE.md has %d guardrail markers, want 1", count)
+	}
+}
+
 // TestInitGuardrailPreservesExistingContent verifies pre-existing content in
 // CLAUDE.md is preserved and the guardrail lands appended at the end.
 func TestInitGuardrailPreservesExistingContent(t *testing.T) {

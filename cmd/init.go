@@ -541,6 +541,17 @@ Never read, write, edit, or delete files under ` + "`.springfield/`" + `. That d
 // the rename is atomic. The existing file's mode is preserved; fresh files
 // default to 0o644.
 func ensureGuardrailBlock(path string) (bool, error) {
+	// Resolve symlinks before any read/write. The keep-agents-md-canonical
+	// convention has CLAUDE.md / AGENTS.md / GEMINI.md as symlinks pointing at
+	// a single source of truth. Operating on the resolved target preserves
+	// the operator's setup; without this, writeFileReplacingNonRegular would
+	// see a non-regular node and replace the symlink with a regular file.
+	if info, lerr := os.Lstat(path); lerr == nil && info.Mode()&os.ModeSymlink != 0 {
+		if resolved, rerr := filepath.EvalSymlinks(path); rerr == nil {
+			path = resolved
+		}
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return false, fmt.Errorf("read %s: %w", filepath.Base(path), err)
