@@ -40,3 +40,8 @@ The `plan` skill emits PRD envelopes (not legacy slice payloads); the envelope s
 ## Auto-branching on protected base
 
 When `springfield start` runs from `main` or `master`, Springfield auto-cuts a feature branch (`springfield/batch-<id>` by default) before the batch and switches back to the original branch when it finishes. Agents must NOT do `git switch -c` themselves before invoking start — the wrapper handles it. The auto-cut branch is local-only; pushing and opening PRs is the operator's job.
+
+<!-- springfield:guardrail -->
+## Springfield control plane
+
+Never read, write, edit, or delete files under `.springfield/`. That directory is Springfield's internal state. Writing to it will abort the current run.
