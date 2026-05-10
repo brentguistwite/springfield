@@ -65,3 +65,27 @@ func TestCompileBatchIDNoCollisionWhenTitleDiffers(t *testing.T) {
 		t.Errorf("batch ID = %q, want %q", out.Batch.ID, "my-batch")
 	}
 }
+
+// TestCompileBatchIDDoesNotCollideWithRegisteredPlanID verifies that when the
+// envelope title sanitizes to the same slug as a standalone registered plan ID,
+// the batch ID is made distinct. This prevents filesystem collisions between
+// batch directory and plan directory under .springfield/plans/<id>/.
+func TestCompileBatchIDDoesNotCollideWithRegisteredPlanID(t *testing.T) {
+	env := prd.BatchPRDEnvelope{
+		Title:  "alpha", // sanitizes to "alpha" — same as registered standalone plan
+		Source: "src",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"beta"}}},
+		Plans:  []prd.BatchPRDPlan{minPlan("beta", "Beta Plan")},
+	}
+
+	out, err := batch.Compile(batch.CompileInput{
+		Envelope:          env,
+		RegisteredPlanIDs: map[string]struct{}{"alpha": {}},
+	})
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if out.Batch.ID == "alpha" {
+		t.Errorf("batch ID = %q collides with registered plan ID %q; want a distinct ID", out.Batch.ID, "alpha")
+	}
+}

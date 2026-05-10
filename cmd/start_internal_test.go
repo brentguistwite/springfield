@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"springfield/internal/features/batch"
@@ -145,6 +147,123 @@ func TestRunBatchWithContextCancelledReturnsContextCanceled(t *testing.T) {
 	// run.json must still exist (not cleared).
 	if _, statErr := os.Stat(batch.RunPath(root)); statErr != nil {
 		t.Errorf("run.json should still exist after interrupt: %v", statErr)
+	}
+}
+
+// TestPlanDirTamperGuardSnapshotsRunJSON verifies that planDirTamperGuard
+// snapshots run.json and detects deletion or modification as tamper.
+func TestPlanDirTamperGuardSnapshotsRunJSON(t *testing.T) {
+	root := t.TempDir()
+	planDir := filepath.Join(root, ".springfield", "plans")
+	if err := os.MkdirAll(planDir, 0o755); err != nil {
+		t.Fatalf("mkdir planDir: %v", err)
+	}
+	// Write a run.json before snapshot.
+	if err := batch.WriteRun(root, batch.Run{ActiveBatchID: "my-batch"}); err != nil {
+		t.Fatalf("WriteRun: %v", err)
+	}
+
+	guard := &planDirTamperGuard{planDir: planDir, controlRoot: root}
+	if err := guard.Snapshot(); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	t.Run("delete run.json is tamper", func(t *testing.T) {
+		if err := os.Remove(batch.RunPath(root)); err != nil {
+			t.Fatalf("remove run.json: %v", err)
+		}
+		reason, err := guard.Detect()
+		if err != nil {
+			t.Fatalf("Detect: %v", err)
+		}
+		if reason == "" {
+			t.Fatal("expected tamper reason for deleted run.json, got empty")
+		}
+		// Restore puts it back.
+		if err := guard.Restore(); err != nil {
+			t.Fatalf("Restore: %v", err)
+		}
+		data, err := os.ReadFile(batch.RunPath(root))
+		if err != nil {
+			t.Fatalf("run.json missing after Restore: %v", err)
+		}
+		if !bytes.Contains(data, []byte("my-batch")) {
+			t.Errorf("restored run.json missing expected content: %s", data)
+		}
+	})
+
+	// Re-snapshot after restore so the next sub-test starts from valid state.
+	if err := guard.Snapshot(); err != nil {
+		t.Fatalf("re-Snapshot: %v", err)
+	}
+
+	t.Run("modify run.json is tamper", func(t *testing.T) {
+		if err := os.WriteFile(batch.RunPath(root), []byte(`{"active_batch_id":"corrupted"}`), 0o644); err != nil {
+			t.Fatalf("write corrupted run.json: %v", err)
+		}
+		reason, err := guard.Detect()
+		if err != nil {
+			t.Fatalf("Detect: %v", err)
+		}
+		if reason == "" {
+			t.Fatal("expected tamper reason for modified run.json, got empty")
+		}
+		// Restore puts it back to original bytes.
+		if err := guard.Restore(); err != nil {
+			t.Fatalf("Restore: %v", err)
+		}
+		data, err := os.ReadFile(batch.RunPath(root))
+		if err != nil {
+			t.Fatalf("run.json missing after Restore: %v", err)
+		}
+		if !bytes.Contains(data, []byte("my-batch")) {
+			t.Errorf("restored run.json missing expected content: %s", data)
+		}
+	})
+}
+
+// TestPlanDirTamperGuardRunJSONAbsentBeforeSnapshot verifies that when run.json
+// does not exist at Snapshot time, deleting it (noop) is not tamper, and creating
+// it is tamper (guarded to keep the Snapshot semantics consistent).
+func TestPlanDirTamperGuardRunJSONAbsentBeforeSnapshot(t *testing.T) {
+	root := t.TempDir()
+	planDir := filepath.Join(root, ".springfield", "plans")
+	if err := os.MkdirAll(planDir, 0o755); err != nil {
+		t.Fatalf("mkdir planDir: %v", err)
+	}
+	// No run.json written — doesn't exist at Snapshot time.
+
+	guard := &planDirTamperGuard{planDir: planDir, controlRoot: root}
+	if err := guard.Snapshot(); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	// With no run.json before or after, Detect must report no tamper.
+	reason, err := guard.Detect()
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if reason != "" {
+		t.Errorf("expected no tamper when run.json absent in both snapshot and current, got %q", reason)
+	}
+
+	// If agent CREATES run.json (it didn't exist before), that's tamper.
+	if err := batch.WriteRun(root, batch.Run{ActiveBatchID: "injected"}); err != nil {
+		t.Fatalf("WriteRun: %v", err)
+	}
+	reason, err = guard.Detect()
+	if err != nil {
+		t.Fatalf("Detect after creation: %v", err)
+	}
+	if reason == "" {
+		t.Fatal("expected tamper when run.json created by agent, got empty")
+	}
+	// Restore must delete the injected file.
+	if err := guard.Restore(); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if _, statErr := os.Stat(batch.RunPath(root)); !os.IsNotExist(statErr) {
+		t.Errorf("expected run.json to be deleted by Restore, stat error: %v", statErr)
 	}
 }
 

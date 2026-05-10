@@ -283,7 +283,7 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 			Progress:             progress,
 			TargetPlanID:         planID,
 			EnforceProtectedBase: enforceProtected,
-			TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(root, ".springfield", "plans")},
+			TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(root, ".springfield", "plans"), controlRoot: root},
 		})
 		if res.Reason == "no-eligible-plan" {
 			// The target plan is not registered in the conductor schedule —
@@ -1081,7 +1081,7 @@ func runOnePlan(w io.Writer, project *conductor.Project, root, worktreeBase stri
 		Manager:              planrun.NewManager(),
 		Progress:             w,
 		EnforceProtectedBase: enforceProtected,
-		TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(root, ".springfield", "plans")},
+		TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(root, ".springfield", "plans"), controlRoot: root},
 	})
 
 	if res.PlanID == "" && res.Reason == "no-eligible-plan" {
@@ -1255,13 +1255,17 @@ func shortSHA(s string) string {
 }
 
 // planDirTamperGuard implements planrun.TamperGuard for the single-plan-unit
-// path. It snapshots every file under .springfield/plans/ before each agent
-// invocation and restores them on detected tamper. This mirrors the semantics
-// of the legacy batch path's snapshotControlPlane/detectAndRecoverTamper,
+// path. It snapshots every file under .springfield/plans/ AND .springfield/run.json
+// before each agent invocation and restores them on detected tamper. This mirrors
+// the semantics of the legacy batch path's snapshotControlPlane/detectAndRecoverTamper,
 // adapted for the plan-unit (non-batch) control plane layout.
 type planDirTamperGuard struct {
-	planDir  string
-	snapshot map[string][]byte // relpath → bytes
+	planDir     string
+	controlRoot string            // project root; used to locate run.json
+	snapshot    map[string][]byte // relpath → bytes (plan dir files)
+	// runSnapshot holds the pre-agent run.json bytes, or nil if it didn't exist.
+	runSnapshot   []byte
+	runExistedPre bool // true when run.json existed at Snapshot time
 }
 
 func (g *planDirTamperGuard) Snapshot() error {
@@ -1270,6 +1274,21 @@ func (g *planDirTamperGuard) Snapshot() error {
 		return fmt.Errorf("tamper snapshot: %w", err)
 	}
 	g.snapshot = tree
+
+	// Snapshot run.json if controlRoot is set.
+	if g.controlRoot != "" {
+		runPath := batch.RunPath(g.controlRoot)
+		data, err := os.ReadFile(runPath)
+		if err == nil {
+			g.runSnapshot = data
+			g.runExistedPre = true
+		} else if errors.Is(err, fs.ErrNotExist) {
+			g.runSnapshot = nil
+			g.runExistedPre = false
+		} else {
+			return fmt.Errorf("tamper snapshot run.json: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -1281,7 +1300,29 @@ func (g *planDirTamperGuard) Detect() (string, error) {
 	if err != nil {
 		return fmt.Sprintf("plan dir unreadable: %v", err), nil
 	}
-	return firstTreeDivergence(g.snapshot, current, nil), nil
+	if reason := firstTreeDivergence(g.snapshot, current, nil); reason != "" {
+		return reason, nil
+	}
+
+	// Check run.json if controlRoot is configured.
+	if g.controlRoot != "" {
+		runPath := batch.RunPath(g.controlRoot)
+		currentData, readErr := os.ReadFile(runPath)
+		runExistsNow := readErr == nil
+		if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
+			return fmt.Sprintf("run.json unreadable: %v", readErr), nil
+		}
+
+		switch {
+		case g.runExistedPre && !runExistsNow:
+			return "run.json missing", nil
+		case !g.runExistedPre && runExistsNow:
+			return "run.json added", nil
+		case g.runExistedPre && runExistsNow && !bytes.Equal(g.runSnapshot, currentData):
+			return "run.json changed", nil
+		}
+	}
+	return "", nil
 }
 
 func (g *planDirTamperGuard) Restore() error {
@@ -1307,6 +1348,21 @@ func (g *planDirTamperGuard) Restore() error {
 		abs := filepath.Join(g.planDir, filepath.FromSlash(rel))
 		if err := writeFileReplacingNonRegular(abs, data, 0o644); err != nil {
 			return fmt.Errorf("restore %s: %w", rel, err)
+		}
+	}
+
+	// Restore run.json if controlRoot is set.
+	if g.controlRoot != "" {
+		runPath := batch.RunPath(g.controlRoot)
+		if g.runExistedPre {
+			if err := writeFileReplacingNonRegular(runPath, g.runSnapshot, 0o644); err != nil {
+				return fmt.Errorf("restore run.json: %w", err)
+			}
+		} else {
+			// run.json didn't exist before — remove any agent-created copy.
+			if rmErr := os.Remove(runPath); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+				return fmt.Errorf("remove agent-created run.json: %w", rmErr)
+			}
 		}
 	}
 	return nil

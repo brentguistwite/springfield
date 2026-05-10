@@ -357,8 +357,13 @@ func TestSinglePlanIterationAlreadyCompleteNoPlanNoAgent(t *testing.T) {
 	}
 }
 
-func TestSinglePlanIterationMarkPassedUnknownIDFails(t *testing.T) {
-	// Agent emits a story-pass for US-099 which doesn't exist in the PRD.
+func TestSinglePlanIterationOffTargetIDIgnoredWithWarning(t *testing.T) {
+	// Agent emits a story-pass for US-099 which is neither in the PRD nor the
+	// current iteration target. The marker must be silently ignored (warn in
+	// progress.md), and the plan must fail via iteration cap (not a hard error
+	// about the unknown ID). The old behavior called MarkPassed unconditionally,
+	// which returned an error for unknown IDs; the new behavior filters by
+	// story.ID first so MarkPassed is never called for off-target markers.
 	p := prd.PRD{
 		ID:    "feat",
 		Title: "Feature Plan",
@@ -368,6 +373,11 @@ func TestSinglePlanIterationMarkPassedUnknownIDFails(t *testing.T) {
 	}
 
 	root, project := projectFixtureWithPRD(t, "feat", p)
+	project.Config.SingleWorkstreamIterations = 1
+	if err := project.SaveConfig(); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
 	g := newFakeGit()
 	runner := &iterScriptRunner{
 		replies: []coreruntime.Result{
@@ -378,6 +388,8 @@ func TestSinglePlanIterationMarkPassedUnknownIDFails(t *testing.T) {
 				Events: []coreexec.Event{
 					{Type: coreexec.EventStdout, Data: "<story-pass>US-099</story-pass>", Time: time.Now()},
 				},
+				StartedAt: time.Now().Add(-time.Second),
+				EndedAt:   time.Now(),
 			},
 		},
 	}
@@ -392,11 +404,32 @@ func TestSinglePlanIterationMarkPassedUnknownIDFails(t *testing.T) {
 		ProjectRoot:  root,
 	})
 
+	// Plan must fail (iteration cap) — the off-target marker is ignored, not a hard error.
 	if res.Err == nil {
-		t.Fatal("expected failure for unknown story ID")
+		t.Fatal("expected failure (iteration cap), not success")
 	}
-	if !strings.Contains(res.Err.Error(), "US-099") {
-		t.Fatalf("error should mention unknown ID, got: %v", res.Err)
+	if !strings.Contains(res.Err.Error(), "iteration cap") {
+		t.Fatalf("expected iteration cap error, got: %v", res.Err)
+	}
+
+	// US-001 must remain unpassed on disk.
+	prdPath := filepath.Join(root, ".springfield", "plans", "feat", "prd.json")
+	finalPRD, err := prd.ParseFile(prdPath)
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	if finalPRD.UserStories[0].Passes {
+		t.Error("US-001 must not be marked passed when agent only emitted off-target US-099")
+	}
+
+	// progress.md must contain a WARN about the off-target marker.
+	progressPath := filepath.Join(root, ".springfield", "plans", "feat", "progress.md")
+	progressData, err := os.ReadFile(progressPath)
+	if err != nil {
+		t.Fatalf("read progress.md: %v", err)
+	}
+	if !strings.Contains(string(progressData), "WARN") {
+		t.Errorf("expected WARN in progress.md for off-target story-pass, got:\n%s", progressData)
 	}
 }
 
@@ -859,5 +892,161 @@ func TestSinglePlanIterationAppendProgressNonFatal(t *testing.T) {
 	}
 	if res.Status != conductor.StatusCompleted {
 		t.Fatalf("status = %s, want completed", res.Status)
+	}
+}
+
+// TestSinglePlanIterationRejectsOffTargetStoryPass verifies that when an agent
+// emits a <story-pass> for a story that is NOT the current iteration target,
+// the marker is ignored, a WARN is appended to progress.md, and the next
+// iteration still targets the original story (no permanent skip).
+func TestSinglePlanIterationRejectsOffTargetStoryPass(t *testing.T) {
+	// US-001 is the target (priority 1). Agent emits pass for US-002 instead.
+	p := prd.PRD{
+		ID:    "feat",
+		Title: "Feature Plan",
+		UserStories: []prd.UserStory{
+			{ID: "US-001", Title: "Story 1", Priority: 1, Passes: false},
+			{ID: "US-002", Title: "Story 2", Priority: 2, Passes: false},
+		},
+	}
+
+	root, project := projectFixtureWithPRD(t, "feat", p)
+	project.Config.SingleWorkstreamIterations = 2
+	if err := project.SaveConfig(); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	g := newFakeGit()
+	// Iter 1: agent emits only US-002 (off target, should be ignored).
+	// Iter 2: exhausts cap.
+	runner := &iterScriptRunner{
+		replies: []coreruntime.Result{
+			{
+				Agent:    agents.AgentClaude,
+				Status:   coreruntime.StatusPassed,
+				ExitCode: 0,
+				Events: []coreexec.Event{
+					{Type: coreexec.EventStdout, Data: "<story-pass>US-002</story-pass>", Time: time.Now()},
+				},
+				StartedAt: time.Now().Add(-time.Second),
+				EndedAt:   time.Now(),
+			},
+			makeNoMarkerResult(),
+		},
+	}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentClaude},
+		Runner:       runner,
+		Manager:      &planrun.Manager{Git: g},
+		ProjectRoot:  root,
+	})
+
+	// Plan must fail (iteration cap) — not complete.
+	if res.Err == nil {
+		t.Fatal("expected failure (iteration cap), not success")
+	}
+
+	// US-002 must NOT be marked passed on disk.
+	prdPath := filepath.Join(root, ".springfield", "plans", "feat", "prd.json")
+	finalPRD, err := prd.ParseFile(prdPath)
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	for _, s := range finalPRD.UserStories {
+		if s.ID == "US-002" && s.Passes {
+			t.Errorf("US-002 must not be marked passed when it was not the iteration target")
+		}
+		if s.ID == "US-001" && s.Passes {
+			t.Errorf("US-001 must not be marked passed (agent never passed it)")
+		}
+	}
+
+	// progress.md must contain a WARN about the rejected off-target marker.
+	progressPath := filepath.Join(root, ".springfield", "plans", "feat", "progress.md")
+	progressData, err := os.ReadFile(progressPath)
+	if err != nil {
+		t.Fatalf("read progress.md: %v", err)
+	}
+	if !strings.Contains(string(progressData), "WARN") {
+		t.Errorf("expected WARN in progress.md for off-target story-pass, got:\n%s", progressData)
+	}
+	if !strings.Contains(string(progressData), "US-002") {
+		t.Errorf("expected WARN to mention US-002, got:\n%s", progressData)
+	}
+}
+
+// TestSinglePlanIterationCurrentAndOffTargetPass verifies that when an agent
+// emits both the current target's <story-pass> AND a wrong story's <story-pass>,
+// only the current target is marked; the off-target is silently warned in progress.md.
+func TestSinglePlanIterationCurrentAndOffTargetPass(t *testing.T) {
+	p := prd.PRD{
+		ID:    "feat",
+		Title: "Feature Plan",
+		UserStories: []prd.UserStory{
+			{ID: "US-001", Title: "Story 1", Priority: 1, Passes: false},
+			{ID: "US-002", Title: "Story 2", Priority: 2, Passes: false},
+		},
+	}
+
+	root, project := projectFixtureWithPRD(t, "feat", p)
+	g := newFakeGit()
+	// Agent emits US-001 (current target) + US-002 (off target) + COMPLETE.
+	// US-001 should be marked passed; US-002 should not.
+	// After US-001 is passed, next target is US-002. Agent must be called again.
+	// Iter 2: pass US-002 + COMPLETE.
+	runner := &iterScriptRunner{
+		replies: []coreruntime.Result{
+			{
+				Agent:    agents.AgentClaude,
+				Status:   coreruntime.StatusPassed,
+				ExitCode: 0,
+				Events: []coreexec.Event{
+					{Type: coreexec.EventStdout,
+						Data: "<story-pass>US-001</story-pass><story-pass>US-002</story-pass><promise>COMPLETE</promise>",
+						Time: time.Now()},
+				},
+				StartedAt: time.Now().Add(-time.Second),
+				EndedAt:   time.Now(),
+			},
+			makePassAndCompleteResult("US-002"),
+		},
+	}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentClaude},
+		Runner:       runner,
+		Manager:      &planrun.Manager{Git: g},
+		ProjectRoot:  root,
+	})
+
+	if res.Err != nil {
+		t.Fatalf("SinglePlan: %v", res.Err)
+	}
+	if res.Status != conductor.StatusCompleted {
+		t.Fatalf("status = %s, want completed", res.Status)
+	}
+	if runner.calls != 2 {
+		t.Fatalf("expected 2 agent calls, got %d", runner.calls)
+	}
+
+	// progress.md must warn about US-002 being rejected in iter 1.
+	progressPath := filepath.Join(root, ".springfield", "plans", "feat", "progress.md")
+	progressData, err := os.ReadFile(progressPath)
+	if err != nil {
+		t.Fatalf("read progress.md: %v", err)
+	}
+	content := string(progressData)
+	if !strings.Contains(content, "WARN") {
+		t.Errorf("expected WARN in progress.md for off-target US-002, got:\n%s", content)
+	}
+	if !strings.Contains(content, "US-002") {
+		t.Errorf("WARN should mention US-002, got:\n%s", content)
 	}
 }

@@ -13,6 +13,11 @@ import (
 type CompileInput struct {
 	Envelope    prd.BatchPRDEnvelope
 	ExistingIDs map[string]struct{}
+	// RegisteredPlanIDs is the set of plan unit IDs already registered in the
+	// conductor config (standalone plans added via "springfield plans add").
+	// These are seeded into the batch-ID uniqueness set so the batch title does
+	// not collide with a standalone plan directory under .springfield/plans/<id>/.
+	RegisteredPlanIDs map[string]struct{}
 }
 
 // WrittenPlan carries the serialized per-plan content produced by Compile.
@@ -52,12 +57,16 @@ func Compile(in CompileInput) (CompileOutput, error) {
 		return CompileOutput{}, result.Errors[0]
 	}
 
-	// Seed the uniqueness set from caller-provided existing IDs plus all plan IDs
-	// from the envelope. This prevents the batch ID from colliding with a plan ID —
-	// both would land under .springfield/plans/<id>/ and an archive/delete of the
-	// batch dir would silently destroy the plan's registered files.
+	// Seed the uniqueness set from caller-provided existing IDs, registered
+	// standalone plan IDs, plus all plan IDs from the envelope. This prevents the
+	// batch ID from colliding with a plan ID — both would land under
+	// .springfield/plans/<id>/ and an archive/delete of the batch dir would
+	// silently destroy the plan's registered files.
 	batchIDSeen := make(map[string]struct{})
 	for k := range in.ExistingIDs {
+		batchIDSeen[k] = struct{}{}
+	}
+	for k := range in.RegisteredPlanIDs {
 		batchIDSeen[k] = struct{}{}
 	}
 	for _, p := range env.Plans {

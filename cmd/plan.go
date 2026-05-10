@@ -132,7 +132,10 @@ func NewPlanCommand() *cobra.Command {
 					// Compile and validate the new envelope FIRST so we catch all
 					// envelope bugs before touching the existing batch. This ensures
 					// the prior batch is never archived unless the replacement is valid.
-					replaceOut, err := batch.Compile(batch.CompileInput{Envelope: env})
+					replaceOut, err := batch.Compile(batch.CompileInput{
+						Envelope:          env,
+						RegisteredPlanIDs: registeredPlanIDs(project),
+					})
 					if err != nil {
 						return err
 					}
@@ -203,7 +206,10 @@ func NewPlanCommand() *cobra.Command {
 			}
 
 			// Compile new batch.
-			out, err := batch.Compile(batch.CompileInput{Envelope: env})
+			out, err := batch.Compile(batch.CompileInput{
+				Envelope:          env,
+				RegisteredPlanIDs: registeredPlanIDs(project),
+			})
 			if err != nil {
 				return err
 			}
@@ -280,8 +286,9 @@ func runAppend(cmd *cobra.Command, rootDir string, project *conductor.Project, p
 
 	// Compile new envelope to get WrittenPlans and Units.
 	newOut, err := batch.Compile(batch.CompileInput{
-		Envelope:    env,
-		ExistingIDs: existingIDs,
+		Envelope:          env,
+		ExistingIDs:       existingIDs,
+		RegisteredPlanIDs: registeredPlanIDs(project),
 	})
 	if err != nil {
 		return err
@@ -352,6 +359,17 @@ func readPayload(src string) ([]byte, error) {
 		return nil, fmt.Errorf("read PRD file %q: %w", src, err)
 	}
 	return data, nil
+}
+
+// registeredPlanIDs returns the set of plan unit IDs currently registered in the
+// conductor config. Used to prevent a new batch ID from colliding with a standalone
+// registered plan's directory under .springfield/plans/<id>/.
+func registeredPlanIDs(project *conductor.Project) map[string]struct{} {
+	ids := make(map[string]struct{}, len(project.Config.PlanUnits))
+	for _, u := range project.Config.PlanUnits {
+		ids[u.ID] = struct{}{}
+	}
+	return ids
 }
 
 // isLegacySlicePayload does a lenient pre-decode into map[string]json.RawMessage

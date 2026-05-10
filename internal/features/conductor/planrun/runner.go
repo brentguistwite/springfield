@@ -335,6 +335,14 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 
 		passedIDs, complete := ScanMarkers(result.Events)
 		for _, sid := range passedIDs {
+			// Only honour the marker if it matches the current iteration's target story.
+			// Agents may emit pass markers for wrong stories; accepting them would
+			// permanently skip future stories without them being worked on.
+			if sid != story.ID {
+				_ = AppendProgress(progressPath, fmt.Sprintf("%s WARN: agent emitted <story-pass>%s</story-pass> but iteration target was %s; ignoring marker",
+					now().UTC().Format(time.RFC3339), sid, story.ID))
+				continue
+			}
 			if err := MarkPassed(prdPath, sid); err != nil {
 				finalRunErr = fmt.Errorf("MarkPassed failed: %w", err)
 				exitReason = fmt.Sprintf("MarkPassed failed: %v", err)
