@@ -329,8 +329,6 @@ A pre-commit hook in `.githooks/pre-commit` runs `go test ./...` before every co
 git config core.hooksPath .githooks
 ```
 
-Use `git commit --no-verify` to skip the hook for a single commit (sparingly — CI runs the same suite).
-
 ## Release Workflow
 
 Springfield uses [release-please](https://github.com/googleapis/release-please) on `main` to maintain a single open release PR driven by [Conventional Commits](https://www.conventionalcommits.org/). A hydration workflow on that PR runs `go run ./cmd/release-sync` to keep `version.txt`, every plugin/marketplace manifest, and `hooks/checksums.txt` in lock-step. Merging the release PR creates the tag, which triggers the publish workflow. Maintainer details live in [docs/release.md](docs/release.md).
