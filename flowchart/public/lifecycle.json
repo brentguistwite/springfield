@@ -1,0 +1,62 @@
+{
+  "nodes": [
+    {
+      "id": "pending",
+      "label": "Pending"
+    },
+    {
+      "id": "running",
+      "label": "Running"
+    },
+    {
+      "id": "interrupted",
+      "label": "Interrupted"
+    },
+    {
+      "id": "completed",
+      "label": "Completed"
+    },
+    {
+      "id": "failed",
+      "label": "Failed"
+    }
+  ],
+  "edges": [
+    {
+      "from": "failed",
+      "to": "running",
+      "kind": "recovery",
+      "label": "retry"
+    },
+    {
+      "from": "interrupted",
+      "to": "running",
+      "kind": "recovery",
+      "label": "retry"
+    },
+    {
+      "from": "pending",
+      "to": "running",
+      "kind": "normal",
+      "label": "dispatch"
+    },
+    {
+      "from": "running",
+      "to": "completed",
+      "kind": "normal",
+      "label": "agent succeeded"
+    },
+    {
+      "from": "running",
+      "to": "failed",
+      "kind": "failure",
+      "label": "agent failed"
+    },
+    {
+      "from": "running",
+      "to": "running",
+      "kind": "fallback",
+      "label": "agent fallback"
+    }
+  ]
+}
