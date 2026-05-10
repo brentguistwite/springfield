@@ -115,8 +115,10 @@ JSON
 
 Schema notes:
 - `phases`: execution ordering. Each phase has `mode` (`"serial"` or `"parallel"`) and `plans` (list of plan IDs in that phase).
-- `plans`: each plan has `id`, `title`, `description`, optional `context_md` (project-specific guidance for the agent — replaces per-plan AGENTS.md), and `user_stories`.
-- `user_stories`: each story has `id` (`US-NNN`), `title`, `description`, `acceptance_criteria`, `priority` (int), `passes` (false initially), `deps` (story IDs within same plan).
+- `plans`: each plan has `id`, `title`, `description`, optional `context_md`, and `user_stories`.
+- `context_md`: plan-specific context only. Project-wide guidance (build commands, repo conventions) lives in root `AGENTS.md` and is auto-loaded by the runner — do not duplicate it into `context_md` or you double the prompt-token cost of that material every iteration.
+- `user_stories`: each story has `id` (`US-NNN`), `title`, `description`, `acceptance_criteria`, `priority` (int, lower = runs first), `passes` (false initially), `deps` (story IDs within same plan).
+- See `docs/prd-format.md` for full field semantics, validation rules, and stop conditions.
 
 Use `--replace` or `--append` if an active batch exists (per Step 2).
 

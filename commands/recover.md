@@ -27,11 +27,14 @@ Read project guidance from AGENTS.md first, then CLAUDE.md, then GEMINI.md when 
 
 Run `springfield status` to see the active batch, current phase, and slice statuses.
 
+For a failing or stalled plan, run `springfield recover --diagnose --plan <plan-id>` first. The CLI surfaces dirty-worktree state, `exit_reason`, orphan-plan handling, and the available recovery actions — interpret that output rather than re-deriving it from raw files.
+
 Also read `.springfield/run.json` for the last checkpoint and last known error.
 
 ## Step 2 — Diagnose
 
 Identify which plan and which story failed or stalled. Check:
+- The CLI diagnose output (above) — primary source.
 - The last error in `run.json`
 - Per-story `passes` state in each plan's `prd.json` (`.springfield/plans/<plan-id>/prd.json`)
 - Any blockers mentioned in the batch source
