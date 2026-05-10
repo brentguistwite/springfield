@@ -1,7 +1,6 @@
 package batch_test
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,62 +9,11 @@ import (
 	"springfield/internal/features/batch"
 )
 
-// TestArchiveBatchNormalizesNonTerminalStatuses locks down the bug where the
-// archive writer captured whatever Status a slice held at archive time — a
-// batch labelled "completed" could contain a slice still marked "running".
-func TestArchiveBatchNormalizesNonTerminalStatuses(t *testing.T) {
-	dir := t.TempDir()
-	paths, _ := batch.NewPaths(dir, "b")
-	b := batch.Batch{
-		ID:    "b",
-		Title: "B",
-		Slices: []batch.Slice{
-			{ID: "01", Status: batch.SliceDone},
-			{ID: "02", Status: batch.SliceRunning},
-			{ID: "03", Status: batch.SliceQueued},
-			{ID: "04", Status: batch.SliceBlocked},
-			{ID: "05", Status: batch.SliceFailed},
-		},
-	}
-	if err := batch.WriteBatch(paths, b, ""); err != nil {
-		t.Fatalf("WriteBatch: %v", err)
-	}
-	if err := batch.ArchiveBatchNormalized(dir, b, "completed"); err != nil {
-		t.Fatalf("ArchiveBatchNormalized: %v", err)
-	}
-
-	entries, _ := os.ReadDir(batch.ArchiveDir(dir))
-	if len(entries) != 1 {
-		t.Fatalf("archive entries = %d, want 1", len(entries))
-	}
-	data, err := os.ReadFile(filepath.Join(batch.ArchiveDir(dir), entries[0].Name()))
-	if err != nil {
-		t.Fatalf("read archive: %v", err)
-	}
-	var got batch.ArchiveEntry
-	if err := json.Unmarshal(data, &got); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-
-	want := map[string]batch.SliceStatus{
-		"01": batch.SliceDone,
-		"02": batch.SliceAborted,
-		"03": batch.SliceAborted,
-		"04": batch.SliceAborted,
-		"05": batch.SliceFailed,
-	}
-	for _, s := range got.Slices {
-		if w, ok := want[s.ID]; !ok {
-			t.Errorf("unexpected slice %q", s.ID)
-		} else if s.Status != w {
-			t.Errorf("slice %q status = %q, want %q", s.ID, s.Status, w)
-		}
-	}
-}
-
 // TestRecoverOrphanWritesStubAndClearsRun covers the primary incident path:
 // run.json points at a batch id with no live plan dir. RecoverOrphan writes a
 // stub archive with reason "orphaned" and clears run.json.
+// Verifies orphan recovery still works against the new layout (Phase 2: Run
+// now uses ActivePlanIDs instead of ActiveSliceIDs; batch has PlanIDs not Slices).
 func TestRecoverOrphanWritesStubAndClearsRun(t *testing.T) {
 	dir := t.TempDir()
 	run := batch.Run{ActiveBatchID: "ghost", FatalError: "something bad"}
@@ -137,35 +85,14 @@ func TestIsMissingBatchErrorWorksThroughWrap(t *testing.T) {
 	}
 }
 
-// TestWriteFileAtomicIsCrashSafe — after a successful write the target exists
-// and no stray .tmp files remain alongside it.
-func TestWriteFileAtomicIsCrashSafe(t *testing.T) {
-	dir := t.TempDir()
-	paths, _ := batch.NewPaths(dir, "b")
-	b := batch.Batch{ID: "b", Title: "B", Slices: []batch.Slice{{ID: "01", Status: batch.SliceQueued}}}
-	if err := batch.WriteBatch(paths, b, "src"); err != nil {
-		t.Fatalf("WriteBatch: %v", err)
-	}
-
-	entries, err := os.ReadDir(paths.PlanDir())
-	if err != nil {
-		t.Fatalf("read plan dir: %v", err)
-	}
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".tmp-") {
-			t.Errorf("stale temp file left behind: %s", e.Name())
-		}
-	}
-}
-
 // TestArchiveConcurrentWritersLandExactlyOnce simulates two near-simultaneous
 // archive attempts and verifies the O_EXCL + stable path contract holds: only
 // one archive file lives on disk for a given batch id.
 func TestArchiveConcurrentWritersLandExactlyOnce(t *testing.T) {
 	dir := t.TempDir()
-	b := batch.Batch{ID: "b", Title: "B", Slices: []batch.Slice{{ID: "01", Status: batch.SliceDone}}}
+	b := batch.Batch{ID: "b", Title: "B", PlanIDs: []string{"01"}}
 	paths, _ := batch.NewPaths(dir, "b")
-	if err := batch.WriteBatch(paths, b, ""); err != nil {
+	if err := batch.WriteBatch(paths, b, "", nil); err != nil {
 		t.Fatalf("WriteBatch: %v", err)
 	}
 
@@ -201,13 +128,11 @@ func TestArchiveBatchIsIdempotentWhenArchiveAlreadyExists(t *testing.T) {
 	dir := t.TempDir()
 	paths, _ := batch.NewPaths(dir, "b")
 	b := batch.Batch{
-		ID:    "b",
-		Title: "B",
-		Slices: []batch.Slice{
-			{ID: "01", Status: batch.SliceDone},
-		},
+		ID:      "b",
+		Title:   "B",
+		PlanIDs: []string{"01"},
 	}
-	if err := batch.WriteBatch(paths, b, ""); err != nil {
+	if err := batch.WriteBatch(paths, b, "", nil); err != nil {
 		t.Fatalf("WriteBatch: %v", err)
 	}
 	if err := batch.ArchiveBatchNormalized(dir, b, "completed"); err != nil {
@@ -215,7 +140,7 @@ func TestArchiveBatchIsIdempotentWhenArchiveAlreadyExists(t *testing.T) {
 	}
 
 	// Re-create live state (as if crash restored it) and archive again.
-	if err := batch.WriteBatch(paths, b, ""); err != nil {
+	if err := batch.WriteBatch(paths, b, "", nil); err != nil {
 		t.Fatalf("WriteBatch second: %v", err)
 	}
 	if err := batch.ArchiveBatchNormalized(dir, b, "completed"); err != nil {

@@ -116,8 +116,8 @@ func TestBuildRegistryStatusShowsQueueRunning(t *testing.T) {
 		{ID: "gamma", Path: plansDir + "/third.md", Order: 3},
 	}
 	project.State.Plans["alpha"] = &conductor.PlanState{
-		Status: conductor.StatusCompleted,
-		Merge:  &conductor.MergeOutcome{Status: conductor.MergeSucceeded},
+		Status:  conductor.StatusCompleted,
+		Merge:   &conductor.MergeOutcome{Status: conductor.MergeSucceeded},
 		Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupSucceeded},
 	}
 	project.State.Queue = &conductor.QueueState{
@@ -178,8 +178,8 @@ func TestBuildRegistryStatusShowsQueueCompleted(t *testing.T) {
 		{ID: "alpha", Path: plansDir + "/feature.md", Order: 1},
 	}
 	project.State.Plans["alpha"] = &conductor.PlanState{
-		Status: conductor.StatusCompleted,
-		Merge:  &conductor.MergeOutcome{Status: conductor.MergeSucceeded},
+		Status:  conductor.StatusCompleted,
+		Merge:   &conductor.MergeOutcome{Status: conductor.MergeSucceeded},
 		Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupSucceeded},
 	}
 	project.State.Queue = &conductor.QueueState{

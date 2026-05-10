@@ -10,24 +10,111 @@ import (
 	"time"
 )
 
-// WriteBatch persists the compiled batch and source to disk.
-func WriteBatch(paths Paths, b Batch, source string) error {
+// WriteBatch persists the compiled batch, source, and per-plan files to disk.
+// For each WrittenPlan, writes:
+//   - <root>/.springfield/plans/<plan-id>/prd.json  (atomic)
+//   - <root>/.springfield/plans/<plan-id>/context.md (atomic; only if ContextBytes non-empty)
+//
+// Rollback on partial failure: if the batch dir did not exist before this call
+// (newly created), any error causes the entire batch dir to be removed so no
+// partial state (batch.json referencing absent plans) is left on disk.
+// If the batch dir already existed (--append flow), only the newly created
+// per-plan dirs are removed and batch.json is restored to its pre-call content
+// so the live batch never references plans whose prd.json was never written.
+func WriteBatch(paths Paths, b Batch, source string, plans []WrittenPlan) error {
+	// Track whether the batch dir existed before this call so rollback knows
+	// whether it can safely remove the entire dir.
+	_, statErr := os.Stat(paths.PlanDir())
+	batchDirIsNew := os.IsNotExist(statErr)
+
+	// For the append case (batch dir pre-existed), snapshot the current
+	// batch.json bytes before overwriting so rollback can restore them.
+	var priorBatchBytes []byte
+	if !batchDirIsNew {
+		priorBatchBytes, _ = os.ReadFile(paths.BatchPath()) // nil on missing is fine
+	}
+
+	rollback := func(createdPlanDirs []string) {
+		// Always remove any per-plan dirs that were created during this call so
+		// no orphaned plan data is left behind.
+		for _, d := range createdPlanDirs {
+			_ = os.RemoveAll(d)
+		}
+		if batchDirIsNew {
+			// Batch dir was newly created by this call — remove it entirely so
+			// batch.json + source.md don't persist referencing absent plan dirs.
+			_ = os.RemoveAll(paths.PlanDir())
+		} else if priorBatchBytes != nil {
+			// Append case: restore the original batch.json so the live batch
+			// does not reference plans whose prd.json was never written.
+			_ = writeFileAtomic(paths.BatchPath(), priorBatchBytes, 0o644)
+		}
+	}
+
 	if err := os.MkdirAll(paths.PlanDir(), 0o755); err != nil {
 		return fmt.Errorf("create plan dir: %w", err)
 	}
 
 	if err := writeFileAtomic(paths.SourcePath(), []byte(source), 0o644); err != nil {
+		rollback(nil)
 		return fmt.Errorf("write source: %w", err)
 	}
 
-	return writeJSON(paths.BatchPath(), b)
+	if err := writeJSON(paths.BatchPath(), b); err != nil {
+		rollback(nil)
+		return err
+	}
+
+	// Write per-plan files; track created dirs for rollback.
+	var createdPlanDirs []string
+	for _, wp := range plans {
+		planDir := PlanDirByID(paths.rootDir, wp.ID)
+		// Clear any stale files from a prior batch that used the same plan ID
+		// (--replace reuse). This guarantees old context.md / progress.md do
+		// not leak into the new batch's prompt or progress log.
+		// Note: --append already errors on colliding plan IDs, so only --replace
+		// can reach here with a pre-existing plan dir.
+		if err := os.RemoveAll(planDir); err != nil {
+			rollback(createdPlanDirs)
+			return fmt.Errorf("clear stale plan dir for %q: %w", wp.ID, err)
+		}
+		if err := os.MkdirAll(planDir, 0o755); err != nil {
+			rollback(createdPlanDirs)
+			return fmt.Errorf("create plan dir for %q: %w", wp.ID, err)
+		}
+		createdPlanDirs = append(createdPlanDirs, planDir)
+
+		prdPath := PlanPRDPath(paths.rootDir, wp.ID)
+		if err := writeFileAtomic(prdPath, wp.PRDBytes, 0o644); err != nil {
+			rollback(createdPlanDirs)
+			return fmt.Errorf("write prd.json for plan %q: %w", wp.ID, err)
+		}
+
+		if len(wp.ContextBytes) > 0 {
+			ctxPath := PlanContextPath(paths.rootDir, wp.ID)
+			if err := writeFileAtomic(ctxPath, wp.ContextBytes, 0o644); err != nil {
+				rollback(createdPlanDirs)
+				return fmt.Errorf("write context.md for plan %q: %w", wp.ID, err)
+			}
+		}
+	}
+
+	return nil
 }
 
 // ReadBatch reads the compiled batch for the given batch id.
+// Returns an error when the file uses the legacy phases[].slices shape, which
+// predates the phases[].plans field rename. Callers must delete the batch dir
+// and recompile rather than silently running with empty plan lists.
 func ReadBatch(paths Paths) (Batch, error) {
 	var b Batch
 	if err := readJSON(paths.BatchPath(), &b); err != nil {
 		return Batch{}, fmt.Errorf("read batch %s: %w", paths.batchID, err)
+	}
+	for _, phase := range b.Phases {
+		if len(phase.Slices) > 0 && string(phase.Slices) != "null" {
+			return Batch{}, fmt.Errorf("legacy batch shape detected (phases[].slices); this format is no longer supported. Run \"rm -rf .springfield/plans/%s/\" or \"springfield plan --replace --prd -\" with a new envelope", paths.batchID)
+		}
 	}
 	return b, nil
 }
@@ -68,9 +155,8 @@ func ClearRun(rootDir string) error {
 	return nil
 }
 
-// ArchiveBatchNormalized rewrites any non-terminal slice status to SliceAborted,
-// then atomically writes the archive entry (exactly once per batch id) and
-// removes the plan directory.
+// ArchiveBatchNormalized writes the archive entry (exactly once per batch id)
+// and removes the plan directory.
 //
 // Single-writer contract: the archive path is a stable per-batch id
 // (StableArchivePath); the archive entry is created with O_EXCL so two
@@ -88,31 +174,19 @@ func ArchiveBatchNormalized(rootDir string, b Batch, reason string) error {
 		return fmt.Errorf("create archive dir: %w", err)
 	}
 
-	slices := make([]ArchiveSlice, 0, len(b.Slices))
-	for _, s := range b.Slices {
-		status := s.Status
-		if !status.IsTerminal() {
-			status = SliceAborted
-		}
-		slices = append(slices, ArchiveSlice{ID: s.ID, Title: s.Title, Status: status})
-	}
-
 	entry := ArchiveEntry{
 		BatchID:    b.ID,
 		Title:      b.Title,
 		ArchivedAt: time.Now().UTC(),
 		Reason:     reason,
-		Slices:     slices,
 	}
 
 	existed, err := writeJSONExclusive(archivePath, entry)
 	if err != nil {
 		return err
 	}
-	// On collision, compare reasons. A distinct reason (e.g. an earlier
-	// "replaced" stub vs. a subsequent "state-tampered" entry) is forensically
-	// valuable and must not be dropped on the floor; write a timestamped
-	// sibling so both records survive.
+	// On collision, compare reasons. A distinct reason is forensically
+	// valuable and must not be dropped; write a timestamped sibling so both records survive.
 	if existed {
 		if err := maybeWriteArchiveSibling(archivePath, entry); err != nil {
 			return err
@@ -166,16 +240,6 @@ func RecoverOrphan(rootDir string, run Run) error {
 // ReadBatch's fmt.Errorf %w wrapping.
 func IsMissingBatchError(err error) bool {
 	return errors.Is(err, fs.ErrNotExist)
-}
-
-// UpdateBatchSlice reads the batch, updates one slice, and writes it back.
-func UpdateBatchSlice(paths Paths, updated Slice) error {
-	b, err := ReadBatch(paths)
-	if err != nil {
-		return err
-	}
-	b.UpdateSlice(updated)
-	return writeJSON(paths.BatchPath(), b)
 }
 
 // archiveSiblingRetryAttempts / archiveSiblingRetryDelay govern the

@@ -12,29 +12,78 @@ import (
 	"strings"
 	"testing"
 
-	"springfield/internal/features/batch"
+	"springfield/internal/features/prd"
 )
 
-// planWithSlices invokes `springfield plan --slices -` with a JSON payload
-// built from the provided title/source/slice list plus any extra CLI args
-// (e.g. --replace, --append).
-func planWithSlices(t *testing.T, bin, dir, title, source string, reqs []batch.SliceRequest, extraArgs ...string) (string, error) {
-	t.Helper()
-	payload := batch.SlicePayload{Title: title, Source: source, Slices: reqs}
-	data, err := json.Marshal(payload)
-	if err != nil {
-		t.Fatalf("marshal slice payload: %v", err)
-	}
-	args := append([]string{"plan", "--slices", "-"}, extraArgs...)
-	return runBinaryInWithInput(t, bin, dir, string(data), args...)
-}
-
-// singleSlicePlan is the common "one slice, title = source" shape used when a
-// test just needs *some* batch to exist so a downstream command can operate on it.
+// singleSlicePlan compiles a minimal single-plan PRD envelope with the given
+// title (used as both plan source and title), then calls planWithPRD to run
+// "springfield plan --prd -". Returns combined stdout+stderr and error.
+//
+// The batch ID is derived from the title (slugified). The plan ID is "plan-1"
+// so it sorts after the batch dir, letting findPlanDir return the batch dir.
 func singleSlicePlan(t *testing.T, bin, dir, title string, extraArgs ...string) (string, error) {
 	t.Helper()
-	return planWithSlices(t, bin, dir, title, title,
-		[]batch.SliceRequest{{ID: "01", Title: title, Summary: title}}, extraArgs...)
+	env := prd.BatchPRDEnvelope{
+		Title:  title,
+		Source: title,
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-1"}}},
+		Plans: []prd.BatchPRDPlan{
+			{
+				PRD: prd.PRD{
+					ID:    "plan-1",
+					Title: title,
+					UserStories: []prd.UserStory{{
+						ID:                 "US-001",
+						Title:              title,
+						Description:        title,
+						AcceptanceCriteria: []string{"passes"},
+						Priority:           1,
+					}},
+				},
+			},
+		},
+	}
+	data, err := json.MarshalIndent(env, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal singleSlicePlan envelope: %v", err)
+	}
+	return planWithPRD(t, bin, dir, string(data), extraArgs...)
+}
+
+// planWithSlices compiles a single-plan PRD envelope where each sliceTitles[i]
+// becomes a UserStory with id="US-00<i+1>", title=sliceTitles[i],
+// description=sliceTitles[i], one acceptance_criterion, priority=1.
+func planWithSlices(t *testing.T, bin, dir, title, source string, sliceTitles []string, extraArgs ...string) (string, error) {
+	t.Helper()
+	stories := make([]prd.UserStory, 0, len(sliceTitles))
+	for i, st := range sliceTitles {
+		stories = append(stories, prd.UserStory{
+			ID:                 fmt.Sprintf("US-%03d", i+1),
+			Title:              st,
+			Description:        st,
+			AcceptanceCriteria: []string{"passes"},
+			Priority:           1,
+		})
+	}
+	env := prd.BatchPRDEnvelope{
+		Title:  title,
+		Source: source,
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-1"}}},
+		Plans: []prd.BatchPRDPlan{
+			{
+				PRD: prd.PRD{
+					ID:          "plan-1",
+					Title:       title,
+					UserStories: stories,
+				},
+			},
+		},
+	}
+	data, err := json.MarshalIndent(env, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal planWithSlices envelope: %v", err)
+	}
+	return planWithPRD(t, bin, dir, string(data), extraArgs...)
 }
 
 func repoRoot(t *testing.T) string {
@@ -170,6 +219,40 @@ func installFakeAgentBinary(t *testing.T, binDir, name, argvPath string) {
 	path := filepath.Join(binDir, name)
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake %s binary: %v", name, err)
+	}
+}
+
+// installPRDFakeAgentBinary installs a fake agent that emits PRD story-pass
+// and COMPLETE markers so the PRD iteration loop in planrun exits cleanly.
+// storyIDs lists the US-NNN ids to mark passed (e.g. "US-001").
+// It also emits a positive-signal JSON so ValidateResult passes.
+func installPRDFakeAgentBinary(t *testing.T, binDir, name string, storyIDs []string) {
+	t.Helper()
+
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir fake bin dir: %v", err)
+	}
+
+	const positiveSignalLine = `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_fake"},{"type":"tool_result","tool_use_id":"toolu_fake","is_error":false}]}}`
+	markers := ""
+	for _, id := range storyIDs {
+		markers += "<story-pass>" + id + "</story-pass>"
+	}
+	markers += "<promise>COMPLETE</promise>"
+	// The script configures git so commits work inside worktrees, makes a
+	// trivial commit so the merge phase has something to merge, then emits
+	// the markers that the PRD iteration loop requires.
+	script := "#!/bin/sh\n" +
+		"git config user.email agent@example.com 2>/dev/null || true\n" +
+		"git config user.name Agent 2>/dev/null || true\n" +
+		"echo 'done' > agent-work.txt\n" +
+		"git add agent-work.txt 2>/dev/null || true\n" +
+		"git commit -m 'agent work' >/dev/null 2>&1 || true\n" +
+		"echo '" + positiveSignalLine + "'\n" +
+		"echo '" + markers + "'\n"
+	path := filepath.Join(binDir, name)
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write PRD fake %s binary: %v", name, err)
 	}
 }
 

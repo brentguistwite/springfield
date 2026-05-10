@@ -15,6 +15,11 @@ type RegistryStatus struct {
 	Failures  []PlanFailure
 	NextStep  string
 	Queue     *QueueState
+
+	// Story aggregate counts; populated by MergeStoryRollups.
+	// -1 means at least one plan had a load error.
+	StoriesPassed int
+	StoriesTotal  int
 }
 
 // PlanUnitStatus is one ordered plan unit annotated with its current state.
@@ -33,6 +38,37 @@ type PlanUnitStatus struct {
 	ExitReason   string
 	Merge        *MergeOutcome
 	Cleanup      *CleanupOutcome
+
+	// Story counts populated by LoadStoryRollups after BuildRegistryStatus.
+	// StoriesPassed == -1 signals "could not load prd.json"; PRDLoadError explains why.
+	StoriesPassed int
+	StoriesTotal  int
+	PRDLoadError  string
+}
+
+// MergeStoryRollups injects per-plan story counts from rollups into rs.Units
+// and accumulates the aggregate total into rs.StoriesPassed / rs.StoriesTotal.
+// Units with a load error contribute 0 to the aggregate so the summary still
+// renders; the per-plan PRDLoadError field surfaces the error inline.
+// Call after BuildRegistryStatus but before Render.
+func (rs *RegistryStatus) MergeStoryRollups(rollups map[string]StoryRollup) {
+	totalPassed, totalStories := 0, 0
+	for i := range rs.Units {
+		id := rs.Units[i].Unit.ID
+		r, ok := rollups[id]
+		if !ok {
+			continue
+		}
+		rs.Units[i].StoriesPassed = r.Passed
+		rs.Units[i].StoriesTotal = r.Total
+		rs.Units[i].PRDLoadError = r.LoadError
+		if r.LoadError == "" {
+			totalPassed += r.Passed
+			totalStories += r.Total
+		}
+	}
+	rs.StoriesPassed = totalPassed
+	rs.StoriesTotal = totalStories
 }
 
 // nextStepRunStart is the parity-2 message: a populated registry can be
@@ -114,6 +150,20 @@ func BuildRegistryStatus(project *Project) *RegistryStatus {
 		rs.NextStep = nextPlannedAction(project)
 	}
 	return rs
+}
+
+// renderStorySuffix returns a story count suffix for a plan unit status line.
+// Returns "" when no story data is present (prd.json not loaded).
+func renderStorySuffix(p PlanUnitStatus) string {
+	if p.PRDLoadError != "" {
+		return "  ?/?  " + p.PRDLoadError
+	}
+	if p.StoriesTotal == 0 && p.StoriesPassed == 0 {
+		// Zero values mean either "no prd loaded" or "0 stories" — omit to
+		// avoid misleading "0/0 stories" on plans that haven't been enriched.
+		return ""
+	}
+	return fmt.Sprintf("  %d/%d stories", p.StoriesPassed, p.StoriesTotal)
 }
 
 func renderMerge(b *strings.Builder, m *MergeOutcome) {
@@ -208,6 +258,9 @@ func (rs *RegistryStatus) Render() string {
 
 	fmt.Fprintln(&b, "No active Springfield batch.")
 	fmt.Fprintf(&b, "Plans: %d configured, %d completed\n", rs.Total, rs.Completed)
+	if rs.StoriesTotal > 0 {
+		fmt.Fprintf(&b, "Stories: %d/%d pass\n", rs.StoriesPassed, rs.StoriesTotal)
+	}
 	if rs.Queue != nil && rs.Queue.Status != QueueIdle {
 		fmt.Fprintf(&b, "Queue: %s", rs.Queue.Status)
 		if rs.Queue.ActivePlanID != "" {
@@ -229,7 +282,8 @@ func (rs *RegistryStatus) Render() string {
 		if title == "" {
 			title = p.Unit.ID
 		}
-		fmt.Fprintf(&b, "  %d. %s  %s  %s\n", i+1, p.Unit.ID, p.Status, title)
+		storySuffix := renderStorySuffix(p)
+		fmt.Fprintf(&b, "  %d. %s  %s  %s%s\n", i+1, p.Unit.ID, p.Status, title, storySuffix)
 		fmt.Fprintf(&b, "     path: %s\n", p.Unit.Path)
 		if p.WorktreePath != "" {
 			fmt.Fprintf(&b, "     worktree: %s\n", p.WorktreePath)

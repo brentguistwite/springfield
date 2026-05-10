@@ -52,6 +52,23 @@ func TestNormalizePlanPathRejectsOutsidePlansDir(t *testing.T) {
 	}
 }
 
+// TestNormalizePlanPathAcceptsSpringfieldPlansPRDPath verifies that Phase 3
+// per-plan prd.json paths under .springfield/plans/<id>/ are accepted even
+// when plansDir is configured to a different directory (e.g. "docs/plans").
+// Phase 3 always writes prd.json to .springfield/plans/<id>/ regardless of
+// the user's plans_dir setting; NormalizePlanPath must accept these paths.
+func TestNormalizePlanPathAcceptsSpringfieldPlansPRDPath(t *testing.T) {
+	// Simulate plansDir configured as something other than .springfield/plans.
+	// The path is still .springfield/plans/<id>/prd.json as written by Phase 3.
+	got, err := conductor.NormalizePlanPath("docs/plans", ".springfield/plans/my-plan/prd.json")
+	if err != nil {
+		t.Fatalf("expected acceptance for per-plan prd.json path, got: %v", err)
+	}
+	if got != ".springfield/plans/my-plan/prd.json" {
+		t.Fatalf("got %q, want %q", got, ".springfield/plans/my-plan/prd.json")
+	}
+}
+
 func TestValidateRefAcceptsCommonBranchNames(t *testing.T) {
 	for _, ok := range []string{"main", "feature/abc", "release-1.2"} {
 		if err := conductor.ValidateRef(ok); err != nil {

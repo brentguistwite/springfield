@@ -117,7 +117,6 @@ func TestPlansAddBootstrapsExecutionConfigWhenMissing(t *testing.T) {
 	}
 }
 
-
 func TestPlansAddPersistsRefAndPlanBranch(t *testing.T) {
 	root := newStatusRoot(t)
 	writeStatusPlan(t, root, "feature.md")

@@ -108,25 +108,63 @@ If the plan is genuinely one step, emit one slice. Don't pad.
 
 ## Step 4 — Confirm and persist
 
-Show the user the proposed slice list (title + one-line intent per slice).
+Show the user the proposed plans (title + one-line intent per plan).
 Ask for confirmation before writing.
 
-Once confirmed, pipe a JSON payload to ` + "`springfield plan --slices -`" + `:
+Once confirmed, compile a **PRD envelope** and pipe it to ` + "`springfield plan --prd -`" + `:
 
 ` + "```" + `bash
-springfield plan --slices - <<'JSON'
+springfield plan --prd - <<'JSON'
 {
   "title": "<batch title>",
-  "source": "<original plan markdown, verbatim>",
-  "slices": [
-    {"id": "01", "title": "<slice 1 title>", "summary": "<slice 1 body>"},
-    {"id": "02", "title": "<slice 2 title>", "summary": "<slice 2 body>"}
+  "source": "<original plan text, verbatim>",
+  "phases": [
+    {"mode": "serial", "plans": ["plan-01", "plan-02"]}
+  ],
+  "plans": [
+    {
+      "id": "plan-01",
+      "title": "<plan 1 title>",
+      "description": "<plan 1 description>",
+      "context_md": "Project uses TypeScript + Bun. Follow existing test patterns.",
+      "user_stories": [
+        {
+          "id": "US-001",
+          "title": "<story title>",
+          "description": "<story description>",
+          "acceptance_criteria": ["<criterion 1>"],
+          "priority": 1,
+          "passes": false,
+          "deps": []
+        }
+      ]
+    },
+    {
+      "id": "plan-02",
+      "title": "<plan 2 title>",
+      "description": "<plan 2 description>",
+      "context_md": "Project uses TypeScript + Bun. Follow existing test patterns.",
+      "user_stories": [
+        {
+          "id": "US-001",
+          "title": "<story title>",
+          "description": "<story description>",
+          "acceptance_criteria": ["<criterion 1>"],
+          "priority": 1,
+          "passes": false,
+          "deps": []
+        }
+      ]
+    }
   ]
 }
 JSON
 ` + "```" + `
 
-Slice IDs: zero-padded (` + "`01`" + `, ` + "`02`" + `, ...). Title short; summary is the actionable body for the slice.
+Schema notes:
+- ` + "`phases`" + `: execution ordering. Each phase has ` + "`mode`" + ` (` + "`\"serial\"`" + ` or ` + "`\"parallel\"`" + `) and ` + "`plans`" + ` (list of plan IDs in that phase).
+- ` + "`plans`" + `: each plan has ` + "`id`" + `, ` + "`title`" + `, ` + "`description`" + `, optional ` + "`context_md`" + ` (project-specific guidance for the agent — replaces per-plan AGENTS.md), and ` + "`user_stories`" + `.
+- ` + "`user_stories`" + `: each story has ` + "`id`" + ` (` + "`US-NNN`" + `), ` + "`title`" + `, ` + "`description`" + `, ` + "`acceptance_criteria`" + `, ` + "`priority`" + ` (int), ` + "`passes`" + ` (false initially), ` + "`deps`" + ` (story IDs within same plan).
 
 Use ` + "`--replace`" + ` or ` + "`--append`" + ` if an active batch exists (per Step 2).
 
@@ -149,6 +187,7 @@ Run ` + "`springfield status`" + ` to get the current Springfield batch state, t
 - The active batch id and title
 - The current phase
 - Which slices are done, running, blocked, or queued
+- Per-plan story progress: e.g. "Plan 03: 5/8 stories pass; failed at US-006"
 - The last known error if any
 - The clearest next action for the user
 
@@ -176,16 +215,19 @@ Also read ` + "`.springfield/run.json`" + ` for the last checkpoint and last kno
 
 ## Step 2 — Diagnose
 
-Identify which slice failed or stalled and why. Check:
+Identify which plan and which story failed or stalled. Check:
 - The last error in ` + "`run.json`" + `
+- Per-story ` + "`passes`" + ` state in each plan's ` + "`prd.json`" + ` (` + "`.springfield/plans/<plan-id>/prd.json`" + `)
 - Any blockers mentioned in the batch source
 
 ## Step 3 — Recover
 
 Propose the safest concrete next step:
-- For a failed slice: fix the underlying issue, then run ` + "`springfield start`" + ` to resume from cursor.
-- For a blocked slice: explain what needs to happen before execution can continue.
+- For a failed plan: fix the underlying issue, then run ` + "`springfield start`" + ` to resume from cursor. Already-passed stories (` + "`passes: true`" + `) are skipped on re-entry — ` + "`prd.json`" + ` is preserved across retries.
+- For a blocked plan: explain what needs to happen before execution can continue.
 - For a corrupt batch: use ` + "`springfield plan --replace`" + ` to start fresh with a new batch.
+
+Story-level retry is not supported in v1; recovery operates at plan grain (retry plan or retry merge).
 
 Prefer recovery and continuation over starting a fresh plan unless the existing state cannot be salvaged.
 Keep Springfield as the only user-facing surface.
@@ -250,4 +292,3 @@ func localCatalog() []LocalTarget {
 	copy(out, localTargets)
 	return out
 }
-

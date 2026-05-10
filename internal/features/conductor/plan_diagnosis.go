@@ -3,6 +3,8 @@ package conductor
 import (
 	"fmt"
 	"strings"
+
+	"springfield/internal/features/prd"
 )
 
 // WorktreeInspection captures live git state for a plan's worktree, computed by
@@ -42,9 +44,90 @@ type PlanDiagnosis struct {
 	Merge   *MergeOutcome
 	Cleanup *CleanupOutcome
 
-	RecoveryHistory []RecoveryAction
-	Worktree        *WorktreeInspection
+	RecoveryHistory  []RecoveryAction
+	Worktree         *WorktreeInspection
 	AvailableActions []RecoveryOption
+
+	// Stories is populated only when a PRD is supplied to DiagnosePlanWithPRD.
+	// Nil when no PRD was provided (backward-compat).
+	Stories *StoryDiagnosis
+}
+
+// StoryDiagnosis holds per-story status for the plan's PRD, computed at
+// diagnosis time from the current passes field in prd.json.
+type StoryDiagnosis struct {
+	Entries       []StoryEntry
+	CurrentTarget string // ID of the story NextStory would return; empty when all done
+}
+
+// StoryEntry is one user story in the diagnosis output.
+type StoryEntry struct {
+	ID     string
+	Title  string
+	Passes bool
+}
+
+// DiagnosePlanWithPRD builds a full plan diagnosis and appends per-story status
+// from p. p may be nil, in which case behavior is identical to DiagnosePlan.
+// The current target story is tagged via NextStory so the operator knows which
+// story the next run would attempt.
+func DiagnosePlanWithPRD(project *Project, planID string, wt *WorktreeInspection, p *prd.PRD) *PlanDiagnosis {
+	d := DiagnosePlan(project, planID, wt)
+	if p == nil {
+		return d
+	}
+	sd := &StoryDiagnosis{}
+	for _, s := range p.UserStories {
+		sd.Entries = append(sd.Entries, StoryEntry{
+			ID:     s.ID,
+			Title:  s.Title,
+			Passes: s.Passes,
+		})
+	}
+	// Tag the current target so the operator sees what the next iteration would attempt.
+	next, ok := nextStoryID(*p)
+	if ok {
+		sd.CurrentTarget = next
+	}
+	d.Stories = sd
+	return d
+}
+
+// nextStoryID returns the ID of the next eligible story using the same
+// eligibility logic as planrun.NextStory, without importing planrun (which
+// would create a cycle). Priority sort: lower number = higher priority;
+// tiebreak lexicographically by ID.
+func nextStoryID(p prd.PRD) (string, bool) {
+	passed := make(map[string]bool, len(p.UserStories))
+	for _, s := range p.UserStories {
+		if s.Passes {
+			passed[s.ID] = true
+		}
+	}
+	var best *prd.UserStory
+	for i := range p.UserStories {
+		s := &p.UserStories[i]
+		if s.Passes {
+			continue
+		}
+		depsOK := true
+		for _, dep := range s.Deps {
+			if !passed[dep] {
+				depsOK = false
+				break
+			}
+		}
+		if !depsOK {
+			continue
+		}
+		if best == nil || s.Priority < best.Priority || (s.Priority == best.Priority && s.ID < best.ID) {
+			best = s
+		}
+	}
+	if best == nil {
+		return "", false
+	}
+	return best.ID, true
 }
 
 // DiagnosePlan builds a diagnosis for one plan. The optional worktree inspection
@@ -200,6 +283,21 @@ func (d *PlanDiagnosis) Render() string {
 		b.WriteString("\nRecovery history:\n")
 		for _, r := range d.RecoveryHistory {
 			fmt.Fprintf(&b, "  - %s: %s (%s)\n", r.At.Format("2006-01-02T15:04:05Z07:00"), r.Action, r.Reason)
+		}
+	}
+
+	if d.Stories != nil && len(d.Stories.Entries) > 0 {
+		b.WriteString("\nStories:\n")
+		for _, e := range d.Stories.Entries {
+			status := "pending"
+			if e.Passes {
+				status = "passed"
+			}
+			suffix := ""
+			if e.ID == d.Stories.CurrentTarget {
+				suffix = "  (current target)"
+			}
+			fmt.Fprintf(&b, "  %s  %s  %s%s\n", e.ID, e.Title, status, suffix)
 		}
 	}
 

@@ -255,8 +255,8 @@ func writeStatusConfig(t *testing.T, root string, planUnits []map[string]any) {
 		"max_retries":                  1,
 		"single_workstream_iterations": 10,
 		"single_workstream_timeout":    600,
-		"tool":       "claude",
-		"plan_units": planUnits,
+		"tool":                         "claude",
+		"plan_units":                   planUnits,
 	}
 	writeStatusJSON(t, root, "execution/config.json", cfg)
 }
@@ -288,12 +288,12 @@ func writeActiveBatch(t *testing.T, root, batchID, title string) {
 		t.Fatalf("NewPaths: %v", err)
 	}
 	b := batch.Batch{
-		ID:     batchID,
-		Title:  title,
-		Phases: []batch.Phase{{Mode: batch.PhaseSerial, Slices: []string{"01"}}},
-		Slices: []batch.Slice{{ID: "01", Title: "First", Status: batch.SliceQueued}},
+		ID:      batchID,
+		Title:   title,
+		Phases:  []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"01"}}},
+		PlanIDs: []string{"01"},
 	}
-	if err := batch.WriteBatch(paths, b, "source"); err != nil {
+	if err := batch.WriteBatch(paths, b, "source", nil); err != nil {
 		t.Fatalf("WriteBatch: %v", err)
 	}
 	if err := batch.WriteRun(root, batch.Run{ActiveBatchID: batchID}); err != nil {

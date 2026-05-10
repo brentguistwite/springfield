@@ -130,10 +130,9 @@ func planningTask(request string, turns []turn) string {
 	builder.WriteString("- question: required when mode is \"question\"\n")
 	builder.WriteString("- work_id: required when mode is \"draft\"\n")
 	builder.WriteString("- title: required when mode is \"draft\"\n")
-	builder.WriteString("- summary: required when mode is \"draft\"\n")
 	builder.WriteString("- split: \"single\" or \"multi\" when mode is \"draft\"\n")
 	builder.WriteString("- workstreams: at least one item when mode is \"draft\"\n")
-	builder.WriteString("- each workstream needs name, title, and optional summary\n")
+	builder.WriteString("- each workstream needs name and title\n")
 
 	return strings.TrimSpace(builder.String())
 }

@@ -68,15 +68,10 @@ func printBatchStatus(w io.Writer, b batch.Batch, run batch.Run) error {
 			fmt.Fprintf(w, "  - %s\n", r)
 		}
 	}
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Slices:")
-	for _, s := range b.Slices {
-		fmt.Fprintf(w, "  %s  %s  %s\n", s.ID, s.Status, s.Title)
-		if s.Error != "" {
-			fmt.Fprintf(w, "    Error: %s\n", s.Error)
-		}
-		if s.EvidencePath != "" {
-			fmt.Fprintf(w, "    Evidence: %s\n", s.EvidencePath)
+	if len(b.PlanIDs) > 0 {
+		fmt.Fprintln(w, "Plans:")
+		for _, id := range b.PlanIDs {
+			fmt.Fprintf(w, "  %s\n", id)
 		}
 	}
 	return nil

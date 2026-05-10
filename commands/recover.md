@@ -31,16 +31,19 @@ Also read `.springfield/run.json` for the last checkpoint and last known error.
 
 ## Step 2 — Diagnose
 
-Identify which slice failed or stalled and why. Check:
+Identify which plan and which story failed or stalled. Check:
 - The last error in `run.json`
+- Per-story `passes` state in each plan's `prd.json` (`.springfield/plans/<plan-id>/prd.json`)
 - Any blockers mentioned in the batch source
 
 ## Step 3 — Recover
 
 Propose the safest concrete next step:
-- For a failed slice: fix the underlying issue, then run `springfield start` to resume from cursor.
-- For a blocked slice: explain what needs to happen before execution can continue.
+- For a failed plan: fix the underlying issue, then run `springfield start` to resume from cursor. Already-passed stories (`passes: true`) are skipped on re-entry — `prd.json` is preserved across retries.
+- For a blocked plan: explain what needs to happen before execution can continue.
 - For a corrupt batch: use `springfield plan --replace` to start fresh with a new batch.
+
+Story-level retry is not supported in v1; recovery operates at plan grain (retry plan or retry merge).
 
 Prefer recovery and continuation over starting a fresh plan unless the existing state cannot be salvaged.
 Keep Springfield as the only user-facing surface.

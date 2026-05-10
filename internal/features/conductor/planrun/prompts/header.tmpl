@@ -1,0 +1,27 @@
+You are executing one Springfield plan in an isolated git worktree.
+
+# Plan: {{.PlanID}} — {{.PlanTitle}}
+
+{{.PlanDescription}}
+
+# Your task
+
+1. Pick the highest-priority user story whose deps are all passed.
+2. Implement it inside the worktree.
+3. Write tests that pin the behavior.
+4. Run the test suite and confirm it passes.
+5. Commit your changes with a clear message.
+6. Emit exactly: <story-pass>US-XXX</story-pass>
+7. Return for the next iteration.
+
+# Current target
+
+- ID: {{.StoryID}}
+- Title: {{.StoryTitle}}
+- Description: {{.StoryDescription}}
+- Acceptance criteria:
+{{range .AcceptanceCriteria}}  - {{.}}
+{{end}}{{if .StoryNotes}}- Notes: {{.StoryNotes}}{{end}}
+{{if .RemainingStories}}# Remaining stories
+{{range .RemainingStories}}- {{.ID}} {{.Title}} (passes={{.Passes}})
+{{end}}{{end}}

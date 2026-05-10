@@ -69,9 +69,6 @@ func TestLoadWorkLoadsMultipleApprovedWorkstreams(t *testing.T) {
 	if got, want := work.Workstreams[1].Name, "02"; got != want {
 		t.Fatalf("second workstream name = %q, want %q", got, want)
 	}
-	if got, want := work.Workstreams[1].Summary, "Add approved-work resume flow."; got != want {
-		t.Fatalf("second workstream summary = %q, want %q", got, want)
-	}
 }
 
 func TestLoadWorkRejectsMissingRunState(t *testing.T) {
@@ -284,9 +281,8 @@ func plannerResponseFixture(workID, title, split string, workstreams []workflowD
 	planned := make([]planner.Workstream, 0, len(workstreams))
 	for _, workstream := range workstreams {
 		planned = append(planned, planner.Workstream{
-			Name:    workstream.name,
-			Title:   workstream.title,
-			Summary: workstream.summary,
+			Name:  workstream.name,
+			Title: workstream.title,
 		})
 	}
 
@@ -294,7 +290,6 @@ func plannerResponseFixture(workID, title, split string, workstreams []workflowD
 		Mode:        planner.ModeDraft,
 		WorkID:      workID,
 		Title:       title,
-		Summary:     title,
 		Split:       planner.Split(split),
 		Workstreams: planned,
 	}

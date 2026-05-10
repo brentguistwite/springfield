@@ -32,3 +32,7 @@ Strict boundaries between modules. Tests should target the exported package inte
 - In Go, prefer small cohesive packages with explicit exported APIs over grab-bag utility packages.
 - Prefer stable project-local state over hidden global machine state.
 - Keep docs and examples good enough for a teammate with no prior Springfield context.
+
+## Plan Skill and PRD Envelopes
+
+The `plan` skill emits PRD envelopes (not legacy slice payloads); the envelope shape is documented in `docs/prd-format.md`. Agents do NOT author per-plan `AGENTS.md` files — per-plan context lives in the envelope's `context_md` field and is injected by the runner at prompt-build time.

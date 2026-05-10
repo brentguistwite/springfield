@@ -180,10 +180,10 @@ The base branch defaults to whatever you have checked out when `springfield star
 The recommended pattern is one feature branch per batch:
 
 ```bash
-git switch -c feat/redesign           # create work branch off main
-springfield plan --slices payload.json # register plans (each branches from feat/redesign)
-springfield start                     # plans run, each ff-merges back into feat/redesign
-git push -u origin feat/redesign      # ship the whole batch as one PR
+git switch -c feat/redesign         # create work branch off main
+springfield plan --prd payload.json # register plans (each branches from feat/redesign)
+springfield start                   # plans run, each ff-merges back into feat/redesign
+git push -u origin feat/redesign    # ship the whole batch as one PR
 gh pr create --base main
 ```
 
@@ -200,24 +200,55 @@ Per-plan override: set `Ref = "feat/other"` on a `PlanUnit` to integrate that on
 
 > Drift caveat: ff-only merge refuses if the base branch advanced between plan start and integrate. Pick a base branch you control during the run; don't `git pull` mid-batch.
 
+## Critical Concepts
+
+- **PRD with user stories** — one or more atomic stories per plan; runner loops until `<promise>COMPLETE</promise>` or iteration cap. Story completion is reported via `<story-pass>US-XXX</story-pass>` output markers. Springfield writes back per-story `passes` state; agents never write to `.springfield/`.
+
 ## Runtime Flow
 
 Use `plan` to compile a work request into a runnable batch, then `start` to execute it.
 
-The `springfield:plan` skill reads your plan (file or prompt), decides slice boundaries, and emits a JSON payload to `springfield plan --slices -`:
+The `springfield:plan` skill reads your plan (file or prompt), decides plan boundaries, and emits a PRD envelope to `springfield plan --prd -`:
 
 ```bash
 # Skill pipes the payload for you; direct usage looks like:
-springfield plan --slices path/to/payload.json
+springfield plan --prd path/to/payload.json
 
 # Or via stdin:
-springfield plan --slices - <<'JSON'
+springfield plan --prd - <<'JSON'
 {
-  "title": "Implement OAuth 2.0 login",
-  "source": "<your original plan text>",
-  "slices": [
-    {"id": "01", "title": "scaffold auth package", "summary": "..."},
-    {"id": "02", "title": "wire login endpoint",    "summary": "..."}
+  "title": "auth scaffold",
+  "source": "<plan markdown verbatim>",
+  "phases": [
+    {"mode": "serial", "plans": ["01-auth"]}
+  ],
+  "plans": [
+    {
+      "id": "01-auth",
+      "title": "Auth scaffold",
+      "description": "Bootstrap the auth package and wire one login endpoint.",
+      "context_md": "Project uses TypeScript + Bun. Follow existing test patterns in src/auth/__tests__.",
+      "user_stories": [
+        {
+          "id": "US-001",
+          "title": "Scaffold auth package",
+          "description": "Create src/auth/ with package.json + initial types",
+          "acceptance_criteria": ["src/auth/package.json present", "bun install succeeds"],
+          "priority": 1,
+          "passes": false,
+          "deps": []
+        },
+        {
+          "id": "US-002",
+          "title": "Wire login endpoint",
+          "description": "Add POST /login that issues a JWT",
+          "acceptance_criteria": ["POST /login returns 200 with valid creds", "JWT verifies with shared secret"],
+          "priority": 2,
+          "passes": false,
+          "deps": ["US-001"]
+        }
+      ]
+    }
   ]
 }
 JSON
@@ -244,11 +275,11 @@ Execution is serial by default. Parallel execution only happens when the batch e
 
 `springfield status` shows the per-slice evidence path after a run settles, and `springfield recover --diagnose` points at the batch evidence directory for orphaned runs.
 
-If a batch already exists, use `--replace` to archive it and start fresh, or `--append` to add new slices:
+If a batch already exists, use `--replace` to archive it and start fresh, or `--append` to add new plans:
 
 ```bash
-springfield plan --replace --slices new-payload.json
-springfield plan --append  --slices extra-slices.json
+springfield plan --replace --prd new-payload.json
+springfield plan --append  --prd extra-plans.json
 ```
 
 Use `springfield doctor` whenever local agent tooling looks unhealthy or a host CLI is missing.

@@ -14,24 +14,22 @@ import (
 // PlanInput describes a plan unit to register through Springfield's public
 // execution boundary.
 type PlanInput struct {
-	ID          string
-	Title       string
-	Description string
-	Path        string
-	Ref         string
-	PlanBranch  string
-	Order       int
+	ID         string
+	Title      string
+	Path       string
+	Ref        string
+	PlanBranch string
+	Order      int
 }
 
 // Plan is the public projection of a registered plan unit.
 type Plan struct {
-	ID          string
-	Title       string
-	Description string
-	Path        string
-	Ref         string
-	PlanBranch  string
-	Order       int
+	ID         string
+	Title      string
+	Path       string
+	Ref        string
+	PlanBranch string
+	Order      int
 }
 
 // AddPlan registers a new plan unit under the project's execution config.
@@ -40,7 +38,7 @@ type Plan struct {
 // springfield.toml so first-time registration does not require a separate
 // setup command.
 func AddPlan(rootDir string, input PlanInput) (Plan, error) {
-	if err := ensureExecutionConfig(rootDir); err != nil {
+	if err := EnsureExecutionConfig(rootDir); err != nil {
 		return Plan{}, err
 	}
 	project, err := conductor.LoadProject(rootDir)
@@ -57,10 +55,10 @@ func AddPlan(rootDir string, input PlanInput) (Plan, error) {
 	return fromUnit(unit), nil
 }
 
-// ensureExecutionConfig writes a minimal default execution config when none
+// EnsureExecutionConfig writes a minimal default execution config when none
 // exists, seeded with the project's primary agent priority from
 // springfield.toml. Idempotent: existing config is reused unchanged.
-func ensureExecutionConfig(rootDir string) error {
+func EnsureExecutionConfig(rootDir string) error {
 	loaded, err := config.LoadFrom(rootDir)
 	if err != nil {
 		return err
@@ -200,11 +198,20 @@ func LoadRegistryStatus(rootDir string) (*RegistryStatus, error) {
 
 // RenderRegistryStatus returns a human-readable plan-registry status block.
 // When no execution config exists yet, the no-config registration hint is
-// rendered instead of a read error.
+// rendered instead of a read error. Story rollups from prd.json are merged in
+// so the output includes per-plan pass counts and an aggregate summary.
 func RenderRegistryStatus(rootDir string) (string, error) {
 	rs, err := loadConductorRegistryStatus(rootDir)
 	if err != nil {
 		return "", err
+	}
+	if len(rs.Units) > 0 {
+		units := make([]conductor.PlanUnit, len(rs.Units))
+		for i, u := range rs.Units {
+			units[i] = u.Unit
+		}
+		rollups := conductor.LoadStoryRollups(units, rootDir)
+		rs.MergeStoryRollups(rollups)
 	}
 	return rs.Render(), nil
 }
@@ -259,24 +266,22 @@ func runningRegistryStatus(project *conductor.Project, held *lock.ErrLockHeld) *
 
 func toUnitInput(input PlanInput) conductor.PlanUnitInput {
 	return conductor.PlanUnitInput{
-		ID:          input.ID,
-		Title:       input.Title,
-		Description: input.Description,
-		Path:        input.Path,
-		Ref:         input.Ref,
-		PlanBranch:  input.PlanBranch,
-		Order:       input.Order,
+		ID:         input.ID,
+		Title:      input.Title,
+		Path:       input.Path,
+		Ref:        input.Ref,
+		PlanBranch: input.PlanBranch,
+		Order:      input.Order,
 	}
 }
 
 func fromUnit(u conductor.PlanUnit) Plan {
 	return Plan{
-		ID:          u.ID,
-		Title:       u.Title,
-		Description: u.Description,
-		Path:        u.Path,
-		Ref:         u.Ref,
-		PlanBranch:  u.PlanBranch,
-		Order:       u.Order,
+		ID:         u.ID,
+		Title:      u.Title,
+		Path:       u.Path,
+		Ref:        u.Ref,
+		PlanBranch: u.PlanBranch,
+		Order:      u.Order,
 	}
 }

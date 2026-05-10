@@ -61,25 +61,63 @@ If the plan is genuinely one step, emit one slice. Don't pad.
 
 ## Step 4 — Confirm and persist
 
-Show the user the proposed slice list (title + one-line intent per slice).
+Show the user the proposed plans (title + one-line intent per plan).
 Ask for confirmation before writing.
 
-Once confirmed, pipe a JSON payload to `springfield plan --slices -`:
+Once confirmed, compile a **PRD envelope** and pipe it to `springfield plan --prd -`:
 
 ```bash
-springfield plan --slices - <<'JSON'
+springfield plan --prd - <<'JSON'
 {
   "title": "<batch title>",
-  "source": "<original plan markdown, verbatim>",
-  "slices": [
-    {"id": "01", "title": "<slice 1 title>", "summary": "<slice 1 body>"},
-    {"id": "02", "title": "<slice 2 title>", "summary": "<slice 2 body>"}
+  "source": "<original plan text, verbatim>",
+  "phases": [
+    {"mode": "serial", "plans": ["plan-01", "plan-02"]}
+  ],
+  "plans": [
+    {
+      "id": "plan-01",
+      "title": "<plan 1 title>",
+      "description": "<plan 1 description>",
+      "context_md": "Project uses TypeScript + Bun. Follow existing test patterns.",
+      "user_stories": [
+        {
+          "id": "US-001",
+          "title": "<story title>",
+          "description": "<story description>",
+          "acceptance_criteria": ["<criterion 1>"],
+          "priority": 1,
+          "passes": false,
+          "deps": []
+        }
+      ]
+    },
+    {
+      "id": "plan-02",
+      "title": "<plan 2 title>",
+      "description": "<plan 2 description>",
+      "context_md": "Project uses TypeScript + Bun. Follow existing test patterns.",
+      "user_stories": [
+        {
+          "id": "US-001",
+          "title": "<story title>",
+          "description": "<story description>",
+          "acceptance_criteria": ["<criterion 1>"],
+          "priority": 1,
+          "passes": false,
+          "deps": []
+        }
+      ]
+    }
   ]
 }
 JSON
 ```
 
-Slice IDs: zero-padded (`01`, `02`, ...). Title short; summary is the actionable body for the slice.
+Schema notes:
+- `phases`: execution ordering. Each phase has `mode` (`"serial"` or `"parallel"`) and `plans` (list of plan IDs in that phase).
+- `plans`: each plan has `id`, `title`, `description`, optional `context_md` (project-specific guidance for the agent — replaces per-plan AGENTS.md), and `user_stories`.
+- `user_stories`: each story has `id` (`US-NNN`), `title`, `description`, `acceptance_criteria`, `priority` (int), `passes` (false initially), `deps` (story IDs within same plan).
 
 Use `--replace` or `--append` if an active batch exists (per Step 2).
 

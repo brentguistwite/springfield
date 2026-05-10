@@ -224,7 +224,6 @@ func toExecutionWork(work Work) execution.Work {
 		workstreams = append(workstreams, execution.Workstream{
 			Name:         workstream.Name,
 			Title:        workstream.Title,
-			Summary:      workstream.Summary,
 			Status:       workstream.Status,
 			Error:        workstream.Error,
 			EvidencePath: workstream.EvidencePath,

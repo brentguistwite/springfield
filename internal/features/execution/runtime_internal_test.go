@@ -68,7 +68,7 @@ func TestRuntimeSingleExecutorRunPassesWorkstreamThroughSharedRuntime(t *testing
 		RequestBody: "Implement the runtime seam.",
 		Split:       "single",
 		Workstreams: []Workstream{
-			{Name: "01", Title: "Adapter", Summary: "Route one workstream."},
+			{Name: "01", Title: "Adapter"},
 		},
 	})
 	if err != nil {
@@ -88,7 +88,7 @@ func TestRuntimeSingleExecutorRunPassesWorkstreamThroughSharedRuntime(t *testing
 		t.Fatalf("runtime calls = %d, want 1", len(calls))
 	}
 
-	for _, want := range []string{"Implement the runtime seam.", "Adapter", "Route one workstream."} {
+	for _, want := range []string{"Implement the runtime seam.", "Adapter"} {
 		if !strings.Contains(calls[0].Stdin, want) {
 			t.Fatalf("expected stdin to contain %q, got %s", want, calls[0].Stdin)
 		}
@@ -154,7 +154,7 @@ func TestRuntimeSingleExecutorRunDoesNotFailWhenEvidenceWriteFails(t *testing.T)
 		RequestBody: "Implement the runtime seam.",
 		Split:       "single",
 		Workstreams: []Workstream{
-			{Name: "01", Title: "Adapter", Summary: "Route one workstream."},
+			{Name: "01", Title: "Adapter"},
 		},
 	})
 	if err != nil {
@@ -189,20 +189,20 @@ func TestRuntimeSingleExecutorRejectsMultipleWorkstreams(t *testing.T) {
 	}
 }
 
-func TestExecutionPromptIncludesSliceBody(t *testing.T) {
+func TestExecutionPromptIncludesSliceTitle(t *testing.T) {
 	work := Work{
 		ID:    "batch-01",
 		Title: "Batch title",
 		Workstreams: []Workstream{
-			{Name: "01", Title: "Slice title", Summary: "implement X"},
+			{Name: "01", Title: "Slice title"},
 		},
 	}
 	prompt, err := executionPrompt("", work, work.Workstreams[0])
 	if err != nil {
 		t.Fatalf("executionPrompt: %v", err)
 	}
-	if !strings.Contains(prompt, "implement X") {
-		t.Fatalf("expected prompt to contain slice summary %q, got:\n%s", "implement X", prompt)
+	if !strings.Contains(prompt, "Slice title") {
+		t.Fatalf("expected prompt to contain workstream title %q, got:\n%s", "Slice title", prompt)
 	}
 }
 
@@ -215,7 +215,7 @@ func TestExecutionPromptIncludesAgentsMdWhenPresent(t *testing.T) {
 		ID:    "batch-01",
 		Title: "Batch title",
 		Workstreams: []Workstream{
-			{Name: "01", Title: "Slice title", Summary: "do it"},
+			{Name: "01", Title: "Slice title"},
 		},
 	}
 	prompt, err := executionPrompt(root, work, work.Workstreams[0])
@@ -243,7 +243,7 @@ func TestExecutionPromptConcatenatesAgentsClaudeGemini(t *testing.T) {
 		ID:    "batch-01",
 		Title: "Batch title",
 		Workstreams: []Workstream{
-			{Name: "01", Title: "Slice title", Summary: "do it"},
+			{Name: "01", Title: "Slice title"},
 		},
 	}
 	prompt, err := executionPrompt(root, work, work.Workstreams[0])
@@ -279,7 +279,7 @@ func TestExecutionPromptOmitsMissingProjectFiles(t *testing.T) {
 		ID:    "batch-01",
 		Title: "Batch title",
 		Workstreams: []Workstream{
-			{Name: "01", Title: "Slice title", Summary: "do it"},
+			{Name: "01", Title: "Slice title"},
 		},
 	}
 	prompt, err := executionPrompt(root, work, work.Workstreams[0])
@@ -303,7 +303,7 @@ func TestExecutionPromptContainsAntiRecursionContract(t *testing.T) {
 		ID:    "batch-01",
 		Title: "Batch title",
 		Workstreams: []Workstream{
-			{Name: "01", Title: "Slice title", Summary: "do it"},
+			{Name: "01", Title: "Slice title"},
 		},
 	}
 	prompt, err := executionPrompt("", work, work.Workstreams[0])
@@ -328,7 +328,7 @@ func TestExecutionPromptIncludesBatchRequestBody(t *testing.T) {
 		Title:       "Batch title",
 		RequestBody: "Polish status UX",
 		Workstreams: []Workstream{
-			{Name: "01", Title: "Slice title", Summary: "do it"},
+			{Name: "01", Title: "Slice title"},
 		},
 	}
 	prompt, err := executionPrompt("", work, work.Workstreams[0])
@@ -354,9 +354,9 @@ func TestRuntimeSingleExecutorRejectsOversizedGuidanceFile(t *testing.T) {
 		workDir: t.TempDir(),
 	}
 	_, err := executor.Run(root, Work{
-		ID:    "x",
-		Title: "x",
-		Split: "single",
+		ID:          "x",
+		Title:       "x",
+		Split:       "single",
 		Workstreams: []Workstream{{Name: "01", Title: "T"}},
 	})
 	if err == nil {
@@ -380,9 +380,9 @@ func TestRuntimeMultiExecutorRejectsOversizedGuidanceFile(t *testing.T) {
 		workDir: t.TempDir(),
 	}
 	report, err := executor.Run(root, Work{
-		ID:    "x",
-		Title: "x",
-		Split: "parallel",
+		ID:          "x",
+		Title:       "x",
+		Split:       "parallel",
 		Workstreams: []Workstream{{Name: "01", Title: "T"}},
 	})
 	if err == nil {
@@ -414,9 +414,9 @@ func TestRuntimeSingleExecutorRejectsUnreadableGuidanceFile(t *testing.T) {
 		workDir: t.TempDir(),
 	}
 	_, err := executor.Run(root, Work{
-		ID:    "x",
-		Title: "x",
-		Split: "single",
+		ID:          "x",
+		Title:       "x",
+		Split:       "single",
 		Workstreams: []Workstream{{Name: "01", Title: "T"}},
 	})
 	if err == nil {

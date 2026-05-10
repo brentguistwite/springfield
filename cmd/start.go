@@ -33,9 +33,7 @@ import (
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/conductor/planmerge"
 	"springfield/internal/features/conductor/planrun"
-	"springfield/internal/features/execution"
 	"springfield/internal/features/wakelock"
-	"springfield/internal/features/workflow"
 )
 
 // runtimeAgentRunner is a thin adapter so cmd does not need to import the
@@ -138,6 +136,14 @@ func NewStartCommand() *cobra.Command {
 
 			result, execErr := runBatch(root, run, b, w, logPath)
 
+			// Interrupted by signal: leave batch state intact so the user can
+			// rerun "springfield start" to resume. Do NOT archive as completed.
+			if errors.Is(execErr, context.Canceled) {
+				fmt.Fprintf(w, "Status: interrupted\n")
+				fmt.Fprintf(w, "Info: rerun \"springfield start\" to resume\n")
+				return fmt.Errorf("batch %s interrupted; rerun \"springfield start\" to resume", b.ID)
+			}
+
 			run.LastCheckpoint = time.Now().UTC()
 			if result.Error != "" {
 				if !result.RunStateCleared {
@@ -194,91 +200,187 @@ type BatchRunResult struct {
 }
 
 func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string) (BatchRunResult, error) {
-	// Agent trace sink: every stream-json event from claude/codex/gemini
-	// gets appended to a per-batch trace file so we can post-mortem exactly
-	// which tool calls ran (and which got blocked by hooks).
-	traceSink, traceCloser := openAgentTrace(root, b.ID)
-	defer traceCloser()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runBatchWithContext(ctx, root, run, b, progress, logPath)
+}
 
-	runner, err := workflow.NewRuntimeRunner(root, exec.LookPath, traceSink)
+// runBatchWithContext is the testable core of runBatch. ctx controls interrupt
+// detection: when ctx is cancelled mid-loop (or on entry) the function returns
+// context.Canceled so the caller can distinguish a user interrupt (preserve
+// batch state) from normal completion (archive + clear run.json).
+func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string) (BatchRunResult, error) {
+	// Check for pre-cancellation before any setup so tests and real signal
+	// handlers both get the same early-exit path.
+	if ctx.Err() != nil {
+		return BatchRunResult{}, ctx.Err()
+	}
+
+	loaded, err := config.LoadFrom(root)
 	if err != nil {
 		return BatchRunResult{Error: err.Error()}, err
 	}
-
-	phase, ok := b.ActivePhase(run.ActivePhaseIdx)
-	if !ok {
-		return BatchRunResult{Status: "completed"}, nil
+	if len(loaded.Config.Project.AgentPriority) == 0 {
+		e := fmt.Errorf("project has no agents configured: agent_priority is empty")
+		return BatchRunResult{Error: e.Error()}, e
 	}
 
-	batchPaths, pathErr := batch.NewPaths(root, b.ID)
-	if pathErr != nil {
-		return BatchRunResult{Error: pathErr.Error()}, pathErr
-	}
-
-	for _, sliceID := range phase.Slices {
-		s, found := b.SliceByID(sliceID)
-		if !found {
-			return BatchRunResult{Error: fmt.Sprintf("slice %q not found in batch", sliceID)}, nil
+	registry := agents.NewRegistry(
+		claude.New(exec.LookPath),
+		codex.New(exec.LookPath),
+		gemini.New(exec.LookPath),
+	)
+	agentIDs := make([]agents.ID, 0, len(loaded.Config.Project.AgentPriority))
+	for _, id := range loaded.Config.Project.AgentPriority {
+		if id != "" {
+			agentIDs = append(agentIDs, agents.ID(id))
 		}
-		if s.Status == batch.SliceDone {
+	}
+
+	worktreeBase := ".worktrees"
+
+	traceHandler, closeTrace := openAgentTrace(root, b.ID)
+	defer closeTrace()
+
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return BatchRunResult{Error: err.Error()}, err
+		}
+		// Execution config is absent. If the batch references plans, this is a
+		// hard error: completing vacuously would silently archive plans that were
+		// never run. Require the user to re-register or recompile.
+		if len(b.PlanIDs) > 0 {
+			e := fmt.Errorf("batch %q references plans %v but execution config is missing or empty; run \"springfield plans add\" to register them or \"springfield plan --replace\" to recompile",
+				b.ID, b.PlanIDs)
+			return BatchRunResult{Error: e.Error()}, e
+		}
+		// No conductor project and no plans: vacuous completion is fine.
+		return BatchRunResult{}, nil
+	}
+	// If the project loaded but its plan registry is empty while the batch has
+	// plans, that is the same class of error (stale/missing config).
+	if len(project.Config.PlanUnits) == 0 && len(b.PlanIDs) > 0 {
+		e := fmt.Errorf("batch %q references plans %v but execution config is missing or empty; run \"springfield plans add\" to register them or \"springfield plan --replace\" to recompile",
+			b.ID, b.PlanIDs)
+		return BatchRunResult{Error: e.Error()}, e
+	}
+
+	enforceProtected := !loaded.Config.Project.AllowProtectedBase
+
+	for {
+		if ctx.Err() != nil {
+			// Interrupted by signal or context cancel. Return context.Canceled so
+			// the caller does NOT archive as completed — batch state stays intact
+			// for the user to rerun springfield start to resume.
+			return BatchRunResult{}, ctx.Err()
+		}
+
+		// Iterate the batch's own phases in order to find the next plan to
+		// dispatch. This avoids the prior bug where schedule.NextPlans() could
+		// return a non-batch plan first, causing the batch loop to exit
+		// prematurely before any batch plans had run.
+		planID := batchNextPlanID(b, project.State)
+		if planID == "" {
+			break
+		}
+
+		res := planrun.SinglePlan(planrun.SinglePlanInput{
+			Project:              project,
+			ControlRoot:          root,
+			ProjectRoot:          root,
+			WorktreeBase:         worktreeBase,
+			AgentIDs:             agentIDs,
+			ExecutionSettings:    loaded.Config.ExecutionSettings(),
+			Runner:               runtimeAgentRunner{inner: coreruntime.NewRunner(registry)},
+			Manager:              planrun.NewManager(),
+			OnEvent:              traceHandler,
+			Progress:             progress,
+			TargetPlanID:         planID,
+			EnforceProtectedBase: enforceProtected,
+			TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(root, ".springfield", "plans"), controlRoot: root},
+		})
+		if res.Reason == "no-eligible-plan" {
+			// The target plan is not registered in the conductor schedule —
+			// either not yet registered or already terminal. Stop the batch.
+			break
+		}
+		if res.Err != nil {
+			fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
+			fmt.Fprintf(progress, "Status: failed (%s)\n", res.Reason)
+			fmt.Fprintf(progress, "Error: %s\n", res.Err.Error())
+			return BatchRunResult{Error: res.Err.Error()}, res.Err
+		}
+		fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
+		fmt.Fprintf(progress, "Status: completed\n")
+		if res.EvidencePath != "" {
+			fmt.Fprintf(progress, "Evidence: %s\n", res.EvidencePath)
+		}
+
+		mergeRes := planmerge.Integrate(planmerge.IntegrateInput{
+			Project:      project,
+			PlanID:       res.PlanID,
+			ControlRoot:  root,
+			WorktreeBase: worktreeBase,
+			Progress:     progress,
+		})
+		renderMergeOutcome(progress, mergeRes)
+		if mergeRes.Err != nil {
+			e := fmt.Errorf("plan %s merge integration failed: %w", res.PlanID, mergeRes.Err)
+			return BatchRunResult{Error: e.Error()}, e
+		}
+		if mergeRes.Merge != nil && mergeRes.Merge.Status != conductor.MergeSucceeded {
+			e := fmt.Errorf("plan %s merge %s: %s", res.PlanID, mergeRes.Merge.Status, mergeRes.Merge.Reason)
+			return BatchRunResult{Error: e.Error()}, e
+		}
+		if mergeRes.Cleanup != nil && mergeRes.Cleanup.Status == conductor.CleanupFailed {
+			e := fmt.Errorf("plan %s merge succeeded but cleanup failed: artifacts preserved", res.PlanID)
+			return BatchRunResult{Error: e.Error()}, e
+		}
+		if mergeRes.Merge != nil && mergeRes.Merge.SourceSyncStatus == "failed" {
+			e := fmt.Errorf("plan %s merge succeeded but source resync failed: %s", res.PlanID, mergeRes.Merge.SourceSyncError)
+			return BatchRunResult{Error: e.Error()}, e
+		}
+	}
+	return BatchRunResult{}, nil
+}
+
+// batchNextPlanID returns the ID of the first non-integrated plan in the
+// batch's phase order, or "" when every batch plan is integrated (done).
+//
+// This replaces the prior approach of filtering schedule.NextPlans() by
+// batch membership. That approach was broken: NextPlans() returns plans from
+// the GLOBAL conductor schedule in phase order. If a non-batch plan appears
+// first (earlier Order) in the global schedule and is not yet integrated, it
+// would be skipped by the batchPlanSet filter — leaving planID empty and
+// causing runBatch to exit prematurely even though batch plans still needed
+// to run.
+//
+// By iterating b.Phases directly, batch dispatch is independent of the global
+// schedule order. Phase semantics are preserved: all plans in phase N must be
+// integrated before any plan in phase N+1 is dispatched.
+func batchNextPlanID(b batch.Batch, state *conductor.State) string {
+	for _, phase := range b.Phases {
+		// Check if this phase is fully integrated.
+		phaseComplete := true
+		for _, id := range phase.Plans {
+			if ps := state.Plans[id]; ps == nil || !ps.IsIntegrated() {
+				phaseComplete = false
+				break
+			}
+		}
+		if phaseComplete {
+			// All plans in this phase integrated; advance to next phase.
 			continue
 		}
-
-		fmt.Fprintf(progress, "  slice %s start — %s\n", s.ID, s.Title)
-
-		s.Status = batch.SliceRunning
-		if err := batch.UpdateBatchSlice(batchPaths, s); err != nil {
-			return BatchRunResult{Error: err.Error()}, err
-		}
-
-		// Snapshot the entire Springfield control plane before the agent
-		// runs: batch.json, run.json, source.md. The agent is not expected
-		// to touch any of them; any byte-level difference is tamper.
-		snap, snapErr := snapshotControlPlane(root, batchPaths)
-		if snapErr != nil {
-			return BatchRunResult{Error: fmt.Sprintf("snapshot control plane: %v", snapErr)}, snapErr
-		}
-
-		report, runErr := runner.Executor.Run(root, sliceToExecutionWork(root, b, s))
-
-		forensics := tamperForensicsContext{
-			batchID:      b.ID,
-			sliceID:      s.ID,
-			agentID:      report.AgentID,
-			agentLogPath: logPath,
-			exitCode:     report.ExitCode,
-		}
-		if tamperErr := detectAndRecoverTamper(root, batchPaths, snap, forensics); tamperErr != nil {
-			return BatchRunResult{Error: tamperErr.Error(), RunStateCleared: true}, tamperErr
-		}
-
-		if runErr != nil || report.Status == "failed" {
-			s.Status = batch.SliceFailed
-			s.Error = report.Error
-			if len(report.Workstreams) > 0 {
-				s.EvidencePath = report.Workstreams[0].EvidencePath
+		// This phase has non-integrated plans. Return the first one.
+		for _, id := range phase.Plans {
+			if ps := state.Plans[id]; ps == nil || !ps.IsIntegrated() {
+				return id
 			}
-			if runErr != nil && s.Error == "" {
-				s.Error = runErr.Error()
-			}
-			if err := batch.UpdateBatchSlice(batchPaths, s); err != nil {
-				return BatchRunResult{Error: s.Error}, fmt.Errorf("%s; also failed to persist slice status: %w", s.Error, err)
-			}
-			fmt.Fprintf(progress, "  slice %s failed — %s\n", s.ID, s.Error)
-			return BatchRunResult{Error: s.Error}, runErr
 		}
-
-		s.Status = batch.SliceDone
-		if len(report.Workstreams) > 0 {
-			s.EvidencePath = report.Workstreams[0].EvidencePath
-		}
-		if err := batch.UpdateBatchSlice(batchPaths, s); err != nil {
-			return BatchRunResult{Error: err.Error()}, err
-		}
-		fmt.Fprintf(progress, "  slice %s done\n", s.ID)
 	}
-
-	return BatchRunResult{Status: "completed"}, nil
+	return "" // all phases integrated
 }
 
 // controlPlaneSnapshot captures every Springfield-owned file under
@@ -820,29 +922,6 @@ func openAgentTrace(root, batchID string) (coreexec.EventHandler, func()) {
 	return handler, closer
 }
 
-// sliceToExecutionWork converts a batch slice into an execution.Work for the runtime adapter.
-// It reads source.md from the batch plan directory best-effort; missing file yields empty RequestBody.
-func sliceToExecutionWork(root string, b batch.Batch, s batch.Slice) execution.Work {
-	var requestBody string
-	if paths, err := batch.NewPaths(root, b.ID); err == nil {
-		data, _ := os.ReadFile(paths.SourcePath())
-		requestBody = string(data)
-	}
-	return execution.Work{
-		ID:          b.ID + "-" + s.ID,
-		Title:       s.Title,
-		RequestBody: requestBody,
-		Split:       "single",
-		Workstreams: []execution.Workstream{
-			{
-				Name:    s.ID,
-				Title:   s.Title,
-				Summary: s.Summary,
-			},
-		},
-	}
-}
-
 // tryRunSinglePlanUnit handles the parity-2 single-plan worktree flow when no
 // active batch is present. Returns (true, nil) when a plan ran (success or
 // failure with state persisted); (false, nil) when no plan-unit registry is
@@ -1017,6 +1096,7 @@ func runOnePlan(w io.Writer, project *conductor.Project, root, worktreeBase stri
 		Manager:              planrun.NewManager(),
 		Progress:             w,
 		EnforceProtectedBase: enforceProtected,
+		TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(root, ".springfield", "plans"), controlRoot: root},
 	})
 
 	if res.PlanID == "" && res.Reason == "no-eligible-plan" {
@@ -1187,4 +1267,127 @@ func shortSHA(s string) string {
 		return s[:8]
 	}
 	return s
+}
+
+// planDirTamperGuard implements planrun.TamperGuard for the single-plan-unit
+// path. It snapshots every file under .springfield/plans/ AND .springfield/run.json
+// before each agent invocation and restores them on detected tamper. This mirrors
+// the semantics of the legacy batch path's snapshotControlPlane/detectAndRecoverTamper,
+// adapted for the plan-unit (non-batch) control plane layout.
+type planDirTamperGuard struct {
+	planDir     string
+	controlRoot string            // project root; used to locate run.json
+	snapshot    map[string][]byte // relpath → bytes (plan dir files)
+	// runSnapshot holds the pre-agent run.json bytes, or nil if it didn't exist.
+	runSnapshot   []byte
+	runExistedPre bool // true when run.json existed at Snapshot time
+}
+
+func (g *planDirTamperGuard) Snapshot() error {
+	tree, err := snapshotPlanDir(g.planDir)
+	if err != nil {
+		return fmt.Errorf("tamper snapshot: %w", err)
+	}
+	g.snapshot = tree
+
+	// Snapshot run.json if controlRoot is set.
+	if g.controlRoot != "" {
+		runPath := batch.RunPath(g.controlRoot)
+		data, err := os.ReadFile(runPath)
+		if err == nil {
+			g.runSnapshot = data
+			g.runExistedPre = true
+		} else if errors.Is(err, fs.ErrNotExist) {
+			g.runSnapshot = nil
+			g.runExistedPre = false
+		} else {
+			return fmt.Errorf("tamper snapshot run.json: %w", err)
+		}
+	}
+	return nil
+}
+
+func (g *planDirTamperGuard) Detect() (string, error) {
+	if g.snapshot == nil {
+		return "", nil
+	}
+	current, err := snapshotPlanDir(g.planDir)
+	if err != nil {
+		return fmt.Sprintf("plan dir unreadable: %v", err), nil
+	}
+	if reason := firstTreeDivergence(g.snapshot, current, nil); reason != "" {
+		return reason, nil
+	}
+
+	// Check run.json if controlRoot is configured.
+	if g.controlRoot != "" {
+		runPath := batch.RunPath(g.controlRoot)
+		currentData, readErr := os.ReadFile(runPath)
+		runExistsNow := readErr == nil
+		if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
+			return fmt.Sprintf("run.json unreadable: %v", readErr), nil
+		}
+
+		switch {
+		case g.runExistedPre && !runExistsNow:
+			return "run.json missing", nil
+		case !g.runExistedPre && runExistsNow:
+			return "run.json added", nil
+		case g.runExistedPre && runExistsNow && !bytes.Equal(g.runSnapshot, currentData):
+			return "run.json changed", nil
+		}
+	}
+	return "", nil
+}
+
+func (g *planDirTamperGuard) Restore() error {
+	if g.snapshot == nil {
+		return nil
+	}
+	if err := os.MkdirAll(g.planDir, 0o755); err != nil {
+		return fmt.Errorf("recreate plan dir: %w", err)
+	}
+	onDisk, err := enumeratePlanTreeRaw(g.planDir)
+	if err != nil {
+		return fmt.Errorf("enumerate plan dir: %w", err)
+	}
+	for rel := range onDisk {
+		if _, keep := g.snapshot[rel]; !keep {
+			abs := filepath.Join(g.planDir, filepath.FromSlash(rel))
+			if rmErr := os.Remove(abs); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+				return fmt.Errorf("remove stray %s: %w", rel, rmErr)
+			}
+		}
+	}
+	for rel, data := range g.snapshot {
+		abs := filepath.Join(g.planDir, filepath.FromSlash(rel))
+		if err := writeFileReplacingNonRegular(abs, data, 0o644); err != nil {
+			return fmt.Errorf("restore %s: %w", rel, err)
+		}
+	}
+
+	// Restore run.json if controlRoot is set.
+	if g.controlRoot != "" {
+		runPath := batch.RunPath(g.controlRoot)
+		if g.runExistedPre {
+			if err := writeFileReplacingNonRegular(runPath, g.runSnapshot, 0o644); err != nil {
+				return fmt.Errorf("restore run.json: %w", err)
+			}
+		} else {
+			// run.json didn't exist before — remove any agent-created copy.
+			if rmErr := os.Remove(runPath); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+				return fmt.Errorf("remove agent-created run.json: %w", rmErr)
+			}
+		}
+	}
+	return nil
+}
+
+// snapshotPlanDir walks planDir and returns a relpath→bytes map for all
+// regular files. Non-existent planDir returns an empty map (no-op snapshot).
+func snapshotPlanDir(planDir string) (map[string][]byte, error) {
+	if _, err := os.Stat(planDir); errors.Is(err, os.ErrNotExist) {
+		return make(map[string][]byte), nil
+	}
+	return snapshotPlanTree(planDir)
 }

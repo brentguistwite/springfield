@@ -22,13 +22,12 @@ var (
 // PlanUnitInput is the validated input shape for registering or updating a
 // plan unit. Fields mirror PlanUnit minus computed Order.
 type PlanUnitInput struct {
-	ID          string
-	Title       string
-	Description string
-	Path        string
-	Ref         string
-	PlanBranch  string
-	Order       int
+	ID         string
+	Title      string
+	Path       string
+	Ref        string
+	PlanBranch string
+	Order      int
 }
 
 // OrderedPlanUnitIDs returns the IDs in ascending Order, ties broken by ID.
@@ -49,11 +48,18 @@ func OrderedPlanUnitIDs(units []PlanUnit) []string {
 	return ids
 }
 
+// springfieldPlansPrefix is the canonical control-plane per-plan directory
+// prefix. Phase 3 always writes prd.json here regardless of the user's
+// plans_dir setting, so NormalizePlanPath accepts it as a second valid root.
+var springfieldPlansPrefix = filepath.Clean(".springfield/plans") + string(filepath.Separator)
+
 // NormalizePlanPath canonicalizes a plan path under plansDir. It rejects
 // absolute paths and any path that escapes plansDir or the project root.
 //
-// Accepted inputs: a bare filename (resolved under plansDir), or a project-
-// relative path that lives under plansDir on disk after cleaning.
+// Accepted inputs:
+//   - a bare filename (resolved under plansDir),
+//   - a project-relative path that lives under plansDir on disk after cleaning,
+//   - a project-relative path under .springfield/plans/ (Phase 3 per-plan prd.json).
 func NormalizePlanPath(plansDir, raw string) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -71,6 +77,12 @@ func NormalizePlanPath(plansDir, raw string) (string, error) {
 
 	// If the cleaned path is already under plansDir, accept it.
 	if cleaned == cleanPlansDir || strings.HasPrefix(cleaned, cleanPlansDir+string(filepath.Separator)) {
+		return filepath.ToSlash(cleaned), nil
+	}
+
+	// Phase 3: per-plan prd.json lives under .springfield/plans/<id>/ regardless
+	// of the user's plans_dir setting. Accept any path under that prefix.
+	if strings.HasPrefix(cleaned, springfieldPlansPrefix) {
 		return filepath.ToSlash(cleaned), nil
 	}
 
@@ -264,13 +276,12 @@ func (p *Project) AddPlanUnit(input PlanUnitInput) (PlanUnit, error) {
 	}
 
 	unit := PlanUnit{
-		ID:          input.ID,
-		Title:       strings.TrimSpace(input.Title),
-		Description: strings.TrimSpace(input.Description),
-		Path:        canonicalPath,
-		Ref:         input.Ref,
-		PlanBranch:  input.PlanBranch,
-		Order:       order,
+		ID:         input.ID,
+		Title:      strings.TrimSpace(input.Title),
+		Path:       canonicalPath,
+		Ref:        input.Ref,
+		PlanBranch: input.PlanBranch,
+		Order:      order,
 	}
 
 	full := filepath.Join(p.runtime.RootDir, filepath.FromSlash(canonicalPath))

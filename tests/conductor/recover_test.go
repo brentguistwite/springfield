@@ -253,10 +253,10 @@ func TestRecoverRetryIntegrationCleanupFailed(t *testing.T) {
 	project.State.Plans["alpha"] = &conductor.PlanState{
 		Status: conductor.StatusCompleted,
 		Merge: &conductor.MergeOutcome{
-			Status:           conductor.MergeSucceeded,
-			PostMergeHead:    "aabbccdd",
-			TargetRef:        "main",
-			WorktreePath:     root + "/.merges/alpha",
+			Status:        conductor.MergeSucceeded,
+			PostMergeHead: "aabbccdd",
+			TargetRef:     "main",
+			WorktreePath:  root + "/.merges/alpha",
 		},
 		Cleanup: &conductor.CleanupOutcome{
 			Status: conductor.CleanupFailed,
