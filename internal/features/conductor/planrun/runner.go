@@ -119,28 +119,36 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		now = time.Now
 	}
 
-	schedule := conductor.BuildSchedule(in.Project.Config)
-	next := schedule.NextPlans(in.Project.State)
-	if len(next) == 0 {
-		return SinglePlanResult{Reason: "no-eligible-plan"}
-	}
-	planID := next[0]
+	var planID string
 	if in.TargetPlanID != "" {
-		// Verify the requested plan is actually eligible before overriding.
-		found := false
-		for _, id := range next {
-			if id == in.TargetPlanID {
-				found = true
-				break
+		// TargetPlanID bypasses the global schedule order. Callers (batch loop)
+		// own phase ordering; SinglePlan only needs to validate that the target
+		// exists and is not already terminal.
+		unit, ok := in.Project.PlanUnitByID(in.TargetPlanID)
+		_ = unit // checked again below after planID is set
+		if !ok {
+			return SinglePlanResult{
+				PlanID: in.TargetPlanID,
+				Reason: "no-eligible-plan",
 			}
 		}
-		if !found {
+		// Reject targets that are already in a terminal state.
+		if ps := in.Project.State.Plans[in.TargetPlanID]; ps != nil &&
+			(ps.Status == conductor.StatusCompleted || ps.Status == conductor.StatusFailed) &&
+			ps.IsIntegrated() {
 			return SinglePlanResult{
 				PlanID: in.TargetPlanID,
 				Reason: "no-eligible-plan",
 			}
 		}
 		planID = in.TargetPlanID
+	} else {
+		schedule := conductor.BuildSchedule(in.Project.Config)
+		next := schedule.NextPlans(in.Project.State)
+		if len(next) == 0 {
+			return SinglePlanResult{Reason: "no-eligible-plan"}
+		}
+		planID = next[0]
 	}
 	unit, ok := in.Project.PlanUnitByID(planID)
 	if !ok {

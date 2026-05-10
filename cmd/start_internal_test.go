@@ -267,6 +267,49 @@ func TestPlanDirTamperGuardRunJSONAbsentBeforeSnapshot(t *testing.T) {
 	}
 }
 
+// TestRunBatchWithContextMissingExecutionConfigFails verifies that when a batch
+// references plans but the conductor execution config is absent (or empty),
+// runBatchWithContext returns an error and does NOT archive/clear the batch.
+func TestRunBatchWithContextMissingExecutionConfigFails(t *testing.T) {
+	root := t.TempDir()
+
+	if err := os.WriteFile(
+		filepath.Join(root, "springfield.toml"),
+		[]byte("[project]\nagent_priority = [\"claude\"]\n"),
+		0o644,
+	); err != nil {
+		t.Fatalf("write toml: %v", err)
+	}
+
+	// Write run.json.
+	run := batch.Run{ActiveBatchID: "test-batch"}
+	if err := batch.WriteRun(root, run); err != nil {
+		t.Fatalf("WriteRun: %v", err)
+	}
+
+	// Batch references a plan but we intentionally DO NOT write execution config.
+	b := batch.Batch{
+		ID:      "test-batch",
+		Title:   "Test",
+		PlanIDs: []string{"plan-a"},
+		Phases:  []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"plan-a"}}},
+	}
+
+	ctx := context.Background()
+	result, err := runBatchWithContext(ctx, root, run, b, io.Discard, "")
+	if err == nil {
+		t.Fatal("expected error when execution config is missing, got nil")
+	}
+	if result.Error == "" {
+		t.Fatal("expected BatchRunResult.Error to be set")
+	}
+
+	// Batch must still be present (not archived/cleared).
+	if _, statErr := os.Stat(batch.RunPath(root)); statErr != nil {
+		t.Errorf("run.json should still exist after config-missing failure: %v", statErr)
+	}
+}
+
 // TestBatchNextPlanIDPhaseBlocksUntilComplete verifies serial phase semantics:
 // if the first phase has a non-integrated plan, the second phase's plans are
 // not dispatched even if the second phase plans exist.

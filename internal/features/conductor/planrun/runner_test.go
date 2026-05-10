@@ -650,4 +650,90 @@ func TestTargetPlanIDOverridesDefaultSelection(t *testing.T) {
 			t.Fatalf("agent must not be dispatched for ineligible target")
 		}
 	})
+
+	t.Run("target not in NextPlans but pending is still dispatched", func(t *testing.T) {
+		// Set up two plans: "unblocking" (order=1) and "target" (order=2).
+		// "unblocking" is not yet integrated, so NextPlans returns only ["unblocking"].
+		// TargetPlanID="target" — under the old schedule-eligibility check this
+		// would return no-eligible-plan; under the new direct-lookup it must dispatch.
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "springfield.toml"),
+			[]byte("[project]\nagent_priority = [\"claude\"]\n"), 0o644); err != nil {
+			t.Fatalf("toml: %v", err)
+		}
+
+		// Write prd.json for both plans.
+		for _, id := range []string{"unblocking", "target"} {
+			planDir := filepath.Join(root, ".springfield", "plans", id)
+			if err := os.MkdirAll(planDir, 0o755); err != nil {
+				t.Fatalf("mkdir plan dir: %v", err)
+			}
+			prdData := map[string]any{
+				"id":    id,
+				"title": id,
+				"user_stories": []map[string]any{
+					{"id": "US-001", "title": "S", "passes": false, "priority": 1,
+						"deps": []string{}, "acceptance_criteria": []string{}},
+				},
+			}
+			prdBytes, _ := json.MarshalIndent(prdData, "", "  ")
+			if err := os.WriteFile(filepath.Join(planDir, "prd.json"), prdBytes, 0o644); err != nil {
+				t.Fatalf("write prd.json: %v", err)
+			}
+		}
+
+		// Register both plans: unblocking(order=1), target(order=2).
+		cfg := map[string]any{
+			"plans_dir":     ".springfield/plans",
+			"worktree_base": ".worktrees",
+			"max_retries":   1,
+			"tool":          "claude",
+			"plan_units": []map[string]any{
+				{"id": "unblocking", "path": ".springfield/plans/unblocking/prd.json", "order": 1},
+				{"id": "target", "path": ".springfield/plans/target/prd.json", "order": 2},
+			},
+		}
+		cfgPath := filepath.Join(root, ".springfield", "execution", "config.json")
+		if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+			t.Fatalf("mkdir cfg: %v", err)
+		}
+		cfgData, _ := json.MarshalIndent(cfg, "", "  ")
+		if err := os.WriteFile(cfgPath, cfgData, 0o644); err != nil {
+			t.Fatalf("write cfg: %v", err)
+		}
+
+		project, err := conductor.LoadProject(root)
+		if err != nil {
+			t.Fatalf("LoadProject: %v", err)
+		}
+		// "unblocking" is still pending — so NextPlans returns ["unblocking"], not ["target"].
+		// "target" is NOT in NextPlans but IS registered and pending.
+
+		g := newFakeGit()
+		runner := &fakeAgentRunner{
+			events: []coreexec.Event{
+				{Type: coreexec.EventStdout, Data: "<story-pass>US-001</story-pass><promise>COMPLETE</promise>"},
+			},
+		}
+
+		res := planrun.SinglePlan(planrun.SinglePlanInput{
+			Project:      project,
+			ControlRoot:  root,
+			WorktreeBase: ".worktrees",
+			AgentIDs:     []agents.ID{agents.AgentClaude},
+			Runner:       runner,
+			Manager:      &planrun.Manager{Git: g},
+			TargetPlanID: "target",
+		})
+
+		if res.Err != nil {
+			t.Fatalf("SinglePlan: %v", res.Err)
+		}
+		if res.PlanID != "target" {
+			t.Fatalf("dispatched %q, want target", res.PlanID)
+		}
+		if len(runner.calls) != 1 {
+			t.Fatalf("expected 1 agent call, got %d", len(runner.calls))
+		}
+	})
 }

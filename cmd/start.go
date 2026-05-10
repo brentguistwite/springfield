@@ -247,8 +247,23 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 		if !errors.Is(err, os.ErrNotExist) {
 			return BatchRunResult{Error: err.Error()}, err
 		}
-		// No conductor project: no eligible plans. Batch completes vacuously.
+		// Execution config is absent. If the batch references plans, this is a
+		// hard error: completing vacuously would silently archive plans that were
+		// never run. Require the user to re-register or recompile.
+		if len(b.PlanIDs) > 0 {
+			e := fmt.Errorf("batch %q references plans %v but execution config is missing or empty; run \"springfield plans add\" to register them or \"springfield plan --replace\" to recompile",
+				b.ID, b.PlanIDs)
+			return BatchRunResult{Error: e.Error()}, e
+		}
+		// No conductor project and no plans: vacuous completion is fine.
 		return BatchRunResult{}, nil
+	}
+	// If the project loaded but its plan registry is empty while the batch has
+	// plans, that is the same class of error (stale/missing config).
+	if len(project.Config.PlanUnits) == 0 && len(b.PlanIDs) > 0 {
+		e := fmt.Errorf("batch %q references plans %v but execution config is missing or empty; run \"springfield plans add\" to register them or \"springfield plan --replace\" to recompile",
+			b.ID, b.PlanIDs)
+		return BatchRunResult{Error: e.Error()}, e
 	}
 
 	enforceProtected := !loaded.Config.Project.AllowProtectedBase

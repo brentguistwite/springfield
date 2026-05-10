@@ -19,13 +19,20 @@ import (
 // (newly created), any error causes the entire batch dir to be removed so no
 // partial state (batch.json referencing absent plans) is left on disk.
 // If the batch dir already existed (--append flow), only the newly created
-// per-plan dirs are removed; a TODO remains to handle --append rollback more
-// precisely (suggest "springfield recover").
+// per-plan dirs are removed and batch.json is restored to its pre-call content
+// so the live batch never references plans whose prd.json was never written.
 func WriteBatch(paths Paths, b Batch, source string, plans []WrittenPlan) error {
 	// Track whether the batch dir existed before this call so rollback knows
 	// whether it can safely remove the entire dir.
 	_, statErr := os.Stat(paths.PlanDir())
 	batchDirIsNew := os.IsNotExist(statErr)
+
+	// For the append case (batch dir pre-existed), snapshot the current
+	// batch.json bytes before overwriting so rollback can restore them.
+	var priorBatchBytes []byte
+	if !batchDirIsNew {
+		priorBatchBytes, _ = os.ReadFile(paths.BatchPath()) // nil on missing is fine
+	}
 
 	rollback := func(createdPlanDirs []string) {
 		// Always remove any per-plan dirs that were created during this call so
@@ -37,6 +44,10 @@ func WriteBatch(paths Paths, b Batch, source string, plans []WrittenPlan) error 
 			// Batch dir was newly created by this call — remove it entirely so
 			// batch.json + source.md don't persist referencing absent plan dirs.
 			_ = os.RemoveAll(paths.PlanDir())
+		} else if priorBatchBytes != nil {
+			// Append case: restore the original batch.json so the live batch
+			// does not reference plans whose prd.json was never written.
+			_ = writeFileAtomic(paths.BatchPath(), priorBatchBytes, 0o644)
 		}
 	}
 
@@ -92,10 +103,18 @@ func WriteBatch(paths Paths, b Batch, source string, plans []WrittenPlan) error 
 }
 
 // ReadBatch reads the compiled batch for the given batch id.
+// Returns an error when the file uses the legacy phases[].slices shape, which
+// predates the phases[].plans field rename. Callers must delete the batch dir
+// and recompile rather than silently running with empty plan lists.
 func ReadBatch(paths Paths) (Batch, error) {
 	var b Batch
 	if err := readJSON(paths.BatchPath(), &b); err != nil {
 		return Batch{}, fmt.Errorf("read batch %s: %w", paths.batchID, err)
+	}
+	for _, phase := range b.Phases {
+		if len(phase.Slices) > 0 && string(phase.Slices) != "null" {
+			return Batch{}, fmt.Errorf("legacy batch shape detected (phases[].slices); this format is no longer supported. Run \"rm -rf .springfield/plans/%s/\" or \"springfield plan --replace --prd -\" with a new envelope", paths.batchID)
+		}
 	}
 	return b, nil
 }

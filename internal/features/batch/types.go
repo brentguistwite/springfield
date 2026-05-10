@@ -1,6 +1,9 @@
 package batch
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // PhaseMode controls whether plans in a phase run serially or in parallel.
 type PhaseMode string
@@ -12,8 +15,9 @@ const (
 
 // Phase groups plan IDs that share an execution mode.
 type Phase struct {
-	Mode  PhaseMode `json:"mode"`
-	Plans []string  `json:"plans"` // ordered plan IDs
+	Mode   PhaseMode       `json:"mode"`
+	Plans  []string        `json:"plans"`            // ordered plan IDs
+	Slices json.RawMessage `json:"slices,omitempty"` // legacy field — must be absent
 }
 
 // Batch is the compile-time state for one Springfield work batch.
