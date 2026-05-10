@@ -92,15 +92,8 @@ func NewInitCommand() *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), "Added Springfield patterns to .gitignore")
 			}
 
-			for _, name := range []string{"CLAUDE.md", "AGENTS.md"} {
-				added, err := ensureGuardrailBlock(filepath.Join(dir, name))
-				if err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to update %s: %v\n", name, err)
-					continue
-				}
-				if added {
-					fmt.Fprintf(cmd.OutOrStdout(), "Added Springfield guardrail to %s\n", name)
-				}
+			if err := ensureAgentInstructionFiles(cmd.OutOrStdout(), cmd.ErrOrStderr(), dir, priority); err != nil {
+				return err
 			}
 
 			fmt.Fprintln(cmd.OutOrStdout())
@@ -530,6 +523,87 @@ const guardrailBlock = guardrailMarker + `
 
 Never read, write, edit, or delete files under ` + "`.springfield/`" + `. That directory is Springfield's internal state. Writing to it will abort the current run.
 `
+
+// agentInstructionFile is the per-agent canonical filename. AGENTS.md is the
+// shared default (also Codex's native file); CLAUDE.md / GEMINI.md are
+// the Claude / Gemini conventions.
+var agentInstructionFile = map[agents.ID]string{
+	agents.AgentClaude: "CLAUDE.md",
+	agents.AgentCodex:  "AGENTS.md",
+	agents.AgentGemini: "GEMINI.md",
+}
+
+// canonicalCandidates is the lookup order for an existing canonical file.
+// AGENTS.md wins because it's the broadest convention and Codex's native
+// home; the others are honored if the operator already adopted them as
+// their single source of truth.
+var canonicalCandidates = []string{"AGENTS.md", "CLAUDE.md", "GEMINI.md"}
+
+// ensureAgentInstructionFiles writes one canonical agent-instruction file
+// (AGENTS.md by default, or whichever already exists) and creates symlinks
+// from the other selected agents' filenames pointing at it. The guardrail
+// block is appended to the canonical file (idempotent).
+//
+// Existing real (non-symlink) files are respected: if CLAUDE.md is already a
+// regular file with content, it's left in place and gets the guardrail
+// directly — the operator's setup is not silently rewritten.
+func ensureAgentInstructionFiles(stdout, stderr io.Writer, dir string, priority []string) error {
+	canonical := pickCanonical(dir)
+	canonicalPath := filepath.Join(dir, canonical)
+
+	added, err := ensureGuardrailBlock(canonicalPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "warning: failed to update %s: %v\n", canonical, err)
+	} else if added {
+		fmt.Fprintf(stdout, "Added Springfield guardrail to %s\n", canonical)
+	}
+
+	seenTargets := map[string]bool{canonical: true}
+	for _, id := range priority {
+		name, ok := agentInstructionFile[agents.ID(id)]
+		if !ok || seenTargets[name] {
+			continue
+		}
+		seenTargets[name] = true
+
+		path := filepath.Join(dir, name)
+		if _, lerr := os.Lstat(path); lerr == nil {
+			// Already exists in some form (real file or symlink). Append the
+			// guardrail (ensureGuardrailBlock follows symlinks to the
+			// canonical target, so duplicate writes are no-ops).
+			if added, gerr := ensureGuardrailBlock(path); gerr != nil {
+				fmt.Fprintf(stderr, "warning: failed to update %s: %v\n", name, gerr)
+			} else if added {
+				fmt.Fprintf(stdout, "Added Springfield guardrail to %s\n", name)
+			}
+			continue
+		}
+
+		// Missing: create as relative symlink to canonical so editors and
+		// agents see consistent content via either path.
+		if err := os.Symlink(canonical, path); err != nil {
+			fmt.Fprintf(stderr, "warning: failed to symlink %s -> %s: %v\n", name, canonical, err)
+			continue
+		}
+		fmt.Fprintf(stdout, "Linked %s -> %s\n", name, canonical)
+	}
+
+	return nil
+}
+
+// pickCanonical returns the existing canonical agent-instruction filename in
+// dir (honoring whichever file the operator already adopted) or the default
+// "AGENTS.md" when none exist. Existence is checked with Lstat so a symlink
+// counts as "present" — operating on the symlink resolves to its target via
+// ensureGuardrailBlock's symlink handling.
+func pickCanonical(dir string) string {
+	for _, name := range canonicalCandidates {
+		if _, err := os.Lstat(filepath.Join(dir, name)); err == nil {
+			return name
+		}
+	}
+	return "AGENTS.md"
+}
 
 // ensureGuardrailBlock appends the Springfield guardrail block to the given
 // agent-instruction file when the idempotency marker is absent. Creates the
