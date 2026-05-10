@@ -15,20 +15,42 @@ import (
 //   - <root>/.springfield/plans/<plan-id>/prd.json  (atomic)
 //   - <root>/.springfield/plans/<plan-id>/context.md (atomic; only if ContextBytes non-empty)
 //
-// Rollback on partial failure: tracks each successfully created per-plan dir;
-// on any error mid-write, removes each created per-plan dir (best-effort),
-// then returns the original error. The batch dir itself is not removed unless
-// its files also failed to write.
+// Rollback on partial failure: if the batch dir did not exist before this call
+// (newly created), any error causes the entire batch dir to be removed so no
+// partial state (batch.json referencing absent plans) is left on disk.
+// If the batch dir already existed (--append flow), only the newly created
+// per-plan dirs are removed; a TODO remains to handle --append rollback more
+// precisely (suggest "springfield recover").
 func WriteBatch(paths Paths, b Batch, source string, plans []WrittenPlan) error {
+	// Track whether the batch dir existed before this call so rollback knows
+	// whether it can safely remove the entire dir.
+	_, statErr := os.Stat(paths.PlanDir())
+	batchDirIsNew := os.IsNotExist(statErr)
+
+	rollback := func(createdPlanDirs []string) {
+		// Always remove any per-plan dirs that were created during this call so
+		// no orphaned plan data is left behind.
+		for _, d := range createdPlanDirs {
+			_ = os.RemoveAll(d)
+		}
+		if batchDirIsNew {
+			// Batch dir was newly created by this call — remove it entirely so
+			// batch.json + source.md don't persist referencing absent plan dirs.
+			_ = os.RemoveAll(paths.PlanDir())
+		}
+	}
+
 	if err := os.MkdirAll(paths.PlanDir(), 0o755); err != nil {
 		return fmt.Errorf("create plan dir: %w", err)
 	}
 
 	if err := writeFileAtomic(paths.SourcePath(), []byte(source), 0o644); err != nil {
+		rollback(nil)
 		return fmt.Errorf("write source: %w", err)
 	}
 
 	if err := writeJSON(paths.BatchPath(), b); err != nil {
+		rollback(nil)
 		return err
 	}
 
@@ -37,34 +59,27 @@ func WriteBatch(paths Paths, b Batch, source string, plans []WrittenPlan) error 
 	for _, wp := range plans {
 		planDir := PlanDirByID(paths.rootDir, wp.ID)
 		if err := os.MkdirAll(planDir, 0o755); err != nil {
-			rollbackPlanDirs(createdPlanDirs)
+			rollback(createdPlanDirs)
 			return fmt.Errorf("create plan dir for %q: %w", wp.ID, err)
 		}
 		createdPlanDirs = append(createdPlanDirs, planDir)
 
 		prdPath := PlanPRDPath(paths.rootDir, wp.ID)
 		if err := writeFileAtomic(prdPath, wp.PRDBytes, 0o644); err != nil {
-			rollbackPlanDirs(createdPlanDirs)
+			rollback(createdPlanDirs)
 			return fmt.Errorf("write prd.json for plan %q: %w", wp.ID, err)
 		}
 
 		if len(wp.ContextBytes) > 0 {
 			ctxPath := PlanContextPath(paths.rootDir, wp.ID)
 			if err := writeFileAtomic(ctxPath, wp.ContextBytes, 0o644); err != nil {
-				rollbackPlanDirs(createdPlanDirs)
+				rollback(createdPlanDirs)
 				return fmt.Errorf("write context.md for plan %q: %w", wp.ID, err)
 			}
 		}
 	}
 
 	return nil
-}
-
-// rollbackPlanDirs removes each plan dir created during WriteBatch (best-effort).
-func rollbackPlanDirs(dirs []string) {
-	for _, d := range dirs {
-		_ = os.RemoveAll(d)
-	}
 }
 
 // ReadBatch reads the compiled batch for the given batch id.

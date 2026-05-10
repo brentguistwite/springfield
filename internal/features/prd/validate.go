@@ -91,6 +91,10 @@ func validatePlan(plan BatchPRDPlan, res *ValidationResult) {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("%s: context_md is large (%d bytes, recommend ≤32 KB)", prefix, ctxLen))
 	}
 
+	if len(plan.UserStories) == 0 {
+		res.Errors = append(res.Errors, fmt.Errorf("%s: at least one user story is required", prefix))
+	}
+
 	// Build story ID set within this plan for dep validation.
 	storyIDs := make(map[string]bool, len(plan.UserStories))
 	seenStoryIDs := make(map[string]bool, len(plan.UserStories))

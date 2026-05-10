@@ -752,5 +752,69 @@ func TestPlanReplaceRefusesWhenPlanIsRunning(t *testing.T) {
 	}
 }
 
+// TestPlanReplaceWithMalformedEnvelopeLeavesPriorBatchUntouched verifies that
+// --replace fails without archiving the prior batch when the new envelope is
+// invalid. The compile step must run BEFORE any archive/clear operations.
+func TestPlanReplaceWithMalformedEnvelopeLeavesPriorBatchUntouched(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "claude")
+
+	// Establish a valid first batch.
+	env1 := prd.BatchPRDEnvelope{
+		Title:  "original-batch",
+		Source: "src",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-one"}}},
+		Plans:  []prd.BatchPRDPlan{minPRDPlan("plan-one", "Plan One")},
+	}
+	out1, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, env1))
+	if err != nil {
+		t.Fatalf("initial plan: %v\n%s", err, out1)
+	}
+	run1 := readRunJSON(t, dir)
+	batchID1 := run1.ActiveBatchID
+
+	// Build a malformed envelope: plan with no acceptance criteria (missing AC).
+	malformedEnv := prd.BatchPRDEnvelope{
+		Title:  "bad-batch",
+		Source: "src",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-bad"}}},
+		Plans: []prd.BatchPRDPlan{
+			{
+				PRD: prd.PRD{
+					ID:    "plan-bad",
+					Title: "Bad Plan",
+					UserStories: []prd.UserStory{
+						// Missing AcceptanceCriteria and Priority — should fail validation
+						{ID: "US-001", Title: "Story"},
+					},
+				},
+			},
+		},
+	}
+	out2, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, malformedEnv), "--replace")
+	if err == nil {
+		t.Fatalf("expected --replace with malformed envelope to fail, got success:\n%s", out2)
+	}
+
+	// Prior batch must still exist (NOT archived).
+	archivePath := filepath.Join(dir, ".springfield", "archive", batchID1+".json")
+	if _, statErr := os.Stat(archivePath); statErr == nil {
+		t.Errorf("prior batch %q was archived even though new envelope is invalid", batchID1)
+	}
+
+	// run.json must still point at the original batch.
+	run2 := readRunJSON(t, dir)
+	if run2.ActiveBatchID != batchID1 {
+		t.Errorf("active_batch_id = %q after failed replace, want %q", run2.ActiveBatchID, batchID1)
+	}
+
+	// Prior batch's batch.json must still be readable.
+	batchDir := filepath.Join(dir, ".springfield", "plans", batchID1)
+	if _, statErr := os.Stat(filepath.Join(batchDir, "batch.json")); statErr != nil {
+		t.Errorf("prior batch.json missing after failed replace: %v", statErr)
+	}
+}
+
 // Unused import guard for fmt
 var _ = fmt.Sprintf

@@ -433,10 +433,11 @@ func TestValidatePhaseReferencesUnknownPlan(t *testing.T) {
 	}
 }
 
-// TestValidateZeroStoryPlanIsValid ensures a plan with no user stories is valid.
-// The runtime treats zero-story plans as immediately complete (NextStory returns
-// PickAllPassed) and sets MergePending without invoking any agent.
-func TestValidateZeroStoryPlanIsValid(t *testing.T) {
+// TestValidateZeroStoryPlanIsError ensures a plan with no user stories is rejected.
+// Zero-story plans are almost always a typo; the runtime would treat them as
+// immediately complete (NextStory returns PickAllPassed) and mark MergePending
+// without any agent work, which is never the intent.
+func TestValidateZeroStoryPlanIsError(t *testing.T) {
 	raw := `{
 		"title": "t",
 		"source": "s",
@@ -455,8 +456,18 @@ func TestValidateZeroStoryPlanIsValid(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	result := prd.Validate(env)
-	if result.HasErrors() {
-		t.Errorf("zero-story plan must be valid, got errors: %v", result.Errors)
+	if !result.HasErrors() {
+		t.Error("zero-story plan must produce a hard error, got none")
+	}
+	found := false
+	for _, e := range result.Errors {
+		if strings.Contains(e.Error(), "user stor") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected error mentioning user stories, got: %v", result.Errors)
 	}
 }
 

@@ -432,6 +432,146 @@ func TestSinglePlanRecordsPreflightFailureWithoutDispatch(t *testing.T) {
 // that the field is honoured (no "no-eligible-plan" return, correct PlanID).
 // A companion sub-test asserts that TargetPlanID for an ineligible (already-
 // completed) plan returns "no-eligible-plan" rather than an unexpected run.
+// projectFixtureLegacy writes a project where the plan unit points to a .md
+// file (legacy path) instead of prd.json. The plan file at sourcePath is also
+// written so buildPrompt can read it.
+func projectFixtureLegacy(t *testing.T, planID string) (root, sourcePath string) {
+	t.Helper()
+	root = t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "springfield.toml"),
+		[]byte("[project]\nagent_priority = [\"claude\"]\n"), 0o644); err != nil {
+		t.Fatalf("toml: %v", err)
+	}
+
+	planSubDir := filepath.Join(root, ".springfield", "plans", planID)
+	if err := os.MkdirAll(planSubDir, 0o755); err != nil {
+		t.Fatalf("mkdir plan subdir: %v", err)
+	}
+	// Write the legacy .md plan file.
+	sourcePath = filepath.Join(planSubDir, "source.md")
+	if err := os.WriteFile(sourcePath, []byte("# Plan\n\nDo the thing.\n"), 0o644); err != nil {
+		t.Fatalf("write source.md: %v", err)
+	}
+
+	legacyPath := ".springfield/plans/" + planID + "/source.md"
+	cfg := map[string]any{
+		"plans_dir":     ".springfield/plans",
+		"worktree_base": ".worktrees",
+		"max_retries":   1,
+		"tool":          "claude",
+		"plan_units": []map[string]any{
+			{"id": planID, "path": legacyPath, "order": 1},
+		},
+	}
+	cfgPath := filepath.Join(root, ".springfield", "execution", "config.json")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatalf("mkdir cfg: %v", err)
+	}
+	data, _ := json.MarshalIndent(cfg, "", "  ")
+	if err := os.WriteFile(cfgPath, data, 0o644); err != nil {
+		t.Fatalf("write cfg: %v", err)
+	}
+	return root, sourcePath
+}
+
+// tamperLegacyRunner writes to the legacy source.md file mid-run to simulate
+// an agent tampering with the control plane.
+type tamperLegacyRunner struct {
+	sourcePath string
+	calls      int
+}
+
+func (r *tamperLegacyRunner) Run(_ context.Context, req coreruntime.Request) coreruntime.Result {
+	r.calls++
+	_ = os.WriteFile(r.sourcePath, []byte("TAMPERED"), 0o644)
+	return coreruntime.Result{
+		Agent:     agents.AgentClaude,
+		Status:    coreruntime.StatusPassed,
+		ExitCode:  0,
+		StartedAt: time.Now().Add(-time.Second),
+		EndedAt:   time.Now(),
+	}
+}
+
+// TestSinglePlanLegacyTamperGuardDetectsTamper verifies that TamperGuard is
+// applied to legacy (.md) plans: an agent that modifies the source.md file is
+// detected, the plan is marked failed, and source.md is restored.
+func TestSinglePlanLegacyTamperGuardDetectsTamper(t *testing.T) {
+	planID := "alpha"
+	root, sourcePath := projectFixtureLegacy(t, planID)
+
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+
+	origBytes, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read source.md: %v", err)
+	}
+
+	guard := &spyTamperGuard{
+		prdPath:    sourcePath,
+		beforeData: origBytes,
+	}
+	agentRunner := &tamperLegacyRunner{sourcePath: sourcePath}
+	g := newFakeGit()
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentClaude},
+		Runner:       agentRunner,
+		Manager:      &planrun.Manager{Git: g},
+		TamperGuard:  guard,
+	})
+
+	if res.Err == nil {
+		t.Fatal("expected failure when legacy plan tamper detected")
+	}
+	if !strings.Contains(res.Err.Error(), "tamper") {
+		t.Fatalf("error should mention tamper, got: %v", res.Err)
+	}
+	if res.Status != conductor.StatusFailed {
+		t.Fatalf("status = %s, want failed", res.Status)
+	}
+
+	// Snapshot and Detect must have been called.
+	if guard.snapshots == 0 {
+		t.Error("expected Snapshot to be called")
+	}
+	if guard.detects == 0 {
+		t.Error("expected Detect to be called")
+	}
+	// Restore must have been called.
+	if guard.restores == 0 {
+		t.Error("expected Restore to be called after tamper detected")
+	}
+
+	// source.md must be restored to original content.
+	restored, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read restored source.md: %v", err)
+	}
+	if string(restored) != string(origBytes) {
+		t.Errorf("source.md not restored: got %q, want %q", string(restored), string(origBytes))
+	}
+
+	// ExitReason must mention tamper.
+	reloaded, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("re-LoadProject: %v", err)
+	}
+	st := reloaded.State.Plans[planID]
+	if st == nil {
+		t.Fatal("expected plan state to be saved")
+	}
+	if !strings.Contains(st.ExitReason, "tamper") {
+		t.Errorf("ExitReason should mention tamper, got %q", st.ExitReason)
+	}
+}
+
 func TestTargetPlanIDOverridesDefaultSelection(t *testing.T) {
 	t.Run("eligible target is dispatched", func(t *testing.T) {
 		// "alpha" is the only plan and is eligible.

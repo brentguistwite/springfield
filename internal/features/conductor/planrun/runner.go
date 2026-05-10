@@ -481,6 +481,15 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 		return SinglePlanResult{PlanID: planID, Reason: "prompt-build-failed", Context: ctx, Err: err}
 	}
 
+	// Snapshot control-plane state before dispatching the agent.
+	if in.TamperGuard != nil {
+		if snapErr := in.TamperGuard.Snapshot(); snapErr != nil {
+			recordPreflightFailure(in.Project, planID, "tamper-guard-snapshot-failed", snapErr.Error(), now())
+			_ = in.Project.SaveState()
+			return SinglePlanResult{PlanID: planID, Reason: "tamper-guard-snapshot-failed", Context: ctx, Err: snapErr}
+		}
+	}
+
 	progress(in.Progress, "plan %s: dispatching agent (workdir %s)\n", planID, ctx.WorktreeRoot)
 	result := in.Runner.Run(context.Background(), coreruntime.Request{
 		AgentIDs:          in.AgentIDs,
@@ -489,6 +498,25 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 		OnEvent:           in.OnEvent,
 		ExecutionSettings: in.ExecutionSettings,
 	})
+
+	// Detect and recover any control-plane tamper by the agent.
+	if in.TamperGuard != nil {
+		tamperReason, detectErr := in.TamperGuard.Detect()
+		if detectErr != nil {
+			err := fmt.Errorf("tamper guard detect failed: %w", detectErr)
+			recordPreflightFailure(in.Project, planID, "tamper-guard-detect-failed", err.Error(), now())
+			_ = in.Project.SaveState()
+			return SinglePlanResult{PlanID: planID, Reason: "tamper-guard-detect-failed", Context: ctx, Err: err}
+		}
+		if tamperReason != "" {
+			_ = in.TamperGuard.Restore()
+			tamperErr := fmt.Errorf("tamper-detected: %s", tamperReason)
+			tamperTag := fmt.Sprintf("tamper-detected: %s", tamperReason)
+			recordPreflightFailure(in.Project, planID, tamperTag, tamperErr.Error(), now())
+			_ = in.Project.SaveState()
+			return SinglePlanResult{PlanID: planID, Reason: tamperTag, Context: ctx, Status: conductor.StatusFailed, Err: tamperErr}
+		}
+	}
 
 	evidenceDir := EvidenceRoot(in.ControlRoot, ctx.PlanKey)
 	runErr := errorFromResult(result)

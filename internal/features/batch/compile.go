@@ -52,15 +52,22 @@ func Compile(in CompileInput) (CompileOutput, error) {
 		return CompileOutput{}, result.Errors[0]
 	}
 
-	existingIDs := in.ExistingIDs
-	if existingIDs == nil {
-		existingIDs = map[string]struct{}{}
+	// Seed the uniqueness set from caller-provided existing IDs plus all plan IDs
+	// from the envelope. This prevents the batch ID from colliding with a plan ID —
+	// both would land under .springfield/plans/<id>/ and an archive/delete of the
+	// batch dir would silently destroy the plan's registered files.
+	batchIDSeen := make(map[string]struct{})
+	for k := range in.ExistingIDs {
+		batchIDSeen[k] = struct{}{}
+	}
+	for _, p := range env.Plans {
+		batchIDSeen[p.ID] = struct{}{}
 	}
 	rawID := SanitizeID(env.Title)
 	if rawID == "" {
 		rawID = "batch"
 	}
-	batchID := UniqueID(rawID, existingIDs)
+	batchID := UniqueID(rawID, batchIDSeen)
 
 	// Build PlanIDs: ordered-unique union across phases[].plans, preserving first-seen order.
 	seen := map[string]struct{}{}

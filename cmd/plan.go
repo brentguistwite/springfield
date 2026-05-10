@@ -129,6 +129,19 @@ func NewPlanCommand() *cobra.Command {
 
 				switch {
 				case replace:
+					// Compile and validate the new envelope FIRST so we catch all
+					// envelope bugs before touching the existing batch. This ensures
+					// the prior batch is never archived unless the replacement is valid.
+					replaceOut, err := batch.Compile(batch.CompileInput{Envelope: env})
+					if err != nil {
+						return err
+					}
+
+					// Surface warnings to stderr before any mutation.
+					for _, w := range replaceOut.Warnings {
+						fmt.Fprintf(cmd.ErrOrStderr(), "[warn] %s\n", w)
+					}
+
 					if err := batch.ArchiveBatchNormalized(rootDir, *priorBatch, "replaced"); err != nil {
 						return fmt.Errorf("archive prior batch: %w", err)
 					}
@@ -143,6 +156,40 @@ func NewPlanCommand() *cobra.Command {
 						_ = project.RemovePlanUnit(id) // best-effort; may not be registered
 					}
 					priorBatch = nil
+
+					// Write the pre-compiled batch (already validated above).
+					// Any failure here is after archive — hint the operator.
+					replacePaths, err := batch.NewPaths(rootDir, replaceOut.Batch.ID)
+					if err != nil {
+						return fmt.Errorf("resolve batch paths (write failed after archive — run \"springfield recover\" to clean up): %w", err)
+					}
+					if err := batch.WriteBatch(replacePaths, replaceOut.Batch, replaceOut.Source, replaceOut.Plans); err != nil {
+						return fmt.Errorf("write batch (write failed after archive — run \"springfield recover\" to clean up): %w", err)
+					}
+					for _, unit := range replaceOut.Units {
+						if _, err := project.AddPlanUnit(conductor.PlanUnitInput{
+							ID:    unit.ID,
+							Title: unit.Title,
+							Path:  unit.Path,
+							Order: unit.Order,
+						}); err != nil {
+							return fmt.Errorf("register plan unit %q (write failed after archive — run \"springfield recover\" to clean up): %w", unit.ID, err)
+						}
+					}
+					if err := project.SaveConfig(); err != nil {
+						return fmt.Errorf("save execution config (write failed after archive — run \"springfield recover\" to clean up): %w", err)
+					}
+					newRun := batch.Run{
+						ActiveBatchID:  replaceOut.Batch.ID,
+						ActivePhaseIdx: 0,
+						ActivePlanIDs:  nil,
+						LastCheckpoint: time.Now().UTC(),
+					}
+					if err := batch.WriteRun(rootDir, newRun); err != nil {
+						return fmt.Errorf("write run.json (write failed after archive — run \"springfield recover\" to clean up): %w", err)
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "Compiled batch %q with %d plan(s).\n", replaceOut.Batch.ID, len(replaceOut.Plans))
+					return nil
 
 				case appendMode:
 					return runAppend(cmd, rootDir, project, *priorBatch, run, env)
