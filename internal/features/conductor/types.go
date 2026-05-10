@@ -1,5 +1,7 @@
 package conductor
 
+//go:generate go run springfield/cmd/lifecycle-gen
+
 import "time"
 
 // Config represents persisted conductor configuration.
