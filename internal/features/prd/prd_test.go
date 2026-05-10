@@ -433,8 +433,36 @@ func TestValidatePhaseReferencesUnknownPlan(t *testing.T) {
 	}
 }
 
-// TestValidateNonConformingStoryID ensures non-conforming story ID produces a warning, not an error.
-func TestValidateNonConformingStoryID(t *testing.T) {
+// TestValidateZeroStoryPlanIsValid ensures a plan with no user stories is valid.
+// The runtime treats zero-story plans as immediately complete (NextStory returns
+// PickAllPassed) and sets MergePending without invoking any agent.
+func TestValidateZeroStoryPlanIsValid(t *testing.T) {
+	raw := `{
+		"title": "t",
+		"source": "s",
+		"phases": [{"mode": "serial", "plans": ["p1"]}],
+		"plans": [
+			{
+				"id": "p1",
+				"title": "Plan 1",
+				"description": "d",
+				"user_stories": []
+			}
+		]
+	}`
+	env, err := prd.ParseEnvelope(strings.NewReader(raw))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	result := prd.Validate(env)
+	if result.HasErrors() {
+		t.Errorf("zero-story plan must be valid, got errors: %v", result.Errors)
+	}
+}
+
+// TestValidateNonConformingStoryIDIsError ensures non-conforming story ID produces a hard error,
+// not just a warning. Non-US IDs cannot be marked via <story-pass>US-(\d+)</story-pass>.
+func TestValidateNonConformingStoryIDIsError(t *testing.T) {
 	raw := `{
 		"title": "t",
 		"source": "s",
@@ -455,11 +483,8 @@ func TestValidateNonConformingStoryID(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	result := prd.Validate(env)
-	if result.HasErrors() {
-		t.Errorf("unexpected errors for non-conforming story id: %v", result.Errors)
-	}
-	if len(result.Warnings) == 0 {
-		t.Error("expected warning for non-conforming story id, got none")
+	if !result.HasErrors() {
+		t.Error("expected error for non-conforming story id (cannot be marked by scanner), got none")
 	}
 }
 

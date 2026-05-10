@@ -113,6 +113,20 @@ func NewPlanCommand() *cobra.Command {
 			}
 
 			if priorBatch != nil {
+				// Before mutating the active batch, refuse if any plan is currently running.
+				// A running plan means `springfield start` is active; mutations would corrupt
+				// control-plane state that the runner expects to be stable.
+				if replace || appendMode {
+					for planID, ps := range project.State.Plans {
+						if ps != nil && ps.Status == conductor.StatusRunning {
+							return fmt.Errorf(
+								"plan %q is currently running (status=running); wait for it to finish or run \"springfield recover\" first",
+								planID,
+							)
+						}
+					}
+				}
+
 				switch {
 				case replace:
 					if err := batch.ArchiveBatchNormalized(rootDir, *priorBatch, "replaced"); err != nil {

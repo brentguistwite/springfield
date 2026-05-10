@@ -542,6 +542,307 @@ func TestSinglePlanIterationAgentFailureExitCodeZero(t *testing.T) {
 	}
 }
 
+// tamperAgentRunner is an agent runner that writes to prd.json mid-iteration
+// to simulate a tampered control plane.
+type tamperAgentRunner struct {
+	prdPath string
+	calls   int
+}
+
+func (r *tamperAgentRunner) Run(_ context.Context, req coreruntime.Request) coreruntime.Result {
+	r.calls++
+	// Write unexpected content to prd.json to simulate tampering.
+	_ = os.WriteFile(r.prdPath, []byte(`{"id":"tampered"}`), 0o644)
+	return coreruntime.Result{
+		Agent:    agents.AgentClaude,
+		Status:   coreruntime.StatusPassed,
+		ExitCode: 0,
+		Events: []coreexec.Event{
+			{Type: coreexec.EventStdout, Data: "<story-pass>US-001</story-pass>", Time: time.Now()},
+		},
+		StartedAt: time.Now().Add(-time.Second),
+		EndedAt:   time.Now(),
+	}
+}
+
+// spyTamperGuard implements planrun.TamperGuard and records calls.
+// It simulates tamper detection by comparing a "before" snapshot of prdPath
+// to the current bytes after the agent runs.
+type spyTamperGuard struct {
+	prdPath    string
+	beforeData []byte
+	snapshots  int
+	detects    int
+	restores   int
+}
+
+func (g *spyTamperGuard) Snapshot() error {
+	g.snapshots++
+	data, err := os.ReadFile(g.prdPath)
+	if err != nil {
+		return err
+	}
+	g.beforeData = data
+	return nil
+}
+
+func (g *spyTamperGuard) Detect() (string, error) {
+	g.detects++
+	current, err := os.ReadFile(g.prdPath)
+	if err != nil {
+		return fmt.Sprintf("read error: %v", err), nil
+	}
+	if string(current) != string(g.beforeData) {
+		return "prd.json changed", nil
+	}
+	return "", nil
+}
+
+func (g *spyTamperGuard) Restore() error {
+	g.restores++
+	return os.WriteFile(g.prdPath, g.beforeData, 0o644)
+}
+
+func TestSinglePlanIterationTamperGuardDetectsTamperAndFailsPlan(t *testing.T) {
+	p := prd.PRD{
+		ID:    "feat",
+		Title: "Feature Plan",
+		UserStories: []prd.UserStory{
+			{ID: "US-001", Title: "Story 1", Priority: 1, Passes: false},
+		},
+	}
+
+	root, project := projectFixtureWithPRD(t, "feat", p)
+	prdPath := filepath.Join(root, ".springfield", "plans", "feat", "prd.json")
+	g := newFakeGit()
+
+	// Read the original prd.json bytes for the guard.
+	origBytes, err := os.ReadFile(prdPath)
+	if err != nil {
+		t.Fatalf("read prd.json: %v", err)
+	}
+
+	guard := &spyTamperGuard{
+		prdPath:    prdPath,
+		beforeData: origBytes,
+	}
+	agentRunner := &tamperAgentRunner{prdPath: prdPath}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentClaude},
+		Runner:       agentRunner,
+		Manager:      &planrun.Manager{Git: g},
+		ProjectRoot:  root,
+		TamperGuard:  guard,
+	})
+
+	if res.Err == nil {
+		t.Fatal("expected failure when tamper detected")
+	}
+	if !strings.Contains(res.Err.Error(), "tamper") {
+		t.Fatalf("error should mention tamper, got: %v", res.Err)
+	}
+	if res.Status != conductor.StatusFailed {
+		t.Fatalf("status = %s, want failed", res.Status)
+	}
+
+	// Guard Snapshot and Detect must have been called.
+	if guard.snapshots == 0 {
+		t.Error("expected Snapshot to be called at least once")
+	}
+	if guard.detects == 0 {
+		t.Error("expected Detect to be called at least once")
+	}
+	// Restore must have been called to put prd.json back.
+	if guard.restores == 0 {
+		t.Error("expected Restore to be called after tamper detected")
+	}
+
+	// prd.json must be restored to original content.
+	restored, err := os.ReadFile(prdPath)
+	if err != nil {
+		t.Fatalf("read restored prd.json: %v", err)
+	}
+	if string(restored) != string(origBytes) {
+		t.Errorf("prd.json not restored: got %q, want %q", string(restored), string(origBytes))
+	}
+
+	// Exit reason must contain tamper.
+	reloaded, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("re-LoadProject: %v", err)
+	}
+	st := reloaded.State.Plans["feat"]
+	if st == nil {
+		t.Fatal("expected plan state to be saved")
+	}
+	if !strings.Contains(st.ExitReason, "tamper") {
+		t.Errorf("ExitReason should mention tamper, got %q", st.ExitReason)
+	}
+}
+
+func TestSinglePlanIterationTamperGuardNoOpWhenNoTamper(t *testing.T) {
+	// Guard with no tamper detected — plan completes normally.
+	p := prd.PRD{
+		ID:    "feat",
+		Title: "Feature Plan",
+		UserStories: []prd.UserStory{
+			{ID: "US-001", Title: "Story 1", Priority: 1, Passes: false},
+		},
+	}
+
+	root, project := projectFixtureWithPRD(t, "feat", p)
+	prdPath := filepath.Join(root, ".springfield", "plans", "feat", "prd.json")
+	g := newFakeGit()
+
+	origBytes, err := os.ReadFile(prdPath)
+	if err != nil {
+		t.Fatalf("read prd.json: %v", err)
+	}
+
+	// Guard that always reports no tamper.
+	guard := &spyTamperGuard{
+		prdPath:    prdPath,
+		beforeData: origBytes,
+	}
+
+	runner := &iterScriptRunner{
+		replies: []coreruntime.Result{
+			makePassAndCompleteResult("US-001"),
+		},
+	}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentClaude},
+		Runner:       runner,
+		Manager:      &planrun.Manager{Git: g},
+		ProjectRoot:  root,
+		TamperGuard:  guard,
+	})
+
+	if res.Err != nil {
+		t.Fatalf("SinglePlan with no-tamper guard should succeed: %v", res.Err)
+	}
+	if res.Status != conductor.StatusCompleted {
+		t.Fatalf("status = %s, want completed", res.Status)
+	}
+	if guard.restores != 0 {
+		t.Errorf("Restore must not be called when no tamper, got %d calls", guard.restores)
+	}
+}
+
+func TestSinglePlanIterationCyclicDepsBlockedFailsWithNoAgentCall(t *testing.T) {
+	// US-001 deps US-002, US-002 deps US-001 → cycle; US-003 already passed.
+	// Plan must fail immediately with blocked exit reason; no agent invocation.
+	p := prd.PRD{
+		ID:    "feat",
+		Title: "Cyclic Dep Plan",
+		UserStories: []prd.UserStory{
+			{ID: "US-001", Title: "Story 1", Priority: 1, Passes: false, Deps: []string{"US-002"}},
+			{ID: "US-002", Title: "Story 2", Priority: 2, Passes: false, Deps: []string{"US-001"}},
+			{ID: "US-003", Title: "Story 3", Priority: 3, Passes: true},
+		},
+	}
+
+	root, project := projectFixtureWithPRD(t, "feat", p)
+	g := newFakeGit()
+	runner := &iterScriptRunner{}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentClaude},
+		Runner:       runner,
+		Manager:      &planrun.Manager{Git: g},
+		ProjectRoot:  root,
+	})
+
+	if res.Err == nil {
+		t.Fatal("expected failure for cyclic dep graph")
+	}
+	if !strings.Contains(res.Err.Error(), "blocked") {
+		t.Fatalf("error should mention 'blocked', got: %v", res.Err)
+	}
+	if res.Status != conductor.StatusFailed {
+		t.Fatalf("status = %s, want failed", res.Status)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected no agent calls for blocked plan, got %d", runner.calls)
+	}
+}
+
+func TestSinglePlanIterationZeroStoryPRDCompletesImmediately(t *testing.T) {
+	// Zero-story PRD → plan completes without invoking any agent, MergePending set,
+	// summary.json shows iteration_count=0.
+	p := prd.PRD{
+		ID:          "feat",
+		Title:       "Zero Story Plan",
+		UserStories: []prd.UserStory{},
+	}
+
+	root, project := projectFixtureWithPRD(t, "feat", p)
+	g := newFakeGit()
+	runner := &iterScriptRunner{}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentClaude},
+		Runner:       runner,
+		Manager:      &planrun.Manager{Git: g},
+		ProjectRoot:  root,
+	})
+
+	if res.Err != nil {
+		t.Fatalf("SinglePlan: %v", res.Err)
+	}
+	if res.Status != conductor.StatusCompleted {
+		t.Fatalf("status = %s, want completed", res.Status)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("expected no agent calls for zero-story plan, got %d", runner.calls)
+	}
+
+	// MergePending must be set.
+	reloaded, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("re-LoadProject: %v", err)
+	}
+	st := reloaded.State.Plans["feat"]
+	if st == nil || st.Merge == nil || st.Merge.Status != conductor.MergePending {
+		t.Fatalf("expected MergePending for zero-story plan, got %+v", st)
+	}
+
+	// summary.json iteration_count must be 0.
+	evidenceDir := planrun.EvidenceRoot(root, "feat")
+	summaryPath := filepath.Join(evidenceDir, "summary.json")
+	summaryData, err := os.ReadFile(summaryPath)
+	if err != nil {
+		t.Fatalf("read summary.json: %v", err)
+	}
+	var summary struct {
+		IterationCount int    `json:"iteration_count"`
+		TerminalStatus string `json:"terminal_status"`
+	}
+	if err := json.Unmarshal(summaryData, &summary); err != nil {
+		t.Fatalf("unmarshal summary.json: %v", err)
+	}
+	if summary.IterationCount != 0 {
+		t.Errorf("summary.json iteration_count = %d, want 0", summary.IterationCount)
+	}
+	if summary.TerminalStatus != "completed" {
+		t.Errorf("summary.json terminal_status = %q, want completed", summary.TerminalStatus)
+	}
+}
+
 func TestSinglePlanIterationAppendProgressNonFatal(t *testing.T) {
 	// progress.md read-only must not cause plan failure — loop continues.
 	p := prd.PRD{

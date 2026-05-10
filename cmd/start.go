@@ -1024,6 +1024,7 @@ func runOnePlan(w io.Writer, project *conductor.Project, root, worktreeBase stri
 		Manager:              planrun.NewManager(),
 		Progress:             w,
 		EnforceProtectedBase: enforceProtected,
+		TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(root, ".springfield", "plans")},
 	})
 
 	if res.PlanID == "" && res.Reason == "no-eligible-plan" {
@@ -1194,4 +1195,71 @@ func shortSHA(s string) string {
 		return s[:8]
 	}
 	return s
+}
+
+// planDirTamperGuard implements planrun.TamperGuard for the single-plan-unit
+// path. It snapshots every file under .springfield/plans/ before each agent
+// invocation and restores them on detected tamper. This mirrors the semantics
+// of the legacy batch path's snapshotControlPlane/detectAndRecoverTamper,
+// adapted for the plan-unit (non-batch) control plane layout.
+type planDirTamperGuard struct {
+	planDir  string
+	snapshot map[string][]byte // relpath → bytes
+}
+
+func (g *planDirTamperGuard) Snapshot() error {
+	tree, err := snapshotPlanDir(g.planDir)
+	if err != nil {
+		return fmt.Errorf("tamper snapshot: %w", err)
+	}
+	g.snapshot = tree
+	return nil
+}
+
+func (g *planDirTamperGuard) Detect() (string, error) {
+	if g.snapshot == nil {
+		return "", nil
+	}
+	current, err := snapshotPlanDir(g.planDir)
+	if err != nil {
+		return fmt.Sprintf("plan dir unreadable: %v", err), nil
+	}
+	return firstTreeDivergence(g.snapshot, current, nil), nil
+}
+
+func (g *planDirTamperGuard) Restore() error {
+	if g.snapshot == nil {
+		return nil
+	}
+	if err := os.MkdirAll(g.planDir, 0o755); err != nil {
+		return fmt.Errorf("recreate plan dir: %w", err)
+	}
+	onDisk, err := enumeratePlanTreeRaw(g.planDir)
+	if err != nil {
+		return fmt.Errorf("enumerate plan dir: %w", err)
+	}
+	for rel := range onDisk {
+		if _, keep := g.snapshot[rel]; !keep {
+			abs := filepath.Join(g.planDir, filepath.FromSlash(rel))
+			if rmErr := os.Remove(abs); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
+				return fmt.Errorf("remove stray %s: %w", rel, rmErr)
+			}
+		}
+	}
+	for rel, data := range g.snapshot {
+		abs := filepath.Join(g.planDir, filepath.FromSlash(rel))
+		if err := writeFileReplacingNonRegular(abs, data, 0o644); err != nil {
+			return fmt.Errorf("restore %s: %w", rel, err)
+		}
+	}
+	return nil
+}
+
+// snapshotPlanDir walks planDir and returns a relpath→bytes map for all
+// regular files. Non-existent planDir returns an empty map (no-op snapshot).
+func snapshotPlanDir(planDir string) (map[string][]byte, error) {
+	if _, err := os.Stat(planDir); errors.Is(err, os.ErrNotExist) {
+		return make(map[string][]byte), nil
+	}
+	return snapshotPlanTree(planDir)
 }

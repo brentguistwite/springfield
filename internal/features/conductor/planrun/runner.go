@@ -25,6 +25,18 @@ type AgentRunner interface {
 	Run(ctx context.Context, req coreruntime.Request) coreruntime.Result
 }
 
+// TamperGuard wraps an agent invocation with control-plane integrity checks.
+// Snapshot is called before the agent runs to capture current state. Detect is
+// called after the agent returns to check for mutations. Restore reverts any
+// mutations back to the snapshotted state.
+//
+// A nil TamperGuard disables tamper detection (used in tests that don't need it).
+type TamperGuard interface {
+	Snapshot() error
+	Detect() (reason string, err error)
+	Restore() error
+}
+
 // EvidenceRoot returns the per-plan evidence directory under ControlRoot.
 // The directory is plan-key namespaced so concurrent plan units cannot stomp
 // each other's evidence and so resume can find the prior attempt's bytes.
@@ -64,6 +76,11 @@ type SinglePlanInput struct {
 	// membership set this field so outside-batch plans don't accidentally run.
 	// Zero value falls back to next[0] for legacy callers.
 	TargetPlanID string
+	// TamperGuard, when non-nil, is called around each agent invocation to detect
+	// and recover control-plane mutations. Snapshot is called before Run, Detect
+	// after. On detected tamper the plan is marked failed and the loop aborts.
+	// Nil disables tamper detection.
+	TamperGuard TamperGuard
 }
 
 // SinglePlanResult summarizes the outcome.
@@ -226,10 +243,16 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 	)
 
 	for iter := 1; iter <= iterCap; iter++ {
-		story, ok := NextStory(currentPRD)
-		if !ok {
+		story, pickStatus := NextStory(currentPRD)
+		if pickStatus == PickAllPassed {
 			// All stories already passed on first check or after marking.
 			completedNormally = true
+			break
+		}
+		if pickStatus == PickBlocked {
+			// Dep graph is unsatisfiable (cycle or unresolvable deps). Fail the plan.
+			finalRunErr = fmt.Errorf("story dependency graph blocked: no eligible story")
+			exitReason = "story dependency graph blocked: no eligible story"
 			break
 		}
 
@@ -249,6 +272,15 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		_ = AppendProgress(progressPath, fmt.Sprintf("%s iteration %d start (story=%s)",
 			now().UTC().Format(time.RFC3339), iter, story.ID))
 
+		// Snapshot control-plane state before dispatching the agent.
+		if in.TamperGuard != nil {
+			if snapErr := in.TamperGuard.Snapshot(); snapErr != nil {
+				finalRunErr = fmt.Errorf("tamper guard snapshot failed: %w", snapErr)
+				exitReason = "tamper-guard-snapshot-failed"
+				break
+			}
+		}
+
 		result := in.Runner.Run(context.Background(), coreruntime.Request{
 			AgentIDs:          in.AgentIDs,
 			Prompt:            prompt,
@@ -257,6 +289,22 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			ExecutionSettings: in.ExecutionSettings,
 		})
 		lastAgent = result.Agent
+
+		// Detect and recover any control-plane tamper by the agent.
+		if in.TamperGuard != nil {
+			tamperReason, detectErr := in.TamperGuard.Detect()
+			if detectErr != nil {
+				finalRunErr = fmt.Errorf("tamper guard detect failed: %w", detectErr)
+				exitReason = "tamper-guard-detect-failed"
+				break
+			}
+			if tamperReason != "" {
+				_ = in.TamperGuard.Restore()
+				finalRunErr = fmt.Errorf("tamper-detected: %s", tamperReason)
+				exitReason = fmt.Sprintf("tamper-detected: %s", tamperReason)
+				break
+			}
+		}
 
 		// Write per-iteration evidence.
 		iterDir := filepath.Join(evidenceDir, fmt.Sprintf("iter-%d", iter))
@@ -304,7 +352,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		}
 
 		if complete {
-			if _, stillRemaining := NextStory(currentPRD); !stillRemaining {
+			if _, stillStatus := NextStory(currentPRD); stillStatus == PickAllPassed {
 				completedNormally = true
 				break
 			}

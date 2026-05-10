@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"springfield/internal/features/batch"
+	"springfield/internal/features/conductor"
 	"springfield/internal/features/prd"
 )
 
@@ -600,6 +601,100 @@ func TestPlanFromFile(t *testing.T) {
 	prdPath := filepath.Join(dir, ".springfield", "plans", "plan-file", "prd.json")
 	if _, err := os.Stat(prdPath); err != nil {
 		t.Fatalf("prd.json missing: %v", err)
+	}
+}
+
+// writeRunningPlanState injects a StatusRunning plan state into conductor state.json
+// so the plan command sees it. Returns the planID.
+func writeRunningPlanState(t *testing.T, dir, planID string) {
+	t.Helper()
+	project, err := conductor.LoadProjectRaw(dir)
+	if err != nil {
+		t.Fatalf("LoadProjectRaw: %v", err)
+	}
+	project.State.Plans[planID] = &conductor.PlanState{
+		Status: conductor.StatusRunning,
+	}
+	if err := project.SaveState(); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+}
+
+// TestPlanAppendRefusesWhenPlanIsRunning verifies --append is rejected when a plan
+// is currently running (Status == StatusRunning in conductor state).
+func TestPlanAppendRefusesWhenPlanIsRunning(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "claude")
+
+	env := prd.BatchPRDEnvelope{
+		Title:  "running-batch",
+		Source: "src",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-one"}}},
+		Plans:  []prd.BatchPRDPlan{minPRDPlan("plan-one", "Plan One")},
+	}
+	out1, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, env))
+	if err != nil {
+		t.Fatalf("initial plan: %v\n%s", err, out1)
+	}
+
+	// Inject a running plan state so the guard fires.
+	writeRunningPlanState(t, dir, "plan-one")
+
+	env2 := prd.BatchPRDEnvelope{
+		Title:  "extra",
+		Source: "src",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-two"}}},
+		Plans:  []prd.BatchPRDPlan{minPRDPlan("plan-two", "Plan Two")},
+	}
+	output, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, env2), "--append")
+	if err == nil {
+		t.Fatalf("expected --append to fail when plan is running, got success:\n%s", output)
+	}
+	if !strings.Contains(output, "running") {
+		t.Fatalf("error should mention 'running', got:\n%s", output)
+	}
+	if !strings.Contains(output, "plan-one") {
+		t.Fatalf("error should mention the running plan ID, got:\n%s", output)
+	}
+}
+
+// TestPlanReplaceRefusesWhenPlanIsRunning verifies --replace is rejected when a plan
+// is currently running (Status == StatusRunning in conductor state).
+func TestPlanReplaceRefusesWhenPlanIsRunning(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "claude")
+
+	env := prd.BatchPRDEnvelope{
+		Title:  "running-batch",
+		Source: "src",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-one"}}},
+		Plans:  []prd.BatchPRDPlan{minPRDPlan("plan-one", "Plan One")},
+	}
+	out1, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, env))
+	if err != nil {
+		t.Fatalf("initial plan: %v\n%s", err, out1)
+	}
+
+	// Inject a running plan state so the guard fires.
+	writeRunningPlanState(t, dir, "plan-one")
+
+	env2 := prd.BatchPRDEnvelope{
+		Title:  "replacement",
+		Source: "src",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-two"}}},
+		Plans:  []prd.BatchPRDPlan{minPRDPlan("plan-two", "Plan Two")},
+	}
+	output, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, env2), "--replace")
+	if err == nil {
+		t.Fatalf("expected --replace to fail when plan is running, got success:\n%s", output)
+	}
+	if !strings.Contains(output, "running") {
+		t.Fatalf("error should mention 'running', got:\n%s", output)
+	}
+	if !strings.Contains(output, "plan-one") {
+		t.Fatalf("error should mention the running plan ID, got:\n%s", output)
 	}
 }
 

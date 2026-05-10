@@ -73,9 +73,6 @@ func validatePlan(plan BatchPRDPlan, res *ValidationResult) {
 	if strings.TrimSpace(plan.Title) == "" {
 		res.Errors = append(res.Errors, fmt.Errorf("%s: title is required", prefix))
 	}
-	if len(plan.UserStories) == 0 {
-		res.Errors = append(res.Errors, fmt.Errorf("%s: at least one user story is required", prefix))
-	}
 
 	// context_md size checks.
 	ctxLen := len(plan.ContextMD)
@@ -105,7 +102,7 @@ func validateStory(story UserStory, planID string, planStoryIDs map[string]bool,
 	prefix := fmt.Sprintf("plan %q story %q", planID, story.ID)
 
 	if !storyIDPattern.MatchString(story.ID) {
-		res.Warnings = append(res.Warnings, fmt.Sprintf("%s: id does not match ^US-\\d{3,}$ (got %q)", prefix, story.ID))
+		res.Errors = append(res.Errors, fmt.Errorf("%s: id does not match ^US-\\d{3,}$ (got %q); non-conforming ids cannot be marked by the story-pass scanner", prefix, story.ID))
 	}
 	if strings.TrimSpace(story.Title) == "" {
 		res.Errors = append(res.Errors, fmt.Errorf("%s: title is required", prefix))
