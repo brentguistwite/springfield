@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.9.0](https://github.com/brentguistwite/springfield/compare/v0.8.0...v0.9.0) (2026-05-10)
+
+
+### Features
+
+* **init:** canonical AGENTS.md + symlinks for selected agents ([#45](https://github.com/brentguistwite/springfield/issues/45)) ([b3e87a2](https://github.com/brentguistwite/springfield/commit/b3e87a26f59567e2fca44c274ce92f36aaaf0d0b))
+* PRD/userStories parity with ralph-conductor ([#43](https://github.com/brentguistwite/springfield/issues/43)) ([8803e55](https://github.com/brentguistwite/springfield/commit/8803e55db9b564bb96e90ec7fefa0d4afa6404ee))
+
+
+### Bug Fixes
+
+* **init:** respect CLAUDE.md/AGENTS.md symlink convention ([#44](https://github.com/brentguistwite/springfield/issues/44)) ([0344348](https://github.com/brentguistwite/springfield/commit/034434878080f584c6d1c929b41079dbae812f9e))
+
 ## [0.8.0](https://github.com/brentguistwite/springfield/compare/v0.7.1...v0.8.0) (2026-05-09)
 
 
