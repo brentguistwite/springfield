@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/brentguistwite/springfield/compare/v0.9.1...v0.10.0) (2026-05-10)
+
+
+### Features
+
+* **start:** auto-cut feature branch on protected base ([#52](https://github.com/brentguistwite/springfield/issues/52)) ([a99f718](https://github.com/brentguistwite/springfield/commit/a99f7187d0dfd7b60f7dbc19bce4cf0fe314de3f))
+
 ## [0.9.1](https://github.com/brentguistwite/springfield/compare/v0.9.0...v0.9.1) (2026-05-10)
 
 
