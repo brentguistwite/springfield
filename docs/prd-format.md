@@ -61,7 +61,7 @@ Field reference:
 | `plans[].id` | string | yes | Slug: `^[a-z0-9][a-z0-9-]*$`. Must be unique within the envelope. |
 | `plans[].title` | string | yes | Short display title. |
 | `plans[].description` | string | no | One-paragraph task summary passed to the agent prompt. |
-| `plans[].context_md` | string | no | Freeform context injected into the agent prompt header. Max 256 KB (hard error). Warn if > 32 KB. |
+| `plans[].context_md` | string | no | Plan-specific context injected into the agent prompt. Project-wide guidance (root `AGENTS.md` / `CLAUDE.md` / `GEMINI.md`) is auto-loaded by the runner — do **not** duplicate it here. Max 256 KB (hard error). Warn if > 32 KB. |
 | `plans[].user_stories` | array | yes | Ordered list of stories. At least one required (hard error if empty). |
 | `user_stories[].id` | string | yes | Story identifier matching `^US-\d{3,}$` (hard error otherwise — runtime marker scanner only matches this shape). |
 | `user_stories[].title` | string | yes | One-line story title. |
@@ -110,6 +110,12 @@ This file is the runner's working copy of story state. Springfield is the sole w
 ```
 
 The optional `context.md` file (sibling of `prd.json`) holds the raw `context_md` string for prompt injection. It is not part of `prd.json` to avoid duplicating potentially large blobs in the state file.
+
+### `context_md` scope
+
+Each agent prompt is assembled as: header + per-plan `context.md` (verbatim, if present) + project-wide guidance (concatenated `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` from the project root) + footer. Both layers are sent on every iteration.
+
+Use `context_md` for plan-specific guidance only — the package being built, test patterns local to that subsystem, files the agent should read first. Project-wide conventions (build/lint commands, top-level architecture, repo-wide testing rules) belong in root `AGENTS.md` and are auto-loaded; duplicating them into `context_md` doubles the prompt-token cost of that material on every iteration.
 
 ## Validation Rules
 
