@@ -318,6 +318,15 @@ The SessionStart hook downloads the matching tarball automatically on `/plugin i
 go test ./...
 go run . --help
 go run . install --help
+go run ./cmd/regen        # regenerate skills/*/SKILL.md + commands/*.md from internal/features/skills/types.go
+```
+
+### Pre-commit hook
+
+A pre-commit hook in `.githooks/pre-commit` runs `go test ./...` before every commit. Activate once per clone:
+
+```bash
+git config core.hooksPath .githooks
 ```
 
 ## Release Workflow
