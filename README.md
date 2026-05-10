@@ -50,7 +50,7 @@ Primary path (one step for both plugin skills and CLI binary):
 
 The plugin ships a `SessionStart` hook that downloads the matching `springfield` CLI binary from the GitHub release pinned by the installed plugin version, verifies it against the plugin-shipped `hooks/checksums.txt` manifest, caches it under `~/.cache/springfield/<version>/`, and symlinks it to `~/.local/bin/springfield`. Add `~/.local/bin` to your `PATH` once; afterwards every `/plugin update springfield@brentguistwite` refreshes the plugin skills **and** the CLI binary in a single step — no `go install` or `brew upgrade` needed.
 
-Slash commands available after install: `/springfield:plan`, `/springfield:start`, `/springfield:status`, `/springfield:recover`.
+Slash commands available after install: `/springfield:plan`, `/springfield:status`, `/springfield:recover`. To execute a batch, run `springfield start` in a terminal.
 
 Manage the install:
 
