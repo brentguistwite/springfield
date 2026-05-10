@@ -27,3 +27,8 @@ jobs:
 
       - name: release-sync idempotency (manifest mode)
         run: go run ./cmd/release-sync -check -skip-build
+
+      - name: lifecycle-drift
+        run: |
+          go generate ./...
+          git diff --exit-code -- flowchart/public/lifecycle.json

@@ -45,3 +45,26 @@ func TestWiring_MakefileLifecycleTarget(t *testing.T) {
 		t.Fatal("Makefile lifecycle target must invoke `go run ./cmd/lifecycle-gen`")
 	}
 }
+
+// TestWiring_CIDriftGuard pins the CI step that fails when lifecycle.json
+// drifts from a fresh regen. The step name and commands are load-bearing —
+// they implement the contract that hand-edits to lifecycle.json get caught
+// in PR CI before merge.
+func TestWiring_CIDriftGuard(t *testing.T) {
+	root := repoRootFromTest()
+	path := filepath.Join(root, ".github", "workflows", "ci.yml")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read ci.yml: %v", err)
+	}
+	src := string(b)
+	if !strings.Contains(src, "name: lifecycle-drift") {
+		t.Fatal("ci.yml missing step named `lifecycle-drift`")
+	}
+	if !strings.Contains(src, "go generate ./...") {
+		t.Fatal("ci.yml lifecycle-drift step must run `go generate ./...`")
+	}
+	if !strings.Contains(src, "git diff --exit-code -- flowchart/public/lifecycle.json") {
+		t.Fatal("ci.yml lifecycle-drift step must diff flowchart/public/lifecycle.json with --exit-code")
+	}
+}
