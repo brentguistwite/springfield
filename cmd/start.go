@@ -227,12 +227,7 @@ func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, log
 		return BatchRunResult{}, nil
 	}
 
-	// Build an index of plan IDs in this batch so we only dispatch plans that
-	// belong to the batch. Conductor plans outside the batch are not touched.
-	batchPlanSet := make(map[string]bool, len(b.PlanIDs))
-	for _, id := range b.PlanIDs {
-		batchPlanSet[id] = true
-	}
+	enforceProtected := !loaded.Config.Project.AllowProtectedBase
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -241,34 +236,34 @@ func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, log
 		if ctx.Err() != nil {
 			break
 		}
-		schedule := conductor.BuildSchedule(project.Config)
-		next := schedule.NextPlans(project.State)
-		// Only dispatch the first eligible plan that belongs to this batch.
-		planID := ""
-		for _, id := range next {
-			if batchPlanSet[id] {
-				planID = id
-				break
-			}
-		}
+
+		// Iterate the batch's own phases in order to find the next plan to
+		// dispatch. This avoids the prior bug where schedule.NextPlans() could
+		// return a non-batch plan first, causing the batch loop to exit
+		// prematurely before any batch plans had run.
+		planID := batchNextPlanID(b, project.State)
 		if planID == "" {
 			break
 		}
 
 		res := planrun.SinglePlan(planrun.SinglePlanInput{
-			Project:           project,
-			ControlRoot:       root,
-			ProjectRoot:       root,
-			WorktreeBase:      worktreeBase,
-			AgentIDs:          agentIDs,
-			ExecutionSettings: loaded.Config.ExecutionSettings(),
-			Runner:            runtimeAgentRunner{inner: coreruntime.NewRunner(registry)},
-			Manager:           planrun.NewManager(),
-			OnEvent:           traceHandler,
-			Progress:          progress,
-			TargetPlanID:      planID,
+			Project:              project,
+			ControlRoot:          root,
+			ProjectRoot:          root,
+			WorktreeBase:         worktreeBase,
+			AgentIDs:             agentIDs,
+			ExecutionSettings:    loaded.Config.ExecutionSettings(),
+			Runner:               runtimeAgentRunner{inner: coreruntime.NewRunner(registry)},
+			Manager:              planrun.NewManager(),
+			OnEvent:              traceHandler,
+			Progress:             progress,
+			TargetPlanID:         planID,
+			EnforceProtectedBase: enforceProtected,
+			TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(root, ".springfield", "plans")},
 		})
-		if res.PlanID == "" && res.Reason == "no-eligible-plan" {
+		if res.Reason == "no-eligible-plan" {
+			// The target plan is not registered in the conductor schedule —
+			// either not yet registered or already terminal. Stop the batch.
 			break
 		}
 		if res.Err != nil {
@@ -309,6 +304,44 @@ func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, log
 		}
 	}
 	return BatchRunResult{}, nil
+}
+
+// batchNextPlanID returns the ID of the first non-integrated plan in the
+// batch's phase order, or "" when every batch plan is integrated (done).
+//
+// This replaces the prior approach of filtering schedule.NextPlans() by
+// batch membership. That approach was broken: NextPlans() returns plans from
+// the GLOBAL conductor schedule in phase order. If a non-batch plan appears
+// first (earlier Order) in the global schedule and is not yet integrated, it
+// would be skipped by the batchPlanSet filter — leaving planID empty and
+// causing runBatch to exit prematurely even though batch plans still needed
+// to run.
+//
+// By iterating b.Phases directly, batch dispatch is independent of the global
+// schedule order. Phase semantics are preserved: all plans in phase N must be
+// integrated before any plan in phase N+1 is dispatched.
+func batchNextPlanID(b batch.Batch, state *conductor.State) string {
+	for _, phase := range b.Phases {
+		// Check if this phase is fully integrated.
+		phaseComplete := true
+		for _, id := range phase.Plans {
+			if ps := state.Plans[id]; ps == nil || !ps.IsIntegrated() {
+				phaseComplete = false
+				break
+			}
+		}
+		if phaseComplete {
+			// All plans in this phase integrated; advance to next phase.
+			continue
+		}
+		// This phase has non-integrated plans. Return the first one.
+		for _, id := range phase.Plans {
+			if ps := state.Plans[id]; ps == nil || !ps.IsIntegrated() {
+				return id
+			}
+		}
+	}
+	return "" // all phases integrated
 }
 
 // controlPlaneSnapshot captures every Springfield-owned file under

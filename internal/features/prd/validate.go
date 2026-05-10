@@ -48,11 +48,20 @@ func Validate(env BatchPRDEnvelope) ValidationResult {
 	}
 
 	// Phase plan ID resolution.
+	referencedByPhase := make(map[string]bool, len(env.Plans))
 	for i, phase := range env.Phases {
 		for _, pid := range phase.Plans {
 			if !planIDs[pid] {
 				res.Errors = append(res.Errors, fmt.Errorf("phase[%d]: plan id %q not found in plans", i, pid))
 			}
+			referencedByPhase[pid] = true
+		}
+	}
+
+	// Inverse check: every plan must be referenced by at least one phase.
+	for _, p := range env.Plans {
+		if !referencedByPhase[p.ID] {
+			res.Errors = append(res.Errors, fmt.Errorf("plan %q is not referenced by any phase", p.ID))
 		}
 	}
 

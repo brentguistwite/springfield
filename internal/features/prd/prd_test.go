@@ -560,6 +560,51 @@ func TestParseFile(t *testing.T) {
 	}
 }
 
+// TestValidateOrphanPlan ensures a plan in plans[] not referenced by any phase is a hard error.
+func TestValidateOrphanPlan(t *testing.T) {
+	raw := `{
+		"title": "t",
+		"source": "s",
+		"phases": [{"mode": "serial", "plans": ["p1"]}],
+		"plans": [
+			{
+				"id": "p1",
+				"title": "Plan 1",
+				"description": "d",
+				"user_stories": [
+					{"id": "US-001", "title": "Story", "description": "d", "acceptance_criteria": ["ok"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
+				]
+			},
+			{
+				"id": "p3",
+				"title": "Plan 3 (orphan)",
+				"description": "d",
+				"user_stories": [
+					{"id": "US-002", "title": "Story 2", "description": "d", "acceptance_criteria": ["ok"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
+				]
+			}
+		]
+	}`
+	env, err := prd.ParseEnvelope(strings.NewReader(raw))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	result := prd.Validate(env)
+	if !result.HasErrors() {
+		t.Fatal("expected error for orphan plan p3 not referenced by any phase, got none")
+	}
+	var found bool
+	for _, e := range result.Errors {
+		if strings.Contains(e.Error(), "p3") && strings.Contains(e.Error(), "not referenced") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected error mentioning 'p3' and 'not referenced', got errors: %v", result.Errors)
+	}
+}
+
 // TestValidationResultHelpers ensures HasErrors and HasWarnings work correctly.
 func TestValidationResultHelpers(t *testing.T) {
 	empty := prd.ValidationResult{}

@@ -96,6 +96,36 @@ func TestLoadStoryRollupsEmptyUnits(t *testing.T) {
 	}
 }
 
+// TestLoadStoryRollupsLegacyPlanUnit verifies that a plan unit whose path is a
+// .md file (not prd.json) produces an empty rollup (no error, no story counts).
+func TestLoadStoryRollupsLegacyPlanUnit(t *testing.T) {
+	root := t.TempDir()
+
+	// Write a .md file at the plan unit's path — simulates a legacy plan
+	// registered via "springfield plans add" pointing at a markdown file.
+	dir := filepath.Join(root, ".springfield", "plans", "legacy-plan")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "plan.md"), []byte("# Legacy Plan\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	units := []PlanUnit{
+		{ID: "legacy-plan", Path: ".springfield/plans/legacy-plan/plan.md"},
+	}
+
+	rollups := LoadStoryRollups(units, root)
+
+	r := rollups["legacy-plan"]
+	if r.LoadError != "" {
+		t.Errorf("legacy plan unit must not produce LoadError, got: %q", r.LoadError)
+	}
+	if r.Passed != 0 || r.Total != 0 {
+		t.Errorf("legacy plan unit must produce zero story counts, got Passed=%d Total=%d", r.Passed, r.Total)
+	}
+}
+
 // writePRDForRollupTest writes a minimal prd.json with nTotal stories, nPassed passed.
 func writePRDForRollupTest(t *testing.T, root, planID string, nTotal, nPassed int) {
 	t.Helper()

@@ -377,6 +377,60 @@ func TestPlanAppendAddsNewPlans(t *testing.T) {
 	}
 }
 
+// TestPlanAppendPreservesSourceMD verifies that --append does not overwrite the
+// original source.md written by the first plan invocation. The append path
+// previously passed the new envelope's source into WriteBatch, silently
+// discarding the original batch provenance.
+func TestPlanAppendPreservesSourceMD(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "claude")
+
+	originalSource := "## Original Batch\n\nThis is the original batch source."
+	env1 := prd.BatchPRDEnvelope{
+		Title:  "preserve-source-batch",
+		Source: originalSource,
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-one"}}},
+		Plans:  []prd.BatchPRDPlan{minPRDPlan("plan-one", "Plan One")},
+	}
+	out1, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, env1))
+	if err != nil {
+		t.Fatalf("initial plan: %v\n%s", err, out1)
+	}
+	batchID := readRunJSON(t, dir).ActiveBatchID
+	sourcePath := filepath.Join(dir, ".springfield", "plans", batchID, "source.md")
+
+	// Verify initial source.md content.
+	got, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read initial source.md: %v", err)
+	}
+	if string(got) != originalSource {
+		t.Fatalf("initial source.md = %q, want %q", string(got), originalSource)
+	}
+
+	// Append a second plan with a different source.
+	env2 := prd.BatchPRDEnvelope{
+		Title:  "extra",
+		Source: "## Append Source\n\nThis is the append source and must NOT overwrite source.md.",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-two"}}},
+		Plans:  []prd.BatchPRDPlan{minPRDPlan("plan-two", "Plan Two")},
+	}
+	out2, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, env2), "--append")
+	if err != nil {
+		t.Fatalf("append plan: %v\n%s", err, out2)
+	}
+
+	// source.md must still contain the original content.
+	after, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read source.md after append: %v", err)
+	}
+	if string(after) != originalSource {
+		t.Fatalf("source.md changed after --append:\nwant: %q\n got: %q", originalSource, string(after))
+	}
+}
+
 // TestPlanAppendRejectsCollidingPlanID verifies --append rejects duplicate plan IDs.
 func TestPlanAppendRejectsCollidingPlanID(t *testing.T) {
 	bin := buildBinary(t)

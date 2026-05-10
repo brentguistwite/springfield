@@ -31,6 +31,13 @@ func LoadStoryRollups(units []PlanUnit, controlRoot string) map[string]StoryRoll
 }
 
 func loadRollupForUnit(u PlanUnit, controlRoot string) StoryRollup {
+	// Legacy plan units registered via "springfield plans add" may point at
+	// a .md file rather than prd.json. Parsing them as JSON always fails with a
+	// misleading "prd parse error". Skip story rollup entirely for non-prd.json
+	// paths — return zero counts with no error.
+	if filepath.Base(u.Path) != "prd.json" {
+		return StoryRollup{}
+	}
 	absPath := filepath.Join(controlRoot, u.Path)
 	plan, err := prd.ParseFile(absPath)
 	if err != nil {

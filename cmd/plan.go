@@ -256,8 +256,15 @@ func runAppend(cmd *cobra.Command, rootDir string, project *conductor.Project, p
 		return fmt.Errorf("resolve batch paths: %w", err)
 	}
 
+	// Preserve the original source.md — the append path must NOT overwrite it
+	// with the new envelope's source, or the original batch provenance is lost.
+	originalSourceBytes, readErr := os.ReadFile(paths.SourcePath())
+	if readErr != nil {
+		return fmt.Errorf("read existing source.md: %w", readErr)
+	}
+
 	// Rewrite batch.json (source stays from original batch).
-	if err := batch.WriteBatch(paths, prior, newOut.Source, newOut.Plans); err != nil {
+	if err := batch.WriteBatch(paths, prior, string(originalSourceBytes), newOut.Plans); err != nil {
 		return fmt.Errorf("write appended batch: %w", err)
 	}
 
