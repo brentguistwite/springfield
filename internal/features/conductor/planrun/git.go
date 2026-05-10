@@ -154,3 +154,17 @@ func (g CLIGit) WorktreeAddExistingBranch(dir, path, branch string) error {
 func (g CLIGit) Head(dir string) (string, error) {
 	return g.run(dir, "rev-parse", "HEAD")
 }
+
+// SwitchCreate creates branch from current HEAD and switches the repo to it.
+// Used by the auto-branch flow in cmd/start so the operator never lands on
+// the protected base when running a batch.
+func (g CLIGit) SwitchCreate(dir, branch string) error {
+	_, err := g.run(dir, "switch", "-c", branch)
+	return err
+}
+
+// Switch checks out an existing branch in dir.
+func (g CLIGit) Switch(dir, branch string) error {
+	_, err := g.run(dir, "switch", branch)
+	return err
+}

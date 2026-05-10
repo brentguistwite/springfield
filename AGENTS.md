@@ -36,3 +36,7 @@ Strict boundaries between modules. Tests should target the exported package inte
 ## Plan Skill and PRD Envelopes
 
 The `plan` skill emits PRD envelopes (not legacy slice payloads); the envelope shape is documented in `docs/prd-format.md`. Agents do NOT author per-plan `AGENTS.md` files — per-plan context lives in the envelope's `context_md` field and is injected by the runner at prompt-build time.
+
+## Auto-branching on protected base
+
+When `springfield start` runs from `main` or `master`, Springfield auto-cuts a feature branch (`springfield/batch-<id>` by default) before the batch and switches back to the original branch when it finishes. Agents must NOT do `git switch -c` themselves before invoking start — the wrapper handles it. The auto-cut branch is local-only; pushing and opening PRs is the operator's job.

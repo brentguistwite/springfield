@@ -165,7 +165,7 @@ func (m *Manager) Prepare(in PrepareInput) (PrepareDecision, error) {
 	}
 	if in.EnforceProtectedBase && IsProtectedBase(effectiveBaseRef) {
 		return PrepareDecision{}, reject("preflight-protected-base",
-			fmt.Sprintf("plan %q would ff-merge into protected branch %q. Springfield refuses by default so the local %s is not silently advanced past origin. Recommended: switch to a feature branch (git switch -c feat/<name>) before running, or set [project] allow_protected_base = true in springfield.toml to opt out.",
+			fmt.Sprintf("plan %q would ff-merge into protected branch %q. Springfield refuses so the local %s is not silently advanced past origin. Recommended: leave [project] auto_branch unset (or = true) so springfield start auto-cuts a feature branch for you, or set [project] allow_protected_base = true to opt out of the guard.",
 				in.Unit.ID, effectiveBaseRef, effectiveBaseRef))
 	}
 

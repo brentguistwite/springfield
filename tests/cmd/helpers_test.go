@@ -27,21 +27,37 @@ func (f fakeDetector) Detect(id agents.ID) agents.DetectionStatus {
 func writeSpringfieldConfig(t *testing.T, dir string, agent string) {
 	t.Helper()
 
-	// allow_protected_base = true so the guard does not block integration
-	// tests that init their tempdir repos on the default "main" branch.
-	// The guard itself is exercised in planrun manager tests and in the
-	// dedicated end-to-end protected-base tests via writeSpringfieldConfigStrict.
-	content := "[project]\nagent_priority = [\"" + agent + "\"]\nallow_protected_base = true\n"
+	// allow_protected_base = true so the protected-base guard does not block
+	// integration tests that init their tempdir repos on the default "main"
+	// branch. auto_branch = false so the auto-branch flow does not insert a
+	// surprise feature-branch cut into tests that pre-date that feature.
+	// Both behaviors are exercised in dedicated end-to-end tests via the
+	// strict and refuse-protected helpers below.
+	content := "[project]\nagent_priority = [\"" + agent + "\"]\nallow_protected_base = true\nauto_branch = false\n"
 	path := filepath.Join(dir, "springfield.toml")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write springfield.toml: %v", err)
 	}
 }
 
-// writeSpringfieldConfigStrict writes a project config that does NOT opt out
-// of the protected-base guard. Used by end-to-end tests that exercise the
-// default behavior of `springfield start` on a tempdir repo initialized on
-// the "main" branch.
+// writeSpringfieldConfigRefuseProtected writes a project config that opts
+// out of auto-branching but does NOT opt out of the protected-base guard.
+// Used by end-to-end tests that exercise the legacy refusal behavior on a
+// tempdir repo initialized on the "main" branch.
+func writeSpringfieldConfigRefuseProtected(t *testing.T, dir string, agent string) {
+	t.Helper()
+
+	content := "[project]\nagent_priority = [\"" + agent + "\"]\nauto_branch = false\n"
+	path := filepath.Join(dir, "springfield.toml")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write springfield.toml: %v", err)
+	}
+}
+
+// writeSpringfieldConfigStrict writes a project config that uses every
+// default — auto-branching enabled, protected-base guard enabled. Used by
+// end-to-end tests that exercise the canonical first-run experience on a
+// tempdir repo initialized on the "main" branch.
 func writeSpringfieldConfigStrict(t *testing.T, dir string, agent string) {
 	t.Helper()
 

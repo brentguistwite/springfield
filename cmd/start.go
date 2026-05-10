@@ -29,6 +29,7 @@ import (
 	coreexec "springfield/internal/core/exec"
 	"springfield/internal/core/lock"
 	coreruntime "springfield/internal/core/runtime"
+	"springfield/internal/features/autobranch"
 	"springfield/internal/features/batch"
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/conductor/planmerge"
@@ -124,6 +125,28 @@ func NewStartCommand() *cobra.Command {
 				fmt.Fprintf(w, "Log: %s\n", logPath)
 			}
 
+			git := planrun.CLIGit{}
+			activation, abErr := autobranch.Activate(autobranch.Input{
+				Git:                 git,
+				Dir:                 root,
+				BatchID:             b.ID,
+				Pattern:             loaded.Config.AutoBranchPatternOrDefault(),
+				Enabled:             loaded.Config.AutoBranchEnabled(),
+				AlreadyAutoBranch:   run.AutoBranchName != "",
+				PriorOriginalBranch: run.OriginalBranch,
+				PriorAutoBranchName: run.AutoBranchName,
+			}, w)
+			if abErr != nil {
+				return fmt.Errorf("auto-branch: %w", abErr)
+			}
+			if activation != nil && activation.Reason == "created" {
+				run.OriginalBranch = activation.OriginalBranch
+				run.AutoBranchName = activation.BranchName
+				if werr := batch.WriteRun(root, run); werr != nil {
+					return fmt.Errorf("persist auto-branch state: %w", werr)
+				}
+			}
+
 			if !noKeepAwake && loaded.Config.KeepAwakeEnabled() {
 				releaseWakelock, wlErr := wakelock.Acquire()
 				if wlErr != nil {
@@ -139,6 +162,9 @@ func NewStartCommand() *cobra.Command {
 			// Interrupted by signal: leave batch state intact so the user can
 			// rerun "springfield start" to resume. Do NOT archive as completed.
 			if errors.Is(execErr, context.Canceled) {
+				if rerr := autobranch.Restore(git, root, activation, autobranch.OutcomeInterrupted, w); rerr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", rerr)
+				}
 				fmt.Fprintf(w, "Status: interrupted\n")
 				fmt.Fprintf(w, "Info: rerun \"springfield start\" to resume\n")
 				return fmt.Errorf("batch %s interrupted; rerun \"springfield start\" to resume", b.ID)
@@ -149,10 +175,16 @@ func NewStartCommand() *cobra.Command {
 				if !result.RunStateCleared {
 					run.FatalError = result.Error
 					if writeErr := batch.WriteRun(root, run); writeErr != nil {
+						if rerr := autobranch.Restore(git, root, activation, autobranch.OutcomeFailed, w); rerr != nil {
+							fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", rerr)
+						}
 						fmt.Fprintf(w, "Status: failed\n")
 						fmt.Fprintf(w, "Error: %s\n", result.Error)
 						return fmt.Errorf("batch %s failed; additionally failed to persist run state: %w", b.ID, writeErr)
 					}
+				}
+				if rerr := autobranch.Restore(git, root, activation, autobranch.OutcomeFailed, w); rerr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", rerr)
 				}
 				fmt.Fprintf(w, "Status: failed\n")
 				fmt.Fprintf(w, "Error: %s\n", result.Error)
@@ -179,6 +211,9 @@ func NewStartCommand() *cobra.Command {
 				return fmt.Errorf("clear run state after completion: %w", clearErr)
 			}
 
+			if rerr := autobranch.Restore(git, root, activation, autobranch.OutcomeSuccess, w); rerr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", rerr)
+			}
 			fmt.Fprintf(w, "Status: completed\n")
 			return nil
 		},

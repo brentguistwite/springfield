@@ -168,33 +168,56 @@ Notes:
 - Primary end-user install is the Claude marketplace or Codex plugin/catalog flow.
 - `springfield install` is the local sync/bootstrap/fallback path after `init`.
 - Re-running `init` preserves existing config, only filling in missing recommended defaults and agent priority. Use `springfield init --reset` to back up the current config and rewrite it from scratch.
-- `allow_protected_base = false` (default) refuses to ff-merge plan results into `main` or `master`. See [Recommended Workflow](#recommended-workflow) for the work-branch pattern.
+- `auto_branch = true` (default) auto-cuts a feature branch (`springfield/batch-<id>`) when you run `springfield start` from `main` or `master`, switches to it for the run, and switches you back when the batch finishes. See [Recommended Workflow](#recommended-workflow). Override the name with `auto_branch_pattern = "feat/{id}"` (only `{id}` is supported). Set `auto_branch = false` to disable.
+- `allow_protected_base = false` (default) refuses to ff-merge plan results into `main` or `master`. Only consulted when `auto_branch = false` (otherwise the auto-cut feature branch becomes the base and the guard does not apply).
 - Runtime state under `.springfield/` is local project state and should not be committed.
 
 ## Recommended Workflow
 
 Springfield runs each plan in an isolated git worktree, then ff-merges the result back into a base branch on your **local** clone. Nothing is pushed and no PR is opened — that step is yours.
 
-The base branch defaults to whatever you have checked out when `springfield start` runs. Because most teams gate `main` and `master` behind PR review, Springfield refuses to ff-merge into either by default with `preflight-protected-base`.
-
-The recommended pattern is one feature branch per batch:
+The base branch defaults to whatever you have checked out when `springfield start` runs. Because most teams gate `main` and `master` behind PR review, Springfield's default behavior is to **auto-cut a feature branch for you** when you start from one of them, run the batch on that branch, and switch you back to where you started when the batch finishes.
 
 ```bash
-git switch -c feat/redesign         # create work branch off main
-springfield plan --prd payload.json # register plans (each branches from feat/redesign)
-springfield start                   # plans run, each ff-merges back into feat/redesign
-git push -u origin feat/redesign    # ship the whole batch as one PR
+git switch main                     # any starting point is fine
+springfield plan --prd payload.json
+springfield start
+# Springfield prints:
+#   auto-cut branch springfield/batch-<id> from main
+#     → all slice work will merge here
+#     → switching back to main on finish (push + PR by hand)
+#
+# ... batch runs ...
+#
+#   batch complete on springfield/batch-<id>
+#   switched back to main
+#   push + open PR:
+#     git push -u origin springfield/batch-<id>
+#     gh pr create
+git push -u origin springfield/batch-<id>
 gh pr create --base main
 ```
 
-Each plan still gets its own `springfield/<plan-key>` branch and its own `.worktrees/<plan-key>` worktree; the merges just land on `feat/redesign` instead of `main`. Reviewers see clean ff-merged history on the feature branch and review the batch as a unit.
+Each plan still gets its own `springfield/<plan-key>` branch and its own `.worktrees/<plan-key>` worktree; the merges just land on the auto-cut batch branch. Reviewers see clean ff-merged history on the batch branch and review the work as one PR.
 
-To opt out of the protected-base guard (e.g. on a personal repo), set:
+The auto-cut branch is local-only. Springfield never pushes — that step is yours.
+
+Customize the branch name in `springfield.toml`:
 
 ```toml
 [project]
-allow_protected_base = true
+auto_branch_pattern = "feat/{id}"   # only {id} (batch ID) is supported
 ```
+
+To disable auto-branching (and fall back to the legacy refuse-or-allow guard):
+
+```toml
+[project]
+auto_branch = false                  # turn off auto-cut
+allow_protected_base = true          # only consulted when auto_branch = false
+```
+
+With `auto_branch = false` and `allow_protected_base = false`, Springfield refuses to start on `main`/`master` with `preflight-protected-base` and asks you to switch to a feature branch first.
 
 Per-plan override: set `Ref = "feat/other"` on a `PlanUnit` to integrate that one plan into a different feature branch.
 
