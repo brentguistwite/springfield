@@ -114,6 +114,16 @@ type Input struct {
 	// PriorAutoBranchName is the auto-branch name persisted by a prior
 	// interrupted run. Required when AlreadyAutoBranch is true.
 	PriorAutoBranchName string
+	// BeforePersistCreate is called on the create path after the auto-branch
+	// name is resolved and the dirty/protected-base checks pass, but BEFORE
+	// the git switch creates the branch. The caller uses this hook to
+	// durably record the intended OriginalBranch and BranchName so a crash
+	// mid-switch leaves recoverable state instead of an orphan branch the
+	// next run can't tie back to a recorded original. Returning an error
+	// aborts Activate before any git side effect.
+	//
+	// Not called on the resume path or when auto-branching is disabled.
+	BeforePersistCreate func(originalBranch, branchName string) error
 }
 
 // Activation describes the state the runner needs to roll back at the end
@@ -205,6 +215,12 @@ func Activate(in Input, out io.Writer) (*Activation, error) {
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	if in.BeforePersistCreate != nil {
+		if perr := in.BeforePersistCreate(current, name); perr != nil {
+			return nil, fmt.Errorf("persist auto-branch state pre-switch: %w", perr)
+		}
 	}
 
 	if err := in.Git.SwitchCreate(in.Dir, name); err != nil {

@@ -296,6 +296,79 @@ func TestActivateResumeDirtyBlocked(t *testing.T) {
 	}
 }
 
+func TestActivateBeforePersistCreateFires(t *testing.T) {
+	g := &fakeGit{current: "main"}
+	var buf bytes.Buffer
+	var persisted struct {
+		original, branch string
+		called           int
+	}
+	_, err := Activate(Input{
+		Git: g, Dir: "/r", BatchID: "abc", Pattern: "springfield/batch-{id}", Enabled: true,
+		BeforePersistCreate: func(o, b string) error {
+			persisted.original = o
+			persisted.branch = b
+			persisted.called++
+			// hook must fire BEFORE switch
+			if len(g.switchCreate) != 0 {
+				t.Errorf("hook fired after switch")
+			}
+			return nil
+		},
+	}, &buf)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if persisted.called != 1 {
+		t.Fatalf("hook called %d times", persisted.called)
+	}
+	if persisted.original != "main" || persisted.branch != "springfield/batch-abc" {
+		t.Fatalf("hook args: %+v", persisted)
+	}
+	if len(g.switchCreate) != 1 {
+		t.Fatalf("switch must run after hook")
+	}
+}
+
+func TestActivateBeforePersistCreateAbortsBeforeSwitch(t *testing.T) {
+	g := &fakeGit{current: "main"}
+	var buf bytes.Buffer
+	_, err := Activate(Input{
+		Git: g, Dir: "/r", BatchID: "abc", Pattern: "springfield/batch-{id}", Enabled: true,
+		BeforePersistCreate: func(string, string) error {
+			return errors.New("disk full")
+		},
+	}, &buf)
+	if err == nil || !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("expected wrapped persist err, got %v", err)
+	}
+	if len(g.switchCreate) != 0 {
+		t.Fatalf("switch must not fire when persist fails")
+	}
+}
+
+func TestActivateBeforePersistCreateNotCalledOnResume(t *testing.T) {
+	g := &fakeGit{current: "springfield/batch-abc"}
+	var buf bytes.Buffer
+	hookCalled := false
+	_, err := Activate(Input{
+		Git: g, Dir: "/r", BatchID: "abc", Pattern: "springfield/batch-{id}", Enabled: true,
+		AlreadyAutoBranch:   true,
+		PriorOriginalBranch: "main",
+		PriorAutoBranchName: "springfield/batch-abc",
+		BeforePersistCreate: func(string, string) error {
+			hookCalled = true
+			return nil
+		},
+	}, &buf)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if hookCalled {
+		t.Fatalf("hook must not fire on resume path")
+	}
+}
+
 func TestActivateSwitchCreateError(t *testing.T) {
 	g := &fakeGit{current: "main", createErr: errors.New("permission denied")}
 	var buf bytes.Buffer
