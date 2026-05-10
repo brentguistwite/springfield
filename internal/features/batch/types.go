@@ -42,6 +42,14 @@ type Run struct {
 	// are appended to LastRetry instead so FatalError stays a reliable post-mortem signal.
 	FatalError string   `json:"fatal_error,omitempty"`
 	LastRetry  []string `json:"last_retry,omitempty"`
+	// OriginalBranch records the branch the operator was on before the
+	// auto-branch flow cut a feature branch. Empty when auto-branching did
+	// not fire. Used to switch back when the batch terminates and to detect
+	// resume when a prior interrupted run already auto-cut.
+	OriginalBranch string `json:"original_branch,omitempty"`
+	// AutoBranchName records the auto-cut feature branch the batch runs on.
+	// Empty when auto-branching did not fire.
+	AutoBranchName string `json:"auto_branch_name,omitempty"`
 }
 
 const maxLastRetry = 10

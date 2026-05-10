@@ -1,6 +1,10 @@
 package config
 
-import "springfield/internal/core/agents"
+import (
+	"strings"
+
+	"springfield/internal/core/agents"
+)
 
 type ExecutionMode string
 
@@ -55,11 +59,41 @@ func (c Config) AgentForPlan(planID string) string {
 type ProjectConfig struct {
 	AgentPriority []string `toml:"agent_priority,omitempty"`
 	// AllowProtectedBase opts out of the protected-base preflight guard.
-	// Default false: Springfield refuses to ff-merge into "main" or "master"
-	// so the local source branch is not silently advanced past origin.
-	// Recommended workflow is to run from a feature branch and push that
-	// branch when the batch finishes.
+	// Only honored when AutoBranch is explicitly false. With auto-branching
+	// enabled (the default) Springfield never lands on a protected base in
+	// the first place because it auto-cuts a feature branch before the run.
 	AllowProtectedBase bool `toml:"allow_protected_base,omitempty"`
+	// AutoBranch controls whether `springfield start` auto-cuts a feature
+	// branch when the operator is on a protected base ("main"/"master").
+	// Pointer so default-true is distinguishable from explicit false.
+	// nil → enabled. Set false to fall back to the refuse-or-allow guard.
+	AutoBranch *bool `toml:"auto_branch,omitempty"`
+	// AutoBranchPattern is the template Springfield renders into the
+	// auto-cut branch name. Supported placeholder: {id} (batch ID).
+	// Empty → defaults to "springfield/batch-{id}".
+	AutoBranchPattern string `toml:"auto_branch_pattern,omitempty"`
+}
+
+// DefaultAutoBranchPattern is the branch-name template used when the project
+// does not configure auto_branch_pattern.
+const DefaultAutoBranchPattern = "springfield/batch-{id}"
+
+// AutoBranchEnabled reports whether auto-branching is active. Default true:
+// only an explicit auto_branch = false in springfield.toml disables it.
+func (c Config) AutoBranchEnabled() bool {
+	if c.Project.AutoBranch == nil {
+		return true
+	}
+	return *c.Project.AutoBranch
+}
+
+// AutoBranchPatternOrDefault returns the configured branch-name pattern, or
+// [DefaultAutoBranchPattern] when unset.
+func (c Config) AutoBranchPatternOrDefault() string {
+	if strings.TrimSpace(c.Project.AutoBranchPattern) == "" {
+		return DefaultAutoBranchPattern
+	}
+	return c.Project.AutoBranchPattern
 }
 
 // ExecutionSettingsForAgent resolves adapter-specific execution settings for

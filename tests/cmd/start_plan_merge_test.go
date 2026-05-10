@@ -468,14 +468,15 @@ func installDriftingAgent(t *testing.T, binDir, name, sourceRoot string) {
 	}
 }
 
-// TestSpringfieldStartRefusesProtectedBaseByDefault asserts the end-to-end
-// command surface enforces the protected-base guard when the project config
-// does not opt out. Default config + a tempdir repo on "main" must refuse
-// before any worktree is created, with output that points at the opt-out.
-func TestSpringfieldStartRefusesProtectedBaseByDefault(t *testing.T) {
+// TestSpringfieldStartRefusesProtectedBaseWhenAutoBranchDisabled asserts the
+// end-to-end command surface still enforces the protected-base guard when
+// the project explicitly opts out of auto-branching. With auto_branch = false
+// and no allow_protected_base, a tempdir repo on "main" must refuse before
+// any worktree is created, with output that points at the opt-out.
+func TestSpringfieldStartRefusesProtectedBaseWhenAutoBranchDisabled(t *testing.T) {
 	bin := buildBinary(t)
 	dir := initRealGitRepo(t)
-	writeSpringfieldConfigStrict(t, dir, "claude")
+	writeSpringfieldConfigRefuseProtected(t, dir, "claude")
 	writeRegisteredPlan(t, dir, "alpha", "Implement alpha")
 
 	gitMust(t, dir, "add", ".")
