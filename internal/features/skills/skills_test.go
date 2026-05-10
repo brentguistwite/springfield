@@ -323,22 +323,13 @@ func TestInstallDoesNotMutateGeminiSettings(t *testing.T) {
 }
 
 func TestInstallDefaultsCodexToAgentsSkillsDir(t *testing.T) {
-	t.Parallel()
+	// HOME is process-global; t.Setenv serializes restore and forbids parallel
+	// ancestors, which previously raced TestInstallDoesNotMutateUserSettings.
 
 	home := t.TempDir()
 	projectRoot := t.TempDir()
 
-	oldHome := os.Getenv("HOME")
-	t.Cleanup(func() {
-		if oldHome == "" {
-			_ = os.Unsetenv("HOME")
-			return
-		}
-		_ = os.Setenv("HOME", oldHome)
-	})
-	if err := os.Setenv("HOME", home); err != nil {
-		t.Fatalf("set HOME: %v", err)
-	}
+	t.Setenv("HOME", home)
 
 	installed, err := Install(projectRoot, InstallOptions{Hosts: []string{"codex"}})
 	if err != nil {
@@ -368,7 +359,8 @@ func TestInstallDefaultsCodexToAgentsSkillsDir(t *testing.T) {
 // spawned agent's --settings flag; it must never pollute the user's global
 // Claude settings.
 func TestInstallDoesNotMutateUserSettings(t *testing.T) {
-	t.Parallel()
+	// HOME is process-global; t.Setenv serializes restore and forbids parallel
+	// ancestors, which previously raced TestInstallDefaultsCodexToAgentsSkillsDir.
 
 	home := t.TempDir()
 	projectRoot := t.TempDir()
@@ -383,17 +375,7 @@ func TestInstallDoesNotMutateUserSettings(t *testing.T) {
 		t.Fatalf("write stub settings.json: %v", err)
 	}
 
-	oldHome := os.Getenv("HOME")
-	t.Cleanup(func() {
-		if oldHome == "" {
-			_ = os.Unsetenv("HOME")
-			return
-		}
-		_ = os.Setenv("HOME", oldHome)
-	})
-	if err := os.Setenv("HOME", home); err != nil {
-		t.Fatalf("set HOME: %v", err)
-	}
+	t.Setenv("HOME", home)
 
 	claudeDir := filepath.Join(home, ".claude", "commands")
 	codexDir := filepath.Join(home, ".agents", "skills")
