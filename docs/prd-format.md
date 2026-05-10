@@ -62,8 +62,8 @@ Field reference:
 | `plans[].title` | string | yes | Short display title. |
 | `plans[].description` | string | no | One-paragraph task summary passed to the agent prompt. |
 | `plans[].context_md` | string | no | Freeform context injected into the agent prompt header. Max 256 KB (hard error). Warn if > 32 KB. |
-| `plans[].user_stories` | array | no | Ordered list of stories. Omitting yields a plan with no story tracking. |
-| `user_stories[].id` | string | yes | Story identifier, e.g. `US-001`. Convention: `^US-\d{3,}$` (warning if violated). |
+| `plans[].user_stories` | array | yes | Ordered list of stories. At least one required (hard error if empty). |
+| `user_stories[].id` | string | yes | Story identifier matching `^US-\d{3,}$` (hard error otherwise — runtime marker scanner only matches this shape). |
 | `user_stories[].title` | string | yes | One-line story title. |
 | `user_stories[].description` | string | no | Narrative description of the story. |
 | `user_stories[].acceptance_criteria` | []string | yes | List of verifiable conditions. At least one required (hard error if empty). |
@@ -121,15 +121,17 @@ Springfield validates the envelope at ingest (`springfield plan --prd`). Hard er
 - `plans` array absent or empty.
 - `phases` array absent or empty.
 - A phase references a plan ID not present in `plans`.
+- A plan in `plans` is not referenced by any phase (orphan plans).
 - Duplicate plan IDs within the envelope.
 - Plan ID does not match `^[a-z0-9][a-z0-9-]*$`.
+- A plan has an empty or missing `user_stories` list.
 - A user story has an empty or missing `acceptance_criteria` list.
-- A story `deps` entry references a plan ID in another plan (cross-plan story deps are not supported).
+- A user story ID does not match `^US-\d{3,}$` (runtime marker scanner only matches this shape).
+- A story `deps` entry references a story ID in another plan (cross-plan story deps are not supported).
 - `context_md` exceeds 256 KB.
 
 ### Warnings
 
-- Story ID does not match `^US-\d{3,}$` — story tracking still works, but `springfield status` rollup may not display cleanly.
 - `context_md` exceeds 32 KB — will be injected but may crowd the agent context window.
 
 ## Marker Contract
@@ -142,7 +144,9 @@ Agents signal story and plan completion via output markers scanned by the Spring
 <story-pass>US-001</story-pass>
 ```
 
-Emit one marker per completed story, in any order. Emit only when the story's acceptance criteria are verifiably met. Springfield sets `passes: true` on the matching story in `prd.json`.
+Emit one marker for the story assigned to the current iteration, only when its acceptance criteria are verifiably met. Springfield sets `passes: true` on the matching story in `prd.json`.
+
+**Off-target markers are ignored.** The runner only marks the story it assigned to the current iteration. If the agent emits `<story-pass>US-099</story-pass>` while the iteration target is `US-001`, the marker is logged as a warning to `progress.md` and discarded — `US-099` is not marked passed. This prevents a misbehaving agent from skipping future stories.
 
 ### Plan completion
 
@@ -150,11 +154,66 @@ Emit one marker per completed story, in any order. Emit only when the story's ac
 <promise>COMPLETE</promise>
 ```
 
-Emit exactly once when all stories in the plan are done. This is the signal that terminates the iteration loop for the plan. Emitting before all stories pass is a bug in the agent prompt — the runner will log a warning and continue iterating.
+Emit exactly once when all stories in the plan are done. This is the signal that terminates the iteration loop for the plan. Emitting before all stories pass is a bug in the agent prompt — the runner will log a warning to `progress.md` and continue iterating.
 
-### Iteration cap
+## Stop Conditions
 
-If the runner reaches the configured iteration cap before `<promise>COMPLETE</promise>` is seen, the plan is marked `failed`. The cap is set in `springfield.toml` (default: 5 iterations per plan).
+The iteration loop terminates on:
+
+| Condition | Outcome | Notes |
+|-----------|---------|-------|
+| All stories `passes: true` | Plan marked `completed`; merge integration follows. | Runner re-checks via `NextStory` after each iteration. |
+| Iteration cap reached | Plan marked `failed`; `exit_reason = "iteration cap reached without completion marker"`. | Cap from `single_workstream_iterations` in `springfield.toml`; default 50. |
+| Story dependency graph blocked | Plan marked `failed`; `exit_reason = "story dependency graph blocked: no eligible story"`. | Cycles like `US-001 → US-002 → US-001` detected before agent dispatch. |
+| `MarkPassed` write error | Plan marked `failed`; iteration aborted. | Atomic temp+rename — original `prd.json` intact on failure. |
+| Tamper detected on `.springfield/` | Plan marked `failed`; control-plane files restored from snapshot. | Agent must not write to `.springfield/`. |
+| `SIGINT` / `SIGTERM` | Batch left intact; `springfield start` resumes from current cursor on next invocation. | `run.json` and per-plan state preserved; batch is NOT archived. |
+
+## Operator Workflows
+
+### `--prd` (skill-driven, canonical path)
+
+```bash
+springfield plan --prd - < envelope.json
+```
+
+Reads envelope from stdin (or a file path). Validates the envelope, writes per-plan PRD dirs under `.springfield/plans/<plan-id>/`, and registers each plan in the conductor config.
+
+Legacy `--slices` shape is rejected with an explicit error pointing to this document.
+
+### `--from-dir` (operator escape hatch)
+
+```bash
+springfield plan --from-dir <path>
+```
+
+Reads `<path>/batch.json` (envelope shape). Same write path as `--prd`. Mutually exclusive with `--prd`.
+
+### `--replace` (recompile active batch)
+
+```bash
+springfield plan --replace --prd - < envelope.json
+```
+
+Compiles the new envelope first; only after validation succeeds does it archive the prior batch and clear `run.json`. A malformed envelope leaves the prior batch unchanged.
+
+When a plan ID is reused across `--replace`, the per-plan directory is wiped and recreated — old `context.md` and `progress.md` from the prior batch never leak into the new run.
+
+`--replace` is refused while any plan in the active batch is `running`.
+
+### `--append` (extend active batch)
+
+```bash
+springfield plan --append --prd - < envelope.json
+```
+
+Adds new envelope plans to the active batch. Plan ID collisions are rejected. Original `source.md` is preserved (only the appended envelope's plans are written; the batch's audit source remains the original).
+
+`--append` is refused while any plan in the active batch is `running`.
+
+### Legacy batch shape
+
+Pre-PRD batches with `phases[].slices` (instead of `phases[].plans`) are rejected at load time with an explicit error. Run `rm -rf .springfield/plans/<batch-id>/` and recompile via `--prd` or `--from-dir`.
 
 ## Operator Override of Prompt Templates
 
@@ -177,5 +236,6 @@ The Springfield runner is the sole writer of:
 - `.springfield/plans/<plan-id>/prd.json`
 - `.springfield/plans/<plan-id>/progress.md`
 - `.springfield/plans/<plan-id>/context.md`
+- `.springfield/run.json`
 
-Agents must not write to `.springfield/`. Writing to `.springfield/` from within an agent run will trigger the tamper-detection guard and abort the current run.
+Agents must not write to `.springfield/`. Writing to `.springfield/` from within an agent run will trigger the tamper-detection guard, restore the snapshot, and abort the current run with `exit_reason = "tamper-detected: <details>"`. The guard covers per-plan directories AND `run.json`.
