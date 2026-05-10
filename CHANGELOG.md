@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/brentguistwite/springfield/compare/v0.9.0...v0.9.1) (2026-05-10)
+
+
+### Bug Fixes
+
+* **ci,skills:** regen commands + add pre-commit hook ([#49](https://github.com/brentguistwite/springfield/issues/49)) ([7bfc85a](https://github.com/brentguistwite/springfield/commit/7bfc85a587a5337053c0043c8eda9efd5652d5e8))
+
 ## [0.9.0](https://github.com/brentguistwite/springfield/compare/v0.8.0...v0.9.0) (2026-05-10)
 
 
