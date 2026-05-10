@@ -121,6 +121,10 @@ func (r Runner) Run(ctx context.Context, req Request) Result {
 		if class == agents.ErrorClassFatal {
 			return last
 		}
+		// Non-fatal: advance to next agent in priority chain. The plan stays
+		// in `running` from the outer caller's view; this self-loop captures
+		// the in-flight agent switch for the lifecycle UI.
+		// lifecycle:edge from=running to=running kind=fallback label="agent fallback"
 	}
 
 	return last

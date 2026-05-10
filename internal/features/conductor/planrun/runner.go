@@ -191,6 +191,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 
 	// Mark running with truthful worktree metadata before dispatch so a
 	// crash leaves an honest state file.
+	// lifecycle:edge from=pending to=running kind=normal label="dispatch"
 	startState := &conductor.PlanState{
 		Status:       conductor.StatusRunning,
 		Attempts:     attemptsOf(prior) + 1,
@@ -412,6 +413,8 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 	}
 
 	// Terminal state construction — same path for both success conditions.
+	// lifecycle:edge from=running to=completed kind=normal label="agent succeeded"
+	// lifecycle:edge from=running to=failed kind=failure label="agent failed"
 	finalStatus := conductor.StatusCompleted
 	if finalRunErr != nil {
 		finalStatus = conductor.StatusFailed

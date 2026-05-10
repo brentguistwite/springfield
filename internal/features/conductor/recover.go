@@ -24,6 +24,11 @@ func (p *Project) RecoverRetry(planID string) (*RecoveryAction, error) {
 		return nil, fmt.Errorf("retry requires failed or interrupted status (plan %q is %s)", planID, ps.Status)
 	}
 
+	// Recovery resets failed/interrupted to pending so the next start can
+	// dispatch. The lifecycle UI shows this as a direct return to the active
+	// path; the intermediate `pending` is internal bookkeeping.
+	// lifecycle:edge from=failed to=running kind=recovery label="retry"
+	// lifecycle:edge from=interrupted to=running kind=recovery label="retry"
 	rec := RecoveryAction{
 		Action: "retry",
 		Reason: fmt.Sprintf("reset from %s to pending for re-execution", ps.Status),
