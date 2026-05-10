@@ -613,7 +613,7 @@ func TestArchiveBatchNormalizedConvertsNonTerminalPlansToAborted(t *testing.T) {
 // first plan's dir when writing the second plan's dir fails.
 func TestWriteBatchRollbackOnPartialFailure(t *testing.T) {
 	if os.Geteuid() == 0 {
-		t.Skip("file-collision test does not apply when running as root")
+		t.Skip("file-permission test does not apply when running as root")
 	}
 	dir := t.TempDir()
 	paths, err := batch.NewPaths(dir, "rollback-batch")
@@ -628,14 +628,12 @@ func TestWriteBatchRollbackOnPartialFailure(t *testing.T) {
 		Phases:  []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"plan-first", "plan-second"}}},
 	}
 
-	// Pre-create the second plan's dir path as a regular file so MkdirAll
-	// fails with a "not a directory" error when WriteBatch tries to create it.
-	secondPlanDir := batch.PlanDirByID(dir, "plan-second")
-	if err := os.MkdirAll(filepath.Dir(secondPlanDir), 0o755); err != nil {
-		t.Fatalf("mkdirall parent: %v", err)
-	}
-	if err := os.WriteFile(secondPlanDir, []byte("collision"), 0o644); err != nil {
-		t.Fatalf("write collision file: %v", err)
+	// Pre-create the plans parent dir, then make it read-only. After plan-first
+	// is written, WriteBatch will attempt RemoveAll+MkdirAll for plan-second, but
+	// the read-only parent blocks creating the plan-second directory.
+	plansParent := filepath.Join(dir, ".springfield", "plans")
+	if err := os.MkdirAll(plansParent, 0o755); err != nil {
+		t.Fatalf("mkdirall plans parent: %v", err)
 	}
 
 	plans := []batch.WrittenPlan{
@@ -649,9 +647,17 @@ func TestWriteBatchRollbackOnPartialFailure(t *testing.T) {
 		},
 	}
 
+	// Make the plans parent read-only before running WriteBatch.
+	if err := os.Chmod(plansParent, 0o555); err != nil {
+		t.Fatalf("chmod plans parent: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(plansParent, 0o755) })
+
 	err = batch.WriteBatch(paths, b, "src", plans)
+	// Restore permissions before assertions so cleanup works.
+	_ = os.Chmod(plansParent, 0o755)
 	if err == nil {
-		t.Fatal("expected WriteBatch to fail due to collision on second plan dir")
+		t.Fatal("expected WriteBatch to fail when per-plan dir creation fails")
 	}
 
 	// Rollback: first plan's dir should have been removed.

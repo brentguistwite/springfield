@@ -58,6 +58,15 @@ func WriteBatch(paths Paths, b Batch, source string, plans []WrittenPlan) error 
 	var createdPlanDirs []string
 	for _, wp := range plans {
 		planDir := PlanDirByID(paths.rootDir, wp.ID)
+		// Clear any stale files from a prior batch that used the same plan ID
+		// (--replace reuse). This guarantees old context.md / progress.md do
+		// not leak into the new batch's prompt or progress log.
+		// Note: --append already errors on colliding plan IDs, so only --replace
+		// can reach here with a pre-existing plan dir.
+		if err := os.RemoveAll(planDir); err != nil {
+			rollback(createdPlanDirs)
+			return fmt.Errorf("clear stale plan dir for %q: %w", wp.ID, err)
+		}
 		if err := os.MkdirAll(planDir, 0o755); err != nil {
 			rollback(createdPlanDirs)
 			return fmt.Errorf("create plan dir for %q: %w", wp.ID, err)

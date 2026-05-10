@@ -1,6 +1,10 @@
 package cmd
 
 import (
+	"context"
+	"errors"
+	"io"
+	"os"
 	"testing"
 
 	"springfield/internal/features/batch"
@@ -98,6 +102,49 @@ func TestBatchNextPlanIDAllIntegratedReturnsEmpty(t *testing.T) {
 	got := batchNextPlanID(b, state)
 	if got != "" {
 		t.Errorf("batchNextPlanID: want empty when all integrated, got %q", got)
+	}
+}
+
+// TestRunBatchWithContextCancelledReturnsContextCanceled verifies that
+// runBatchWithContext returns context.Canceled (not nil) when the context is
+// already cancelled before the loop runs. The caller must not archive or clear
+// run.json on this return value.
+func TestRunBatchWithContextCancelledReturnsContextCanceled(t *testing.T) {
+	root := t.TempDir()
+
+	// Minimal springfield.toml with agent config.
+	if err := os.WriteFile(
+		root+"/springfield.toml",
+		[]byte("[project]\nagent_priority = [\"claude\"]\n"),
+		0o644,
+	); err != nil {
+		t.Fatalf("write toml: %v", err)
+	}
+
+	// Write run.json so we can verify it's untouched.
+	run := batch.Run{ActiveBatchID: "test-batch"}
+	if err := batch.WriteRun(root, run); err != nil {
+		t.Fatalf("WriteRun: %v", err)
+	}
+
+	b := batch.Batch{
+		ID:      "test-batch",
+		Title:   "Test",
+		PlanIDs: []string{"plan-a"},
+		Phases:  []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"plan-a"}}},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before calling
+
+	_, err := runBatchWithContext(ctx, root, run, b, io.Discard, "")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+
+	// run.json must still exist (not cleared).
+	if _, statErr := os.Stat(batch.RunPath(root)); statErr != nil {
+		t.Errorf("run.json should still exist after interrupt: %v", statErr)
 	}
 }
 

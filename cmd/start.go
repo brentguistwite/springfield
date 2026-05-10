@@ -136,6 +136,14 @@ func NewStartCommand() *cobra.Command {
 
 			result, execErr := runBatch(root, run, b, w, logPath)
 
+			// Interrupted by signal: leave batch state intact so the user can
+			// rerun "springfield start" to resume. Do NOT archive as completed.
+			if errors.Is(execErr, context.Canceled) {
+				fmt.Fprintf(w, "Status: interrupted\n")
+				fmt.Fprintf(w, "Info: rerun \"springfield start\" to resume\n")
+				return fmt.Errorf("batch %s interrupted; rerun \"springfield start\" to resume", b.ID)
+			}
+
 			run.LastCheckpoint = time.Now().UTC()
 			if result.Error != "" {
 				if !result.RunStateCleared {
@@ -192,6 +200,22 @@ type BatchRunResult struct {
 }
 
 func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string) (BatchRunResult, error) {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runBatchWithContext(ctx, root, run, b, progress, logPath)
+}
+
+// runBatchWithContext is the testable core of runBatch. ctx controls interrupt
+// detection: when ctx is cancelled mid-loop (or on entry) the function returns
+// context.Canceled so the caller can distinguish a user interrupt (preserve
+// batch state) from normal completion (archive + clear run.json).
+func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string) (BatchRunResult, error) {
+	// Check for pre-cancellation before any setup so tests and real signal
+	// handlers both get the same early-exit path.
+	if ctx.Err() != nil {
+		return BatchRunResult{}, ctx.Err()
+	}
+
 	loaded, err := config.LoadFrom(root)
 	if err != nil {
 		return BatchRunResult{Error: err.Error()}, err
@@ -229,12 +253,12 @@ func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, log
 
 	enforceProtected := !loaded.Config.Project.AllowProtectedBase
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	for {
 		if ctx.Err() != nil {
-			break
+			// Interrupted by signal or context cancel. Return context.Canceled so
+			// the caller does NOT archive as completed — batch state stays intact
+			// for the user to rerun springfield start to resume.
+			return BatchRunResult{}, ctx.Err()
 		}
 
 		// Iterate the batch's own phases in order to find the next plan to

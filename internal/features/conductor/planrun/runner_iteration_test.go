@@ -778,9 +778,10 @@ func TestSinglePlanIterationCyclicDepsBlockedFailsWithNoAgentCall(t *testing.T) 
 	}
 }
 
-func TestSinglePlanIterationZeroStoryPRDCompletesImmediately(t *testing.T) {
-	// Zero-story PRD → plan completes without invoking any agent, MergePending set,
-	// summary.json shows iteration_count=0.
+func TestSinglePlanIterationZeroStoryPRDFails(t *testing.T) {
+	// Zero-story PRD written by direct file edit (bypassing Validate) must fail
+	// with a clear exit reason. The runtime guard catches it so a manually-crafted
+	// prd.json with empty user_stories never silently succeeds.
 	p := prd.PRD{
 		ID:          "feat",
 		Title:       "Zero Story Plan",
@@ -801,45 +802,17 @@ func TestSinglePlanIterationZeroStoryPRDCompletesImmediately(t *testing.T) {
 		ProjectRoot:  root,
 	})
 
-	if res.Err != nil {
-		t.Fatalf("SinglePlan: %v", res.Err)
+	if res.Err == nil {
+		t.Fatal("expected SinglePlan to fail for zero-story PRD")
 	}
-	if res.Status != conductor.StatusCompleted {
-		t.Fatalf("status = %s, want completed", res.Status)
+	if res.Status != conductor.StatusFailed {
+		t.Fatalf("status = %s, want failed", res.Status)
 	}
 	if runner.calls != 0 {
 		t.Fatalf("expected no agent calls for zero-story plan, got %d", runner.calls)
 	}
-
-	// MergePending must be set.
-	reloaded, err := conductor.LoadProject(root)
-	if err != nil {
-		t.Fatalf("re-LoadProject: %v", err)
-	}
-	st := reloaded.State.Plans["feat"]
-	if st == nil || st.Merge == nil || st.Merge.Status != conductor.MergePending {
-		t.Fatalf("expected MergePending for zero-story plan, got %+v", st)
-	}
-
-	// summary.json iteration_count must be 0.
-	evidenceDir := planrun.EvidenceRoot(root, "feat")
-	summaryPath := filepath.Join(evidenceDir, "summary.json")
-	summaryData, err := os.ReadFile(summaryPath)
-	if err != nil {
-		t.Fatalf("read summary.json: %v", err)
-	}
-	var summary struct {
-		IterationCount int    `json:"iteration_count"`
-		TerminalStatus string `json:"terminal_status"`
-	}
-	if err := json.Unmarshal(summaryData, &summary); err != nil {
-		t.Fatalf("unmarshal summary.json: %v", err)
-	}
-	if summary.IterationCount != 0 {
-		t.Errorf("summary.json iteration_count = %d, want 0", summary.IterationCount)
-	}
-	if summary.TerminalStatus != "completed" {
-		t.Errorf("summary.json terminal_status = %q, want completed", summary.TerminalStatus)
+	if !strings.Contains(res.Err.Error(), "zero user stories") {
+		t.Fatalf("error should mention 'zero user stories', got: %v", res.Err)
 	}
 }
 

@@ -225,6 +225,16 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		return SinglePlanResult{PlanID: planID, Reason: "prd-load-failed", Context: ctx, Err: err}
 	}
 
+	// Runtime guard: reject zero-story PRDs. The validator in prd.Validate
+	// already rejects them at compile time; this guard catches files that were
+	// hand-edited after compilation and bypassed the validator.
+	if len(currentPRD.UserStories) == 0 {
+		zeroErr := fmt.Errorf("prd has zero user stories — manual edit detected")
+		recordPreflightFailure(in.Project, planID, "prd-zero-stories", zeroErr.Error(), now())
+		_ = in.Project.SaveState()
+		return SinglePlanResult{PlanID: planID, Reason: "prd-zero-stories", Context: ctx, Status: conductor.StatusFailed, Err: zeroErr}
+	}
+
 	contextMDBytes, _ := os.ReadFile(contextPath) // not-exist → empty is fine
 	projectGuidance := loadProjectGuidance(in.ControlRoot)
 
