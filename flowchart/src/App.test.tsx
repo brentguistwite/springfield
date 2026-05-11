@@ -38,4 +38,69 @@ describe('App', () => {
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(screen.queryByRole('complementary', { name: /node detail/i })).toBeNull()
   })
+
+  describe('step-through indicator', () => {
+    const getCaption = () => screen.getByTestId('step-caption').textContent ?? ''
+    const isActive = (id: string) =>
+      document.querySelector(`.react-flow__node[data-id="${id}"]`)?.classList.contains('lifecycle-node--active') ?? false
+    const activeEdge = () =>
+      document.querySelector('.step-through')?.getAttribute('data-active-edge') ?? ''
+
+    it('starts at step 0 with no active highlight', () => {
+      render(<App />)
+      expect(getCaption()).toMatch(/Step 0 of 3/)
+      expect(isActive('plan-pending')).toBe(false)
+      expect(isActive('plan-running')).toBe(false)
+      expect(isActive('plan-completed')).toBe(false)
+    })
+
+    it('advances to pending on first Next click', () => {
+      render(<App />)
+      fireEvent.click(screen.getByRole('button', { name: /next/i }))
+      expect(getCaption()).toBe('Step 1 of 3: Pending')
+      expect(isActive('plan-pending')).toBe(true)
+    })
+
+    it('reaches completed after three Next clicks', () => {
+      render(<App />)
+      const next = screen.getByRole('button', { name: /next/i })
+      fireEvent.click(next)
+      fireEvent.click(next)
+      fireEvent.click(next)
+      expect(getCaption()).toBe('Step 3 of 3: Completed')
+      expect(isActive('plan-completed')).toBe(true)
+      expect(activeEdge()).toBe('plan-running__completed')
+    })
+
+    it('disables Next at the final step', () => {
+      render(<App />)
+      const next = screen.getByRole('button', { name: /next/i }) as HTMLButtonElement
+      fireEvent.click(next)
+      fireEvent.click(next)
+      fireEvent.click(next)
+      expect(next.disabled).toBe(true)
+      fireEvent.click(next)
+      expect(getCaption()).toBe('Step 3 of 3: Completed')
+    })
+
+    it('Reset returns to step 0 with no highlight', () => {
+      render(<App />)
+      const next = screen.getByRole('button', { name: /next/i })
+      fireEvent.click(next)
+      fireEvent.click(next)
+      fireEvent.click(screen.getByRole('button', { name: /reset/i }))
+      expect(getCaption()).toMatch(/Step 0 of 3/)
+      expect(isActive('plan-pending')).toBe(false)
+      expect(isActive('plan-running')).toBe(false)
+    })
+
+    it('highlights the active edge entering the current node', () => {
+      render(<App />)
+      const next = screen.getByRole('button', { name: /next/i })
+      fireEvent.click(next) // step 1: pending — no incoming edge
+      expect(activeEdge()).toBe('')
+      fireEvent.click(next) // step 2: running — edge pending->running active
+      expect(activeEdge()).toBe('plan-pending__running')
+    })
+  })
 })
