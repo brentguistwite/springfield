@@ -15,10 +15,12 @@ export const PLAN_PRIMARY_PATH = ['plan-pending', 'plan-running', 'plan-complete
 // convention against the real edges in lifecycle.ts — a future rename of the
 // convention will fail the test, not the UI.
 export function activeEdgeIdForStep(step: number): string | null {
-  if (step < 2) return null
-  const prev = PLAN_PRIMARY_PATH[step - 2]
-  const curr = PLAN_PRIMARY_PATH[step - 1]
-  return `${prev}__${curr.replace(/^plan-/, '')}`
+  const prevIdx = step - 2
+  const currIdx = step - 1
+  // Steps 0 and 1 have no incoming edge: step 0 = nothing highlighted,
+  // step 1 = first node in path (no predecessor).
+  if (prevIdx < 0 || currIdx < 0) return null
+  return `${PLAN_PRIMARY_PATH[prevIdx]}__${PLAN_PRIMARY_PATH[currIdx].replace(/^plan-/, '')}`
 }
 
 export default function App() {
