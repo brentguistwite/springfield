@@ -18,3 +18,8 @@
   font-weight: 600;
   letter-spacing: 0.01em;
 }
+
+.app-main {
+  flex: 1;
+  min-height: 0;
+}
