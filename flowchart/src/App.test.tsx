@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen, fireEvent, within } from '@testing-library/react'
-import App from './App'
+import App, { PLAN_PRIMARY_PATH, activeEdgeIdForStep } from './App'
+import { edges as dataEdges } from './data/lifecycle'
 
 describe('App', () => {
   it('renders the Springfield Lifecycle heading', () => {
@@ -101,6 +102,22 @@ describe('App', () => {
       expect(activeEdge()).toBe('')
       fireEvent.click(next) // step 2: running — edge pending->running active
       expect(activeEdge()).toBe('plan-pending__running')
+    })
+  })
+
+  describe('activeEdgeIdForStep convention pin', () => {
+    it('returns null for steps 0 and 1 (no incoming edge yet)', () => {
+      expect(activeEdgeIdForStep(0)).toBeNull()
+      expect(activeEdgeIdForStep(1)).toBeNull()
+    })
+
+    it('every computed edge ID exists in lifecycle.ts edges (catches convention drift)', () => {
+      const edgeIds = new Set(dataEdges.map((e) => e.id))
+      for (let step = 2; step <= PLAN_PRIMARY_PATH.length; step++) {
+        const id = activeEdgeIdForStep(step)
+        expect(id).not.toBeNull()
+        expect(edgeIds.has(id!)).toBe(true)
+      }
     })
   })
 })

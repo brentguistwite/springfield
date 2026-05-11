@@ -114,7 +114,10 @@ func countStatusConsts(t *testing.T, path string) map[string]int {
 	return counts
 }
 
-var expectedCountRe = regexp.MustCompile(`(?m)^export const EXPECTED_(PLAN|QUEUE|MERGE)_NODE_COUNT\s*=\s*(\d+)\s*;?\s*$`)
+// Tolerates an optional trailing semicolon and an optional `// comment` after
+// the literal, so future maintainers can annotate without silently breaking
+// the drift check.
+var expectedCountRe = regexp.MustCompile(`(?m)^export const EXPECTED_(PLAN|QUEUE|MERGE)_NODE_COUNT\s*=\s*(\d+)\s*;?\s*(?://.*)?$`)
 
 func parseExpectedCounts(t *testing.T, ts string) map[string]int {
 	t.Helper()

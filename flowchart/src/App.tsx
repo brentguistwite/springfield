@@ -7,7 +7,19 @@ import { layoutNodes } from './layout'
 import { NodePanel } from './components/NodePanel'
 import './App.css'
 
-const PLAN_PRIMARY_PATH = ['plan-pending', 'plan-running', 'plan-completed'] as const
+export const PLAN_PRIMARY_PATH = ['plan-pending', 'plan-running', 'plan-completed'] as const
+
+// activeEdgeIdForStep encodes the edge-id convention from src/data/lifecycle.ts:
+// `<source-node-id>__<target-status>` where target-status is the node id with
+// the `plan-` machine prefix stripped. Exported so App.test.tsx can pin the
+// convention against the real edges in lifecycle.ts — a future rename of the
+// convention will fail the test, not the UI.
+export function activeEdgeIdForStep(step: number): string | null {
+  if (step < 2) return null
+  const prev = PLAN_PRIMARY_PATH[step - 2]
+  const curr = PLAN_PRIMARY_PATH[step - 1]
+  return `${prev}__${curr.replace(/^plan-/, '')}`
+}
 
 export default function App() {
   const { nodes: laidOutNodes, edges: laidOutEdges } = useMemo(
@@ -27,10 +39,7 @@ export default function App() {
 
   const totalSteps = PLAN_PRIMARY_PATH.length
   const activeNodeId = step > 0 ? PLAN_PRIMARY_PATH[step - 1] : null
-  const activeEdgeId =
-    step > 1
-      ? `${PLAN_PRIMARY_PATH[step - 2]}__${PLAN_PRIMARY_PATH[step - 1].replace(/^plan-/, '')}`
-      : null
+  const activeEdgeId = activeEdgeIdForStep(step)
 
   const activeLabel = activeNodeId ? dataById.get(activeNodeId)?.label ?? '' : ''
   const caption = activeNodeId
