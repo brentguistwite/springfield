@@ -6,6 +6,8 @@ Plugin-first, local-state conductor for multi-agent code work.
 
 Springfield turns a plan (file or prompt) into a sequential batch of agent runs, executes each slice in an isolated worktree, captures per-slice evidence, and falls through `agent_priority` (Claude → Codex → Gemini) when a run is retryable. State lives under `.springfield/` in the repo; install ships through Claude Code and Codex marketplace plugins.
 
+Onboarding diagram: <Pages URL placeholder> (URL fills in after the first deploy of `.github/workflows/deploy-flowchart.yml`).
+
 > Pre-1.0. Config and state layout may change without migration shims.
 
 ## Prerequisites
