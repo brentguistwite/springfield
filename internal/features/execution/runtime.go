@@ -98,7 +98,7 @@ func (r Runner) Run(root string, work Work) (Report, error) {
 }
 
 type runtimeSingleExecutor struct {
-	runner   coreruntime.Runner
+	runner   *coreruntime.Runner
 	agents   []agents.ID
 	workDir  string
 	settings agents.ExecutionSettings
@@ -226,7 +226,7 @@ func modelForAgent(agentID agents.ID, settings agents.ExecutionSettings) string 
 }
 
 type runtimeMultiExecutor struct {
-	runner   coreruntime.Runner
+	runner   *coreruntime.Runner
 	agents   []agents.ID
 	workDir  string
 	settings agents.ExecutionSettings
