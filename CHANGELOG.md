@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.11.0](https://github.com/brentguistwite/springfield/compare/v0.10.0...v0.11.0) (2026-05-12)
+
+
+### Features
+
+* **flowchart:** onboarding lifecycle diagram (ReactFlow + dagre + trip-wire) ([#55](https://github.com/brentguistwite/springfield/issues/55)) ([1efdd30](https://github.com/brentguistwite/springfield/commit/1efdd30fa4292b39bf8ea82f8b2d583afe39721f))
+* **flowchart:** visual polish for v1 (group titles, label stagger, LR layout, legend) ([#58](https://github.com/brentguistwite/springfield/issues/58)) ([3980eed](https://github.com/brentguistwite/springfield/commit/3980eed70844b244aff9c9157db2c7abfec72532))
+* **runtime:** per-agent cooldown to skip rate-limited agents ([#57](https://github.com/brentguistwite/springfield/issues/57)) ([9ecd6be](https://github.com/brentguistwite/springfield/commit/9ecd6be36450b70e5ea1dfa3efb0b9f167bce437))
+
 ## [0.10.0](https://github.com/brentguistwite/springfield/compare/v0.9.1...v0.10.0) (2026-05-10)
 
 
