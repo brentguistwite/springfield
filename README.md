@@ -317,6 +317,35 @@ springfield plan --append  --prd extra-plans.json
 
 Use `springfield doctor` whenever local agent tooling looks unhealthy or a host CLI is missing.
 
+## Debugging a stuck run
+
+When a batch stalls or an agent run fails in a way you don't recognise, work from these commands. Everything is read-only unless you pass `--diagnose` off explicitly.
+
+```bash
+# Where is the run? What's in flight? Which agent is up next?
+springfield status
+
+# Read-only triage for one plan: surfaces the most recent evidence,
+# the plan's status, and what next-step Springfield would take.
+springfield recover --diagnose --plan <plan-id>
+
+# Read-only triage for an orphaned batch (run.json points at a batch
+# directory that's been deleted or never wrote):
+springfield recover --diagnose
+
+# Drop into the slice's evidence files directly:
+ls .springfield/plans/<batch-id>/evidence/<plan-id>/
+#   meta.json         — runner verdict, timing, exit code
+#   events.jsonl      — every dispatched event (one per line)
+#   assistant_text.txt — what the agent actually said
+#   prompt.txt        — the exact prompt the runner built
+
+# Inspect the active-run cursor (which batch + phase + plans are live):
+cat .springfield/run.json
+```
+
+`springfield recover --plan <plan-id>` (without `--diagnose`) is the only one of these that mutates state — it resets a failed plan back to `queued` so `springfield start` can re-dispatch it.
+
 ## Key Files
 
 | Path | Tracked | Purpose |
