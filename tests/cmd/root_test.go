@@ -332,8 +332,16 @@ func TestInitCreatesProjectInCurrentDir(t *testing.T) {
 	if strings.Contains(output, "springfield conductor setup") {
 		t.Errorf("init should not direct users to the conductor surface, got:\n%s", output)
 	}
-	if !strings.Contains(output, `Next: install Springfield from the Claude marketplace or Codex plugin/catalog. Use "springfield install" only for local host sync, bootstrap, or fallback workflows.`) {
-		t.Errorf("expected Springfield-only next step, got:\n%s", output)
+	if !strings.Contains(output, "Next: springfield plan") {
+		t.Errorf("expected post-init Next: line pointing at springfield plan, got:\n%s", output)
+	}
+	if !strings.Contains(output, "Then: springfield start") {
+		t.Errorf("expected post-init Then: line pointing at springfield start, got:\n%s", output)
+	}
+	for _, stale := range []string{"marketplace", "Codex plugin/catalog", "springfield install"} {
+		if strings.Contains(output, stale) {
+			t.Errorf("post-init copy still mentions stale install pitch %q:\n%s", stale, output)
+		}
 	}
 
 	// Re-run should show skip messages

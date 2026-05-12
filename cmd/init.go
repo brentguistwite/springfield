@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
@@ -20,10 +21,6 @@ import (
 	"springfield/internal/core/agents/catalog"
 	"springfield/internal/core/config"
 )
-
-// maxPromptAttempts bounds retries on invalid interactive input so a misconfigured
-// TTY or pasted garbage can't trap the caller in an infinite re-prompt loop.
-const maxPromptAttempts = 4
 
 // isTTY reports whether fd is an interactive terminal.
 func isTTY(fd int) bool {
@@ -97,7 +94,7 @@ func NewInitCommand() *cobra.Command {
 			}
 
 			fmt.Fprintln(cmd.OutOrStdout())
-			fmt.Fprintln(cmd.OutOrStdout(), "Next: install Springfield from the Claude marketplace or Codex plugin/catalog. Use \"springfield install\" only for local host sync, bootstrap, or fallback workflows.")
+			printNextSteps(cmd.OutOrStdout(), isTTY(int(os.Stdout.Fd())))
 
 			return nil
 		},
@@ -110,6 +107,14 @@ func NewInitCommand() *cobra.Command {
 	return cmd
 }
 
+// resolveInitSelections is the single decision point for how `springfield init`
+// learns the operator's agent + model preferences. Three paths:
+//
+//   - Flags: --agents and (optionally) --model bypass the form entirely.
+//   - Interactive TTY: hand off to the huh form for back-nav and a confirm
+//     screen.
+//   - Non-TTY (CI / piped install): huh's accessible mode renders the same
+//     fields as numbered plain-text prompts driven from stdin line-by-line.
 func resolveInitSelections(
 	agentsFlag string,
 	modelsFlag string,
@@ -118,96 +123,37 @@ func resolveInitSelections(
 	out io.Writer,
 	suggest func(agents.ID) []string,
 ) ([]string, map[string]string, error) {
-	reader := bufio.NewReader(in)
-
-	priority, err := resolvePriorityWithReader(agentsFlag, interactive, reader, out)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	models, err := resolveModelsWithReader(
-		modelsFlag,
-		interactive,
-		priority,
-		reader,
-		out,
-		suggest,
-	)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return priority, models, nil
-}
-
-// resolvePriority determines the agent priority list from flag or interactive
-// prompt. Non-interactive callers must pass --agents explicitly — there is no
-// fixed default priority for fresh init.
-func resolvePriority(agentsFlag string, interactive bool, in io.Reader, out io.Writer) ([]string, error) {
-	return resolvePriorityWithReader(agentsFlag, interactive, bufferedReader(in), out)
-}
-
-func resolvePriorityWithReader(agentsFlag string, interactive bool, in *bufio.Reader, out io.Writer) ([]string, error) {
 	if agentsFlag != "" {
-		return parseAndValidateAgents(agentsFlag)
+		priority, err := parseAndValidateAgents(agentsFlag)
+		if err != nil {
+			return nil, nil, err
+		}
+		var models map[string]string
+		if modelsFlag != "" {
+			models, err = parseAndValidateModels(modelsFlag, priority)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		return priority, models, nil
 	}
 
+	// Non-TTY callers can still reach the form via huh's accessible mode by
+	// piping answers on stdin. Without any piped bytes the accessible loop
+	// would spin forever on EOF (huh re-prompts on each "0" int read from a
+	// dead reader), so refuse early when stdin is at EOF before the form
+	// starts. The bufio wrapper preserves any peeked byte for the form.
 	if !interactive {
-		return nil, fmt.Errorf(
-			"non-interactive init requires --agents flag (e.g. --agents claude,codex,gemini)")
+		buffered := bufio.NewReader(in)
+		if _, err := buffered.Peek(1); err != nil {
+			return nil, nil, fmt.Errorf(
+				"non-interactive init needs --agents (e.g. --agents claude,codex,gemini) or piped answers on stdin")
+		}
+		in = buffered
 	}
 
-	return promptForAgentsWithDetectionReader(in, out, newRegistryDetector(exec.LookPath))
-}
-
-func resolveModels(
-	agentsFlag string,
-	modelsFlag string,
-	interactive bool,
-	priority []string,
-	in io.Reader,
-	out io.Writer,
-	suggest func(agents.ID) []string,
-) (map[string]string, error) {
-	return resolveModelsWithReader(modelsFlag, interactive, priority, bufferedReader(in), out, suggest)
-}
-
-func resolveModelsWithReader(
-	modelsFlag string,
-	interactive bool,
-	priority []string,
-	in *bufio.Reader,
-	out io.Writer,
-	suggest func(agents.ID) []string,
-) (map[string]string, error) {
-	if modelsFlag != "" {
-		return parseAndValidateModels(modelsFlag, priority)
-	}
-
-	if !interactive {
-		return nil, nil
-	}
-
-	enabled := make([]agents.ID, 0, len(priority))
-	for _, id := range priority {
-		enabled = append(enabled, agents.ID(id))
-	}
-
-	models, err := promptForAgentModelsWithReader(in, out, enabled, suggest)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(models) == 0 {
-		return map[string]string{}, nil
-	}
-
-	result := make(map[string]string, len(models))
-	for id, model := range models {
-		result[string(id)] = model
-	}
-
-	return result, nil
+	det := newRegistryDetector(exec.LookPath)
+	return runInitForm(in, out, det, suggest, !interactive)
 }
 
 // Detector reports detection status for execution-supported agents. Exported
@@ -217,118 +163,20 @@ type Detector interface {
 	Detect(id agents.ID) agents.DetectionStatus
 }
 
-// PromptForAgentsWithDetection runs the multi-agent picker. It surfaces each
-// execution-supported agent alongside its current detection state so users
-// can see at a glance which CLIs are installed before opting in. The user
-// supplies a comma-separated priority list of the agents they want enabled;
-// empty input is rejected and re-prompts up to maxPromptAttempts.
-//
-// The bufio.Reader is constructed once outside the retry loop so its internal
-// buffer is shared across attempts — constructing it per-attempt would strand
-// any bytes already read past the current line.
-func PromptForAgentsWithDetection(in io.Reader, out io.Writer, det Detector) ([]string, error) {
-	return promptForAgentsWithDetectionReader(bufferedReader(in), out, det)
-}
-
-func promptForAgentsWithDetectionReader(in *bufio.Reader, out io.Writer, det Detector) ([]string, error) {
-	fmt.Fprintln(out, "Which agents do you want Springfield to use? (order = priority)")
-	fmt.Fprintln(out)
-	for _, id := range agents.SupportedForExecution() {
-		marker := "✗ not found"
-		switch det.Detect(id) {
-		case agents.DetectionStatusAvailable:
-			marker = "✓ detected on PATH"
-		case agents.DetectionStatusUnhealthy:
-			marker = "⚠ found but unhealthy"
-		}
-		fmt.Fprintf(out, "  %s — %s\n", id, marker)
+// printNextSteps writes the post-init next-step copy. lipgloss styling is
+// applied only when stdout is a TTY — pipes and CI logs get plain text.
+func printNextSteps(w io.Writer, tty bool) {
+	header := "Next:"
+	next := "springfield plan"
+	then := "Then: springfield start"
+	if tty {
+		bold := lipgloss.NewStyle().Bold(true)
+		fmt.Fprintln(w, bold.Render(header)+" "+next)
+		fmt.Fprintln(w, then)
+		return
 	}
-	fmt.Fprintln(out)
-
-	for attempt := 0; attempt < maxPromptAttempts; attempt++ {
-		fmt.Fprint(out, "Enter agents in priority order (comma-separated, e.g. claude,codex): ")
-
-		line, err := in.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return nil, fmt.Errorf("read input: %w", err)
-		}
-
-		line = strings.TrimSpace(line)
-		if line == "" {
-			fmt.Fprintln(out, "Error: at least one agent is required")
-			if errors.Is(err, io.EOF) {
-				// Stream exhausted; retrying would reprompt with no input to read.
-				break
-			}
-			continue
-		}
-
-		priority, parseErr := parseAndValidateAgents(line)
-		if parseErr != nil {
-			fmt.Fprintf(out, "Error: %v\n", parseErr)
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			continue
-		}
-		return priority, nil
-	}
-
-	return nil, fmt.Errorf("too many invalid attempts; aborting")
-}
-
-// PromptForAgentModels prompts once per enabled agent for an optional model
-// override. Blank input keeps the adapter default and is omitted from the
-// returned map.
-func PromptForAgentModels(
-	in io.Reader,
-	out io.Writer,
-	enabled []agents.ID,
-	suggest func(agents.ID) []string,
-) (map[agents.ID]string, error) {
-	return promptForAgentModelsWithReader(bufferedReader(in), out, enabled, suggest)
-}
-
-func promptForAgentModelsWithReader(
-	in *bufio.Reader,
-	out io.Writer,
-	enabled []agents.ID,
-	suggest func(agents.ID) []string,
-) (map[agents.ID]string, error) {
-	models := make(map[agents.ID]string, len(enabled))
-
-	for _, id := range enabled {
-		suggestions := suggest(id)
-		fmt.Fprintf(
-			out,
-			"Model for %s (blank = default; suggestions: %s): ",
-			id,
-			strings.Join(suggestions, ", "),
-		)
-
-		line, err := in.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return nil, fmt.Errorf("read input: %w", err)
-		}
-
-		model := strings.TrimSpace(line)
-		if model != "" {
-			models[id] = model
-		}
-
-		if errors.Is(err, io.EOF) {
-			break
-		}
-	}
-
-	return models, nil
-}
-
-func bufferedReader(in io.Reader) *bufio.Reader {
-	if reader, ok := in.(*bufio.Reader); ok {
-		return reader
-	}
-	return bufio.NewReader(in)
+	fmt.Fprintln(w, header+" "+next)
+	fmt.Fprintln(w, then)
 }
 
 func newModelSuggester(lookPath agents.LookPathFunc) func(agents.ID) []string {

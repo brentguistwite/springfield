@@ -1,94 +1,12 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"strings"
 	"testing"
 
 	"springfield/internal/core/agents"
 )
-
-// TestResolvePriorityInteractiveEmptyInput verifies empty input is rejected —
-// the picker requires the user to explicitly opt in to at least one agent.
-func TestResolvePriorityInteractiveEmptyInput(t *testing.T) {
-	in := strings.NewReader("\n")
-	var out bytes.Buffer
-
-	_, err := resolvePriority("", true, in, &out)
-	if err == nil {
-		t.Fatal("expected error on empty input, got nil")
-	}
-	if !strings.Contains(out.String(), "at least one agent is required") {
-		t.Errorf("expected rejection message in output, got: %q", out.String())
-	}
-}
-
-// TestResolvePriorityInteractiveValidInput verifies a valid comma-separated input is returned.
-func TestResolvePriorityInteractiveValidInput(t *testing.T) {
-	in := strings.NewReader("codex,claude\n")
-	var out bytes.Buffer
-
-	got, err := resolvePriority("", true, in, &out)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	want := []string{"codex", "claude"}
-	if len(got) != len(want) {
-		t.Fatalf("got %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("got[%d]=%q, want %q", i, got[i], want[i])
-		}
-	}
-}
-
-// TestResolvePriorityInteractiveRetryOnInvalid verifies invalid input re-prompts and
-// a subsequent valid entry is accepted.
-func TestResolvePriorityInteractiveRetryOnInvalid(t *testing.T) {
-	// "unknown" is not a supported agent → triggers re-prompt;
-	// "claude,codex" succeeds.
-	in := strings.NewReader("unknown\nclaude,codex\n")
-	var out bytes.Buffer
-
-	got, err := resolvePriority("", true, in, &out)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	want := []string{"claude", "codex"}
-	if len(got) != len(want) {
-		t.Fatalf("got %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("got[%d]=%q, want %q", i, got[i], want[i])
-		}
-	}
-
-	// Confirm a rejection message was printed during the retry.
-	if !strings.Contains(out.String(), "not") {
-		t.Errorf("expected rejection message in output, got: %q", out.String())
-	}
-}
-
-// TestResolvePriorityInteractiveWhitespaceInput verifies that a line containing
-// only whitespace is rejected like empty input — TrimSpace collapses it and
-// the picker still requires an explicit agent selection.
-func TestResolvePriorityInteractiveWhitespaceInput(t *testing.T) {
-	in := strings.NewReader("   \n")
-	var out bytes.Buffer
-
-	_, err := resolvePriority("", true, in, &out)
-	if err == nil {
-		t.Fatal("expected error on whitespace-only input, got nil")
-	}
-	if !strings.Contains(out.String(), "at least one agent is required") {
-		t.Errorf("expected rejection message in output, got: %q", out.String())
-	}
-}
 
 // TestParseAndValidateAgentsRejectsDuplicates verifies that a duplicate agent ID
 // in the priority list is rejected — agent_priority must be a strict ordering.
@@ -99,79 +17,6 @@ func TestParseAndValidateAgentsRejectsDuplicates(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "duplicate") {
 		t.Errorf("expected duplicate error, got: %v", err)
-	}
-}
-
-func TestResolveModelsPromptsInteractivelyEvenWithAgentsFlag(t *testing.T) {
-	in := strings.NewReader("claude-sonnet-4-6\n\n")
-	var out bytes.Buffer
-
-	models, err := resolveModels(
-		"claude,codex",
-		"",
-		true,
-		[]string{"claude", "codex"},
-		in,
-		&out,
-		func(id agents.ID) []string {
-			switch id {
-			case agents.AgentClaude:
-				return []string{"claude-sonnet-4-6"}
-			case agents.AgentCodex:
-				return []string{"gpt-5-codex"}
-			default:
-				return nil
-			}
-		},
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if got := models["claude"]; got != "claude-sonnet-4-6" {
-		t.Fatalf("claude model = %q, want claude-sonnet-4-6", got)
-	}
-	if _, ok := models["codex"]; ok {
-		t.Fatalf("expected blank codex input to omit model, got %v", models)
-	}
-	if !strings.Contains(out.String(), "Model for claude") || !strings.Contains(out.String(), "Model for codex") {
-		t.Fatalf("expected prompt output for both agents, got:\n%s", out.String())
-	}
-}
-
-func TestInteractiveInitFlowPreservesQueuedModelAnswers(t *testing.T) {
-	in := strings.NewReader("claude,codex\nclaude-opus-4-7\ncustom-codex-model\n")
-	var out bytes.Buffer
-
-	priority, models, err := resolveInitSelections(
-		"",
-		"",
-		true,
-		in,
-		&out,
-		func(id agents.ID) []string {
-			switch id {
-			case agents.AgentClaude:
-				return []string{"claude-opus-4-7"}
-			case agents.AgentCodex:
-				return []string{"gpt-5-codex"}
-			default:
-				return nil
-			}
-		},
-	)
-	if err != nil {
-		t.Fatalf("resolveInitSelections: %v", err)
-	}
-
-	if len(priority) != 2 || priority[0] != "claude" || priority[1] != "codex" {
-		t.Fatalf("priority = %v, want [claude codex]", priority)
-	}
-	if got := models["claude"]; got != "claude-opus-4-7" {
-		t.Fatalf("claude model = %q, want claude-opus-4-7", got)
-	}
-	if got := models["codex"]; got != "custom-codex-model" {
-		t.Fatalf("codex model = %q, want custom-codex-model", got)
 	}
 }
 
@@ -210,6 +55,65 @@ func TestNewModelSuggesterReturnsNilWhenAdapterHasNoModelProvider(t *testing.T) 
 
 	if got := suggester(agents.AgentClaude); got != nil {
 		t.Fatalf("suggestions = %v, want nil", got)
+	}
+}
+
+// TestPreservedOrderUsesCanonicalAgentOrdering pins the rule that the final
+// priority list follows the supported-agents canonical order rather than the
+// operator's toggle order. Two operators picking the same set must end up
+// with byte-identical springfield.toml.
+func TestPreservedOrderUsesCanonicalAgentOrdering(t *testing.T) {
+	canonical := []agents.ID{agents.AgentClaude, agents.AgentCodex, agents.AgentGemini}
+
+	cases := []struct {
+		name     string
+		selected []string
+		want     []string
+	}{
+		{"toggle-reverse", []string{"gemini", "codex", "claude"}, []string{"claude", "codex", "gemini"}},
+		{"toggle-codex-first", []string{"codex", "claude"}, []string{"claude", "codex"}},
+		{"empty", nil, []string{}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := preservedOrder(tc.selected, canonical)
+			if len(got) != len(tc.want) {
+				t.Fatalf("len(got) = %d, want %d (%v)", len(got), len(tc.want), got)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Errorf("got[%d] = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestCollectModelsOmitsBlanks pins the rule that a blank-string selection
+// (the "(adapter default)" option) is omitted from the result map so the
+// downstream config.Init path leaves the corresponding TOML model line out.
+func TestCollectModelsOmitsBlanks(t *testing.T) {
+	picked := "claude-sonnet-4-6"
+	empty := ""
+	whitespace := "   "
+
+	modelTargets := map[string]*string{
+		"claude": &picked,
+		"codex":  &empty,
+		"gemini": &whitespace,
+	}
+
+	models := collectModels([]string{"claude", "codex", "gemini"}, modelTargets)
+
+	if models["claude"] != "claude-sonnet-4-6" {
+		t.Errorf("claude = %q, want claude-sonnet-4-6", models["claude"])
+	}
+	if _, ok := models["codex"]; ok {
+		t.Errorf("codex should be omitted (adapter default), got %q", models["codex"])
+	}
+	if _, ok := models["gemini"]; ok {
+		t.Errorf("gemini should be omitted (whitespace-only), got %q", models["gemini"])
 	}
 }
 
