@@ -25,27 +25,51 @@ var (
 // reset timestamp. Returns the zero time when no parseable reset is found
 // (caller applies a default cooldown if it still wants to skip the agent).
 // Returns at most now+maxCooldown.
+//
+// Wall-clock regexes (reHumanTZ, reHumanShort) are gated by the presence of
+// the word "limit" on the same line so unrelated stderr noise like
+// "connection reset by peer" or "counter reset 5 times" cannot trigger a
+// false positive. Pipe-epoch already requires "usage limit reached" in its
+// own pattern so it scans across the whole haystack.
 func parseCooldown(events []coreexec.Event, exitCode int, err error, now time.Time) time.Time {
-	var b strings.Builder
-	for _, e := range events {
-		b.WriteString(e.Data)
-		b.WriteByte('\n')
-	}
-	if err != nil {
-		b.WriteString(err.Error())
-	}
-	haystack := b.String()
+	lines := collectLines(events, err)
+	joined := strings.Join(lines, "\n")
 
-	if reset, ok := matchPipeEpoch(haystack); ok {
+	if reset, ok := matchPipeEpoch(joined); ok {
 		return capReset(reset, now)
 	}
-	if reset, ok := matchHumanTZ(haystack, now); ok {
-		return capReset(reset, now)
-	}
-	if reset, ok := matchHumanShort(haystack, now); ok {
-		return capReset(reset, now)
+	for _, line := range lines {
+		if !hasLimitContext(line) {
+			continue
+		}
+		if reset, ok := matchHumanTZ(line, now); ok {
+			return capReset(reset, now)
+		}
+		if reset, ok := matchHumanShort(line, now); ok {
+			return capReset(reset, now)
+		}
 	}
 	return time.Time{}
+}
+
+func collectLines(events []coreexec.Event, err error) []string {
+	var lines []string
+	for _, e := range events {
+		for _, l := range strings.Split(e.Data, "\n") {
+			lines = append(lines, l)
+		}
+	}
+	if err != nil {
+		for _, l := range strings.Split(err.Error(), "\n") {
+			lines = append(lines, l)
+		}
+	}
+	return lines
+}
+
+func hasLimitContext(line string) bool {
+	lower := strings.ToLower(line)
+	return strings.Contains(lower, "limit") || strings.Contains(lower, "usage")
 }
 
 func matchPipeEpoch(s string) (time.Time, bool) {
@@ -102,7 +126,10 @@ func buildWallClock(hourStr, minStr, ampm string, loc *time.Location, now time.T
 	nowInLoc := now.In(loc)
 	candidate := time.Date(nowInLoc.Year(), nowInLoc.Month(), nowInLoc.Day(), hour, min, 0, 0, loc)
 	if !candidate.After(now) {
-		candidate = candidate.Add(24 * time.Hour)
+		// AddDate (not Add(24h)) preserves wall-clock time across DST
+		// transitions. Add(24h) crosses the DST boundary as a fixed
+		// duration and lands an hour off the operator-visible reset time.
+		candidate = candidate.AddDate(0, 0, 1)
 	}
 	return candidate
 }

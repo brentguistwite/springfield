@@ -226,6 +226,35 @@ func TestRunner_ClaudeRateLimit_InstallsParsedCooldown(t *testing.T) {
 	}
 }
 
+// Adapters that don't implement Cooldowner (codex, gemini) should NOT
+// be penalized with the default cooldown on a single retryable failure —
+// that prevents a transient blip from silencing them for an hour.
+func TestRunner_NonCooldownerAdapter_NoCooldownInstalled(t *testing.T) {
+	clock := newFixedClock(time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC))
+	// classifyingCommander implements ErrorClassifier but NOT Cooldowner.
+	first := &classifyingCommander{id: agents.AgentCodex, class: agents.ErrorClassRetryable}
+	second := &classifyingCommander{id: agents.AgentGemini, class: agents.ErrorClassFatal}
+	registry := agents.NewRegistry(first, second)
+
+	fakeRun := func(_ context.Context, cmd exec.Command, _ exec.EventHandler) exec.Result {
+		if cmd.Name == string(agents.AgentCodex) {
+			return exec.Result{ExitCode: 1, Err: errors.New("transient")}
+		}
+		return exec.Result{ExitCode: 0}
+	}
+
+	r := runtime.NewTestRunner(registry, fakeRun, clock.now)
+	_ = r.Run(context.Background(), runtime.Request{
+		AgentIDs: []agents.ID{agents.AgentCodex, agents.AgentGemini},
+		Prompt:   "x",
+	})
+
+	got := r.GetCooldown(agents.AgentCodex)
+	if !got.IsZero() {
+		t.Fatalf("non-Cooldowner adapter got penalized: cooldown=%v want zero", got)
+	}
+}
+
 func TestRunner_AllAgentsInCooldown_ReturnsFailure(t *testing.T) {
 	clock := newFixedClock(time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC))
 	claude := &cooldownCommander{id: agents.AgentClaude}

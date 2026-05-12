@@ -85,6 +85,57 @@ func TestParseCooldown_Raw429NoTimestamp_ReturnsZero(t *testing.T) {
 	}
 }
 
+func TestParseCooldown_FalsePositive_ConnectionReset(t *testing.T) {
+	// Cross-event-boundary haystack join must not let "reset" in one event
+	// pair up with a time fragment in another.
+	events := []coreexec.Event{
+		ev(coreexec.EventStderr, "connection reset by peer"),
+		ev(coreexec.EventStderr, "retrying at 3pm"),
+	}
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+
+	got := parseCooldown(events, 1, nil, now)
+
+	if !got.IsZero() {
+		t.Fatalf("false positive on cross-boundary reset/3pm: got %v want zero", got)
+	}
+}
+
+func TestParseCooldown_FalsePositive_CounterReset(t *testing.T) {
+	// Stderr noise that mentions "reset N" should not be parsed as a
+	// rate-limit reset — there's no rate-limit context.
+	events := []coreexec.Event{
+		ev(coreexec.EventStderr, "internal counter reset 5 times during retry"),
+	}
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+
+	got := parseCooldown(events, 1, nil, now)
+
+	if !got.IsZero() {
+		t.Fatalf("false positive on 'counter reset 5': got %v want zero", got)
+	}
+}
+
+func TestParseCooldown_DSTSpringForward_RollsCorrectly(t *testing.T) {
+	// US DST spring-forward 2026-03-08 02:00 EST → 03:00 EDT.
+	// A naive Add(24h) rollover crosses the DST gap and lands an hour
+	// off the wall-clock time the operator actually saw in the message.
+	loc, _ := time.LoadLocation("America/New_York")
+	// Saturday noon EST, before DST jump.
+	now := time.Date(2026, 3, 7, 12, 0, 0, 0, loc)
+	events := []coreexec.Event{
+		ev(coreexec.EventStderr, "Your limit will reset at 11am (America/New_York)."),
+	}
+
+	got := parseCooldown(events, 1, nil, now)
+
+	// Sunday 11am EDT — wall-clock 11am next day, not 12pm.
+	want := time.Date(2026, 3, 8, 11, 0, 0, 0, loc)
+	if !got.Equal(want) {
+		t.Fatalf("DST rollover: got %v want %v", got, want)
+	}
+}
+
 func TestParseCooldown_NoRateLimitMessage_ReturnsZero(t *testing.T) {
 	events := []coreexec.Event{
 		ev(coreexec.EventStderr, "panic: nil pointer dereference"),

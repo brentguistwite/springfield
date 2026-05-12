@@ -105,7 +105,7 @@ func (r *Runner) Run(ctx context.Context, req Request) Result {
 	allSkipped := true
 	for _, agentID := range agentIDs {
 		if until, cooled := r.inCooldown(agentID, r.now()); cooled {
-			emitSkipEvent(req.OnEvent, agentID, until)
+			r.emitSkipEvent(req.OnEvent, agentID, until)
 			continue
 		}
 		allSkipped = false
@@ -183,14 +183,18 @@ func (r *Runner) Run(ctx context.Context, req Request) Result {
 		if class == agents.ErrorClassFatal {
 			return last
 		}
-		until := time.Time{}
+		// Only install a cooldown for adapters that opted into Cooldowner.
+		// Adapters without it (currently codex, gemini) fall through to the
+		// next agent without being penalized for a single transient failure
+		// — only the agent that knows how to recognize its own rate-limit
+		// gets cooled down.
 		if cd, ok := resolved.Adapter.(agents.Cooldowner); ok {
-			until = cd.Cooldown(execResult.Events, execResult.ExitCode, execResult.Err, r.now())
+			until := cd.Cooldown(execResult.Events, execResult.ExitCode, execResult.Err, r.now())
+			if until.IsZero() {
+				until = r.now().Add(defaultCooldown)
+			}
+			r.installCooldown(agentID, until)
 		}
-		if until.IsZero() {
-			until = r.now().Add(defaultCooldown)
-		}
-		r.installCooldown(agentID, until)
 	}
 
 	if allSkipped {
@@ -206,14 +210,14 @@ func (r *Runner) Run(ctx context.Context, req Request) Result {
 
 // emitSkipEvent writes a synthetic stderr event so operators see why an
 // agent was skipped. No-op if handler is nil.
-func emitSkipEvent(handler exec.EventHandler, id agents.ID, until time.Time) {
+func (r *Runner) emitSkipEvent(handler exec.EventHandler, id agents.ID, until time.Time) {
 	if handler == nil {
 		return
 	}
 	handler(exec.Event{
 		Type: exec.EventStderr,
 		Data: fmt.Sprintf("springfield: %s in cooldown until %s; skipping", id, until.Format(time.RFC3339)),
-		Time: time.Now(),
+		Time: r.now(),
 	})
 }
 
