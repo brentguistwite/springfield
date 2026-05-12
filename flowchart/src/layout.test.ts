@@ -50,20 +50,37 @@ describe('layoutNodes', () => {
     }
   })
 
-  it('TB direction: nodes are non-overlapping and within a plausible y-range', () => {
+  it('TB direction: data nodes are non-overlapping and groups stack vertically', () => {
     const { nodes } = layoutNodes(dataNodes, dataEdges, 'TB')
     const data = nodes.filter((n) => n.type !== 'group')
-    // All nodes positioned
+
     for (const n of data) {
       expect(n.position).toBeDefined()
       expect(typeof n.position.x).toBe('number')
       expect(typeof n.position.y).toBe('number')
     }
-    // Groups should be stacked vertically (max group y > min group y)
+
+    // Pairwise bounding-box non-overlap. Child positions are group-local
+    // (see layout.ts:180 + parentId/extent in the React Flow contract),
+    // so compare only within the same parent.
+    for (let i = 0; i < data.length; i++) {
+      for (let j = i + 1; j < data.length; j++) {
+        const a = data[i]
+        const b = data[j]
+        if (a.parentId !== b.parentId) continue
+        const aw = Number(a.style?.width ?? 0)
+        const ah = Number(a.style?.height ?? 0)
+        const bw = Number(b.style?.width ?? 0)
+        const bh = Number(b.style?.height ?? 0)
+        const overlapX = a.position.x < b.position.x + bw && b.position.x < a.position.x + aw
+        const overlapY = a.position.y < b.position.y + bh && b.position.y < a.position.y + ah
+        expect(overlapX && overlapY, `nodes ${a.id} and ${b.id} overlap`).toBe(false)
+      }
+    }
+
+    // Groups stack vertically in TB direction.
     const groups = nodes.filter((n) => n.type === 'group')
     const ys = groups.map((n) => n.position.y)
-    const minY = Math.min(...ys)
-    const maxY = Math.max(...ys)
-    expect(maxY).toBeGreaterThan(minY)
+    expect(Math.max(...ys)).toBeGreaterThan(Math.min(...ys))
   })
 })

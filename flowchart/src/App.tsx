@@ -39,13 +39,16 @@ const nodeTypes: NodeTypes = {
 
 /** Returns 'LR' on wide screens, 'TB' on narrow. */
 function useLayoutDirection(): 'LR' | 'TB' {
-  const [dir, setDir] = useState<'LR' | 'TB'>('LR')
+  const [dir, setDir] = useState<'LR' | 'TB'>(() =>
+    typeof window !== 'undefined' && window.matchMedia('(min-width: 900px)').matches
+      ? 'LR'
+      : 'TB',
+  )
 
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 900px)')
     const handler = (e: MediaQueryListEvent) => setDir(e.matches ? 'LR' : 'TB')
     mq.addEventListener('change', handler)
-    setDir(mq.matches ? 'LR' : 'TB')
     return () => mq.removeEventListener('change', handler)
   }, [])
 
