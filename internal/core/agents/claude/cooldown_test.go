@@ -136,6 +136,70 @@ func TestParseCooldown_DSTSpringForward_RollsCorrectly(t *testing.T) {
 	}
 }
 
+func TestParseCooldown_FalsePositive_UsageInUnrelatedLog(t *testing.T) {
+	// "usage" + reset + digit + ampm on the same line, but unrelated to
+	// claude rate limits. Currently passes the keyword gate; tightening
+	// the regex (must include a Claude-style rate-limit verb pair) blocks it.
+	events := []coreexec.Event{
+		ev(coreexec.EventStderr, "API usage cap: connection reset at 3pm yesterday"),
+	}
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+
+	got := parseCooldown(events, 1, nil, now)
+
+	if !got.IsZero() {
+		t.Fatalf("false positive on 'usage cap...reset at 3pm': got %v want zero", got)
+	}
+}
+
+func TestParseCooldown_NoAmPm_ReturnsZero(t *testing.T) {
+	// "reset at 5 minutes" must not match — there's no am/pm marker, so
+	// the "5" is not a wall-clock hour.
+	events := []coreexec.Event{
+		ev(coreexec.EventStderr, "limit will reset at 5 minutes from now"),
+	}
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+
+	got := parseCooldown(events, 1, nil, now)
+
+	if !got.IsZero() {
+		t.Fatalf("false positive on 'reset at 5 minutes': got %v want zero", got)
+	}
+}
+
+func TestParseCooldown_UnknownTimezone_ReturnsZero(t *testing.T) {
+	// Bad/unknown timezone names must fail closed (zero time) so the
+	// runner applies the default cooldown rather than silently guessing
+	// local wall-clock.
+	events := []coreexec.Event{
+		ev(coreexec.EventStderr, "Your limit will reset at 1pm (Atlantis/Lost)."),
+	}
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+
+	got := parseCooldown(events, 1, nil, now)
+
+	if !got.IsZero() {
+		t.Fatalf("unknown TZ should return zero, got %v", got)
+	}
+}
+
+func TestParseCooldown_PastPipeEpoch_ReturnsZero(t *testing.T) {
+	// If the parsed reset epoch is already in the past, return zero so
+	// the runner applies the default cooldown instead of installing an
+	// already-expired entry.
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	pastEpoch := now.Add(-1 * time.Hour).Unix()
+	events := []coreexec.Event{
+		ev(coreexec.EventStdout, "Claude AI usage limit reached|"+strconv.FormatInt(pastEpoch, 10)),
+	}
+
+	got := parseCooldown(events, 1, nil, now)
+
+	if !got.IsZero() {
+		t.Fatalf("past epoch should return zero, got %v", got)
+	}
+}
+
 func TestParseCooldown_NoRateLimitMessage_ReturnsZero(t *testing.T) {
 	events := []coreexec.Event{
 		ev(coreexec.EventStderr, "panic: nil pointer dereference"),

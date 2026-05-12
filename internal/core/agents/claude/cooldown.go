@@ -16,9 +16,17 @@ import (
 const maxCooldown = 24 * time.Hour
 
 var (
-	rePipeEpoch  = regexp.MustCompile(`usage limit reached\|(\d{9,11})`)
-	reHumanTZ    = regexp.MustCompile(`(?i)reset(?:s)?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*\(([^)]+)\)`)
-	reHumanShort = regexp.MustCompile(`(?i)reset(?:s)?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b`)
+	rePipeEpoch = regexp.MustCompile(`usage limit reached\|(\d{9,11})`)
+	// am/pm required: without it, "reset at 5 minutes" would match with
+	// hour=5, producing a bogus 5am cooldown. Real claude reset messages
+	// always carry an am/pm suffix.
+	reHumanTZ    = regexp.MustCompile(`(?i)reset(?:s)?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*\(([^)]+)\)`)
+	reHumanShort = regexp.MustCompile(`(?i)reset(?:s)?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b`)
+	// reRateLimitPhrase gates wall-clock matching: a line must contain an
+	// actual rate-limit phrase, not merely the words "limit" or "usage"
+	// in isolation, so unrelated stderr like
+	// "API usage cap: connection reset at 3pm yesterday" cannot match.
+	reRateLimitPhrase = regexp.MustCompile(`(?i)(usage limit|rate[- ]?limit|hour limit|limit (?:will\s+)?reset|limit reached)`)
 )
 
 // parseCooldown inspects events, exit code, and err for a claude rate-limit
@@ -42,8 +50,15 @@ func parseCooldown(events []coreexec.Event, exitCode int, err error, now time.Ti
 		if !hasLimitContext(line) {
 			continue
 		}
-		if reset, ok := matchHumanTZ(line, now); ok {
-			return capReset(reset, now)
+		// If the line carries a parenthesized timezone, it MUST resolve;
+		// silently falling through to the no-TZ branch would let an
+		// unknown zone (e.g. "(Atlantis/Lost)") install a local-time
+		// cooldown that's hours off the operator's actual reset.
+		if reHumanTZ.MatchString(line) {
+			if reset, ok := matchHumanTZ(line, now); ok {
+				return capReset(reset, now)
+			}
+			continue
 		}
 		if reset, ok := matchHumanShort(line, now); ok {
 			return capReset(reset, now)
@@ -68,8 +83,7 @@ func collectLines(events []coreexec.Event, err error) []string {
 }
 
 func hasLimitContext(line string) bool {
-	lower := strings.ToLower(line)
-	return strings.Contains(lower, "limit") || strings.Contains(lower, "usage")
+	return reRateLimitPhrase.MatchString(line)
 }
 
 func matchPipeEpoch(s string) (time.Time, bool) {
@@ -91,7 +105,10 @@ func matchHumanTZ(s string, now time.Time) (time.Time, bool) {
 	}
 	loc, locErr := time.LoadLocation(m[4])
 	if locErr != nil {
-		loc = time.Local
+		// Fail closed: silently guessing time.Local could land hours off
+		// the operator's actual reset. Let the runner apply the default
+		// cooldown instead.
+		return time.Time{}, false
 	}
 	return buildWallClock(m[1], m[2], m[3], loc, now), true
 }
@@ -135,6 +152,12 @@ func buildWallClock(hourStr, minStr, ampm string, loc *time.Location, now time.T
 }
 
 func capReset(reset, now time.Time) time.Time {
+	if !reset.After(now) {
+		// Already-expired reset (stale epoch, clock skew). Return zero so
+		// the caller applies its default cooldown rather than installing
+		// an entry that will be skipped immediately.
+		return time.Time{}
+	}
 	max := now.Add(maxCooldown)
 	if reset.After(max) {
 		return max
