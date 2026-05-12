@@ -333,12 +333,17 @@ springfield recover --diagnose --plan <plan-id>
 # directory that's been deleted or never wrote):
 springfield recover --diagnose
 
-# Drop into the plan's per-iteration evidence files directly:
-ls .springfield/execution/plans/<plan-id>/evidence/iter-<N>/
+# Drop into the slice's evidence files directly. `springfield status`
+# prints the live evidence path after a run settles; otherwise:
+ls .springfield/plans/<batch-id>/evidence/<slice-id>/
 #   meta.json          — runner verdict, timing, exit code
 #   events.jsonl       — every dispatched event (one per line)
 #   assistant_text.txt — what the agent actually said
 #   prompt.txt         — the exact prompt the runner built
+#
+# Note: the conductor's per-plan runner can additionally write
+# per-iteration evidence under .springfield/execution/plans/<plan-id>/
+# evidence/iter-<N>/ — check both paths when triaging a stuck run.
 
 # Inspect the active-run cursor (which batch + phase + plans are live):
 cat .springfield/run.json
