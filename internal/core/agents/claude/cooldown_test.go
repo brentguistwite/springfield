@@ -200,6 +200,57 @@ func TestParseCooldown_PastPipeEpoch_ReturnsZero(t *testing.T) {
 	}
 }
 
+// Real-world format observed in anthropics/claude-code issue 8620:
+// "Claude usage limit reached. Your limit will reset at Oct 7, 1am."
+// Date prefix between "at" and time. Within 24h cap → parsed precisely.
+func TestParseCooldown_DatedWallClock_WithinCap(t *testing.T) {
+	loc := time.UTC
+	now := time.Date(2026, 10, 6, 22, 0, 0, 0, loc)
+	events := []coreexec.Event{
+		ev(coreexec.EventStderr, "Claude usage limit reached. Your limit will reset at Oct 7, 1am."),
+	}
+
+	got := parseCooldown(events, 1, nil, now)
+
+	want := time.Date(2026, 10, 7, 1, 0, 0, 0, loc)
+	if !got.Equal(want) {
+		t.Fatalf("dated wallclock: got %v want %v", got, want)
+	}
+}
+
+// Same issue-8620 message but the reset is 6 days out — should clamp to
+// the 24h cap rather than fall through to a default cooldown.
+func TestParseCooldown_DatedWallClock_BeyondCap_ClampsTo24h(t *testing.T) {
+	loc := time.UTC
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, loc)
+	events := []coreexec.Event{
+		ev(coreexec.EventStderr, "Claude usage limit reached. Your limit will reset at Oct 7, 1am."),
+	}
+
+	got := parseCooldown(events, 1, nil, now)
+
+	want := now.Add(24 * time.Hour)
+	if !got.Equal(want) {
+		t.Fatalf("dated wallclock cap: got %v want %v", got, want)
+	}
+}
+
+// Full month name + no comma variant.
+func TestParseCooldown_DatedWallClock_FullMonthName(t *testing.T) {
+	loc := time.UTC
+	now := time.Date(2026, 10, 6, 22, 0, 0, 0, loc)
+	events := []coreexec.Event{
+		ev(coreexec.EventStderr, "Your limit will reset at October 7 1am."),
+	}
+
+	got := parseCooldown(events, 1, nil, now)
+
+	want := time.Date(2026, 10, 7, 1, 0, 0, 0, loc)
+	if !got.Equal(want) {
+		t.Fatalf("full month name: got %v want %v", got, want)
+	}
+}
+
 func TestParseCooldown_NoRateLimitMessage_ReturnsZero(t *testing.T) {
 	events := []coreexec.Event{
 		ev(coreexec.EventStderr, "panic: nil pointer dereference"),

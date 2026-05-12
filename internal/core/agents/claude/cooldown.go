@@ -22,6 +22,13 @@ var (
 	// always carry an am/pm suffix.
 	reHumanTZ    = regexp.MustCompile(`(?i)reset(?:s)?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*\(([^)]+)\)`)
 	reHumanShort = regexp.MustCompile(`(?i)reset(?:s)?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b`)
+	// reHumanDated handles the date-prefixed format observed in
+	// anthropics/claude-code issue 8620:
+	// "Your limit will reset at Oct 7, 1am." — month name + day before
+	// the wall-clock time. Captures month, day, hour, optional minute,
+	// am/pm. The month name is validated via time.Parse before use so
+	// non-month 3-letter words ("Sat", "the") cannot trigger a match.
+	reHumanDated = regexp.MustCompile(`(?i)reset(?:s)?\s+(?:at\s+)?([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b`)
 	// reRateLimitPhrase gates wall-clock matching: a line must contain an
 	// actual rate-limit phrase, not merely the words "limit" or "usage"
 	// in isolation, so unrelated stderr like
@@ -59,6 +66,9 @@ func parseCooldown(events []coreexec.Event, exitCode int, err error, now time.Ti
 				return capReset(reset, now)
 			}
 			continue
+		}
+		if reset, ok := matchHumanDated(line, now); ok {
+			return capReset(reset, now)
 		}
 		if reset, ok := matchHumanShort(line, now); ok {
 			return capReset(reset, now)
@@ -119,6 +129,62 @@ func matchHumanShort(s string, now time.Time) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return buildWallClock(m[1], m[2], m[3], time.Local, now), true
+}
+
+// matchHumanDated parses "reset at <Month> <day>, <hour>[:<min>]<am|pm>".
+// Builds an absolute date in now.Location() — the message carries no
+// explicit timezone, and the local clock is the best available reference.
+// If the parsed date is already in the past, rolls forward by one year so
+// e.g. "Jan 5" emitted in late December lands next January, not last.
+func matchHumanDated(s string, now time.Time) (time.Time, bool) {
+	m := reHumanDated.FindStringSubmatch(s)
+	if m == nil {
+		return time.Time{}, false
+	}
+	month, ok := parseMonth(m[1])
+	if !ok {
+		return time.Time{}, false
+	}
+	day, err := strconv.Atoi(m[2])
+	if err != nil || day < 1 || day > 31 {
+		return time.Time{}, false
+	}
+	hour, _ := strconv.Atoi(m[3])
+	min := 0
+	if m[4] != "" {
+		min, _ = strconv.Atoi(m[4])
+	}
+	switch strings.ToLower(m[5]) {
+	case "pm":
+		if hour < 12 {
+			hour += 12
+		}
+	case "am":
+		if hour == 12 {
+			hour = 0
+		}
+	}
+	loc := now.Location()
+	year := now.Year()
+	candidate := time.Date(year, month, day, hour, min, 0, 0, loc)
+	if !candidate.After(now) {
+		candidate = time.Date(year+1, month, day, hour, min, 0, 0, loc)
+	}
+	return candidate, true
+}
+
+// parseMonth resolves a 3-letter abbreviation or full month name (e.g.
+// "Oct" or "October") to a time.Month. Returns ok=false for non-month
+// tokens like "Sat" or "the" so the dated regex can't false-positive.
+func parseMonth(s string) (time.Month, bool) {
+	s = strings.TrimSpace(s)
+	layouts := []string{"Jan", "January"}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.Month(), true
+		}
+	}
+	return 0, false
 }
 
 // buildWallClock composes the next occurrence of the given wall-clock
