@@ -251,6 +251,23 @@ func TestParseCooldown_DatedWallClock_FullMonthName(t *testing.T) {
 	}
 }
 
+// time.Date normalizes invalid dates ("Feb 30" → "Mar 2") silently. We
+// must reject impossible day-of-month rather than installing a cooldown
+// for the wrong month.
+func TestParseCooldown_DatedWallClock_InvalidDayRejected(t *testing.T) {
+	loc := time.UTC
+	now := time.Date(2026, 2, 1, 12, 0, 0, 0, loc)
+	events := []coreexec.Event{
+		ev(coreexec.EventStderr, "Your limit will reset at Feb 30, 1am."),
+	}
+
+	got := parseCooldown(events, 1, nil, now)
+
+	if !got.IsZero() {
+		t.Fatalf("invalid day Feb 30 should return zero, got %v", got)
+	}
+}
+
 func TestParseCooldown_NoRateLimitMessage_ReturnsZero(t *testing.T) {
 	events := []coreexec.Event{
 		ev(coreexec.EventStderr, "panic: nil pointer dereference"),

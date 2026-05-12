@@ -167,8 +167,17 @@ func matchHumanDated(s string, now time.Time) (time.Time, bool) {
 	loc := now.Location()
 	year := now.Year()
 	candidate := time.Date(year, month, day, hour, min, 0, 0, loc)
+	// time.Date silently normalizes invalid combinations (Feb 30 → Mar 2,
+	// Apr 31 → May 1). Reject so we don't install a cooldown for the
+	// wrong month.
+	if candidate.Month() != month || candidate.Day() != day {
+		return time.Time{}, false
+	}
 	if !candidate.After(now) {
 		candidate = time.Date(year+1, month, day, hour, min, 0, 0, loc)
+		if candidate.Month() != month || candidate.Day() != day {
+			return time.Time{}, false
+		}
 	}
 	return candidate, true
 }
