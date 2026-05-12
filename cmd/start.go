@@ -39,7 +39,7 @@ import (
 
 // runtimeAgentRunner is a thin adapter so cmd does not need to import the
 // shared coreruntime constructor everywhere.
-type runtimeAgentRunner struct{ inner coreruntime.Runner }
+type runtimeAgentRunner struct{ inner *coreruntime.Runner }
 
 func (r runtimeAgentRunner) Run(ctx context.Context, req coreruntime.Request) coreruntime.Result {
 	return r.inner.Run(ctx, req)

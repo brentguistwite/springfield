@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"springfield/internal/core/agents"
 	coreexec "springfield/internal/core/exec"
@@ -163,6 +164,14 @@ func (a *adapter) ClassifyError(events []coreexec.Event, exitCode int, err error
 		}
 	}
 	return agents.ErrorClassFatal
+}
+
+// Cooldown extracts the claude rate-limit reset timestamp from a failed
+// run. Returns the zero time when no parseable reset message is present.
+// now is supplied by the runner so wall-clock-format messages resolve
+// against the same reference time used for skip decisions.
+func (a *adapter) Cooldown(events []coreexec.Event, exitCode int, err error, now time.Time) time.Time {
+	return parseCooldown(events, exitCode, err, now)
 }
 
 // SpringfieldControlPlaneHookCommand returns the hook command string used

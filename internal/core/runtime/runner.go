@@ -3,39 +3,93 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"springfield/internal/core/agents"
 	"springfield/internal/core/exec"
 )
 
-// Runner resolves an agent and executes a prompt through it.
+// defaultCooldown is the fallback duration installed when a retryable
+// failure has no parseable reset time. Long enough to not hot-loop;
+// short enough to recover within one workday.
+const defaultCooldown = 1 * time.Hour
+
+// Runner resolves an agent and executes a prompt through it. Maintains a
+// per-agent cooldown map so a rate-limited agent is skipped on subsequent
+// Run calls until its cooldown expires.
 type Runner struct {
 	registry agents.Registry
 	run      exec.CommandFunc
 	now      func() time.Time
+
+	mu        sync.Mutex
+	cooldowns map[agents.ID]time.Time
 }
 
 // NewRunner creates a Runner with production defaults.
-func NewRunner(registry agents.Registry) Runner {
-	return Runner{
-		registry: registry,
-		run:      exec.Run,
-		now:      time.Now,
+func NewRunner(registry agents.Registry) *Runner {
+	return &Runner{
+		registry:  registry,
+		run:       exec.Run,
+		now:       time.Now,
+		cooldowns: map[agents.ID]time.Time{},
 	}
 }
 
 // NewTestRunner creates a Runner with injectable command execution and clock.
-func NewTestRunner(registry agents.Registry, runFn exec.CommandFunc, clock func() time.Time) Runner {
-	return Runner{
-		registry: registry,
-		run:      runFn,
-		now:      clock,
+func NewTestRunner(registry agents.Registry, runFn exec.CommandFunc, clock func() time.Time) *Runner {
+	return &Runner{
+		registry:  registry,
+		run:       runFn,
+		now:       clock,
+		cooldowns: map[agents.ID]time.Time{},
 	}
 }
 
-// Run resolves the agent, builds a command, and executes it.
-func (r Runner) Run(ctx context.Context, req Request) Result {
+// SetCooldown installs a "do not retry before" timestamp for an agent.
+// Production callers should let Run install cooldowns automatically based
+// on adapter parsing; exported for tests.
+func (r *Runner) SetCooldown(id agents.ID, until time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cooldowns[id] = until
+}
+
+// GetCooldown returns the active cooldown timestamp for an agent, or the
+// zero time if none is set.
+func (r *Runner) GetCooldown(id agents.ID) time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cooldowns[id]
+}
+
+func (r *Runner) clearCooldown(id agents.ID) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.cooldowns, id)
+}
+
+func (r *Runner) installCooldown(id agents.ID, until time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.cooldowns[id] = until
+}
+
+func (r *Runner) inCooldown(id agents.ID, now time.Time) (time.Time, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	until, ok := r.cooldowns[id]
+	if !ok {
+		return time.Time{}, false
+	}
+	return until, now.Before(until)
+}
+
+// Run resolves the agent, builds a command, and executes it. Honors agent
+// cooldowns: if an agent's cooldown is still active, it is skipped and the
+// next agent in the chain is tried.
+func (r *Runner) Run(ctx context.Context, req Request) Result {
 	start := r.now()
 	agentIDs := normalizeAgentIDs(req.AgentIDs)
 	if len(agentIDs) == 0 {
@@ -48,7 +102,14 @@ func (r Runner) Run(ctx context.Context, req Request) Result {
 	}
 
 	var last Result
+	allSkipped := true
 	for _, agentID := range agentIDs {
+		if until, cooled := r.inCooldown(agentID, r.now()); cooled {
+			r.emitSkipEvent(req.OnEvent, agentID, until)
+			continue
+		}
+		allSkipped = false
+
 		resolved, err := r.registry.Resolve(agents.ResolveInput{ProjectDefault: agentID})
 		if err != nil {
 			return Result{
@@ -112,6 +173,7 @@ func (r Runner) Run(ctx context.Context, req Request) Result {
 			EndedAt:   r.now(),
 		}
 		if status == StatusPassed {
+			r.clearCooldown(agentID)
 			return last
 		}
 		class := agents.ErrorClassFatal
@@ -121,9 +183,42 @@ func (r Runner) Run(ctx context.Context, req Request) Result {
 		if class == agents.ErrorClassFatal {
 			return last
 		}
+		// Only install a cooldown for adapters that opted into Cooldowner.
+		// Adapters without it (currently codex, gemini) fall through to the
+		// next agent without being penalized for a single transient failure
+		// — only the agent that knows how to recognize its own rate-limit
+		// gets cooled down.
+		if cd, ok := resolved.Adapter.(agents.Cooldowner); ok {
+			until := cd.Cooldown(execResult.Events, execResult.ExitCode, execResult.Err, r.now())
+			if until.IsZero() {
+				until = r.now().Add(defaultCooldown)
+			}
+			r.installCooldown(agentID, until)
+		}
 	}
 
+	if allSkipped {
+		return Result{
+			Status:    StatusFailed,
+			Err:       fmt.Errorf("all agents in cooldown; retry after cooldowns expire"),
+			StartedAt: start,
+			EndedAt:   r.now(),
+		}
+	}
 	return last
+}
+
+// emitSkipEvent writes a synthetic stderr event so operators see why an
+// agent was skipped. No-op if handler is nil.
+func (r *Runner) emitSkipEvent(handler exec.EventHandler, id agents.ID, until time.Time) {
+	if handler == nil {
+		return
+	}
+	handler(exec.Event{
+		Type: exec.EventStderr,
+		Data: fmt.Sprintf("springfield: %s in cooldown until %s; skipping", id, until.Format(time.RFC3339)),
+		Time: r.now(),
+	})
 }
 
 func normalizeAgentIDs(ids []agents.ID) []agents.ID {
