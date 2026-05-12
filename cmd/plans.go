@@ -108,21 +108,29 @@ func newPlansRemoveCommand() *cobra.Command {
 		id  string
 	)
 	cmd := &cobra.Command{
-		Use:   "remove",
+		Use:   "remove [<id>]",
 		Short: "Remove a plan unit by id.",
-		Args:  cobra.NoArgs,
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if id == "" {
-				return fmt.Errorf("--id is required")
+			var target string
+			switch {
+			case len(args) == 1 && id != "":
+				return fmt.Errorf("specify the plan id once: pass it positionally or via --id, not both")
+			case len(args) == 1:
+				target = args[0]
+			case id != "":
+				target = id
+			default:
+				return fmt.Errorf("plan id is required (pass positionally or via --id)")
 			}
 			loaded, err := config.LoadFrom(dir)
 			if err != nil {
 				return err
 			}
-			if err := execution.RemovePlan(loaded.RootDir, id); err != nil {
+			if err := execution.RemovePlan(loaded.RootDir, target); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Removed plan %q.\n", id)
+			fmt.Fprintf(cmd.OutOrStdout(), "Removed plan %q.\n", target)
 			return nil
 		},
 	}
