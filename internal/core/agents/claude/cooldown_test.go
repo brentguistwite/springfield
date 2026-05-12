@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"springfield/internal/core/agents"
 	coreexec "springfield/internal/core/exec"
 )
 
@@ -94,6 +95,48 @@ func TestParseCooldown_NoRateLimitMessage_ReturnsZero(t *testing.T) {
 
 	if !got.IsZero() {
 		t.Fatalf("parseCooldown unrelated stderr: expected zero, got %v", got)
+	}
+}
+
+func TestAdapterImplementsCooldowner(t *testing.T) {
+	a := New(nil)
+	if _, ok := a.(agents.Cooldowner); !ok {
+		t.Fatal("claude adapter does not implement agents.Cooldowner")
+	}
+}
+
+// Verifies the adapter wrapper correctly forwards events/now to parseCooldown
+// (catches pass-through mistakes — wrong argument order, dropped `now`, etc.).
+func TestAdapterCooldown_ForwardsNowToParser(t *testing.T) {
+	a := New(nil).(agents.Cooldowner)
+	events := []coreexec.Event{
+		{Type: coreexec.EventStdout, Data: "Claude AI usage limit reached|1759770000"},
+	}
+	now := time.Unix(1759700000, 0)
+
+	got := a.Cooldown(events, 1, nil, now)
+
+	want := time.Unix(1759770000, 0)
+	if !got.Equal(want) {
+		t.Fatalf("adapter.Cooldown pipe-epoch: got %v want %v", got, want)
+	}
+}
+
+// Verifies the adapter passes now through to the wall-clock branch so a
+// pinned clock produces deterministic output.
+func TestAdapterCooldown_WallClockUsesProvidedNow(t *testing.T) {
+	a := New(nil).(agents.Cooldowner)
+	loc, _ := time.LoadLocation("America/New_York")
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, loc)
+	events := []coreexec.Event{
+		{Type: coreexec.EventStderr, Data: "Your limit will reset at 1pm (America/New_York)."},
+	}
+
+	got := a.Cooldown(events, 1, nil, now)
+
+	want := time.Date(2026, 5, 11, 13, 0, 0, 0, loc)
+	if !got.Equal(want) {
+		t.Fatalf("adapter.Cooldown wall-clock: got %v want %v", got, want)
 	}
 }
 
