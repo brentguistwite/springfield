@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"springfield/internal/core/agents"
+	"springfield/internal/core/agents/claude"
 	"springfield/internal/core/exec"
 	"springfield/internal/core/runtime"
 )
@@ -187,6 +188,41 @@ func TestRunner_ClearsCooldownOnSuccess(t *testing.T) {
 	got := r.GetCooldown(agents.AgentClaude)
 	if !got.IsZero() {
 		t.Fatalf("cooldown not cleared: got %v want zero", got)
+	}
+}
+
+// TestRunner_ClaudeRateLimit_InstallsParsedCooldown wires the real claude
+// adapter to the runner with a stub command function that emits a pipe-epoch
+// rate-limit message. Verifies the parser → Cooldowner → runner pipeline
+// installs the parsed reset time end-to-end.
+func TestRunner_ClaudeRateLimit_InstallsParsedCooldown(t *testing.T) {
+	clock := newFixedClock(time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC))
+	resetEpoch := clock.now().Add(2 * time.Hour).Unix()
+	resetTime := time.Unix(resetEpoch, 0)
+
+	runFn := func(_ context.Context, _ exec.Command, handler exec.EventHandler) exec.Result {
+		line := "Claude AI usage limit reached|" + strconv.FormatInt(resetEpoch, 10)
+		event := exec.Event{Type: exec.EventStdout, Data: line, Time: clock.now()}
+		if handler != nil {
+			handler(event)
+		}
+		return exec.Result{ExitCode: 1, Events: []exec.Event{event}, Err: errors.New("rate limit")}
+	}
+
+	registry := agents.NewRegistry(claude.New(func(string) (string, error) {
+		return "/usr/bin/claude", nil
+	}))
+	r := runtime.NewTestRunner(registry, runFn, clock.now)
+
+	_ = r.Run(context.Background(), runtime.Request{
+		AgentIDs: []agents.ID{agents.AgentClaude},
+		Prompt:   "x",
+	})
+
+	got := r.GetCooldown(agents.AgentClaude)
+	if got.Unix() != resetTime.Unix() {
+		t.Fatalf("cooldown: got %v (unix %d) want %v (unix %d)",
+			got, got.Unix(), resetTime, resetTime.Unix())
 	}
 }
 
