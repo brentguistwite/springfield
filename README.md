@@ -11,7 +11,7 @@ When you run `springfield start`, the conductor will:
 1. Load the next plan from the compiled batch.
 2. Cut an isolated worktree on `springfield/<plan-id>` so the host clone stays untouched.
 3. Dispatch the first id in `agent_priority` (Claude → Codex → Gemini) against the plan envelope.
-4. Stream the agent's output to `.springfield/plans/<batch-id>/evidence/<slice-id>/` and watch for the runner-sole-writer markers that signal pass/fail.
+4. Stream the agent's output to `.springfield/execution/plans/<plan-id>/evidence/iter-<N>/` and watch for the runner-sole-writer markers that signal pass/fail.
 5. Fast-forward merge the plan back into your base branch on success; fall through to the next agent on a retryable failure.
 6. Move to the next plan, repeating until the batch is complete or a fatal failure stops it.
 
@@ -299,7 +299,7 @@ When you run `springfield start`, Springfield will:
 2. Pick the next `queued` slice in the active phase.
 3. Snapshot the control plane (`batch.json`, `run.json`, `source.md`) for tamper detection.
 4. Spawn a fresh agent run for that slice using the first id in `agent_priority`.
-5. Stream the agent's output to `.springfield/plans/<batch-id>/evidence/<slice-id>/`.
+5. Stream the agent's output to `.springfield/execution/plans/<plan-id>/evidence/iter-<N>/`.
 6. If the agent fails with a retryable error, fall through to the next id in `agent_priority`. Fatal failures stop the batch immediately.
 7. Mark the slice `done` (or `failed`) and persist the result to disk.
 8. Repeat until every slice is terminal, then archive the batch and clear the run cursor.
@@ -333,17 +333,14 @@ springfield recover --diagnose --plan <plan-id>
 # directory that's been deleted or never wrote):
 springfield recover --diagnose
 
-# Drop into the slice's evidence files directly. `springfield status`
-# prints the live evidence path after a run settles; otherwise:
-ls .springfield/plans/<batch-id>/evidence/<slice-id>/
+# Drop into the plan's per-iteration evidence files directly.
+# `springfield status` prints the live evidence path after a run settles;
+# otherwise ls the runner's output directly:
+ls .springfield/execution/plans/<plan-id>/evidence/iter-<N>/
 #   meta.json          — runner verdict, timing, exit code
 #   events.jsonl       — every dispatched event (one per line)
 #   assistant_text.txt — what the agent actually said
 #   prompt.txt         — the exact prompt the runner built
-#
-# Note: the conductor's per-plan runner can additionally write
-# per-iteration evidence under .springfield/execution/plans/<plan-id>/
-# evidence/iter-<N>/ — check both paths when triaging a stuck run.
 
 # Inspect the active-run cursor (which batch + phase + plans are live):
 cat .springfield/run.json
@@ -360,7 +357,7 @@ cat .springfield/run.json
 | `.springfield/run.json` | no | Active run cursor: which batch + phase is in flight |
 | `.springfield/plans/<batch-id>/batch.json` | no | Compiled batch state (per-slice statuses) |
 | `.springfield/plans/<batch-id>/source.md` | no | Frozen plan source for the batch |
-| `.springfield/plans/<batch-id>/evidence/<slice-id>/` | no | Per-slice agent output: `meta.json`, `events.jsonl`, `assistant_text.txt`, `prompt.txt` |
+| `.springfield/execution/plans/<plan-id>/evidence/iter-<N>/` | no | Per-iteration agent output: `meta.json`, `events.jsonl`, `assistant_text.txt`, `prompt.txt` |
 | `.springfield/archive/<batch-id>.json` | no | Compact summary written when a batch completes or is replaced |
 | `.springfield/execution/config.json` | no | Internal conductor config (derived from `springfield.toml`) |
 | `.springfield/.lock` | no | Process lock for the active run |
