@@ -14,6 +14,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -238,11 +239,29 @@ func configureForm(form *huh.Form, in io.Reader, out io.Writer, accessible bool)
 	return form
 }
 
+// maxLineReaderEOFs bounds how many consecutive EOF reads the
+// lineByLineReader tolerates before bailing out. huh's accessible-mode
+// loops re-prompt on every PromptInt returning 0 from EOF, and huh swallows
+// io.Reader errors — so without a forced exit an empty or already-drained
+// stdin would wedge the form in an infinite re-prompt loop. The threshold
+// is high enough that a normal multi-prompt sequence does not trip it
+// during legitimate input lulls, but small enough to bail within seconds
+// when the pipe is genuinely dead.
+const maxLineReaderEOFs = 16
+
 // lineByLineReader is an io.Reader that returns at most one line per Read.
 // See configureForm for the why; this is the smallest workaround that does
 // not require forking huh.
+//
+// After maxLineReaderEOFs consecutive EOF reads the reader calls the
+// exhausted hook (default: os.Exit) so the wedged accessible-mode loop
+// cannot spin forever. Tests inject a hook that records the exit instead.
+// This replaces the earlier goroutine-based Peek probe, which raced with
+// huh's later reads on the same *bufio.Reader (round-3 review finding).
 type lineByLineReader struct {
-	r *bufio.Reader
+	r         *bufio.Reader
+	eofs      int
+	onExhaust func()
 }
 
 func (l *lineByLineReader) Read(p []byte) (int, error) {
@@ -254,10 +273,21 @@ func (l *lineByLineReader) Read(p []byte) (int, error) {
 		b, err := l.r.ReadByte()
 		if err != nil {
 			if n > 0 {
+				l.eofs = 0
 				return n, nil
+			}
+			l.eofs++
+			if l.eofs >= maxLineReaderEOFs {
+				if l.onExhaust != nil {
+					l.onExhaust()
+				} else {
+					fmt.Fprintln(os.Stderr, "init: stdin exhausted before form completed — pass --agents or pipe enough answers for every prompt")
+					os.Exit(2)
+				}
 			}
 			return 0, err
 		}
+		l.eofs = 0
 		p[n] = b
 		n++
 		if b == '\n' {

@@ -160,6 +160,76 @@ func TestLineByLineReaderEnforcesOneLinePerRead(t *testing.T) {
 	}
 }
 
+// TestLineByLineReaderExhaustionHookFires verifies the EOF-counter bail
+// path: after maxLineReaderEOFs consecutive zero-byte reads on an empty
+// underlying reader, the configured onExhaust hook fires exactly once.
+// Production code passes os.Exit; tests pass a recording hook so the
+// process is not killed.
+func TestLineByLineReaderExhaustionHookFires(t *testing.T) {
+	var calls int
+	lr := &lineByLineReader{
+		r:         bufio.NewReader(strings.NewReader("")),
+		onExhaust: func() { calls++ },
+	}
+	buf := make([]byte, 4)
+	for i := 0; i < maxLineReaderEOFs+5; i++ {
+		_, err := lr.Read(buf)
+		if err != io.EOF {
+			t.Fatalf("iter %d: err = %v, want io.EOF", i, err)
+		}
+	}
+	if calls < 1 {
+		t.Fatalf("expected exhaustion hook to fire at least once after %d EOFs, got %d", maxLineReaderEOFs+5, calls)
+	}
+}
+
+// TestLineByLineReaderExhaustionResetsOnData verifies the EOF counter is
+// cleared when a real byte arrives mid-form, so a temporarily slow pipe
+// (consumer waits for prompt; producer responds) does not trigger the
+// exhaustion bail on the cumulative EOFs across prompts.
+func TestLineByLineReaderExhaustionResetsOnData(t *testing.T) {
+	type chunk struct {
+		emit string
+		eof  bool
+	}
+	chunks := []chunk{
+		{eof: true}, {eof: true}, {eof: true}, // slow pipe; no data yet
+		{emit: "answer\n"}, // producer writes
+		{eof: true},
+	}
+	idx := 0
+	var calls int
+	pr, pw := io.Pipe()
+	go func() {
+		for _, c := range chunks {
+			if c.emit != "" {
+				_, _ = pw.Write([]byte(c.emit))
+			}
+			idx++
+		}
+		_ = pw.Close()
+	}()
+	lr := &lineByLineReader{r: bufio.NewReader(pr), onExhaust: func() { calls++ }}
+
+	// Read the single line. Some intermediate reads will return EOF/0
+	// bytes but onExhaust must NOT fire because real data arrives before
+	// the EOF count exceeds the threshold.
+	buf := make([]byte, 32)
+	var got string
+	for attempts := 0; attempts < 8 && got == ""; attempts++ {
+		n, _ := lr.Read(buf)
+		if n > 0 {
+			got = string(buf[:n])
+		}
+	}
+	if got != "answer\n" {
+		t.Fatalf("got %q, want %q", got, "answer\n")
+	}
+	if calls != 0 {
+		t.Fatalf("exhaustion hook fired %d times during slow-pipe read; should not have fired", calls)
+	}
+}
+
 // TestLineByLineReaderRespectsBufferLimit pins the safety net for the
 // pathological case where a single "line" exceeds the caller's buffer:
 // the reader must return what it has rather than overflow.

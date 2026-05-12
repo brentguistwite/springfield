@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -12,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/spf13/cobra"
@@ -139,26 +137,6 @@ func resolveInitSelections(
 		return priority, models, nil
 	}
 
-	// Non-TTY callers can still reach the form via huh's accessible mode by
-	// piping answers on stdin. Without any piped bytes the accessible loop
-	// would spin forever on EOF (huh re-prompts on each "0" int read from
-	// a dead reader), so probe stdin briefly before the form starts.
-	//
-	// The probe runs in a goroutine with a short deadline so a slow or
-	// prompt-driven producer (where the consumer is supposed to read
-	// prompts before sending answers) does not deadlock at startup —
-	// after the deadline we assume the pipe will deliver bytes once
-	// prompts emit and proceed into the form.
-	if !interactive {
-		buffered := bufio.NewReader(in)
-		hasData, hasEOF := probeStdinShortly(buffered)
-		if hasEOF && !hasData {
-			return nil, nil, fmt.Errorf(
-				"non-interactive init needs --agents (e.g. --agents claude,codex,gemini) or piped answers on stdin")
-		}
-		in = buffered
-	}
-
 	det := newRegistryDetector(exec.LookPath)
 	return runInitForm(in, out, det, suggest, !interactive)
 }
@@ -168,35 +146,6 @@ func resolveInitSelections(
 // internals.
 type Detector interface {
 	Detect(id agents.ID) agents.DetectionStatus
-}
-
-// probeStdinShortly looks ahead on a bufio.Reader without consuming bytes.
-// Reports (hasData, hasEOF):
-//   - hasData=true when at least one byte is already buffered/available.
-//   - hasEOF=true when the read returned EOF — pipe was closed before any
-//     bytes arrived.
-//
-// Slow or prompt-driven pipes can stall here indefinitely; cap the wait
-// at 150ms and treat a timeout as "assume bytes will arrive once the form
-// prompts" (returning hasData=true, hasEOF=false) so we do not deadlock.
-func probeStdinShortly(buffered *bufio.Reader) (hasData, hasEOF bool) {
-	type result struct {
-		ok  bool
-		err error
-	}
-	done := make(chan result, 1)
-	go func() {
-		_, err := buffered.Peek(1)
-		done <- result{ok: err == nil, err: err}
-	}()
-	select {
-	case r := <-done:
-		return r.ok, errors.Is(r.err, io.EOF)
-	case <-time.After(150 * time.Millisecond):
-		// Producer is slow but the pipe is still open. Proceed and let
-		// the form's per-prompt reads pull bytes as they arrive.
-		return true, false
-	}
 }
 
 // printNextSteps writes the post-init next-step copy. lipgloss styling is
