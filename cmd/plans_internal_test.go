@@ -189,6 +189,69 @@ func TestPlansRemoveRepairsMissingPlanFile(t *testing.T) {
 	}
 }
 
+func TestPlansRemoveAcceptsPositionalID(t *testing.T) {
+	root := newStatusRoot(t)
+	writeStatusPlan(t, root, "feature.md")
+	writeStatusConfig(t, root, []map[string]any{})
+
+	if _, err := runPlansArgs(t, "add", "--dir", root, "--id", "feature-a", "--path", "feature.md"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	if out, err := runPlansArgs(t, "remove", "--dir", root, "feature-a"); err != nil {
+		t.Fatalf("positional remove: %v\n%s", err, out)
+	}
+	listOut, _ := runPlansArgs(t, "list", "--dir", root)
+	if strings.Contains(listOut, "feature-a") {
+		t.Fatalf("feature-a still present after positional remove:\n%s", listOut)
+	}
+}
+
+func TestPlansRemoveAcceptsFlagID(t *testing.T) {
+	root := newStatusRoot(t)
+	writeStatusPlan(t, root, "feature.md")
+	writeStatusConfig(t, root, []map[string]any{})
+
+	if _, err := runPlansArgs(t, "add", "--dir", root, "--id", "feature-a", "--path", "feature.md"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	if out, err := runPlansArgs(t, "remove", "--dir", root, "--id", "feature-a"); err != nil {
+		t.Fatalf("flag remove: %v\n%s", err, out)
+	}
+}
+
+func TestPlansRemoveRejectsBothPositionalAndFlag(t *testing.T) {
+	root := newStatusRoot(t)
+	writeStatusPlan(t, root, "feature.md")
+	writeStatusConfig(t, root, []map[string]any{})
+
+	if _, err := runPlansArgs(t, "add", "--dir", root, "--id", "feature-a", "--path", "feature.md"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	out, err := runPlansArgs(t, "remove", "--dir", root, "feature-a", "--id", "feature-b")
+	if err == nil {
+		t.Fatalf("expected error when both positional and --id given, got: %s", out)
+	}
+	if !strings.Contains(err.Error(), "specify the plan id once") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPlansRemoveRequiresID(t *testing.T) {
+	root := newStatusRoot(t)
+	writeStatusConfig(t, root, []map[string]any{})
+
+	_, err := runPlansArgs(t, "remove", "--dir", root)
+	if err == nil {
+		t.Fatalf("expected error when no id given")
+	}
+	if !strings.Contains(err.Error(), "plan id is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func runPlansArgs(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	cmd := NewPlansCommand()

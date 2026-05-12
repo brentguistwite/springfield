@@ -138,6 +138,13 @@ func (c Config) ExecutionSettings() agents.ExecutionSettings {
 	}
 }
 
+// RecommendedExecutionSettings returns the default per-agent execution settings
+// `springfield init` applies when the operator picks the recommended profile.
+//
+// Model is intentionally unset across all three agent blocks below. Pinning a
+// model couples Springfield's release cadence to each vendor's; we defer to the
+// underlying CLI's evolving default. Operators override per-agent via
+// `springfield init`.
 func RecommendedExecutionSettings() agents.ExecutionSettings {
 	return agents.ExecutionSettings{
 		Claude: agents.ClaudeExecutionSettings{
@@ -150,7 +157,6 @@ func RecommendedExecutionSettings() agents.ExecutionSettings {
 		Gemini: agents.GeminiExecutionSettings{
 			ApprovalMode: "yolo",
 			SandboxMode:  "sandbox-exec",
-			Model:        "",
 		},
 	}
 }

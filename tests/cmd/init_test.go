@@ -1,114 +1,12 @@
 package cmd_test
 
 import (
-	"bytes"
-	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"testing"
-
-	"springfield/cmd"
-	"springfield/internal/core/agents"
 )
-
-func TestPromptCollectsPerAgentModels(t *testing.T) {
-	var out bytes.Buffer
-	in := strings.NewReader("claude-opus-4-7\ncustom-codex-model\n")
-
-	models, err := cmd.PromptForAgentModels(
-		in,
-		&out,
-		[]agents.ID{agents.AgentClaude, agents.AgentCodex},
-		func(id agents.ID) []string {
-			switch id {
-			case agents.AgentClaude:
-				return []string{"claude-opus-4-7", "claude-sonnet-4-6"}
-			case agents.AgentCodex:
-				return []string{"gpt-5-codex", "o3"}
-			default:
-				return nil
-			}
-		},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	want := map[agents.ID]string{
-		agents.AgentClaude: "claude-opus-4-7",
-		agents.AgentCodex:  "custom-codex-model",
-	}
-	if !maps.Equal(models, want) {
-		t.Fatalf("models = %v, want %v", models, want)
-	}
-}
-
-// TestPromptShowsAllThreeAgentsWithDetection verifies the picker lists every
-// execution-supported agent with a detection marker so the user can see at a
-// glance which CLIs are installed before choosing.
-func TestPromptShowsAllThreeAgentsWithDetection(t *testing.T) {
-	var out bytes.Buffer
-	in := strings.NewReader("claude,codex\n")
-	priority, err := cmd.PromptForAgentsWithDetection(in, &out, fakeDetector{
-		statuses: map[agents.ID]agents.DetectionStatus{
-			agents.AgentClaude: agents.DetectionStatusAvailable,
-			agents.AgentCodex:  agents.DetectionStatusMissing,
-			agents.AgentGemini: agents.DetectionStatusAvailable,
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := out.String()
-	for _, want := range []string{"claude", "codex", "gemini", "✓", "✗"} {
-		if !strings.Contains(s, want) {
-			t.Fatalf("prompt output missing %q:\n%s", want, s)
-		}
-	}
-	if !slices.Equal(priority, []string{"claude", "codex"}) {
-		t.Fatalf("priority = %v, want [claude codex]", priority)
-	}
-}
-
-// TestPromptRejectsAllOff verifies the picker errors out when the user
-// repeatedly submits no agents — the runtime cannot proceed without at
-// least one agent in the priority list.
-func TestPromptRejectsAllOff(t *testing.T) {
-	var out bytes.Buffer
-	// strings.Repeat with maxPromptAttempts+1 newlines so the loop exhausts the cap
-	// rather than hitting EOF — exercises the "too many invalid attempts" path.
-	// (maxPromptAttempts = 4, so 5 newlines exceeds it)
-	in := strings.NewReader(strings.Repeat("\n", 5))
-	_, err := cmd.PromptForAgentsWithDetection(in, &out, fakeDetector{})
-	if err == nil {
-		t.Fatal("expected error when no agents selected after retries")
-	}
-}
-
-// TestPromptShowsUnhealthyMarker verifies the picker renders the ⚠ marker and
-// "unhealthy" descriptor when an agent's detection status is Unhealthy.
-func TestPromptShowsUnhealthyMarker(t *testing.T) {
-	var out bytes.Buffer
-	in := strings.NewReader("claude\n")
-	_, err := cmd.PromptForAgentsWithDetection(in, &out, fakeDetector{
-		statuses: map[agents.ID]agents.DetectionStatus{
-			agents.AgentClaude: agents.DetectionStatusUnhealthy,
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := out.String()
-	if !strings.Contains(s, "⚠") {
-		t.Fatalf("expected unhealthy marker ⚠ in output:\n%s", s)
-	}
-	if !strings.Contains(s, "unhealthy") {
-		t.Fatalf("expected 'unhealthy' descriptor in output:\n%s", s)
-	}
-}
 
 // TestInitAgentsFlagSetsAgentPriority verifies --agents flag controls agent_priority.
 func TestInitAgentsFlagSetsAgentPriority(t *testing.T) {
@@ -238,10 +136,10 @@ func TestInitAcceptsGeminiInAgentsFlag(t *testing.T) {
 	}
 }
 
-// TestInitNonTTYWithoutAgentsFlagErrors verifies that running init non-interactively
-// (no TTY) without an explicit --agents flag fails with a clear error. There is no
-// fixed default priority — the user must opt in.
-func TestInitNonTTYWithoutAgentsFlagErrors(t *testing.T) {
+// TestInitNonTTYEmptyStdinErrors verifies that running init non-interactively
+// without piped answers or --agents fails with a clear error. There is no
+// fixed default priority — the user must opt in via flag or pipe.
+func TestInitNonTTYEmptyStdinErrors(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 
@@ -256,6 +154,58 @@ func TestInitNonTTYWithoutAgentsFlagErrors(t *testing.T) {
 	// No springfield.toml should have been written.
 	if _, statErr := os.Stat(filepath.Join(dir, "springfield.toml")); statErr == nil {
 		t.Fatalf("expected no springfield.toml on error path")
+	}
+}
+
+// TestInitNonTTYPipedAccessibleModeMatchesFlagOutput pipes the canonical
+// "claude only, adapter default" answer script into init's accessible-mode
+// form and asserts the resulting springfield.toml is byte-identical to the
+// flag-driven equivalent.
+//
+// Answer-script derivation (empirical, 2026-05-11):
+//
+//  Prompt                                            Input     Effect
+//  ───────────────────────────────────────────────── ──────    ───────────────────────────
+//  MultiSelect "Which agents..."                     "1\n"     toggle claude
+//  MultiSelect (still in toggle loop)                "0\n"     confirm selection
+//  Select "Model for claude"                         "1\n"     pick "(use adapter default)"
+//  Confirm "Write springfield.toml..."               "y\n"     write
+//
+// Drift warning: huh's accessible-mode output format (numbered separators,
+// prompt phrasing) is not API-stable. If this test fails on a `huh` bump:
+//   1. Run `printf '' | springfield init` interactively against a temp dir.
+//   2. Re-derive the answer script from observed prompts.
+//   3. Update this fixture in a chore(deps) commit alongside the bump.
+func TestInitNonTTYPipedAccessibleModeMatchesFlagOutput(t *testing.T) {
+	bin := buildBinary(t)
+
+	flagDir := t.TempDir()
+	pipeDir := t.TempDir()
+
+	if out, err := runBinaryIn(t, bin, flagDir, "init", "--agents", "claude"); err != nil {
+		t.Fatalf("flag-driven init failed: %v\n%s", err, out)
+	}
+	flagBytes, err := os.ReadFile(filepath.Join(flagDir, "springfield.toml"))
+	if err != nil {
+		t.Fatalf("read flag config: %v", err)
+	}
+
+	const cannedAnswers = "1\n0\n1\ny\n"
+	out, err := runBinaryInWithInput(t, bin, pipeDir, cannedAnswers, "init")
+	if err != nil {
+		t.Fatalf("piped init failed: %v\n%s", err, out)
+	}
+	pipeBytes, err := os.ReadFile(filepath.Join(pipeDir, "springfield.toml"))
+	if err != nil {
+		t.Fatalf("read piped config: %v", err)
+	}
+
+	if string(flagBytes) != string(pipeBytes) {
+		t.Fatalf("piped accessible-mode config diverged from flag-driven:\n--- flag ---\n%s\n--- pipe ---\n%s", flagBytes, pipeBytes)
+	}
+
+	if !strings.Contains(out, "Next: springfield plan") {
+		t.Errorf("expected post-init Next: line in piped output, got:\n%s", out)
 	}
 }
 

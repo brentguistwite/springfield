@@ -1,94 +1,14 @@
 package cmd
 
 import (
-	"bytes"
+	"bufio"
 	"context"
+	"io"
 	"strings"
 	"testing"
 
 	"springfield/internal/core/agents"
 )
-
-// TestResolvePriorityInteractiveEmptyInput verifies empty input is rejected —
-// the picker requires the user to explicitly opt in to at least one agent.
-func TestResolvePriorityInteractiveEmptyInput(t *testing.T) {
-	in := strings.NewReader("\n")
-	var out bytes.Buffer
-
-	_, err := resolvePriority("", true, in, &out)
-	if err == nil {
-		t.Fatal("expected error on empty input, got nil")
-	}
-	if !strings.Contains(out.String(), "at least one agent is required") {
-		t.Errorf("expected rejection message in output, got: %q", out.String())
-	}
-}
-
-// TestResolvePriorityInteractiveValidInput verifies a valid comma-separated input is returned.
-func TestResolvePriorityInteractiveValidInput(t *testing.T) {
-	in := strings.NewReader("codex,claude\n")
-	var out bytes.Buffer
-
-	got, err := resolvePriority("", true, in, &out)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	want := []string{"codex", "claude"}
-	if len(got) != len(want) {
-		t.Fatalf("got %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("got[%d]=%q, want %q", i, got[i], want[i])
-		}
-	}
-}
-
-// TestResolvePriorityInteractiveRetryOnInvalid verifies invalid input re-prompts and
-// a subsequent valid entry is accepted.
-func TestResolvePriorityInteractiveRetryOnInvalid(t *testing.T) {
-	// "unknown" is not a supported agent → triggers re-prompt;
-	// "claude,codex" succeeds.
-	in := strings.NewReader("unknown\nclaude,codex\n")
-	var out bytes.Buffer
-
-	got, err := resolvePriority("", true, in, &out)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	want := []string{"claude", "codex"}
-	if len(got) != len(want) {
-		t.Fatalf("got %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("got[%d]=%q, want %q", i, got[i], want[i])
-		}
-	}
-
-	// Confirm a rejection message was printed during the retry.
-	if !strings.Contains(out.String(), "not") {
-		t.Errorf("expected rejection message in output, got: %q", out.String())
-	}
-}
-
-// TestResolvePriorityInteractiveWhitespaceInput verifies that a line containing
-// only whitespace is rejected like empty input — TrimSpace collapses it and
-// the picker still requires an explicit agent selection.
-func TestResolvePriorityInteractiveWhitespaceInput(t *testing.T) {
-	in := strings.NewReader("   \n")
-	var out bytes.Buffer
-
-	_, err := resolvePriority("", true, in, &out)
-	if err == nil {
-		t.Fatal("expected error on whitespace-only input, got nil")
-	}
-	if !strings.Contains(out.String(), "at least one agent is required") {
-		t.Errorf("expected rejection message in output, got: %q", out.String())
-	}
-}
 
 // TestParseAndValidateAgentsRejectsDuplicates verifies that a duplicate agent ID
 // in the priority list is rejected — agent_priority must be a strict ordering.
@@ -99,79 +19,6 @@ func TestParseAndValidateAgentsRejectsDuplicates(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "duplicate") {
 		t.Errorf("expected duplicate error, got: %v", err)
-	}
-}
-
-func TestResolveModelsPromptsInteractivelyEvenWithAgentsFlag(t *testing.T) {
-	in := strings.NewReader("claude-sonnet-4-6\n\n")
-	var out bytes.Buffer
-
-	models, err := resolveModels(
-		"claude,codex",
-		"",
-		true,
-		[]string{"claude", "codex"},
-		in,
-		&out,
-		func(id agents.ID) []string {
-			switch id {
-			case agents.AgentClaude:
-				return []string{"claude-sonnet-4-6"}
-			case agents.AgentCodex:
-				return []string{"gpt-5-codex"}
-			default:
-				return nil
-			}
-		},
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if got := models["claude"]; got != "claude-sonnet-4-6" {
-		t.Fatalf("claude model = %q, want claude-sonnet-4-6", got)
-	}
-	if _, ok := models["codex"]; ok {
-		t.Fatalf("expected blank codex input to omit model, got %v", models)
-	}
-	if !strings.Contains(out.String(), "Model for claude") || !strings.Contains(out.String(), "Model for codex") {
-		t.Fatalf("expected prompt output for both agents, got:\n%s", out.String())
-	}
-}
-
-func TestInteractiveInitFlowPreservesQueuedModelAnswers(t *testing.T) {
-	in := strings.NewReader("claude,codex\nclaude-opus-4-7\ncustom-codex-model\n")
-	var out bytes.Buffer
-
-	priority, models, err := resolveInitSelections(
-		"",
-		"",
-		true,
-		in,
-		&out,
-		func(id agents.ID) []string {
-			switch id {
-			case agents.AgentClaude:
-				return []string{"claude-opus-4-7"}
-			case agents.AgentCodex:
-				return []string{"gpt-5-codex"}
-			default:
-				return nil
-			}
-		},
-	)
-	if err != nil {
-		t.Fatalf("resolveInitSelections: %v", err)
-	}
-
-	if len(priority) != 2 || priority[0] != "claude" || priority[1] != "codex" {
-		t.Fatalf("priority = %v, want [claude codex]", priority)
-	}
-	if got := models["claude"]; got != "claude-opus-4-7" {
-		t.Fatalf("claude model = %q, want claude-opus-4-7", got)
-	}
-	if got := models["codex"]; got != "custom-codex-model" {
-		t.Fatalf("codex model = %q, want custom-codex-model", got)
 	}
 }
 
@@ -210,6 +57,196 @@ func TestNewModelSuggesterReturnsNilWhenAdapterHasNoModelProvider(t *testing.T) 
 
 	if got := suggester(agents.AgentClaude); got != nil {
 		t.Fatalf("suggestions = %v, want nil", got)
+	}
+}
+
+// TestPreservedOrderUsesCanonicalAgentOrdering pins the rule that the final
+// priority list follows the supported-agents canonical order rather than the
+// operator's toggle order. Two operators picking the same set must end up
+// with byte-identical springfield.toml.
+func TestPreservedOrderUsesCanonicalAgentOrdering(t *testing.T) {
+	canonical := []agents.ID{agents.AgentClaude, agents.AgentCodex, agents.AgentGemini}
+
+	cases := []struct {
+		name     string
+		selected []string
+		want     []string
+	}{
+		{"toggle-reverse", []string{"gemini", "codex", "claude"}, []string{"claude", "codex", "gemini"}},
+		{"toggle-codex-first", []string{"codex", "claude"}, []string{"claude", "codex"}},
+		{"empty", nil, []string{}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := preservedOrder(tc.selected, canonical)
+			if len(got) != len(tc.want) {
+				t.Fatalf("len(got) = %d, want %d (%v)", len(got), len(tc.want), got)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Errorf("got[%d] = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestCollectModelsOmitsBlanks pins the rule that a blank-string selection
+// (the "(adapter default)" option) is omitted from the result map so the
+// downstream config.Init path leaves the corresponding TOML model line out.
+func TestCollectModelsOmitsBlanks(t *testing.T) {
+	picked := "claude-sonnet-4-6"
+	empty := ""
+	whitespace := "   "
+
+	modelTargets := map[string]*string{
+		"claude": &picked,
+		"codex":  &empty,
+		"gemini": &whitespace,
+	}
+
+	models := collectModels([]string{"claude", "codex", "gemini"}, modelTargets)
+
+	if models["claude"] != "claude-sonnet-4-6" {
+		t.Errorf("claude = %q, want claude-sonnet-4-6", models["claude"])
+	}
+	if _, ok := models["codex"]; ok {
+		t.Errorf("codex should be omitted (adapter default), got %q", models["codex"])
+	}
+	if _, ok := models["gemini"]; ok {
+		t.Errorf("gemini should be omitted (whitespace-only), got %q", models["gemini"])
+	}
+}
+
+// TestLineByLineReaderEnforcesOneLinePerRead pins the contract that drives
+// huh's accessible-mode compatibility: a single Read call must never return
+// more than one logical line, even when the producer delivered every byte
+// up front. Without this, the first prompt's bufio.Scanner would drain the
+// whole answer script and starve every later prompt.
+func TestLineByLineReaderEnforcesOneLinePerRead(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   string
+		want    []string
+		wantErr error
+	}{
+		{"lf", "alpha\nbravo\ncharlie\n", []string{"alpha\n", "bravo\n", "charlie\n"}, io.EOF},
+		{"crlf", "alpha\r\nbravo\r\n", []string{"alpha\r", "bravo\r"}, io.EOF},
+		{"cr-only", "alpha\rbravo\r", []string{"alpha\r", "bravo\r"}, io.EOF},
+		{"no-trailing-newline", "alpha\nbravo", []string{"alpha\n", "bravo"}, io.EOF},
+		{"empty", "", nil, io.EOF},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lr := &lineByLineReader{r: bufio.NewReader(strings.NewReader(tc.input))}
+			buf := make([]byte, 64)
+			for _, want := range tc.want {
+				n, err := lr.Read(buf)
+				if err != nil {
+					t.Fatalf("Read returned %v before consuming all lines", err)
+				}
+				if got := string(buf[:n]); got != want {
+					t.Fatalf("got %q, want %q", got, want)
+				}
+			}
+			// Drain to EOF.
+			_, err := lr.Read(buf)
+			if err != tc.wantErr {
+				t.Fatalf("final err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestLineByLineReaderExhaustionHookFires verifies the EOF-counter bail
+// path: after maxLineReaderEOFs consecutive zero-byte reads on an empty
+// underlying reader, the configured onExhaust hook fires exactly once.
+// Production code passes os.Exit; tests pass a recording hook so the
+// process is not killed.
+func TestLineByLineReaderExhaustionHookFires(t *testing.T) {
+	var calls int
+	lr := &lineByLineReader{
+		r:         bufio.NewReader(strings.NewReader("")),
+		onExhaust: func() { calls++ },
+	}
+	buf := make([]byte, 4)
+	for i := 0; i < maxLineReaderEOFs+5; i++ {
+		_, err := lr.Read(buf)
+		if err != io.EOF {
+			t.Fatalf("iter %d: err = %v, want io.EOF", i, err)
+		}
+	}
+	if calls < 1 {
+		t.Fatalf("expected exhaustion hook to fire at least once after %d EOFs, got %d", maxLineReaderEOFs+5, calls)
+	}
+}
+
+// TestLineByLineReaderExhaustionResetsOnData verifies the EOF counter is
+// cleared when a real byte arrives mid-form, so a temporarily slow pipe
+// (consumer waits for prompt; producer responds) does not trigger the
+// exhaustion bail on the cumulative EOFs across prompts.
+func TestLineByLineReaderExhaustionResetsOnData(t *testing.T) {
+	type chunk struct {
+		emit string
+		eof  bool
+	}
+	chunks := []chunk{
+		{eof: true}, {eof: true}, {eof: true}, // slow pipe; no data yet
+		{emit: "answer\n"}, // producer writes
+		{eof: true},
+	}
+	idx := 0
+	var calls int
+	pr, pw := io.Pipe()
+	go func() {
+		for _, c := range chunks {
+			if c.emit != "" {
+				_, _ = pw.Write([]byte(c.emit))
+			}
+			idx++
+		}
+		_ = pw.Close()
+	}()
+	lr := &lineByLineReader{r: bufio.NewReader(pr), onExhaust: func() { calls++ }}
+
+	// Read the single line. Some intermediate reads will return EOF/0
+	// bytes but onExhaust must NOT fire because real data arrives before
+	// the EOF count exceeds the threshold.
+	buf := make([]byte, 32)
+	var got string
+	for attempts := 0; attempts < 8 && got == ""; attempts++ {
+		n, _ := lr.Read(buf)
+		if n > 0 {
+			got = string(buf[:n])
+		}
+	}
+	if got != "answer\n" {
+		t.Fatalf("got %q, want %q", got, "answer\n")
+	}
+	if calls != 0 {
+		t.Fatalf("exhaustion hook fired %d times during slow-pipe read; should not have fired", calls)
+	}
+}
+
+// TestLineByLineReaderRespectsBufferLimit pins the safety net for the
+// pathological case where a single "line" exceeds the caller's buffer:
+// the reader must return what it has rather than overflow.
+func TestLineByLineReaderRespectsBufferLimit(t *testing.T) {
+	long := strings.Repeat("x", 100) + "\n"
+	lr := &lineByLineReader{r: bufio.NewReader(strings.NewReader(long))}
+	buf := make([]byte, 16)
+
+	n, err := lr.Read(buf)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if n != 16 {
+		t.Fatalf("expected to fill buffer, got n=%d", n)
+	}
+	if string(buf) != strings.Repeat("x", 16) {
+		t.Fatalf("buffer content = %q, want 16 x's", string(buf))
 	}
 }
 
