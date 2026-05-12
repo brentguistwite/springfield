@@ -4,9 +4,16 @@
 
 Plugin-first, local-state conductor for multi-agent code work.
 
-Springfield turns a plan (file or prompt) into a sequential batch of agent runs, executes each slice in an isolated worktree, captures per-slice evidence, and falls through `agent_priority` (Claude → Codex → Gemini) when a run is retryable. State lives under `.springfield/` in the repo; install ships through Claude Code and Codex marketplace plugins.
+Springfield turns a plan (file or prompt) into a sequential batch of agent runs, executes each slice in an isolated git worktree, captures per-slice evidence, and falls through `agent_priority` (Claude → Codex → Gemini) when a run is retryable. State lives under `.springfield/` in the repo; install ships through Claude Code and Codex marketplace plugins.
 
-Onboarding diagram: <Pages URL placeholder> (URL fills in after the first deploy of `.github/workflows/deploy-flowchart.yml`).
+When you run `springfield start`, the conductor will:
+
+1. Load the next plan from the compiled batch.
+2. Cut an isolated worktree on `springfield/<plan-id>` so the host clone stays untouched.
+3. Dispatch the first id in `agent_priority` (Claude → Codex → Gemini) against the plan envelope.
+4. Stream the agent's output to `.springfield/plans/<batch-id>/evidence/<slice-id>/` and watch for the runner-sole-writer markers that signal pass/fail.
+5. Fast-forward merge the plan back into your base branch on success; fall through to the next agent on a retryable failure.
+6. Move to the next plan, repeating until the batch is complete or a fatal failure stops it.
 
 > Pre-1.0. Config and state layout may change without migration shims.
 
@@ -19,6 +26,7 @@ Onboarding diagram: <Pages URL placeholder> (URL fills in after the first deploy
   - [Gemini CLI](https://github.com/google-gemini/gemini-cli) (opt-in; set `GEMINI_API_KEY` or sign in headless)
 - macOS or Linux (amd64/arm64) for the plugin auto-install path. Windows installs via [Alternate Install Paths](#alternate-install-paths).
 - `~/.local/bin` on `PATH` if installing through the Claude marketplace plugin (the SessionStart hook symlinks the binary there).
+- Go 1.26+ if you're building from source (`go install .`); not needed for the plugin install path.
 
 ## Public CLI
 
@@ -164,8 +172,8 @@ approval_policy = "never"
 
 Notes:
 
-- `springfield init` prompts for agent priority order, then prompts for an optional model per enabled agent. Press enter to keep the agent default, pick a suggested model, or pass `--model claude=<id>,codex=<id>,gemini=<id>` for non-interactive runs.
-- `springfield init` scaffolds `springfield.toml` + `.springfield/` with recommended execution settings for each selected agent. Use `--agents claude,codex` to skip the interactive priority prompt; non-interactive runs without `--agents` will error.
+- `springfield init` runs an interactive TUI: multi-select agents, pick a model per agent (or take the adapter default), then confirm a summary before write. Shift+Tab navigates back; Esc edits any answer. For non-interactive installs, pass `--agents claude,codex` and optionally `--model claude=<id>,codex=<id>,gemini=<id>` — or pipe answers on stdin and Springfield falls through to huh's accessible plain-text mode.
+- `springfield init` scaffolds `springfield.toml` + `.springfield/` with recommended execution settings for each selected agent.
 - Gemini is execution-supported but opt-in. Pass `--agents claude,codex,gemini` (or edit `agent_priority`) to include it. See [`docs/release.md`](docs/release.md#2026-04-gemini-cli-execution-support) for the migration note.
 - Primary end-user install is the Claude marketplace or Codex plugin/catalog flow.
 - `springfield install` is the local sync/bootstrap/fallback path after `init`.
