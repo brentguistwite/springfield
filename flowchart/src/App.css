@@ -87,6 +87,90 @@
   position: relative;
 }
 
+/* ── Group node with header label ───────────────────────────── */
+
+.group-node {
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.group-node__header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 6px 12px;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(11, 18, 32, 0.6);
+  border-radius: 10px 10px 0 0;
+  user-select: none;
+}
+
+/* ── Edge legend overlay ────────────────────────────────────── */
+
+.legend {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  background: rgba(11, 18, 32, 0.88);
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 4;
+  pointer-events: none;
+  backdrop-filter: blur(4px);
+}
+
+.legend__title {
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #64748b;
+  margin-bottom: 2px;
+}
+
+.legend__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.legend__swatch {
+  flex-shrink: 0;
+}
+
+.legend__label {
+  font-size: 0.75rem;
+  color: #cbd5e1;
+}
+
+/* ── Canvas title overlay ────────────────────────────────────── */
+
+.canvas-title {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.75rem;
+  color: #475569;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 4;
+  letter-spacing: 0.03em;
+}
+
+/* ── NodePanel ───────────────────────────────────────────────── */
+
 .node-panel {
   position: absolute;
   top: 0;

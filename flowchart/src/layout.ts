@@ -1,5 +1,5 @@
 import dagre from 'dagre'
-import { MarkerType, type Edge, type Node } from '@xyflow/react'
+import { MarkerType, type Edge, type Node, type SmoothStepPathOptions } from '@xyflow/react'
 import type {
   LifecycleEdge,
   LifecycleMachine,
@@ -11,7 +11,8 @@ const NODE_H = 52
 const GROUP_PADDING = 24
 const GROUP_PADDING_TOP = 44
 
-const MACHINES: LifecycleMachine[] = ['plan', 'queue', 'merge']
+// LR order: queue dispatches → plan executes → merge integrates
+const MACHINES: LifecycleMachine[] = ['queue', 'plan', 'merge']
 
 const MACHINE_LABEL: Record<LifecycleMachine, string> = {
   plan: 'Plan machine',
@@ -31,6 +32,33 @@ const MACHINE_BORDER: Record<LifecycleMachine, string> = {
   merge: '#10b981',
 }
 
+// Recovery edges routed as lighter back-arcs
+const RECOVERY_EDGE_IDS = new Set([
+  'plan-interrupted__running',
+  'plan-failed__pending',
+  'queue-halted__running',
+  'queue-stopped__running',
+  'merge-refused__pending',
+  'merge-failed__pending',
+])
+
+// Parallel outgoing edges need different smoothstep offset to spread paths
+// (positive offset = bend right/down, negative = bend left/up)
+const EDGE_PATH_OFFSET: Record<string, number> = {
+  // plan-running has 3 outgoing edges
+  'plan-running__completed': 0,
+  'plan-running__failed': 50,
+  'plan-running__interrupted': -50,
+  // queue-running has 3 outgoing edges
+  'queue-running__completed': 0,
+  'queue-running__halted': 50,
+  'queue-running__stopped': -50,
+  // merge-pending has 3 outgoing edges
+  'merge-pending__succeeded': 0,
+  'merge-pending__refused': 50,
+  'merge-pending__failed': -50,
+}
+
 export interface LayoutResult {
   nodes: Node[]
   edges: Edge[]
@@ -39,11 +67,12 @@ export interface LayoutResult {
 export function layoutNodes(
   dataNodes: LifecycleNode[],
   dataEdges: LifecycleEdge[],
-  direction: 'TB' | 'LR' = 'TB',
+  direction: 'TB' | 'LR' = 'LR',
 ): LayoutResult {
   const childPositions = new Map<string, { x: number; y: number }>()
   const groupDims = new Map<LifecycleMachine, { width: number; height: number }>()
 
+  // Inner layout is always TB — state diagram reads top-to-bottom within each group
   for (const m of MACHINES) {
     const machineNodes = dataNodes.filter((n) => n.machine === m)
     if (machineNodes.length === 0) continue
@@ -53,7 +82,7 @@ export function layoutNodes(
     )
 
     const g = new dagre.graphlib.Graph()
-    g.setGraph({ rankdir: direction, nodesep: 28, ranksep: 56, marginx: 0, marginy: 0 })
+    g.setGraph({ rankdir: 'TB', nodesep: 28, ranksep: 56, marginx: 0, marginy: 0 })
     g.setDefaultEdgeLabel(() => ({}))
     for (const n of machineNodes) g.setNode(n.id, { width: NODE_W, height: NODE_H })
     for (const e of machineEdges) g.setEdge(e.source, e.target)
@@ -87,7 +116,9 @@ export function layoutNodes(
 
   const machineByNode = new Map(dataNodes.map((n) => [n.id, n.machine] as const))
   const gg = new dagre.graphlib.Graph()
-  gg.setGraph({ rankdir: direction, nodesep: 80, ranksep: 100, marginx: 24, marginy: 24 })
+  const groupRanksep = direction === 'LR' ? 140 : 100
+  const groupNodesep = direction === 'LR' ? 60 : 80
+  gg.setGraph({ rankdir: direction, nodesep: groupNodesep, ranksep: groupRanksep, marginx: 24, marginy: 24 })
   gg.setDefaultEdgeLabel(() => ({}))
   for (const m of MACHINES) {
     const dim = groupDims.get(m)
@@ -153,15 +184,41 @@ export function layoutNodes(
     },
   }))
 
-  const reactEdges: Edge[] = dataEdges.map((e) => ({
-    id: e.id,
-    source: e.source,
-    target: e.target,
-    label: e.label,
-    markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor(e.kind) },
-    style: { stroke: edgeColor(e.kind), strokeDasharray: edgeDash(e.kind) },
-    animated: e.kind === 'fallback',
-  }))
+  const reactEdges: Edge[] = dataEdges.map((e) => {
+    const isRecovery = RECOVERY_EDGE_IDS.has(e.id)
+    const pathOffset = EDGE_PATH_OFFSET[e.id]
+    const color = edgeColor(e.kind)
+
+    const edge: Edge = {
+      id: e.id,
+      source: e.source,
+      target: e.target,
+      type: 'smoothstep',
+      label: e.label,
+      labelShowBg: true,
+      labelStyle: { fontSize: 11, fill: color, fontWeight: 500 },
+      labelBgStyle: { fill: '#0b1220', fillOpacity: 0.9 },
+      labelBgPadding: [4, 6] as [number, number],
+      labelBgBorderRadius: 3,
+      markerEnd: { type: MarkerType.ArrowClosed, color },
+      style: {
+        stroke: color,
+        strokeDasharray: edgeDash(e.kind),
+        strokeWidth: isRecovery ? 1.5 : 2,
+        opacity: isRecovery ? 0.75 : 1,
+      },
+      animated: e.kind === 'fallback',
+    }
+
+    // Stagger parallel edges by adding a smoothstep path offset
+    if (pathOffset !== undefined) {
+      const opts: SmoothStepPathOptions = { borderRadius: 12 }
+      if (pathOffset !== 0) opts.offset = pathOffset
+      ;(edge as Edge & { pathOptions?: SmoothStepPathOptions }).pathOptions = opts
+    }
+
+    return edge
+  })
 
   return { nodes: [...groupNodes, ...dataReactNodes], edges: reactEdges }
 }
