@@ -1,10 +1,20 @@
-import { useCallback, useMemo, useState } from 'react'
-import { Background, Controls, ReactFlow, type Edge, type Node } from '@xyflow/react'
+import { useCallback, useMemo, useState, useEffect } from 'react'
+import {
+  Background,
+  BackgroundVariant,
+  Controls,
+  ReactFlow,
+  type Edge,
+  type Node,
+  type NodeTypes,
+} from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { edges as dataEdges, nodes as dataNodes } from './data/lifecycle'
 import type { LifecycleNode } from './data/lifecycle'
 import { layoutNodes } from './layout'
 import { NodePanel } from './components/NodePanel'
+import { GroupNode } from './components/GroupNode'
+import { Legend } from './components/Legend'
 import './App.css'
 
 export const PLAN_PRIMARY_PATH = ['plan-pending', 'plan-running', 'plan-completed'] as const
@@ -23,10 +33,34 @@ export function activeEdgeIdForStep(step: number): string | null {
   return `${PLAN_PRIMARY_PATH[prevIdx]}__${PLAN_PRIMARY_PATH[currIdx].replace(/^plan-/, '')}`
 }
 
+const nodeTypes: NodeTypes = {
+  group: GroupNode,
+}
+
+/** Returns 'LR' on wide screens, 'TB' on narrow. */
+function useLayoutDirection(): 'LR' | 'TB' {
+  const [dir, setDir] = useState<'LR' | 'TB'>(() =>
+    typeof window !== 'undefined' && window.matchMedia('(min-width: 900px)').matches
+      ? 'LR'
+      : 'TB',
+  )
+
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 900px)')
+    const handler = (e: MediaQueryListEvent) => setDir(e.matches ? 'LR' : 'TB')
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
+
+  return dir
+}
+
 export default function App() {
+  const direction = useLayoutDirection()
+
   const { nodes: laidOutNodes, edges: laidOutEdges } = useMemo(
-    () => layoutNodes(dataNodes, dataEdges),
-    [],
+    () => layoutNodes(dataNodes, dataEdges, direction),
+    [direction],
   )
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [step, setStep] = useState(0)
@@ -114,13 +148,18 @@ export default function App() {
         <ReactFlow
           nodes={nodes}
           edges={edges}
+          nodeTypes={nodeTypes}
           fitView
           minZoom={0.2}
           proOptions={{ hideAttribution: true }}
           onNodeClick={onNodeClick}
         >
           <Controls />
-          <Background gap={20} />
+          <Background variant={BackgroundVariant.Dots} gap={32} size={1} color="rgba(148,163,184,0.18)" />
+          <div className="canvas-title">
+            Springfield queue → plan → merge lifecycle
+          </div>
+          <Legend />
         </ReactFlow>
         <NodePanel node={selected} onClose={handleClose} />
       </main>
