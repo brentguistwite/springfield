@@ -319,7 +319,7 @@ Use `springfield doctor` whenever local agent tooling looks unhealthy or a host 
 
 ## Debugging a stuck run
 
-When a batch stalls or an agent run fails in a way you don't recognise, work from these commands. Everything is read-only unless you pass `--diagnose` off explicitly.
+When a batch stalls or an agent run fails in a way you don't recognise, work from these commands. Everything below is read-only — only `springfield recover --plan <id>` *without* `--diagnose` mutates state.
 
 ```bash
 # Where is the run? What's in flight? Which agent is up next?
@@ -333,12 +333,12 @@ springfield recover --diagnose --plan <plan-id>
 # directory that's been deleted or never wrote):
 springfield recover --diagnose
 
-# Drop into the slice's evidence files directly:
-ls .springfield/plans/<batch-id>/evidence/<plan-id>/
-#   meta.json         — runner verdict, timing, exit code
-#   events.jsonl      — every dispatched event (one per line)
+# Drop into the plan's per-iteration evidence files directly:
+ls .springfield/execution/plans/<plan-id>/evidence/iter-<N>/
+#   meta.json          — runner verdict, timing, exit code
+#   events.jsonl       — every dispatched event (one per line)
 #   assistant_text.txt — what the agent actually said
-#   prompt.txt        — the exact prompt the runner built
+#   prompt.txt         — the exact prompt the runner built
 
 # Inspect the active-run cursor (which batch + phase + plans are live):
 cat .springfield/run.json

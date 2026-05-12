@@ -35,6 +35,16 @@ func runInitForm(
 	suggest func(agents.ID) []string,
 	accessible bool,
 ) ([]string, map[string]string, error) {
+	// Allocate the lineByLineReader once and share it across both forms.
+	// Wrapping `in` in a fresh bufio.Reader per form would let the first
+	// form's bufio buffer bytes that the second form then can't see —
+	// every byte read past form 1's last prompt would be stranded when
+	// form 1's reader is discarded.
+	var formIn io.Reader = in
+	if accessible && in != nil {
+		formIn = &lineByLineReader{r: bufio.NewReader(in)}
+	}
+
 	supported := agents.SupportedForExecution()
 
 	options := make([]huh.Option[string], 0, len(supported))
@@ -60,7 +70,7 @@ func runInitForm(
 				Value(&selected),
 		),
 	)
-	pickAgents = configureForm(pickAgents, in, out, accessible)
+	pickAgents = configureForm(pickAgents, formIn, out, accessible)
 	if err := pickAgents.Run(); err != nil {
 		return nil, nil, fmt.Errorf("agent selection: %w", err)
 	}
@@ -78,33 +88,42 @@ func runInitForm(
 		modelTargets[id] = &model
 	}
 
-	groups := make([]*huh.Group, 0, len(priority)+1)
-	for _, id := range priority {
-		groups = append(groups, modelGroupForAgent(agents.ID(id), modelTargets[id], suggest))
+	// Bound the edit loop. Operators can revise their selections by hitting
+	// "Edit" on the confirm screen; cap the iterations so a misconfigured
+	// pipe stream cannot wedge init in an unbounded re-prompt loop.
+	const maxEditLoops = 5
+	for attempt := 0; attempt < maxEditLoops; attempt++ {
+		groups := make([]*huh.Group, 0, len(priority)+1)
+		for _, id := range priority {
+			groups = append(groups, modelGroupForAgent(agents.ID(id), modelTargets[id], suggest))
+		}
+
+		var confirmed bool
+		groups = append(groups, huh.NewGroup(
+			huh.NewConfirm().
+				Title("Write springfield.toml with these settings?").
+				DescriptionFunc(func() string {
+					return renderInitSummary(priority, collectModels(priority, modelTargets))
+				}, modelTargets).
+				Affirmative("Write").
+				Negative("Edit").
+				Value(&confirmed),
+		))
+
+		modelForm := huh.NewForm(groups...)
+		modelForm = configureForm(modelForm, formIn, out, accessible)
+		if err := modelForm.Run(); err != nil {
+			return nil, nil, fmt.Errorf("model selection: %w", err)
+		}
+		if confirmed {
+			return priority, collectModels(priority, modelTargets), nil
+		}
+		// Operator hit "Edit": loop and re-run the model-selection groups
+		// with their current values preserved (the *string accessors keep
+		// state across iterations).
 	}
 
-	var confirmed bool
-	groups = append(groups, huh.NewGroup(
-		huh.NewConfirm().
-			Title("Write springfield.toml with these settings?").
-			DescriptionFunc(func() string {
-				return renderInitSummary(priority, collectModels(priority, modelTargets))
-			}, modelTargets).
-			Affirmative("Write").
-			Negative("Edit").
-			Value(&confirmed),
-	))
-
-	modelForm := huh.NewForm(groups...)
-	modelForm = configureForm(modelForm, in, out, accessible)
-	if err := modelForm.Run(); err != nil {
-		return nil, nil, fmt.Errorf("model selection: %w", err)
-	}
-	if !confirmed {
-		return nil, nil, fmt.Errorf("aborted by user")
-	}
-
-	return priority, collectModels(priority, modelTargets), nil
+	return nil, nil, fmt.Errorf("too many edit cycles; aborting")
 }
 
 // modelGroupForAgent builds a Select of "(adapter default)" + suggested
@@ -198,9 +217,10 @@ func agentDetectionMarker(s agents.DetectionStatus) string {
 }
 
 // configureForm wires the io plumbing and accessible-mode toggle onto a
-// huh.Form. Centralised so the two passes share the same setup.
+// huh.Form. The caller is responsible for handing in a stable reader
+// shared across all forms in a sequence (see runInitForm for the why).
 //
-// Accessible-mode input is funnelled through lineByLineReader: huh's
+// Accessible-mode input arrives via lineByLineReader: huh's
 // internal/accessibility.PromptString constructs a fresh bufio.Scanner per
 // call and reads a 4KB block on the first Scan(), which drains all queued
 // piped lines into the first prompt and starves every subsequent prompt
@@ -210,9 +230,6 @@ func agentDetectionMarker(s agents.DetectionStatus) string {
 func configureForm(form *huh.Form, in io.Reader, out io.Writer, accessible bool) *huh.Form {
 	form = form.WithAccessible(accessible)
 	if in != nil {
-		if accessible {
-			in = &lineByLineReader{r: bufio.NewReader(in)}
-		}
 		form = form.WithInput(in)
 	}
 	if out != nil {
@@ -244,6 +261,17 @@ func (l *lineByLineReader) Read(p []byte) (int, error) {
 		p[n] = b
 		n++
 		if b == '\n' {
+			return n, nil
+		}
+		// CR-only line ending (old Mac, some Windows tools that emit \r
+		// without \n): treat as terminator. If the next byte is \n, swallow
+		// it so the answer parses as one logical line and the subsequent
+		// prompt's scanner does not see a stray empty line.
+		if b == '\r' {
+			next, perr := l.r.Peek(1)
+			if perr == nil && len(next) == 1 && next[0] == '\n' {
+				_, _ = l.r.ReadByte()
+			}
 			return n, nil
 		}
 	}

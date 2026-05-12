@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
+	"io"
 	"strings"
 	"testing"
 
@@ -114,6 +116,67 @@ func TestCollectModelsOmitsBlanks(t *testing.T) {
 	}
 	if _, ok := models["gemini"]; ok {
 		t.Errorf("gemini should be omitted (whitespace-only), got %q", models["gemini"])
+	}
+}
+
+// TestLineByLineReaderEnforcesOneLinePerRead pins the contract that drives
+// huh's accessible-mode compatibility: a single Read call must never return
+// more than one logical line, even when the producer delivered every byte
+// up front. Without this, the first prompt's bufio.Scanner would drain the
+// whole answer script and starve every later prompt.
+func TestLineByLineReaderEnforcesOneLinePerRead(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   string
+		want    []string
+		wantErr error
+	}{
+		{"lf", "alpha\nbravo\ncharlie\n", []string{"alpha\n", "bravo\n", "charlie\n"}, io.EOF},
+		{"crlf", "alpha\r\nbravo\r\n", []string{"alpha\r", "bravo\r"}, io.EOF},
+		{"cr-only", "alpha\rbravo\r", []string{"alpha\r", "bravo\r"}, io.EOF},
+		{"no-trailing-newline", "alpha\nbravo", []string{"alpha\n", "bravo"}, io.EOF},
+		{"empty", "", nil, io.EOF},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lr := &lineByLineReader{r: bufio.NewReader(strings.NewReader(tc.input))}
+			buf := make([]byte, 64)
+			for _, want := range tc.want {
+				n, err := lr.Read(buf)
+				if err != nil {
+					t.Fatalf("Read returned %v before consuming all lines", err)
+				}
+				if got := string(buf[:n]); got != want {
+					t.Fatalf("got %q, want %q", got, want)
+				}
+			}
+			// Drain to EOF.
+			_, err := lr.Read(buf)
+			if err != tc.wantErr {
+				t.Fatalf("final err = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestLineByLineReaderRespectsBufferLimit pins the safety net for the
+// pathological case where a single "line" exceeds the caller's buffer:
+// the reader must return what it has rather than overflow.
+func TestLineByLineReaderRespectsBufferLimit(t *testing.T) {
+	long := strings.Repeat("x", 100) + "\n"
+	lr := &lineByLineReader{r: bufio.NewReader(strings.NewReader(long))}
+	buf := make([]byte, 16)
+
+	n, err := lr.Read(buf)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if n != 16 {
+		t.Fatalf("expected to fill buffer, got n=%d", n)
+	}
+	if string(buf) != strings.Repeat("x", 16) {
+		t.Fatalf("buffer content = %q, want 16 x's", string(buf))
 	}
 }
 
