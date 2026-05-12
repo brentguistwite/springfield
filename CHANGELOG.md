@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/brentguistwite/springfield/compare/v0.11.0...v0.12.0) (2026-05-12)
+
+
+### Features
+
+* pre-v1 polish (README onboarding + init UX + CLI papercuts) ([#59](https://github.com/brentguistwite/springfield/issues/59)) ([b0568d7](https://github.com/brentguistwite/springfield/commit/b0568d742523082e2e0f718286f7a34597dd9446))
+
 ## [0.11.0](https://github.com/brentguistwite/springfield/compare/v0.10.0...v0.11.0) (2026-05-12)
 
 
