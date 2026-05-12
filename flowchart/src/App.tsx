@@ -39,9 +39,7 @@ const nodeTypes: NodeTypes = {
 
 /** Returns 'LR' on wide screens, 'TB' on narrow. */
 function useLayoutDirection(): 'LR' | 'TB' {
-  const [dir, setDir] = useState<'LR' | 'TB'>(() =>
-    typeof window !== 'undefined' && window.innerWidth >= 900 ? 'LR' : 'TB',
-  )
+  const [dir, setDir] = useState<'LR' | 'TB'>('LR')
 
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 900px)')
@@ -156,7 +154,7 @@ export default function App() {
           <Controls />
           <Background variant={BackgroundVariant.Dots} gap={32} size={1} color="rgba(148,163,184,0.18)" />
           <div className="canvas-title">
-            Springfield plan → merge → queue lifecycle
+            Springfield queue → plan → merge lifecycle
           </div>
           <Legend />
         </ReactFlow>

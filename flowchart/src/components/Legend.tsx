@@ -2,7 +2,7 @@
 
 const KINDS = [
   { label: 'Normal', color: '#64748b', dash: undefined },
-  { label: 'Fallback', color: '#a855f7', dash: '6 3' },
+  { label: 'Fallback', color: '#a855f7', dash: '2 4' },
   { label: 'Failure', color: '#ef4444', dash: undefined },
   { label: 'Recovery', color: '#10b981', dash: '4 2' },
 ]

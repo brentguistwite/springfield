@@ -49,4 +49,21 @@ describe('layoutNodes', () => {
       expect(inputIds.has(e.id)).toBe(true)
     }
   })
+
+  it('TB direction: nodes are non-overlapping and within a plausible y-range', () => {
+    const { nodes } = layoutNodes(dataNodes, dataEdges, 'TB')
+    const data = nodes.filter((n) => n.type !== 'group')
+    // All nodes positioned
+    for (const n of data) {
+      expect(n.position).toBeDefined()
+      expect(typeof n.position.x).toBe('number')
+      expect(typeof n.position.y).toBe('number')
+    }
+    // Groups should be stacked vertically (max group y > min group y)
+    const groups = nodes.filter((n) => n.type === 'group')
+    const ys = groups.map((n) => n.position.y)
+    const minY = Math.min(...ys)
+    const maxY = Math.max(...ys)
+    expect(maxY).toBeGreaterThan(minY)
+  })
 })

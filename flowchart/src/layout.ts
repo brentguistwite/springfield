@@ -1,5 +1,5 @@
 import dagre from 'dagre'
-import { MarkerType, type Edge, type Node, type SmoothStepPathOptions } from '@xyflow/react'
+import { MarkerType, type BuiltInEdge, type Node, type SmoothStepPathOptions } from '@xyflow/react'
 import type {
   LifecycleEdge,
   LifecycleMachine,
@@ -61,7 +61,7 @@ const EDGE_PATH_OFFSET: Record<string, number> = {
 
 export interface LayoutResult {
   nodes: Node[]
-  edges: Edge[]
+  edges: BuiltInEdge[]
 }
 
 export function layoutNodes(
@@ -184,12 +184,17 @@ export function layoutNodes(
     },
   }))
 
-  const reactEdges: Edge[] = dataEdges.map((e) => {
+  const reactEdges: BuiltInEdge[] = dataEdges.map((e) => {
     const isRecovery = RECOVERY_EDGE_IDS.has(e.id)
     const pathOffset = EDGE_PATH_OFFSET[e.id]
     const color = edgeColor(e.kind)
 
-    const edge: Edge = {
+    const opts: SmoothStepPathOptions | undefined =
+      pathOffset !== undefined
+        ? { borderRadius: 12, ...(pathOffset !== 0 ? { offset: pathOffset } : {}) }
+        : undefined
+
+    const edge: BuiltInEdge = {
       id: e.id,
       source: e.source,
       target: e.target,
@@ -208,13 +213,7 @@ export function layoutNodes(
         opacity: isRecovery ? 0.75 : 1,
       },
       animated: e.kind === 'fallback',
-    }
-
-    // Stagger parallel edges by adding a smoothstep path offset
-    if (pathOffset !== undefined) {
-      const opts: SmoothStepPathOptions = { borderRadius: 12 }
-      if (pathOffset !== 0) opts.offset = pathOffset
-      ;(edge as Edge & { pathOptions?: SmoothStepPathOptions }).pathOptions = opts
+      pathOptions: opts,
     }
 
     return edge
