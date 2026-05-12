@@ -3,6 +3,7 @@ package agents
 import (
 	"context"
 	"errors"
+	"time"
 
 	"springfield/internal/core/exec"
 )
@@ -153,6 +154,21 @@ const (
 // default to ErrorClassFatal (no automatic fallback).
 type ErrorClassifier interface {
 	ClassifyError(events []exec.Event, exitCode int, err error) ErrorClass
+}
+
+// Cooldowner optionally extracts a "do not retry before" timestamp from a
+// failed run. Adapters that implement this are consulted by the runtime
+// after ErrorClassifier returns ErrorClassRetryable; a non-zero return
+// time installs a cooldown that skips the agent until the timestamp has
+// passed. Returning the zero time means "no parseable reset" — the runtime
+// applies its default cooldown duration.
+//
+// now is the runtime's clock, threaded down so wall-clock-format reset
+// messages (e.g. "resets 3pm") can be disambiguated against the same
+// reference time the runner uses for skip decisions, and so adapter tests
+// can pin time deterministically.
+type Cooldowner interface {
+	Cooldown(events []exec.Event, exitCode int, err error, now time.Time) time.Time
 }
 
 // ModelProvider exposes a small curated list of "blessed/tested" models for an
