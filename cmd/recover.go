@@ -143,8 +143,6 @@ func printOrphanDiagnosis(w io.Writer, root string, run batch.Run, paths batch.P
 	switch {
 	case perr != nil:
 		fmt.Fprintf(w, "  plans registered: (unavailable — %v)\n", perr)
-	case project == nil || project.Config == nil:
-		fmt.Fprintln(w, "  plans registered: (unavailable — empty project)")
 	default:
 		total := len(project.Config.PlanUnits)
 		var integrated, running int
