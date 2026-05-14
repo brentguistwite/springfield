@@ -3,11 +3,13 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"springfield/internal/core/config"
 	"springfield/internal/features/batch"
+	"springfield/internal/features/conductor"
 	"springfield/internal/features/execution"
 )
 
@@ -47,7 +49,15 @@ func NewStatusCommand() *cobra.Command {
 				}
 				return err
 			}
-			return printBatchStatus(cmd.OutOrStdout(), b, run)
+
+			var state *conductor.State
+			project, loadErr := conductor.LoadProjectRaw(root)
+			if loadErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "[warn] could not load project state: %v; progress rollup will be limited.\n", loadErr)
+			} else {
+				state = project.State
+			}
+			return printBatchStatus(cmd.OutOrStdout(), b, run, state)
 		},
 	}
 
@@ -55,10 +65,30 @@ func NewStatusCommand() *cobra.Command {
 	return cmd
 }
 
-func printBatchStatus(w io.Writer, b batch.Batch, run batch.Run) error {
+func printBatchStatus(w io.Writer, b batch.Batch, run batch.Run, state *conductor.State) error {
 	fmt.Fprintf(w, "Batch: %s\n", b.ID)
 	fmt.Fprintf(w, "Title: %s\n", b.Title)
-	fmt.Fprintf(w, "Phase: %d of %d\n", run.ActivePhaseIdx+1, len(b.Phases))
+
+	if state != nil {
+		p := batch.ComputeProgress(b, state)
+		fmt.Fprintf(w, "Plans: %d/%d integrated\n", p.DonePlans, p.TotalPlans)
+		switch {
+		case p.AllDone:
+			fmt.Fprintln(w, "Status: complete")
+		case len(p.InFlight) > 0:
+			label := "running"
+			if p.ParallelInFlight {
+				label = "parallel"
+			}
+			fmt.Fprintf(w, "Current: %s (%s)\n", strings.Join(p.InFlight, ", "), label)
+			if len(p.Pending) > 0 {
+				fmt.Fprintf(w, "Next: %s\n", p.Pending[0])
+			}
+		case len(p.Pending) > 0:
+			fmt.Fprintf(w, "Next: %s\n", p.Pending[0])
+		}
+	}
+
 	if run.FatalError != "" {
 		fmt.Fprintf(w, "Fatal error: %s\n", run.FatalError)
 	}
