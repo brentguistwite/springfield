@@ -235,6 +235,34 @@ func (s *PlanState) IsIntegrated() bool {
 	return true
 }
 
+// PlanBucket classifies a PlanState into the three buckets renderers care
+// about: integrated (terminal success), in-flight (currently executing),
+// or pending (anything else, including failed/nil/interrupted).
+type PlanBucket int
+
+const (
+	// BucketPending covers everything that is not integrated and not running:
+	// no entry, queued, failed, interrupted. Failed plans land here so they
+	// surface as "needs attention" in rollup displays.
+	BucketPending PlanBucket = iota
+	BucketInFlight
+	BucketIntegrated
+)
+
+// ClassifyPlan returns the bucket a PlanState falls into. Centralizes the
+// "what counts as integrated vs in-flight" predicate so renderers
+// (status rollup, recover diagnose, start header) cannot drift.
+func ClassifyPlan(s *PlanState) PlanBucket {
+	switch {
+	case s != nil && s.IsIntegrated():
+		return BucketIntegrated
+	case s != nil && s.Status == StatusRunning:
+		return BucketInFlight
+	default:
+		return BucketPending
+	}
+}
+
 // QueueStatus describes the lifecycle of a multi-plan queue run.
 type QueueStatus string
 

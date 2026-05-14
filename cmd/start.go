@@ -120,7 +120,11 @@ func NewStartCommand() *cobra.Command {
 			w := cmd.OutOrStdout()
 			fmt.Fprintf(w, "Batch: %s\n", b.ID)
 			fmt.Fprintf(w, "Title: %s\n", b.Title)
-			fmt.Fprintf(w, "Phase: %d of %d\n", run.ActivePhaseIdx+1, len(b.Phases))
+			if project, projectErr := conductor.LoadProjectRaw(root); projectErr == nil {
+				printProgressBlock(w, b, project.State)
+			} else {
+				fmt.Fprintf(cmd.ErrOrStderr(), "[warn] could not load project state: %v; progress rollup will be limited.\n", projectErr)
+			}
 			if logPath != "" {
 				fmt.Fprintf(w, "Log: %s\n", logPath)
 			}

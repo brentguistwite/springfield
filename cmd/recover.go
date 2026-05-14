@@ -10,6 +10,7 @@ import (
 
 	"springfield/internal/core/config"
 	"springfield/internal/features/batch"
+	"springfield/internal/features/conductor"
 	"springfield/internal/features/execution"
 )
 
@@ -128,9 +129,32 @@ func runOrphanRecover(w io.Writer, root string, diagnoseOnly bool) error {
 func printOrphanDiagnosis(w io.Writer, root string, run batch.Run, paths batch.Paths) error {
 	fmt.Fprintln(w, "Diagnosis:")
 	fmt.Fprintf(w, "  run.json active_batch_id: %s\n", run.ActiveBatchID)
-	fmt.Fprintf(w, "  run.json active_phase_idx: %d\n", run.ActivePhaseIdx)
 	if run.FatalError != "" {
 		fmt.Fprintf(w, "  run.json fatal_error: %s\n", run.FatalError)
+	}
+
+	// Surface plan-level progress from conductor state. batch.json is gone in the
+	// orphan path, so phase context is unavailable — but the registered plan
+	// units + their integrated/running/pending breakdown is the most actionable
+	// signal for someone deciding whether to archive or salvage. In a forensics
+	// dump, an inability to read project state IS diagnostic signal: surface it
+	// explicitly rather than silently omit the line.
+	project, perr := conductor.LoadProjectRaw(root)
+	switch {
+	case perr != nil:
+		fmt.Fprintf(w, "  plans registered: (unavailable — %v)\n", perr)
+	default:
+		total := len(project.Config.PlanUnits)
+		var integrated, running int
+		for _, unit := range project.Config.PlanUnits {
+			switch conductor.ClassifyPlan(project.State.Plans[unit.ID]) {
+			case conductor.BucketIntegrated:
+				integrated++
+			case conductor.BucketInFlight:
+				running++
+			}
+		}
+		fmt.Fprintf(w, "  plans registered: %d (integrated %d, running %d)\n", total, integrated, running)
 	}
 	fmt.Fprintf(w, "  plan dir:      %s\n", statHint(paths.PlanDir()))
 	fmt.Fprintf(w, "  batch.json:    %s\n", statHint(paths.BatchPath()))

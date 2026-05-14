@@ -2,9 +2,11 @@
 
 ![Springfield](docs/images/springfield.png)
 
-Plugin-first, local-state conductor for multi-agent code work.
+Local-state conductor for multi-agent code work, distributed as a Claude Code (and Codex) marketplace plugin.
 
 Springfield turns a plan (file or prompt) into a sequential batch of agent runs, executes each slice in an isolated git worktree, captures per-slice evidence, and falls through `agent_priority` (Claude → Codex → Gemini) when a run is retryable. State lives under `.springfield/` in the repo; install ships through Claude Code and Codex marketplace plugins.
+
+> "Plugin-distributed" here means Springfield is *installed via* the marketplace plugin flow. Springfield does not currently expose a plugin or extension API of its own.
 
 When you run `springfield start`, the conductor will:
 
@@ -182,6 +184,24 @@ Notes:
 - `allow_protected_base = false` (default) refuses to ff-merge plan results into `main` or `master`. Only consulted when `auto_branch = false` (otherwise the auto-cut feature branch becomes the base and the guard does not apply).
 - Runtime state under `.springfield/` is local project state and should not be committed.
 
+### `agent_priority` semantics
+
+`agent_priority` is an ordered list of agent IDs. Springfield always starts with the **first** id for each plan dispatch and only advances down the list on a retryable failure.
+
+**Failover triggers, evaluated in this order:**
+
+1. **Rate-limit cooldown** — the Claude adapter (only) implements the `Cooldowner` interface and, on a rate-limited response, extracts a "do-not-retry-before" timestamp from the error. Claude is then skipped on subsequent plan dispatches until that timestamp passes. The parsed cooldown is capped at 24h beyond "now". Codex and Gemini do not implement `Cooldowner`, so neither is ever skipped on cooldown.
+2. **Retryable error** — all three adapters (Claude, Codex, Gemini) implement `ErrorClassifier` and classify their own retryable patterns (rate-limit without an extractable cooldown, transient API errors, etc.). When `ClassifyError` returns `retryable`, the runner advances to the next id in `agent_priority` for the same plan.
+3. **Fatal error** — when `ClassifyError` returns `fatal` (the default), the batch stops; no further fallback. The plan is left in `failed` state and the run records the error.
+
+**What it is NOT:**
+
+- **Not round-robin.** Order is deterministic; the first eligible agent wins every dispatch.
+- **Not sticky-per-plan.** A plan that failed over to Codex once does not stay on Codex for retries — each retry re-evaluates from the top of `agent_priority`.
+- **Not load-balanced.** No cost-aware or capacity-aware routing.
+
+**Operator override:** there is no per-run flag to skip the failover chain. To force a single agent, list only that agent in `agent_priority`.
+
 ## Recommended Workflow
 
 Springfield runs each plan in an isolated git worktree, then ff-merges the result back into a base branch on your **local** clone. Nothing is pushed and no PR is opened — that step is yours.
@@ -232,6 +252,10 @@ With `auto_branch = false` and `allow_protected_base = false`, Springfield refus
 Per-plan override: set `Ref = "feat/other"` on a `PlanUnit` to integrate that one plan into a different feature branch.
 
 > Drift caveat: ff-only merge refuses if the base branch advanced between plan start and integrate. Pick a base branch you control during the run; don't `git pull` mid-batch.
+
+## Lifecycle
+
+Interactive lifecycle diagram: <https://brentguistwite.github.io/springfield/> — plan → queue → merge state machines and the recovery edges between them. Open it alongside [Debugging a stuck run](#debugging-a-stuck-run) when triaging a stalled batch.
 
 ## Critical Concepts
 

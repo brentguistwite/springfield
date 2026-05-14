@@ -34,7 +34,6 @@ type Batch struct {
 // Run is the runtime-only cursor state for the active batch.
 type Run struct {
 	ActiveBatchID  string    `json:"active_batch_id"`
-	ActivePhaseIdx int       `json:"active_phase_idx"`
 	ActivePlanIDs  []string  `json:"active_plan_ids,omitempty"`
 	LastCheckpoint time.Time `json:"last_checkpoint,omitempty"`
 	// FatalError is set only on terminal failure that requires user intervention.
@@ -82,10 +81,3 @@ type ArchivePlan struct {
 	Status string `json:"status"`
 }
 
-// ActivePhase returns the current phase, or false when all are done.
-func (b *Batch) ActivePhase(phaseIdx int) (Phase, bool) {
-	if phaseIdx < 0 || phaseIdx >= len(b.Phases) {
-		return Phase{}, false
-	}
-	return b.Phases[phaseIdx], true
-}

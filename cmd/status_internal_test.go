@@ -86,6 +86,145 @@ func TestStatusActiveBatchWinsArbitration(t *testing.T) {
 	}
 }
 
+func TestStatusRollupNothingRunning(t *testing.T) {
+	root := newStatusRoot(t)
+	writeStatusPlan(t, root, "feature.md")
+	writeStatusConfig(t, root, []map[string]any{
+		{"id": "01", "path": ".springfield/plans/feature.md", "order": 1},
+	})
+	writeActiveBatch(t, root, "batch-001", "Active Batch")
+
+	out, err := runStatusIn(root)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(out, "Plans: 0/1 integrated") {
+		t.Fatalf("expected 0/1 rollup:\n%s", out)
+	}
+	if !strings.Contains(out, "Next: 01") {
+		t.Fatalf("expected Next pointer:\n%s", out)
+	}
+	if strings.Contains(out, "Phase:") {
+		t.Fatalf("stale Phase: line leaked:\n%s", out)
+	}
+}
+
+func TestStatusRollupOneInFlight(t *testing.T) {
+	root := newStatusRoot(t)
+	writeStatusPlan(t, root, "feature.md")
+	writeStatusConfig(t, root, []map[string]any{
+		{"id": "01", "path": ".springfield/plans/feature.md", "order": 1},
+		{"id": "02", "path": ".springfield/plans/feature.md", "order": 2},
+	})
+	writeActiveBatchN(t, root, "batch-001", "Active Batch", []string{"01", "02"})
+	writeStatusState(t, root, map[string]any{
+		"plans": map[string]any{
+			"01": map[string]any{"status": "running"},
+		},
+	})
+
+	out, err := runStatusIn(root)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(out, "Plans: 0/2 integrated") {
+		t.Fatalf("expected Plans: 0/2 integrated:\n%s", out)
+	}
+	if !strings.Contains(out, "Current: 01 (running)") {
+		t.Fatalf("expected Current running line:\n%s", out)
+	}
+	if !strings.Contains(out, "Next: 02") {
+		t.Fatalf("expected Next: 02:\n%s", out)
+	}
+}
+
+func TestStatusRollupParallelInFlight(t *testing.T) {
+	root := newStatusRoot(t)
+	writeStatusPlan(t, root, "feature.md")
+	writeStatusConfig(t, root, []map[string]any{
+		{"id": "01", "path": ".springfield/plans/feature.md", "order": 1},
+		{"id": "02", "path": ".springfield/plans/feature.md", "order": 2},
+	})
+	writeActiveBatchParallel(t, root, "batch-001", "Active Batch", []string{"01", "02"})
+	writeStatusState(t, root, map[string]any{
+		"plans": map[string]any{
+			"01": map[string]any{"status": "running"},
+			"02": map[string]any{"status": "running"},
+		},
+	})
+
+	out, err := runStatusIn(root)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(out, "Current: 01, 02 (parallel)") {
+		t.Fatalf("expected Current: 01, 02 (parallel) line:\n%s", out)
+	}
+}
+
+func TestStatusRollupAllDone(t *testing.T) {
+	root := newStatusRoot(t)
+	writeStatusPlan(t, root, "feature.md")
+	writeStatusConfig(t, root, []map[string]any{
+		{"id": "01", "path": ".springfield/plans/feature.md", "order": 1},
+	})
+	writeActiveBatch(t, root, "batch-001", "Active Batch")
+	writeStatusState(t, root, map[string]any{
+		"plans": map[string]any{
+			"01": map[string]any{
+				"status": "completed",
+				"merge": map[string]any{
+					"status":             "succeeded",
+					"source_sync_status": "synced",
+				},
+				"cleanup": map[string]any{"status": "succeeded"},
+			},
+		},
+	})
+
+	out, err := runStatusIn(root)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(out, "Plans: 1/1 integrated") {
+		t.Fatalf("expected 1/1 rollup:\n%s", out)
+	}
+	if !strings.Contains(out, "Status: complete") {
+		t.Fatalf("expected Status: complete:\n%s", out)
+	}
+}
+
+func TestStatusRollupDegradesWhenStateLoadFails(t *testing.T) {
+	root := newStatusRoot(t)
+	writeStatusPlan(t, root, "feature.md")
+	writeStatusConfig(t, root, []map[string]any{
+		{"id": "01", "path": ".springfield/plans/feature.md", "order": 1},
+	})
+	writeActiveBatch(t, root, "batch-001", "Active Batch")
+	// Corrupt state.json so LoadProjectRaw fails.
+	stateFile := filepath.Join(root, ".springfield", "execution", "state.json")
+	if err := os.MkdirAll(filepath.Dir(stateFile), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(stateFile, []byte("{not json"), 0o644); err != nil {
+		t.Fatalf("write corrupt state: %v", err)
+	}
+
+	out, err := runStatusIn(root)
+	if err != nil {
+		t.Fatalf("status should degrade not error: %v", err)
+	}
+	if !strings.Contains(out, "Batch: batch-001") {
+		t.Fatalf("expected batch header to still render:\n%s", out)
+	}
+	if !strings.Contains(out, "[warn]") {
+		t.Fatalf("expected stderr warn line:\n%s", out)
+	}
+	if strings.Contains(out, "Plans: ") && strings.Contains(out, "integrated") {
+		t.Fatalf("rollup should be omitted when state load fails:\n%s", out)
+	}
+}
+
 func TestStatusOrphanedBatchKeepsRecoveryGuidance(t *testing.T) {
 	root := newStatusRoot(t)
 	if err := batch.WriteRun(root, batch.Run{ActiveBatchID: "ghost-batch"}); err != nil {
@@ -283,6 +422,30 @@ func writeStatusJSON(t *testing.T, root, rel string, value any) {
 
 func writeActiveBatch(t *testing.T, root, batchID, title string) {
 	t.Helper()
+	writeActiveBatchN(t, root, batchID, title, []string{"01"})
+}
+
+func writeActiveBatchN(t *testing.T, root, batchID, title string, planIDs []string) {
+	t.Helper()
+	paths, err := batch.NewPaths(root, batchID)
+	if err != nil {
+		t.Fatalf("NewPaths: %v", err)
+	}
+	phases := make([]batch.Phase, len(planIDs))
+	for i, id := range planIDs {
+		phases[i] = batch.Phase{Mode: batch.PhaseSerial, Plans: []string{id}}
+	}
+	b := batch.Batch{ID: batchID, Title: title, Phases: phases, PlanIDs: planIDs}
+	if err := batch.WriteBatch(paths, b, "source", nil); err != nil {
+		t.Fatalf("WriteBatch: %v", err)
+	}
+	if err := batch.WriteRun(root, batch.Run{ActiveBatchID: batchID}); err != nil {
+		t.Fatalf("WriteRun: %v", err)
+	}
+}
+
+func writeActiveBatchParallel(t *testing.T, root, batchID, title string, planIDs []string) {
+	t.Helper()
 	paths, err := batch.NewPaths(root, batchID)
 	if err != nil {
 		t.Fatalf("NewPaths: %v", err)
@@ -290,8 +453,8 @@ func writeActiveBatch(t *testing.T, root, batchID, title string) {
 	b := batch.Batch{
 		ID:      batchID,
 		Title:   title,
-		Phases:  []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"01"}}},
-		PlanIDs: []string{"01"},
+		Phases:  []batch.Phase{{Mode: batch.PhaseParallel, Plans: planIDs}},
+		PlanIDs: planIDs,
 	}
 	if err := batch.WriteBatch(paths, b, "source", nil); err != nil {
 		t.Fatalf("WriteBatch: %v", err)

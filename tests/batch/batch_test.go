@@ -479,7 +479,6 @@ func TestWriteAndReadRun(t *testing.T) {
 
 	r := batch.Run{
 		ActiveBatchID:  "my-batch",
-		ActivePhaseIdx: 0,
 		LastCheckpoint: time.Now().UTC().Truncate(time.Second),
 	}
 	if err := batch.WriteRun(dir, r); err != nil {
