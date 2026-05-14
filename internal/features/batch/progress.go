@@ -39,12 +39,11 @@ func ComputeProgress(b Batch, state *conductor.State) Progress {
 	}
 
 	for _, id := range b.PlanIDs {
-		ps := plans[id]
-		switch {
-		case ps != nil && ps.IsIntegrated():
+		switch conductor.ClassifyPlan(plans[id]) {
+		case conductor.BucketIntegrated:
 			p.Done = append(p.Done, id)
 			p.DonePlans++
-		case ps != nil && ps.Status == conductor.StatusRunning:
+		case conductor.BucketInFlight:
 			p.InFlight = append(p.InFlight, id)
 		default:
 			p.Pending = append(p.Pending, id)
@@ -54,8 +53,7 @@ func ComputeProgress(b Batch, state *conductor.State) Progress {
 	for i, phase := range b.Phases {
 		allIntegrated := true
 		for _, id := range phase.Plans {
-			ps := plans[id]
-			if ps == nil || !ps.IsIntegrated() {
+			if conductor.ClassifyPlan(plans[id]) != conductor.BucketIntegrated {
 				allIntegrated = false
 				break
 			}

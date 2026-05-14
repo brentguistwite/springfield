@@ -136,22 +136,27 @@ func printOrphanDiagnosis(w io.Writer, root string, run batch.Run, paths batch.P
 	// Surface plan-level progress from conductor state. batch.json is gone in the
 	// orphan path, so phase context is unavailable — but the registered plan
 	// units + their integrated/running/pending breakdown is the most actionable
-	// signal for someone deciding whether to archive or salvage.
-	if project, perr := conductor.LoadProjectRaw(root); perr == nil && project != nil && project.Config != nil {
+	// signal for someone deciding whether to archive or salvage. In a forensics
+	// dump, an inability to read project state IS diagnostic signal: surface it
+	// explicitly rather than silently omit the line.
+	project, perr := conductor.LoadProjectRaw(root)
+	switch {
+	case perr != nil:
+		fmt.Fprintf(w, "  plans registered: (unavailable — %v)\n", perr)
+	case project == nil || project.Config == nil:
+		fmt.Fprintln(w, "  plans registered: (unavailable — empty project)")
+	default:
 		total := len(project.Config.PlanUnits)
-		if total > 0 {
-			var integrated, running int
-			for _, unit := range project.Config.PlanUnits {
-				ps := project.State.Plans[unit.ID]
-				switch {
-				case ps != nil && ps.IsIntegrated():
-					integrated++
-				case ps != nil && ps.Status == conductor.StatusRunning:
-					running++
-				}
+		var integrated, running int
+		for _, unit := range project.Config.PlanUnits {
+			switch conductor.ClassifyPlan(project.State.Plans[unit.ID]) {
+			case conductor.BucketIntegrated:
+				integrated++
+			case conductor.BucketInFlight:
+				running++
 			}
-			fmt.Fprintf(w, "  plans registered: %d (integrated %d, running %d)\n", total, integrated, running)
 		}
+		fmt.Fprintf(w, "  plans registered: %d (integrated %d, running %d)\n", total, integrated, running)
 	}
 	fmt.Fprintf(w, "  plan dir:      %s\n", statHint(paths.PlanDir()))
 	fmt.Fprintf(w, "  batch.json:    %s\n", statHint(paths.BatchPath()))

@@ -228,6 +228,37 @@ func TestSpringfieldRecoverDiagnoseShowsPlansRegistered(t *testing.T) {
 	}
 }
 
+// TestSpringfieldRecoverDiagnoseSurfacesUnavailableStateLoad confirms the
+// orphan diagnose dump explicitly reports when conductor state cannot be
+// loaded, rather than silently omitting the line (which would be misleading
+// in a forensics context).
+func TestSpringfieldRecoverDiagnoseSurfacesUnavailableStateLoad(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeSpringfieldConfig(t, dir, "claude")
+
+	// Orphan: run.json points at a batch with no batch.json.
+	if err := batch.WriteRun(dir, batch.Run{ActiveBatchID: "ghost"}); err != nil {
+		t.Fatalf("WriteRun: %v", err)
+	}
+	// Corrupt execution config so LoadProjectRaw fails.
+	corrupt := filepath.Join(dir, ".springfield", "execution", "config.json")
+	if err := os.MkdirAll(filepath.Dir(corrupt), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(corrupt, []byte("{not json"), 0o644); err != nil {
+		t.Fatalf("write corrupt config: %v", err)
+	}
+
+	output, err := runBinaryIn(t, bin, dir, "recover", "--diagnose")
+	if err != nil {
+		t.Fatalf("recover --diagnose should not abort on state load failure: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "plans registered: (unavailable") {
+		t.Fatalf("expected explicit unavailable line for state load failure:\n%s", output)
+	}
+}
+
 func TestSpringfieldStatusDegradesOnMissingBatchJSON(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()

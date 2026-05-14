@@ -161,6 +161,46 @@ func TestSpringfieldStartBatchRuntimeWinsOverConductorState(t *testing.T) {
 	}
 }
 
+// TestSpringfieldStartHeaderDegradesWhenStateLoadFails mirrors
+// TestStatusRollupDegradesWhenStateLoadFails for the start.go startup header.
+// Corrupt state.json must produce a warn line on stderr and a header without
+// the rollup, NOT an aborted batch (the later LoadProject call will error out
+// for its own reasons — we only assert the header degraded gracefully).
+func TestSpringfieldStartHeaderDegradesWhenStateLoadFails(t *testing.T) {
+	bin := buildBinary(t)
+	dir := initRealGitRepo(t)
+	writeSpringfieldConfig(t, dir, "claude")
+	writeRegisteredPlansBinary(t, dir, []registeredPlan{
+		{ID: "alpha", Title: "Implement alpha", Order: 1},
+	})
+	writeActiveBatchBinary(t, dir, "batch-001", "Active Batch")
+
+	// Corrupt state.json after registry write so the startup-header
+	// LoadProjectRaw call fails. The later LoadProject for runBatch will fail
+	// too — that's fine; we only inspect the header output.
+	corrupt := filepath.Join(dir, ".springfield", "execution", "state.json")
+	if err := os.WriteFile(corrupt, []byte("{not json"), 0o644); err != nil {
+		t.Fatalf("corrupt state.json: %v", err)
+	}
+
+	fakeBinDir := filepath.Join(dir, "bin")
+	argvPath := filepath.Join(dir, "claude.argv")
+	installFakeAgentBinary(t, fakeBinDir, "claude", argvPath)
+
+	// Start will fail later (LoadProject can't decode), but the header must
+	// have printed first with a warn line and no rollup.
+	out, _ := runBinaryInWithEnv(t, bin, dir, []string{"PATH=" + fakeBinDir}, "start")
+	if !strings.Contains(out, "Batch: batch-001") {
+		t.Fatalf("expected batch header to render even when state load fails:\n%s", out)
+	}
+	if !strings.Contains(out, "[warn] could not load project state") {
+		t.Fatalf("expected stderr warn line in combined output:\n%s", out)
+	}
+	if strings.Contains(out, "Plans: ") && strings.Contains(out, "integrated") {
+		t.Fatalf("rollup line leaked when state load failed:\n%s", out)
+	}
+}
+
 type registeredPlan struct {
 	ID    string
 	Title string

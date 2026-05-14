@@ -83,3 +83,19 @@ func writePlanFileBinary(t *testing.T, root, plansDir, name, content string) {
 		t.Fatalf("write plan file: %v", err)
 	}
 }
+
+// writePRDJSON writes a minimal prd.json under .springfield/plans/<planID>/prd.json.
+// Use this when a conductor config registers a PRD-style path (.../<id>/prd.json);
+// writePlanFileBinary unconditionally appends ".md" and is the wrong helper for
+// that shape.
+func writePRDJSON(t *testing.T, root, planID string) {
+	t.Helper()
+	dir := filepath.Join(root, ".springfield", "plans", planID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	body := `{"id":"` + planID + `","user_stories":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "prd.json"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write prd.json: %v", err)
+	}
+}
