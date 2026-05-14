@@ -92,7 +92,7 @@ Each archive contains a single `springfield` binary built with `cmd.Version` set
 
 ## Homebrew
 
-`springfield.rb` is rendered during the release from the computed archive URLs and SHA256 values. Keep the generated copy plugin-first: if the release formula wording drifts back to stale TUI-era text, treat that as a release blocker. Install it straight from the release assets:
+`springfield.rb` is rendered during the release from the computed archive URLs and SHA256 values. Keep the generated copy aligned with the marketplace-plugin install path: if the release formula wording drifts back to stale TUI-era text, treat that as a release blocker. Install it straight from the release assets:
 
 ```bash
 brew install --formula https://github.com/<owner>/<repo>/releases/download/v0.1.0/springfield.rb
