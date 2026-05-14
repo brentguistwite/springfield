@@ -27,6 +27,7 @@ func NewPlanCommand() *cobra.Command {
 	var fromDir string
 	var replace bool
 	var appendMode bool
+	var dryRun bool
 
 	cmd := &cobra.Command{
 		Use:   "plan",
@@ -34,6 +35,7 @@ func NewPlanCommand() *cobra.Command {
 		Long: "Compile a Springfield plan from a caller-provided PRD envelope.\n\n" +
 			"Use --prd <path> to read a JSON envelope from a file, or --prd - to read from stdin.\n" +
 			"Use --from-dir <path> to load <path>/batch.json as the envelope.\n" +
+			"Use --dry-run to preview the compiled batch without writing to .springfield/.\n" +
 			"The springfield:plan skill emits this envelope. Run \"springfield start\" to execute.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -80,6 +82,12 @@ func NewPlanCommand() *cobra.Command {
 					snippet = snippet[:legacyPayloadSnippetLen]
 				}
 				return fmt.Errorf("parse PRD envelope: %w\n(first %d bytes: %s)", err, len(snippet), snippet)
+			}
+
+			// Dry-run: short-circuit before any mutation. Compile, print summary,
+			// return. Composable with --replace/--append (previews the operation).
+			if dryRun {
+				return runDryRun(cmd, rootDir, env, replace, appendMode)
 			}
 
 			// Ensure execution config exists.
@@ -263,8 +271,91 @@ func NewPlanCommand() *cobra.Command {
 	cmd.Flags().StringVar(&fromDir, "from-dir", "", "directory containing batch.json (operator-authored PRD); mutually exclusive with --prd")
 	cmd.Flags().BoolVar(&replace, "replace", false, "archive the current active batch and replace it with this one")
 	cmd.Flags().BoolVar(&appendMode, "append", false, "add new plans to the end of the current active batch")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "preview the compiled batch without writing to .springfield/")
 
 	return cmd
+}
+
+// runDryRun compiles the envelope and prints a summary without writing any
+// state under .springfield/. Composes with --replace and --append (previews
+// the operation, including collision detection for append).
+func runDryRun(cmd *cobra.Command, rootDir string, env prd.BatchPRDEnvelope, replace, appendMode bool) error {
+	project, err := conductor.LoadProjectRaw(rootDir)
+	if err != nil {
+		return fmt.Errorf("load conductor project: %w", err)
+	}
+
+	run, hasRun, err := batch.ReadRun(rootDir)
+	if err != nil {
+		return fmt.Errorf("read run state: %w", err)
+	}
+
+	var existingIDs map[string]struct{}
+	if hasRun && run.ActiveBatchID != "" {
+		if !replace && !appendMode {
+			fmt.Fprintf(cmd.ErrOrStderr(), "[warn] active batch %q exists; --dry-run does not modify it.\n", run.ActiveBatchID)
+		}
+		if appendMode {
+			paths, perr := batch.NewPaths(rootDir, run.ActiveBatchID)
+			if perr != nil {
+				return fmt.Errorf("resolve batch paths: %w", perr)
+			}
+			b, berr := batch.ReadBatch(paths)
+			if berr == nil {
+				existingIDs = make(map[string]struct{}, len(b.PlanIDs))
+				for _, id := range b.PlanIDs {
+					existingIDs[id] = struct{}{}
+				}
+				for _, p := range env.Plans {
+					if _, clash := existingIDs[p.ID]; clash {
+						return fmt.Errorf("append failed: plan %q already exists in batch %q", p.ID, b.ID)
+					}
+				}
+			} else if !batch.IsMissingBatchError(err) {
+				return fmt.Errorf("read active batch: %w", berr)
+			}
+		}
+	}
+
+	out, err := batch.Compile(batch.CompileInput{
+		Envelope:          env,
+		ExistingIDs:       existingIDs,
+		RegisteredPlanIDs: registeredPlanIDs(project),
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, w := range out.Warnings {
+		fmt.Fprintf(cmd.ErrOrStderr(), "[warn] %s\n", w)
+	}
+
+	w := cmd.OutOrStdout()
+	fmt.Fprintf(w, "Dry run: would compile batch %q with %d plan(s).\n", out.Batch.ID, len(out.Plans))
+	fmt.Fprintln(w, "Phases:")
+	for i, ph := range out.Batch.Phases {
+		mode := "serial"
+		if ph.Mode == batch.PhaseParallel {
+			mode = "parallel"
+		}
+		fmt.Fprintf(w, "  %d. [%s] %s\n", i+1, mode, joinIDs(ph.Plans))
+	}
+	fmt.Fprintf(w, "Plan IDs (first-seen order): %s\n", joinIDs(out.Batch.PlanIDs))
+	if len(out.Warnings) > 0 {
+		fmt.Fprintf(w, "Validation warnings (printed to stderr): %d\n", len(out.Warnings))
+	}
+	return nil
+}
+
+func joinIDs(ids []string) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	out := ids[0]
+	for _, id := range ids[1:] {
+		out += ", " + id
+	}
+	return out
 }
 
 // runAppend adds plans from the new envelope to an existing batch.
