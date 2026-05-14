@@ -70,23 +70,7 @@ func printBatchStatus(w io.Writer, b batch.Batch, run batch.Run, state *conducto
 	fmt.Fprintf(w, "Title: %s\n", b.Title)
 
 	if state != nil {
-		p := batch.ComputeProgress(b, state)
-		fmt.Fprintf(w, "Plans: %d/%d integrated\n", p.DonePlans, p.TotalPlans)
-		switch {
-		case p.AllDone:
-			fmt.Fprintln(w, "Status: complete")
-		case len(p.InFlight) > 0:
-			label := "running"
-			if p.ParallelInFlight {
-				label = "parallel"
-			}
-			fmt.Fprintf(w, "Current: %s (%s)\n", strings.Join(p.InFlight, ", "), label)
-			if len(p.Pending) > 0 {
-				fmt.Fprintf(w, "Next: %s\n", p.Pending[0])
-			}
-		case len(p.Pending) > 0:
-			fmt.Fprintf(w, "Next: %s\n", p.Pending[0])
-		}
+		printProgressBlock(w, b, state)
 	}
 
 	if run.FatalError != "" {
@@ -105,6 +89,28 @@ func printBatchStatus(w io.Writer, b batch.Batch, run batch.Run, state *conducto
 		}
 	}
 	return nil
+}
+
+// printProgressBlock emits the plan-centric progress lines (Plans/Current/Next
+// or Status: complete) used by both `springfield status` and the start-header.
+func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State) {
+	p := batch.ComputeProgress(b, state)
+	fmt.Fprintf(w, "Plans: %d/%d integrated\n", p.DonePlans, p.TotalPlans)
+	switch {
+	case p.AllDone:
+		fmt.Fprintln(w, "Status: complete")
+	case len(p.InFlight) > 0:
+		label := "running"
+		if p.ParallelInFlight {
+			label = "parallel"
+		}
+		fmt.Fprintf(w, "Current: %s (%s)\n", strings.Join(p.InFlight, ", "), label)
+		if len(p.Pending) > 0 {
+			fmt.Fprintf(w, "Next: %s\n", p.Pending[0])
+		}
+	case len(p.Pending) > 0:
+		fmt.Fprintf(w, "Next: %s\n", p.Pending[0])
+	}
 }
 
 func printPlanRegistry(w io.Writer, root string) error {
