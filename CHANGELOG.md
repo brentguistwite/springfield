@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/brentguistwite/springfield/compare/v0.12.0...v0.13.0) (2026-05-14)
+
+
+### Features
+
+* pre-v1 polish (status rollup + plan dry-run + agent_priority spec + plugin terminology + Pages wire-up) ([#61](https://github.com/brentguistwite/springfield/issues/61)) ([09958c1](https://github.com/brentguistwite/springfield/commit/09958c1f0cf08dad51a71bcbd5b4e35b6650db89))
+
 ## [0.12.0](https://github.com/brentguistwite/springfield/compare/v0.11.0...v0.12.0) (2026-05-12)
 
 
