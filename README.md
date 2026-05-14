@@ -182,6 +182,24 @@ Notes:
 - `allow_protected_base = false` (default) refuses to ff-merge plan results into `main` or `master`. Only consulted when `auto_branch = false` (otherwise the auto-cut feature branch becomes the base and the guard does not apply).
 - Runtime state under `.springfield/` is local project state and should not be committed.
 
+### `agent_priority` semantics
+
+`agent_priority` is an ordered list of agent IDs. Springfield always starts with the **first** id for each plan dispatch and only advances down the list on a retryable failure.
+
+**Failover triggers, evaluated in this order:**
+
+1. **Rate-limit cooldown** — the Claude adapter (only) implements the `Cooldowner` interface and, on a rate-limited response, extracts a "do-not-retry-before" timestamp from the error. Claude is then skipped on subsequent plan dispatches until that timestamp passes. The parsed cooldown is capped at 24h beyond "now". Codex and Gemini do not implement `Cooldowner`, so neither is ever skipped on cooldown.
+2. **Retryable error** — all three adapters (Claude, Codex, Gemini) implement `ErrorClassifier` and classify their own retryable patterns (rate-limit without an extractable cooldown, transient API errors, etc.). When `ClassifyError` returns `retryable`, the runner advances to the next id in `agent_priority` for the same plan.
+3. **Fatal error** — when `ClassifyError` returns `fatal` (the default), the batch stops; no further fallback. The plan is left in `failed` state and the run records the error.
+
+**What it is NOT:**
+
+- **Not round-robin.** Order is deterministic; the first eligible agent wins every dispatch.
+- **Not sticky-per-plan.** A plan that failed over to Codex once does not stay on Codex for retries — each retry re-evaluates from the top of `agent_priority`.
+- **Not load-balanced.** No cost-aware or capacity-aware routing.
+
+**Operator override:** there is no per-run flag to skip the failover chain. To force a single agent, list only that agent in `agent_priority`.
+
 ## Recommended Workflow
 
 Springfield runs each plan in an isolated git worktree, then ff-merges the result back into a base branch on your **local** clone. Nothing is pushed and no PR is opened — that step is yours.
