@@ -147,6 +147,9 @@ func TestTamperRunJSONDetected(t *testing.T) {
 		t.Fatalf("plan: %v", err)
 	}
 	fakeBinDir := filepath.Join(dir, "bin")
+	// active_phase_idx is intentionally retained as a compatibility probe: the
+	// decoder must continue to ignore the now-removed field so legacy run.json
+	// files still load. See decisions/2026-05-03-no-backward-compat-before-first-release.
 	installTamperingAgent(t, fakeBinDir, "claude",
 		"echo '{\"active_batch_id\":\"bogus\",\"active_phase_idx\":0}' > "+filepath.Join(dir, ".springfield", "run.json"))
 

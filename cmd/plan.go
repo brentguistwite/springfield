@@ -184,7 +184,6 @@ func NewPlanCommand() *cobra.Command {
 					}
 					newRun := batch.Run{
 						ActiveBatchID:  replaceOut.Batch.ID,
-						ActivePhaseIdx: 0,
 						ActivePlanIDs:  nil,
 						LastCheckpoint: time.Now().UTC(),
 					}
@@ -247,7 +246,6 @@ func NewPlanCommand() *cobra.Command {
 			// Write run.json cursor.
 			newRun := batch.Run{
 				ActiveBatchID:  out.Batch.ID,
-				ActivePhaseIdx: 0,
 				ActivePlanIDs:  nil,
 				LastCheckpoint: time.Now().UTC(),
 			}

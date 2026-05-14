@@ -34,7 +34,6 @@ type Batch struct {
 // Run is the runtime-only cursor state for the active batch.
 type Run struct {
 	ActiveBatchID  string    `json:"active_batch_id"`
-	ActivePhaseIdx int       `json:"active_phase_idx"`
 	ActivePlanIDs  []string  `json:"active_plan_ids,omitempty"`
 	LastCheckpoint time.Time `json:"last_checkpoint,omitempty"`
 	// FatalError is set only on terminal failure that requires user intervention.
