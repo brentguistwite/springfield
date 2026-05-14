@@ -147,6 +147,13 @@ func TestSpringfieldStartBatchRuntimeWinsOverConductorState(t *testing.T) {
 	if strings.Contains(out, "Plan: alpha") {
 		t.Fatalf("conductor plan surfaced despite active batch:\n%s", out)
 	}
+	// Startup header must show the plan-centric rollup, not stale "Phase: 1 of N".
+	if !strings.Contains(out, "Plans: ") || !strings.Contains(out, "integrated") {
+		t.Fatalf("startup header missing plan-centric rollup; expected 'Plans: X/Y integrated':\n%s", out)
+	}
+	if strings.Contains(out, "Phase: 1 of") {
+		t.Fatalf("stale 'Phase: 1 of N' resurrected in start header:\n%s", out)
+	}
 
 	state := readPlanStateFile(t, dir)
 	if state.Plans["alpha"].Status != "running" {

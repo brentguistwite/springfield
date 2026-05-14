@@ -9,7 +9,18 @@ import (
 )
 
 func integrated() *conductor.PlanState {
-	return &conductor.PlanState{Status: conductor.StatusCompleted}
+	// Mirror the canonical plan-unit integration path: Status=Completed plus
+	// Merge.Succeeded + Cleanup.Succeeded. The nil-Merge legacy shortcut also
+	// passes IsIntegrated but exists only for backwards compatibility, so tests
+	// shouldn't rely on it.
+	return &conductor.PlanState{
+		Status: conductor.StatusCompleted,
+		Merge: &conductor.MergeOutcome{
+			Status:           conductor.MergeSucceeded,
+			SourceSyncStatus: "synced",
+		},
+		Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupSucceeded},
+	}
 }
 
 func running() *conductor.PlanState {
@@ -85,8 +96,8 @@ func TestComputeProgress_ParallelInFlight(t *testing.T) {
 	if !got.ParallelInFlight {
 		t.Error("ParallelInFlight should be true: 2 in flight in parallel phase")
 	}
-	if len(got.InFlight) != 2 {
-		t.Errorf("InFlight: got %d, want 2", len(got.InFlight))
+	if !reflect.DeepEqual(got.InFlight, []string{"a", "b"}) {
+		t.Errorf("InFlight: got %v, want [a b]", got.InFlight)
 	}
 }
 

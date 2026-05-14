@@ -96,6 +96,50 @@ func TestPlanDryRunFreshProjectWritesNothing(t *testing.T) {
 	}
 }
 
+// TestPlanDryRunPlainModeWithActiveBatchWarns confirms the operator-visible
+// warning when --dry-run is invoked against a project with an active batch
+// but no --replace/--append flag.
+func TestPlanDryRunPlainModeWithActiveBatchWarns(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "claude")
+
+	// Seed an active batch via a real plan invocation.
+	env1 := prd.BatchPRDEnvelope{
+		Title:  "existing-batch",
+		Source: "src",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"existing-01"}}},
+		Plans:  []prd.BatchPRDPlan{minPRDPlan("existing-01", "Existing 01")},
+	}
+	if out, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, env1)); err != nil {
+		t.Fatalf("seed plan: %v\n%s", err, out)
+	}
+
+	pre := fingerprintSpringfieldDir(t, dir)
+
+	env2 := prd.BatchPRDEnvelope{
+		Title:  "preview-batch",
+		Source: "src",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"preview-01"}}},
+		Plans:  []prd.BatchPRDPlan{minPRDPlan("preview-01", "Preview 01")},
+	}
+	stdout, stderr, err := runPlanSplit(t, bin, dir, buildEnvelopeJSON(t, env2), "--dry-run")
+	if err != nil {
+		t.Fatalf("dry-run plain mode against active batch should succeed: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "[warn] active batch") {
+		t.Fatalf("expected stderr warning that active batch will not be modified:\nstderr:\n%s", stderr)
+	}
+	if !strings.Contains(stdout, "Dry run: would compile batch") {
+		t.Fatalf("expected dry-run summary on stdout:\nstdout:\n%s", stdout)
+	}
+
+	post := fingerprintSpringfieldDir(t, dir)
+	if diff, eq := mapEqual(pre, post); !eq {
+		t.Fatalf(".springfield/ mutated by plain --dry-run with active batch: %s", diff)
+	}
+}
+
 func TestPlanDryRunReplaceLeavesActiveBatchUntouched(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
@@ -133,6 +177,47 @@ func TestPlanDryRunReplaceLeavesActiveBatchUntouched(t *testing.T) {
 	post := fingerprintSpringfieldDir(t, dir)
 	if diff, eq := mapEqual(pre, post); !eq {
 		t.Fatalf(".springfield/ mutated by --replace --dry-run: %s", diff)
+	}
+}
+
+// TestPlanDryRunAppendAgainstOrphanRunSucceeds exercises the path where
+// run.json points at a batch whose batch.json was deleted (orphan state).
+// In that case the missing-batch error must be swallowed so the dry-run
+// proceeds with an empty existing-ID set. Regression test for the
+// err-vs-berr variable shadowing bug.
+func TestPlanDryRunAppendAgainstOrphanRunSucceeds(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "claude")
+
+	// Manufacture an orphan run by writing run.json but never producing a batch.json.
+	if err := os.WriteFile(
+		filepath.Join(dir, ".springfield", "run.json"),
+		[]byte(`{"active_batch_id":"ghost"}`),
+		0o644,
+	); err != nil {
+		t.Fatalf("write orphan run.json: %v", err)
+	}
+
+	pre := fingerprintSpringfieldDir(t, dir)
+
+	env := prd.BatchPRDEnvelope{
+		Title:  "append-batch",
+		Source: "src",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"new-plan"}}},
+		Plans:  []prd.BatchPRDPlan{minPRDPlan("new-plan", "New Plan")},
+	}
+	out, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, env), "--append", "--dry-run")
+	if err != nil {
+		t.Fatalf("dry-run append against orphan should succeed (missing batch.json swallowed): %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Dry run: would compile batch") {
+		t.Fatalf("expected dry-run summary even with orphan run.json:\n%s", out)
+	}
+
+	post := fingerprintSpringfieldDir(t, dir)
+	if diff, eq := mapEqual(pre, post); !eq {
+		t.Fatalf(".springfield/ mutated by --append --dry-run on orphan: %s", diff)
 	}
 }
 

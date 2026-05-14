@@ -81,10 +81,3 @@ type ArchivePlan struct {
 	Status string `json:"status"`
 }
 
-// ActivePhase returns the current phase, or false when all are done.
-func (b *Batch) ActivePhase(phaseIdx int) (Phase, bool) {
-	if phaseIdx < 0 || phaseIdx >= len(b.Phases) {
-		return Phase{}, false
-	}
-	return b.Phases[phaseIdx], true
-}

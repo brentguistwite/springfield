@@ -127,6 +127,9 @@ func TestStatusRollupOneInFlight(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
+	if !strings.Contains(out, "Plans: 0/2 integrated") {
+		t.Fatalf("expected Plans: 0/2 integrated:\n%s", out)
+	}
 	if !strings.Contains(out, "Current: 01 (running)") {
 		t.Fatalf("expected Current running line:\n%s", out)
 	}
@@ -154,8 +157,8 @@ func TestStatusRollupParallelInFlight(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if !strings.Contains(out, "(parallel)") {
-		t.Fatalf("expected parallel label:\n%s", out)
+	if !strings.Contains(out, "Current: 01, 02 (parallel)") {
+		t.Fatalf("expected Current: 01, 02 (parallel) line:\n%s", out)
 	}
 }
 
@@ -168,7 +171,14 @@ func TestStatusRollupAllDone(t *testing.T) {
 	writeActiveBatch(t, root, "batch-001", "Active Batch")
 	writeStatusState(t, root, map[string]any{
 		"plans": map[string]any{
-			"01": map[string]any{"status": "completed"},
+			"01": map[string]any{
+				"status": "completed",
+				"merge": map[string]any{
+					"status":             "succeeded",
+					"source_sync_status": "synced",
+				},
+				"cleanup": map[string]any{"status": "succeeded"},
+			},
 		},
 	})
 

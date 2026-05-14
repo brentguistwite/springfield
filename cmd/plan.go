@@ -311,7 +311,7 @@ func runDryRun(cmd *cobra.Command, rootDir string, env prd.BatchPRDEnvelope, rep
 						return fmt.Errorf("append failed: plan %q already exists in batch %q", p.ID, b.ID)
 					}
 				}
-			} else if !batch.IsMissingBatchError(err) {
+			} else if !batch.IsMissingBatchError(berr) {
 				return fmt.Errorf("read active batch: %w", berr)
 			}
 		}

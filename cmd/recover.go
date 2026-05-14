@@ -10,6 +10,7 @@ import (
 
 	"springfield/internal/core/config"
 	"springfield/internal/features/batch"
+	"springfield/internal/features/conductor"
 	"springfield/internal/features/execution"
 )
 
@@ -130,6 +131,27 @@ func printOrphanDiagnosis(w io.Writer, root string, run batch.Run, paths batch.P
 	fmt.Fprintf(w, "  run.json active_batch_id: %s\n", run.ActiveBatchID)
 	if run.FatalError != "" {
 		fmt.Fprintf(w, "  run.json fatal_error: %s\n", run.FatalError)
+	}
+
+	// Surface plan-level progress from conductor state. batch.json is gone in the
+	// orphan path, so phase context is unavailable — but the registered plan
+	// units + their integrated/running/pending breakdown is the most actionable
+	// signal for someone deciding whether to archive or salvage.
+	if project, perr := conductor.LoadProjectRaw(root); perr == nil && project != nil && project.Config != nil {
+		total := len(project.Config.PlanUnits)
+		if total > 0 {
+			var integrated, running int
+			for _, unit := range project.Config.PlanUnits {
+				ps := project.State.Plans[unit.ID]
+				switch {
+				case ps != nil && ps.IsIntegrated():
+					integrated++
+				case ps != nil && ps.Status == conductor.StatusRunning:
+					running++
+				}
+			}
+			fmt.Fprintf(w, "  plans registered: %d (integrated %d, running %d)\n", total, integrated, running)
+		}
 	}
 	fmt.Fprintf(w, "  plan dir:      %s\n", statHint(paths.PlanDir()))
 	fmt.Fprintf(w, "  batch.json:    %s\n", statHint(paths.BatchPath()))

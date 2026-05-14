@@ -1,6 +1,7 @@
 package cmd_test
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -8,6 +9,21 @@ import (
 	"springfield/internal/features/batch"
 	"springfield/internal/features/conductor"
 )
+
+// writePRDJSON writes a minimal prd.json under .springfield/plans/<planID>/prd.json.
+// Used in tests where the conductor config points at a PRD-style path
+// (writePlanFileBinary unconditionally appends .md, which is wrong here).
+func writePRDJSON(t *testing.T, root, planID string) {
+	t.Helper()
+	dir := filepath.Join(root, ".springfield", "plans", planID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	body := `{"id":"` + planID + `","user_stories":[]}`
+	if err := os.WriteFile(filepath.Join(dir, "prd.json"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write prd.json: %v", err)
+	}
+}
 
 // writeActiveBatchBinaryN is the multi-plan variant of writeActiveBatchBinary.
 // Each plan is its own serial phase, matching how `springfield plan` typically
@@ -62,9 +78,7 @@ func TestStatusActiveBatchRollupShapeViaBinary(t *testing.T) {
 		{ID: "02", Title: "Plan 02", Path: ".springfield/plans/02/prd.json", Order: 2},
 	}
 	for _, p := range plans {
-		dir := filepath.Join(root, ".springfield", "plans", p.ID)
-		writePlanFileBinary(t, root, ".springfield/plans/"+p.ID, "prd.json", `{"id":"`+p.ID+`","user_stories":[]}`)
-		_ = dir
+		writePRDJSON(t, root, p.ID)
 	}
 	writeConductorConfigBinary(t, root, &conductor.Config{
 		PlansDir:                   ".springfield/plans",
@@ -115,7 +129,7 @@ func TestStatusActiveBatchAllDoneViaBinary(t *testing.T) {
 	plans := []conductor.PlanUnit{
 		{ID: "01", Title: "Plan 01", Path: ".springfield/plans/01/prd.json", Order: 1},
 	}
-	writePlanFileBinary(t, root, ".springfield/plans/01", "prd.json", `{"id":"01","user_stories":[]}`)
+	writePRDJSON(t, root, "01")
 	writeConductorConfigBinary(t, root, &conductor.Config{
 		PlansDir:                   ".springfield/plans",
 		WorktreeBase:               ".worktrees",

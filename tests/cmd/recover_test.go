@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"springfield/internal/features/batch"
+	"springfield/internal/features/conductor"
 	"springfield/internal/features/prd"
 )
 
@@ -173,6 +174,57 @@ func TestSpringfieldRecoverDiagnoseDoesNotModifyState(t *testing.T) {
 	// State untouched.
 	if _, ok, _ := batch.ReadRun(dir); !ok {
 		t.Error("--diagnose must not clear run.json")
+	}
+}
+
+// TestSpringfieldRecoverDiagnoseShowsPlansRegistered confirms the orphan
+// diagnose output surfaces plan-level progress derived from conductor state
+// even when batch.json is missing. Replaces the deleted active_phase_idx
+// signal with something the operator can actually act on.
+func TestSpringfieldRecoverDiagnoseShowsPlansRegistered(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeSpringfieldConfig(t, dir, "claude")
+
+	// Orphan: run.json points at a batch with no batch.json.
+	if err := batch.WriteRun(dir, batch.Run{ActiveBatchID: "ghost"}); err != nil {
+		t.Fatalf("WriteRun: %v", err)
+	}
+	// Register two plan units, mark one integrated, one pending.
+	writePlanFileBinary(t, dir, ".springfield/plans", "alpha", "# alpha")
+	writePlanFileBinary(t, dir, ".springfield/plans", "beta", "# beta")
+	writeConductorConfigBinary(t, dir, &conductor.Config{
+		PlansDir:                   ".springfield/plans",
+		WorktreeBase:               ".worktrees",
+		MaxRetries:                 2,
+		SingleWorkstreamIterations: 50,
+		SingleWorkstreamTimeout:    3600,
+		Tool:                       "claude",
+		PlanUnits: []conductor.PlanUnit{
+			{ID: "alpha", Title: "Alpha", Path: ".springfield/plans/alpha.md", Order: 1},
+			{ID: "beta", Title: "Beta", Path: ".springfield/plans/beta.md", Order: 2},
+		},
+	})
+	writeConductorStateBinary(t, dir, &conductor.State{
+		Plans: map[string]*conductor.PlanState{
+			"alpha": {
+				Status: conductor.StatusCompleted,
+				Merge: &conductor.MergeOutcome{
+					Status:           conductor.MergeSucceeded,
+					SourceSyncStatus: "synced",
+				},
+				Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupSucceeded},
+			},
+			// beta: no entry → pending
+		},
+	})
+
+	output, err := runBinaryIn(t, bin, dir, "recover", "--diagnose")
+	if err != nil {
+		t.Fatalf("recover --diagnose: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "plans registered: 2 (integrated 1, running 0)") {
+		t.Fatalf("expected plan-level progress line in diagnose output:\n%s", output)
 	}
 }
 
