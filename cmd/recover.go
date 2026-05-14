@@ -128,7 +128,6 @@ func runOrphanRecover(w io.Writer, root string, diagnoseOnly bool) error {
 func printOrphanDiagnosis(w io.Writer, root string, run batch.Run, paths batch.Paths) error {
 	fmt.Fprintln(w, "Diagnosis:")
 	fmt.Fprintf(w, "  run.json active_batch_id: %s\n", run.ActiveBatchID)
-	fmt.Fprintf(w, "  run.json active_phase_idx: %d\n", run.ActivePhaseIdx)
 	if run.FatalError != "" {
 		fmt.Fprintf(w, "  run.json fatal_error: %s\n", run.FatalError)
 	}
