@@ -431,6 +431,10 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		if err := execution.WriteEvidence(iterDir, snap); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: write evidence iter %d for plan %s: %v\n", iter, planID, err)
 		}
+		capture := extractCost(result.Agent, result.Events, snap.Model, now())
+		if err := execution.WriteCost(iterDir, capture); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: write cost iter %d for plan %s: %v\n", iter, planID, err)
+		}
 
 		passedIDs, complete := ScanMarkers(result.Events)
 		honoredPasses := 0
@@ -731,6 +735,10 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 	}
 	if err := execution.WriteEvidence(evidenceDir, snap); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: write evidence for plan %s: %v\n", planID, err)
+	}
+	capture := extractCost(result.Agent, result.Events, snap.Model, now())
+	if err := execution.WriteCost(evidenceDir, capture); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: write cost for plan %s: %v\n", planID, err)
 	}
 
 	finalStatus := conductor.StatusCompleted
