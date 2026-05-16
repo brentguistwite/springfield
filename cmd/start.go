@@ -244,6 +244,9 @@ func NewStartCommand() *cobra.Command {
 
 			autoBranchOutcome = autobranch.OutcomeSuccess
 			fmt.Fprintf(w, "Status: completed\n")
+			if archiveRollup != nil && archiveRollup.Iterations > 0 {
+				fmt.Fprintln(w, formatTotalSpendLine(*archiveRollup))
+			}
 			return nil
 		},
 	}
