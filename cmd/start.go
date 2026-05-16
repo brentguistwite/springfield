@@ -421,11 +421,19 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 			TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(root, ".springfield", "plans"), controlRoot: root},
 			Ctx:                  ctx,
 			MaxTurnsPerIteration: loaded.Config.MaxTurnsPerIteration(),
+			CostCapUSD:           costCap,
 		})
 		if res.Reason == "no-eligible-plan" {
 			// The target plan is not registered in the conductor schedule —
 			// either not yet registered or already terminal. Stop the batch.
 			break
+		}
+		// Cost-cap fired inside the plan's iteration loop. Surface the pause
+		// to the caller WITHOUT marking the batch as failed.
+		if res.CostCapped {
+			fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
+			fmt.Fprintf(progress, "Status: cost-capped (%s)\n", res.Reason)
+			return BatchRunResult{CostCapped: true, SpendUSD: res.SpendUSD}, nil
 		}
 		if res.Err != nil {
 			fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
@@ -466,16 +474,6 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 		if mergeRes.Merge != nil && mergeRes.Merge.SourceSyncStatus == "failed" {
 			e := fmt.Errorf("plan %s merge succeeded but source resync failed: %s", res.PlanID, mergeRes.Merge.SourceSyncError)
 			return BatchRunResult{Error: e.Error()}, e
-		}
-
-		// Cost-cap check fires AFTER plan integration so we never abort
-		// mid-write. The current plan is allowed to complete; the cap halts
-		// the NEXT plan dispatch. Use >= so an exactly-at-cap value triggers
-		// abort (boundary test g in the plan).
-		if costCap > 0 {
-			if r, rollupErr := cost.ComputeRollup(root, b.ID); rollupErr == nil && r.TotalUSD >= costCap {
-				return BatchRunResult{CostCapped: true, SpendUSD: r.TotalUSD}, nil
-			}
 		}
 	}
 	return BatchRunResult{}, nil

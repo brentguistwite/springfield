@@ -1,0 +1,135 @@
+package planrun_test
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"springfield/internal/core/agents"
+	coreexec "springfield/internal/core/exec"
+	"springfield/internal/features/conductor"
+	"springfield/internal/features/conductor/planrun"
+	"springfield/internal/features/cost"
+)
+
+// TestSinglePlanCostCapAbortsIterationLoop is the headline integration test
+// the vendor-economics pivot was missing: a plan with an unpassed story that
+// keeps running iterations must abort INSIDE the iteration loop as soon as
+// the rollup crosses CostCapUSD, not "at the end of the plan."
+//
+// The fake runner emits a claude stream-json usage event sized to cost ~$3
+// per iteration against the static pricing table for claude-sonnet-4-6
+// (1M input tokens at $3/Mtok). Cap is $1.00 so iteration 1's $3.00 spend
+// crosses on the first WriteCost call.
+func TestSinglePlanCostCapAbortsIterationLoop(t *testing.T) {
+	root := projectFixtureWithUnpassedStory(t, "alpha")
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+	g := newFakeGit()
+	// Agent emits a usage event that the claude ExtractCost sums into 1M
+	// input tokens. Pricing: $3.00 per iteration. No story-pass marker
+	// means the loop would keep iterating if not for the cap.
+	runner := &fakeAgentRunner{}
+	runner.events = []coreexec.Event{
+		{Type: coreexec.EventStdout, Data: `{"type":"assistant","message":{"usage":{"input_tokens":1000000,"output_tokens":0}}}`},
+	}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		ProjectRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentClaude},
+		ExecutionSettings: agents.ExecutionSettings{
+			Claude: agents.ClaudeExecutionSettings{Model: "claude-sonnet-4-6"},
+		},
+		Runner:     runner,
+		Manager:    &planrun.Manager{Git: g},
+		CostCapUSD: 1.00,
+	})
+	if res.Err != nil {
+		t.Fatalf("SinglePlan should not surface err on cost-cap: %v", res.Err)
+	}
+	if !res.CostCapped {
+		t.Fatalf("expected CostCapped=true, got %+v", res)
+	}
+	if res.SpendUSD < 1.00 {
+		t.Errorf("expected SpendUSD >= cap, got $%.2f", res.SpendUSD)
+	}
+	if !strings.Contains(res.Reason, "cost-capped") {
+		t.Errorf("expected reason to mention cost-cap, got %q", res.Reason)
+	}
+	if res.Status != conductor.StatusInterrupted {
+		t.Errorf("status=%v want StatusInterrupted (cap is resumable, not failure)", res.Status)
+	}
+	// The agent should have been dispatched at most a small number of times
+	// before the cap fired — the loop must NOT have run iterCap (50) times.
+	if len(runner.calls) > 3 {
+		t.Errorf("loop did not abort promptly: %d agent dispatches before cap", len(runner.calls))
+	}
+
+	// Verify cost.json landed under the live evidence path so ComputeRollup
+	// will see the spend on resume.
+	matches, _ := filepath.Glob(filepath.Join(root, ".springfield", "execution", "plans", "*", "evidence", "iter-*", "cost.json"))
+	if len(matches) == 0 {
+		t.Errorf("expected at least one cost.json on disk after cap fired")
+	}
+
+	// Persisted state must NOT be StatusCompleted (otherwise runBatch would
+	// merge the plan).
+	reloaded, _ := conductor.LoadProject(root)
+	st := reloaded.State.Plans["alpha"]
+	if st == nil {
+		t.Fatal("no state persisted")
+	}
+	if st.Status == conductor.StatusCompleted {
+		t.Error("cost-capped plan must not persist as completed; would trigger spurious merge")
+	}
+}
+
+// TestSinglePlanCostCapBoundaryExact verifies the >= semantics: when the
+// rollup exactly equals the cap (to float precision), the abort fires.
+// This guards against an off-by-one between > and >= that would otherwise
+// be invisible until production.
+func TestSinglePlanCostCapBoundaryExact(t *testing.T) {
+	root := projectFixtureWithUnpassedStory(t, "alpha")
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+
+	g := newFakeGit()
+	// Pre-seed a cost.json under the live evidence path so ComputeRollup
+	// returns exactly $1.00 BEFORE the first iteration runs. The first
+	// iteration's WriteCost adds whatever the runner emits (zero usage
+	// → $0 added) so the post-WriteCost rollup is exactly $1.00.
+	planKey := planrun.PlanKey(conductor.PlanUnit{ID: "alpha"})
+	preDir := filepath.Join(root, ".springfield", "execution", "plans", planKey, "evidence", "iter-pre")
+	if err := os.MkdirAll(preDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	preCapture := cost.Capture{Adapter: "claude", Model: "claude-sonnet-4-6", CostUSD: 1.00}
+	preData, _ := json.MarshalIndent(preCapture, "", "  ")
+	if err := os.WriteFile(filepath.Join(preDir, "cost.json"), preData, 0o644); err != nil {
+		t.Fatalf("write pre-seed: %v", err)
+	}
+
+	runner := &fakeAgentRunner{}
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		ProjectRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentClaude},
+		Runner:       runner,
+		Manager:      &planrun.Manager{Git: g},
+		CostCapUSD:   1.00,
+	})
+	if !res.CostCapped {
+		t.Errorf("equality with cap must fire (>=); got CostCapped=%v Reason=%q", res.CostCapped, res.Reason)
+	}
+}

@@ -17,6 +17,7 @@ import (
 	"springfield/internal/core/exec"
 	coreruntime "springfield/internal/core/runtime"
 	"springfield/internal/features/conductor"
+	"springfield/internal/features/cost"
 	"springfield/internal/features/execution"
 	"springfield/internal/features/prd"
 )
@@ -107,6 +108,12 @@ type SinglePlanInput struct {
 	// silent-ignore behavior is surfaced to operators as a progress-line
 	// warning when the field is non-zero on a legacy dispatch.
 	MaxTurnsPerIteration int
+	// CostCapUSD bounds total spend across the live batch's evidence
+	// directories. When > 0, the iteration loop recomputes cost.ComputeRollup
+	// after each iteration's cost.json is written; if TotalUSD >= CostCapUSD,
+	// the loop breaks with Reason "cost-capped" so the caller (runBatch) can
+	// abort the batch without dispatching further plans. Zero disables.
+	CostCapUSD float64
 }
 
 // SinglePlanResult summarizes the outcome.
@@ -119,6 +126,15 @@ type SinglePlanResult struct {
 	Agent        string
 	Status       conductor.PlanStatus
 	Err          error
+	// CostCapped is true when the iteration loop broke because the rollup
+	// crossed CostCapUSD. The caller must NOT treat this as a plan failure
+	// (Err stays nil); it is a batch-level pause that needs CostCapped
+	// status persisted on Run.
+	CostCapped bool
+	// SpendUSD reports the rollup TotalUSD at the moment the cap fired; zero
+	// otherwise. Surfacing it on the result avoids a second ComputeRollup
+	// call in the caller for the cap-message dollar figure.
+	SpendUSD float64
 }
 
 // iterationSummary is written once at loop exit to evidenceDir/summary.json.
@@ -285,6 +301,8 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		exitReason        = "completed"
 		lastAgent         agents.ID
 		iterCount         int
+		costCapped        bool
+		costCapSpend      float64
 	)
 
 	// finishWithReview gates plan completion on the pre-merge review fix-loop.
@@ -436,6 +454,22 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			fmt.Fprintf(os.Stderr, "warning: write cost iter %d for plan %s: %v\n", iter, planID, err)
 		}
 
+		// Cost-cap check fires immediately after the iteration's cost is
+		// captured so a runaway plan with many iterations cannot blow past
+		// the cap. Mid-iteration: the iteration that crossed the threshold
+		// is allowed to finish (its evidence is already on disk); the NEXT
+		// iteration is what doesn't dispatch. Uses >= so total == cap fires
+		// (boundary spec).
+		if in.CostCapUSD > 0 {
+			if r, rollupErr := cost.ComputeRollup(in.ControlRoot, ""); rollupErr == nil && r.TotalUSD >= in.CostCapUSD {
+				costCapped = true
+				costCapSpend = r.TotalUSD
+				exitReason = fmt.Sprintf("cost-capped at $%.2f (cap $%.2f)", r.TotalUSD, in.CostCapUSD)
+				_ = AppendProgress(progressPath, fmt.Sprintf("%s cost-capped at $%.2f after iteration %d", now().UTC().Format(time.RFC3339), r.TotalUSD, iter))
+				break
+			}
+		}
+
 		passedIDs, complete := ScanMarkers(result.Events)
 		honoredPasses := 0
 		for _, sid := range passedIDs {
@@ -523,8 +557,11 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		}
 	}
 
-	// After loop: check if cap was hit without completion.
-	if !completedNormally && !needsHuman && finalRunErr == nil {
+	// After loop: an incomplete run that didn't halt for human review and
+	// wasn't cost-capped means the iteration cap was hit — a real failure.
+	// needsHuman (review halt) and costCapped (resumable batch pause) are
+	// both non-failure terminal states and must be excluded here.
+	if !completedNormally && !needsHuman && finalRunErr == nil && !costCapped {
 		finalRunErr = fmt.Errorf("iteration cap reached without completion marker")
 		exitReason = "iteration cap reached without completion marker"
 	}
@@ -561,6 +598,14 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 	case finalRunErr != nil:
 		finalStatus = conductor.StatusFailed
 		exitReason = terminalExitReason(exitReason, finalRunErr)
+	}
+	if costCapped {
+		// Cost-cap is neither success nor failure: the plan paused
+		// mid-flight, resumable when the operator passes a higher cap.
+		// Reuse StatusInterrupted (also used for ctx-cancel) so the
+		// plan does NOT enter merge integration and IsIntegrated stays
+		// false until the next start advances it.
+		finalStatus = conductor.StatusInterrupted
 	}
 	errOut := ""
 	if finalRunErr != nil {
@@ -600,6 +645,12 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 	if finalRunErr != nil {
 		resultReason = exitReason
 	}
+	if costCapped {
+		// cost-cap pauses the batch but is NOT a plan failure; keep Err nil
+		// so the caller sees a clean status and the cost-cap flag drives
+		// the batch-level abort decision.
+		resultReason = exitReason
+	}
 	out := SinglePlanResult{
 		PlanID:       planID,
 		Reason:       resultReason,
@@ -609,6 +660,8 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		Agent:        string(lastAgent),
 		Status:       finalStatus,
 		Err:          finalRunErr,
+		CostCapped:   costCapped,
+		SpendUSD:     costCapSpend,
 	}
 	// SaveState failures must never be silent.
 	switch {
