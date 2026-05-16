@@ -137,18 +137,17 @@ func TestInitAcceptsGeminiInAgentsFlag(t *testing.T) {
 }
 
 // TestInitNonTTYEmptyStdinErrors verifies that running init non-interactively
-// without piped answers or --agents fails with a clear error. There is no
-// fixed default priority — the user must opt in via flag or pipe.
+// with an empty stdin still fails before writing springfield.toml. The
+// init form pre-selects codex as the default priority (see the
+// vendor-economics pivot, 2026-05-14), but the model picker and write
+// confirmation still require input — empty stdin cannot satisfy them.
 func TestInitNonTTYEmptyStdinErrors(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 
 	output, err := runBinaryInWithInput(t, bin, dir, "", "init")
 	if err == nil {
-		t.Fatalf("expected error when non-interactive and no --agents flag, output:\n%s", output)
-	}
-	if !strings.Contains(output, "--agents") {
-		t.Fatalf("expected error mentioning --agents, got:\n%s", output)
+		t.Fatalf("expected error when non-interactive with empty stdin, output:\n%s", output)
 	}
 
 	// No springfield.toml should have been written.
@@ -158,17 +157,17 @@ func TestInitNonTTYEmptyStdinErrors(t *testing.T) {
 }
 
 // TestInitNonTTYPipedAccessibleModeMatchesFlagOutput pipes the canonical
-// "claude only, adapter default" answer script into init's accessible-mode
+// "codex only, adapter default" answer script into init's accessible-mode
 // form and asserts the resulting springfield.toml is byte-identical to the
-// flag-driven equivalent.
+// flag-driven equivalent. Codex is the default after the 2026-05-14
+// vendor-economics pivot.
 //
-// Answer-script derivation (empirical, 2026-05-11):
+// Answer-script derivation (empirical, 2026-05-15):
 //
 //  Prompt                                            Input     Effect
 //  ───────────────────────────────────────────────── ──────    ───────────────────────────
-//  MultiSelect "Which agents..."                     "1\n"     toggle claude
-//  MultiSelect (still in toggle loop)                "0\n"     confirm selection
-//  Select "Model for claude"                         "1\n"     pick "(use adapter default)"
+//  MultiSelect "Which agents..." (codex pre-checked) "0\n"     confirm selection as-is
+//  Select "Model for codex"                          "1\n"     pick "(use adapter default)"
 //  Confirm "Write springfield.toml..."               "y\n"     write
 //
 // Drift warning: huh's accessible-mode output format (numbered separators,
@@ -182,7 +181,7 @@ func TestInitNonTTYPipedAccessibleModeMatchesFlagOutput(t *testing.T) {
 	flagDir := t.TempDir()
 	pipeDir := t.TempDir()
 
-	if out, err := runBinaryIn(t, bin, flagDir, "init", "--agents", "claude"); err != nil {
+	if out, err := runBinaryIn(t, bin, flagDir, "init", "--agents", "codex"); err != nil {
 		t.Fatalf("flag-driven init failed: %v\n%s", err, out)
 	}
 	flagBytes, err := os.ReadFile(filepath.Join(flagDir, "springfield.toml"))
@@ -190,7 +189,7 @@ func TestInitNonTTYPipedAccessibleModeMatchesFlagOutput(t *testing.T) {
 		t.Fatalf("read flag config: %v", err)
 	}
 
-	const cannedAnswers = "1\n0\n1\ny\n"
+	const cannedAnswers = "0\n1\ny\n"
 	out, err := runBinaryInWithInput(t, bin, pipeDir, cannedAnswers, "init")
 	if err != nil {
 		t.Fatalf("piped init failed: %v\n%s", err, out)

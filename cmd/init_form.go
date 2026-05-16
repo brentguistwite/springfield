@@ -52,10 +52,18 @@ func runInitForm(
 	for _, id := range supported {
 		marker := agentDetectionMarker(det.Detect(id))
 		label := fmt.Sprintf("%s — %s", id, marker)
-		options = append(options, huh.NewOption(label, string(id)))
+		opt := huh.NewOption(label, string(id))
+		// Codex is pre-checked by default — subscription-friendly path.
+		// Claude and Gemini remain opt-in.
+		if id == agents.AgentCodex {
+			opt = opt.Selected(true)
+		}
+		options = append(options, opt)
 	}
 
-	var selected []string
+	// Pre-populate selected so accessible-mode renders codex as the default
+	// when the operator simply confirms without re-entering picks.
+	selected := []string{string(agents.AgentCodex)}
 	pickAgents := huh.NewForm(
 		huh.NewGroup(
 			huh.NewMultiSelect[string]().

@@ -11,8 +11,8 @@ func TestSupportedForExecutionReturnsSupportedIDs(t *testing.T) {
 		pos int
 		id  agents.ID
 	}{
-		{0, agents.AgentClaude},
-		{1, agents.AgentCodex},
+		{0, agents.AgentCodex},
+		{1, agents.AgentClaude},
 		{2, agents.AgentGemini},
 	}
 
