@@ -81,6 +81,11 @@ func NewStartCommand() *cobra.Command {
 				return err
 			}
 
+			// Emit the vendor-billing warning before any dispatch, regardless
+			// of which path follows (batch-resume, single-plan-unit, or "no
+			// plan" error). Operators see the warning consistently.
+			emitClaudeBillingWarning(cmd.ErrOrStderr(), root, loaded.Config.Project.AgentPriority)
+
 			if !hasRun || run.ActiveBatchID == "" {
 				ran, runErr := tryRunSinglePlanUnit(cmd, root, loaded, noKeepAwake)
 				if runErr != nil {
