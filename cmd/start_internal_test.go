@@ -139,7 +139,7 @@ func TestRunBatchWithContextCancelledReturnsContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel before calling
 
-	_, err := runBatchWithContext(ctx, root, run, b, io.Discard, "")
+	_, err := runBatchWithContext(ctx, root, run, b, io.Discard, "", 0)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
@@ -296,7 +296,7 @@ func TestRunBatchWithContextMissingExecutionConfigFails(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	result, err := runBatchWithContext(ctx, root, run, b, io.Discard, "")
+	result, err := runBatchWithContext(ctx, root, run, b, io.Discard, "", 0)
 	if err == nil {
 		t.Fatal("expected error when execution config is missing, got nil")
 	}

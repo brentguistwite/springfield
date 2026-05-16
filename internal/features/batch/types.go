@@ -49,6 +49,11 @@ type Run struct {
 	// AutoBranchName records the auto-cut feature branch the batch runs on.
 	// Empty when auto-branching did not fire.
 	AutoBranchName string `json:"auto_branch_name,omitempty"`
+	// CostCapped is set when a batch was paused because total spend reached
+	// or exceeded --cost-cap. Distinct from FatalError: cost-capped is a
+	// resumable pause (rerun with a higher --cost-cap to continue), not a
+	// terminal failure requiring `springfield recover`.
+	CostCapped bool `json:"cost_capped,omitempty"`
 }
 
 const maxLastRetry = 10

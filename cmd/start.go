@@ -50,6 +50,7 @@ func (r runtimeAgentRunner) Run(ctx context.Context, req coreruntime.Request) co
 func NewStartCommand() *cobra.Command {
 	var dir string
 	var noKeepAwake bool
+	var costCap float64
 
 	cmd := &cobra.Command{
 		Use:   "start",
@@ -85,6 +86,28 @@ func NewStartCommand() *cobra.Command {
 			// of which path follows (batch-resume, single-plan-unit, or "no
 			// plan" error). Operators see the warning consistently.
 			emitClaudeBillingWarning(cmd.ErrOrStderr(), root, loaded.Config.Project.AgentPriority)
+
+			// Resume semantics for a previously cost-capped batch: the user
+			// must pass --cost-cap with a value strictly greater than the
+			// current spend, otherwise we reject before any dispatch. This
+			// keeps the new cap a deliberate choice rather than an accidental
+			// silent restart at the same threshold.
+			if hasRun && run.CostCapped {
+				currentSpend := 0.0
+				if r, rollupErr := cost.ComputeRollup(root, run.ActiveBatchID); rollupErr == nil {
+					currentSpend = r.TotalUSD
+				}
+				if costCap <= 0 {
+					return fmt.Errorf("cost-capped batch requires --cost-cap to resume; current spend $%.2f; pass --cost-cap $Y where Y > current spend", currentSpend)
+				}
+				if costCap <= currentSpend {
+					return fmt.Errorf("requested cap $%.2f not greater than current spend $%.2f; pass a higher --cost-cap to resume", costCap, currentSpend)
+				}
+				run.CostCapped = false
+				if writeErr := batch.WriteRun(root, run); writeErr != nil {
+					return fmt.Errorf("clear cost-cap state for resume: %w", writeErr)
+				}
+			}
 
 			if !hasRun || run.ActiveBatchID == "" {
 				ran, runErr := tryRunSinglePlanUnit(cmd, root, loaded, noKeepAwake)
@@ -187,7 +210,7 @@ func NewStartCommand() *cobra.Command {
 				}
 			}
 
-			result, execErr := runBatch(root, run, b, w, logPath)
+			result, execErr := runBatch(root, run, b, w, logPath, costCap)
 
 			// Interrupted by signal: leave batch state intact so the user can
 			// rerun "springfield start" to resume. Do NOT archive as completed.
@@ -196,6 +219,22 @@ func NewStartCommand() *cobra.Command {
 				fmt.Fprintf(w, "Status: interrupted\n")
 				fmt.Fprintf(w, "Info: rerun \"springfield start\" to resume\n")
 				return fmt.Errorf("batch %s interrupted; rerun \"springfield start\" to resume", b.ID)
+			}
+
+			// Cost-capped: persist the CostCapped state, surface the spend +
+			// resume hint, and exit non-zero so CI / scripts can detect.
+			// Do NOT archive — the batch is paused, not done.
+			if result.CostCapped {
+				run.CostCapped = true
+				run.LastCheckpoint = time.Now().UTC()
+				if writeErr := batch.WriteRun(root, run); writeErr != nil {
+					return fmt.Errorf("persist cost-cap state: %w", writeErr)
+				}
+				autoBranchOutcome = autobranch.OutcomeInterrupted
+				fmt.Fprintf(w, "Status: cost-capped\n")
+				fmt.Fprintf(w, "Spend: $%.2f (cap: $%.2f)\n", result.SpendUSD, costCap)
+				fmt.Fprintf(w, "Info: rerun with --cost-cap $Y to continue (Y > current spend) or remove claude from agent_priority to reduce spend\n")
+				return fmt.Errorf("batch %s halted by --cost-cap at $%.2f", b.ID, result.SpendUSD)
 			}
 
 			run.LastCheckpoint = time.Now().UTC()
@@ -253,6 +292,7 @@ func NewStartCommand() *cobra.Command {
 
 	cmd.Flags().StringVar(&dir, "dir", ".", "project root or nested path inside the Springfield project")
 	cmd.Flags().BoolVar(&noKeepAwake, "no-keep-awake", false, "disable sleep prevention for this run")
+	cmd.Flags().Float64Var(&costCap, "cost-cap", 0, "Abort the batch when total spend reaches this many USD (0 = no cap). Cap-aborted batches are resumable: rerun with a higher --cost-cap to continue.")
 	return cmd
 }
 
@@ -264,19 +304,26 @@ type BatchRunResult struct {
 	// run cursor on an unrecoverable path (e.g. tamper detection). The caller
 	// must not re-write run.json, or the cleared cursor gets stranded again.
 	RunStateCleared bool
+	// CostCapped is true when the batch hit the --cost-cap threshold and was
+	// paused. The caller persists run.CostCapped and surfaces the cap status
+	// to the operator instead of archiving the batch.
+	CostCapped bool
+	// SpendUSD reports the rollup total at the moment the cap fired. Zero
+	// when CostCapped is false.
+	SpendUSD float64
 }
 
-func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string) (BatchRunResult, error) {
+func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string, costCap float64) (BatchRunResult, error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return runBatchWithContext(ctx, root, run, b, progress, logPath)
+	return runBatchWithContext(ctx, root, run, b, progress, logPath, costCap)
 }
 
 // runBatchWithContext is the testable core of runBatch. ctx controls interrupt
 // detection: when ctx is cancelled mid-loop (or on entry) the function returns
 // context.Canceled so the caller can distinguish a user interrupt (preserve
 // batch state) from normal completion (archive + clear run.json).
-func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string) (BatchRunResult, error) {
+func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string, costCap float64) (BatchRunResult, error) {
 	// Check for pre-cancellation before any setup so tests and real signal
 	// handlers both get the same early-exit path.
 	if ctx.Err() != nil {
@@ -419,6 +466,16 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 		if mergeRes.Merge != nil && mergeRes.Merge.SourceSyncStatus == "failed" {
 			e := fmt.Errorf("plan %s merge succeeded but source resync failed: %s", res.PlanID, mergeRes.Merge.SourceSyncError)
 			return BatchRunResult{Error: e.Error()}, e
+		}
+
+		// Cost-cap check fires AFTER plan integration so we never abort
+		// mid-write. The current plan is allowed to complete; the cap halts
+		// the NEXT plan dispatch. Use >= so an exactly-at-cap value triggers
+		// abort (boundary test g in the plan).
+		if costCap > 0 {
+			if r, rollupErr := cost.ComputeRollup(root, b.ID); rollupErr == nil && r.TotalUSD >= costCap {
+				return BatchRunResult{CostCapped: true, SpendUSD: r.TotalUSD}, nil
+			}
 		}
 	}
 	return BatchRunResult{}, nil

@@ -76,6 +76,9 @@ func printBatchStatus(w io.Writer, root string, b batch.Batch, run batch.Run, st
 		printSpendLine(w, root, b.ID)
 	}
 
+	if run.CostCapped {
+		fmt.Fprintln(w, "Status: cost-capped")
+	}
 	// The batch-level fatal error is a post-mortem of the plan that halted the
 	// run. Once that plan has been recovered (no plan in the batch is failed
 	// anymore), the error is stale — suppress it so it does not sit beside a
@@ -226,6 +229,12 @@ func printPlanRegistry(w io.Writer, root string) error {
 
 func printOrphanStatus(w io.Writer, run batch.Run) {
 	fmt.Fprintf(w, "Batch: %s (orphaned — batch.json missing)\n", run.ActiveBatchID)
+	if run.CostCapped {
+		// Spend figure intentionally omitted: batch.json is gone so
+		// ComputeRollup cannot resolve the evidence path. Operator must
+		// run recover before resuming.
+		fmt.Fprintln(w, "Status: cost-capped")
+	}
 	if run.FatalError != "" {
 		fmt.Fprintf(w, "Fatal error: %s\n", run.FatalError)
 	}
