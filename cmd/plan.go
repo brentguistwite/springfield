@@ -13,6 +13,7 @@ import (
 
 	"springfield/internal/core/config"
 	"springfield/internal/features/batch"
+	"springfield/internal/features/cost"
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/execution"
 	"springfield/internal/features/prd"
@@ -161,7 +162,14 @@ func NewPlanCommand() *cobra.Command {
 						fmt.Fprintf(cmd.ErrOrStderr(), "[warn] %s\n", w)
 					}
 
-					if err := batch.ArchiveBatchNormalized(rootDir, *priorBatch, "replaced"); err != nil {
+					// Capture the prior batch's rollup before archive removes
+					// its evidence dirs; without this, the "replaced" flow
+					// loses historical signal for the just-killed batch.
+					var priorRollup *cost.Rollup
+					if r, rollupErr := cost.ComputeRollup(rootDir, priorBatch.ID); rollupErr == nil {
+						priorRollup = &r
+					}
+					if err := batch.ArchiveBatchNormalized(rootDir, *priorBatch, "replaced", priorRollup); err != nil {
 						return fmt.Errorf("archive prior batch: %w", err)
 					}
 					// Clear run.json immediately after archive so there is no window

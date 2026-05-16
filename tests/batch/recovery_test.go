@@ -102,7 +102,7 @@ func TestArchiveConcurrentWritersLandExactlyOnce(t *testing.T) {
 	for i := 0; i < n; i++ {
 		go func() {
 			<-start
-			errs <- batch.ArchiveBatchNormalized(dir, b, "completed")
+			errs <- batch.ArchiveBatchNormalized(dir, b, "completed", nil)
 		}()
 	}
 	close(start)
@@ -135,7 +135,7 @@ func TestArchiveBatchIsIdempotentWhenArchiveAlreadyExists(t *testing.T) {
 	if err := batch.WriteBatch(paths, b, "", nil); err != nil {
 		t.Fatalf("WriteBatch: %v", err)
 	}
-	if err := batch.ArchiveBatchNormalized(dir, b, "completed"); err != nil {
+	if err := batch.ArchiveBatchNormalized(dir, b, "completed", nil); err != nil {
 		t.Fatalf("first archive: %v", err)
 	}
 
@@ -143,7 +143,7 @@ func TestArchiveBatchIsIdempotentWhenArchiveAlreadyExists(t *testing.T) {
 	if err := batch.WriteBatch(paths, b, "", nil); err != nil {
 		t.Fatalf("WriteBatch second: %v", err)
 	}
-	if err := batch.ArchiveBatchNormalized(dir, b, "completed"); err != nil {
+	if err := batch.ArchiveBatchNormalized(dir, b, "completed", nil); err != nil {
 		t.Fatalf("second archive: %v", err)
 	}
 

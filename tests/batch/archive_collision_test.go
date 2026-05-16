@@ -38,7 +38,7 @@ func TestArchiveBatchNormalizedWritesSiblingOnReasonCollision(t *testing.T) {
 		t.Fatalf("seed batch.json: %v", err)
 	}
 
-	if err := batch.ArchiveBatchNormalized(dir, b, "replaced"); err != nil {
+	if err := batch.ArchiveBatchNormalized(dir, b, "replaced", nil); err != nil {
 		t.Fatalf("archive 1: %v", err)
 	}
 	// Re-seed plan dir for the second archive (first call removed it).
@@ -48,7 +48,7 @@ func TestArchiveBatchNormalizedWritesSiblingOnReasonCollision(t *testing.T) {
 	if err := os.WriteFile(paths.BatchPath(), []byte("{}"), 0o644); err != nil {
 		t.Fatalf("reseed batch.json: %v", err)
 	}
-	if err := batch.ArchiveBatchNormalized(dir, b, "state-tampered"); err != nil {
+	if err := batch.ArchiveBatchNormalized(dir, b, "state-tampered", nil); err != nil {
 		t.Fatalf("archive 2: %v", err)
 	}
 
@@ -111,7 +111,7 @@ func TestArchiveBatchNormalizedIdempotentSameReason(t *testing.T) {
 		if err := os.WriteFile(paths.BatchPath(), []byte("{}"), 0o644); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
-		if err := batch.ArchiveBatchNormalized(dir, b, "completed"); err != nil {
+		if err := batch.ArchiveBatchNormalized(dir, b, "completed", nil); err != nil {
 			t.Fatalf("archive %d: %v", i, err)
 		}
 	}

@@ -65,12 +65,20 @@ func (r *Run) AppendRetry(msg string) {
 }
 
 // ArchiveEntry is the compact summary stored after a batch completes or is replaced.
+//
+// TotalUSD and CostBreakdown are populated at archive time when the caller
+// can compute a cost.Rollup for the batch (start completion, plan-replace).
+// Legacy archives written before cost capture landed have these zero and
+// must be skipped when computing historical estimates rather than treated
+// as $0 batches.
 type ArchiveEntry struct {
-	BatchID    string        `json:"batch_id"`
-	Title      string        `json:"title"`
-	ArchivedAt time.Time     `json:"archived_at"`
-	Reason     string        `json:"reason,omitempty"`
-	Plans      []ArchivePlan `json:"plans,omitempty"`
+	BatchID       string             `json:"batch_id"`
+	Title         string             `json:"title"`
+	ArchivedAt    time.Time          `json:"archived_at"`
+	Reason        string             `json:"reason,omitempty"`
+	Plans         []ArchivePlan      `json:"plans,omitempty"`
+	TotalUSD      float64            `json:"total_usd,omitempty"`
+	CostBreakdown map[string]float64 `json:"cost_breakdown,omitempty"`
 }
 
 // ArchivePlan is the per-plan summary in an archive entry.

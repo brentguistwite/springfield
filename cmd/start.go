@@ -31,6 +31,7 @@ import (
 	coreruntime "springfield/internal/core/runtime"
 	"springfield/internal/features/autobranch"
 	"springfield/internal/features/batch"
+	"springfield/internal/features/cost"
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/conductor/planmerge"
 	"springfield/internal/features/conductor/planrun"
@@ -220,7 +221,16 @@ func NewStartCommand() *cobra.Command {
 			// archive first. If the process dies between archive-rename and
 			// ClearRun, the next start sees run.json pointing at an already-
 			// archived id and RecoverOrphan handles it idempotently.
-			if archiveErr := batch.ArchiveBatchNormalized(root, b, "completed"); archiveErr != nil {
+			//
+			// Compute the cost rollup before archiving so historical estimates
+			// survive past the point where per-iter cost.json files are reaped
+			// along with the live plan dir. Walking evidence dirs is best-effort
+			// — a read error here must not block archive write.
+			var archiveRollup *cost.Rollup
+			if r, rollupErr := cost.ComputeRollup(root, b.ID); rollupErr == nil {
+				archiveRollup = &r
+			}
+			if archiveErr := batch.ArchiveBatchNormalized(root, b, "completed", archiveRollup); archiveErr != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: archive completed batch %q: %v\n", b.ID, archiveErr)
 			}
 			if clearErr := batch.ClearRun(root); clearErr != nil {

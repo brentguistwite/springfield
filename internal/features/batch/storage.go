@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"springfield/internal/features/cost"
 )
 
 // WriteBatch persists the compiled batch, source, and per-plan files to disk.
@@ -167,7 +169,13 @@ func ClearRun(rootDir string) error {
 // Durability contract: the archive bytes are fsynced, the rename makes them
 // visible atomically, and the parent directory is fsynced so the rename
 // survives power loss. Only after that is the live plan dir removed.
-func ArchiveBatchNormalized(rootDir string, b Batch, reason string) error {
+//
+// rollup may be nil. When non-nil, its TotalUSD and PerAdapter values are
+// copied into the archive entry so historical cost estimates survive past
+// the point where per-iter cost.json files under .springfield/execution/
+// are reaped. Callers that have no rollup (orphan recovery, legacy paths)
+// pass nil.
+func ArchiveBatchNormalized(rootDir string, b Batch, reason string, rollup *cost.Rollup) error {
 	archivePath := StableArchivePath(rootDir, b.ID)
 
 	if err := os.MkdirAll(ArchiveDir(rootDir), 0o755); err != nil {
@@ -179,6 +187,15 @@ func ArchiveBatchNormalized(rootDir string, b Batch, reason string) error {
 		Title:      b.Title,
 		ArchivedAt: time.Now().UTC(),
 		Reason:     reason,
+	}
+	if rollup != nil {
+		entry.TotalUSD = rollup.TotalUSD
+		if len(rollup.PerAdapter) > 0 {
+			entry.CostBreakdown = make(map[string]float64, len(rollup.PerAdapter))
+			for k, v := range rollup.PerAdapter {
+				entry.CostBreakdown[k] = v
+			}
+		}
 	}
 
 	existed, err := writeJSONExclusive(archivePath, entry)
