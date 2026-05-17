@@ -42,13 +42,46 @@ func TestExtractCost_TokenBasedFromMessages(t *testing.T) {
 
 func TestExtractCost_ExplicitCostUSDWins(t *testing.T) {
 	events := []coreexec.Event{
-		evt(`{"type":"assistant","message":{"usage":{"input_tokens":1_000_000,"output_tokens":0}}}`),
+		evt(`{"type":"assistant","message":{"usage":{"input_tokens":1000000,"output_tokens":0}}}`),
 		evt(`{"type":"result","subtype":"success","usage":{"input_tokens":1000000,"output_tokens":0},"total_cost_usd":0.42}`),
 	}
 	got := claude.ExtractCost(events, "claude-sonnet-4-6", time.Now())
 	// Pricing table would yield 1M*3/1e6 = $3.00, but result event's 0.42 wins.
 	if math.Abs(got.CostUSD-0.42) > 1e-9 {
 		t.Errorf("expected explicit cost 0.42, got %v", got.CostUSD)
+	}
+	// The result event's usage block is the cumulative total and must
+	// REPLACE any accumulated tokens from prior assistant events — not
+	// add on top. Pre-fix this would have shown 2_000_000.
+	if got.InputTokens != 1_000_000 {
+		t.Errorf("input_tokens=%d want 1_000_000 (result event must NOT double-count assistant tokens)", got.InputTokens)
+	}
+	if got.OutputTokens != 0 {
+		t.Errorf("output_tokens=%d want 0", got.OutputTokens)
+	}
+}
+
+// TestExtractCost_ResultEventTokensWinWithoutCostUSD verifies the same
+// no-double-count rule applies even when the result event carries no
+// explicit cost — token-based pricing must still see the correct total.
+func TestExtractCost_ResultEventTokensWinWithoutCostUSD(t *testing.T) {
+	events := []coreexec.Event{
+		evt(`{"type":"assistant","message":{"usage":{"input_tokens":500000,"output_tokens":100000}}}`),
+		evt(`{"type":"assistant","message":{"usage":{"input_tokens":500000,"output_tokens":100000}}}`),
+		// Result's usage is cumulative; without the de-double-count fix
+		// this run would persist 2M/400K instead of 1M/200K.
+		evt(`{"type":"result","subtype":"success","usage":{"input_tokens":1000000,"output_tokens":200000}}`),
+	}
+	got := claude.ExtractCost(events, "claude-sonnet-4-6", time.Now())
+	if got.InputTokens != 1_000_000 {
+		t.Errorf("input_tokens=%d want 1_000_000", got.InputTokens)
+	}
+	if got.OutputTokens != 200_000 {
+		t.Errorf("output_tokens=%d want 200_000", got.OutputTokens)
+	}
+	// sonnet 4.6: 1M*3/1e6 + 200K*15/1e6 = 3.00 + 3.00 = $6.00
+	if math.Abs(got.CostUSD-6.00) > 1e-9 {
+		t.Errorf("cost_usd=%v want 6.00", got.CostUSD)
 	}
 }
 

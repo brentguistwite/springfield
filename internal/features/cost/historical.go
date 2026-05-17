@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 )
 
 // archiveEntry mirrors the subset of batch.ArchiveEntry needed for the
@@ -14,8 +15,9 @@ import (
 // batch (avoiding a cycle — batch depends on cost for the Rollup type that
 // archive uses).
 type archiveEntry struct {
-	BatchID  string  `json:"batch_id"`
-	TotalUSD float64 `json:"total_usd"`
+	BatchID    string    `json:"batch_id"`
+	TotalUSD   float64   `json:"total_usd"`
+	ArchivedAt time.Time `json:"archived_at"`
 	// Plans count is derived from the embedded plans array; only its length
 	// is needed for the estimate.
 	Plans []json.RawMessage `json:"plans"`
@@ -46,8 +48,8 @@ func EstimatePerPlanUSD(root string, lookback int) (low, high float64, batchCoun
 	}
 
 	type sample struct {
-		modTime int64
-		perPlan float64
+		archivedAt time.Time
+		perPlan    float64
 	}
 	var samples []sample
 
@@ -71,13 +73,20 @@ func EstimatePerPlanUSD(root string, lookback int) (low, high float64, batchCoun
 		if ae.TotalUSD <= 0 || len(ae.Plans) == 0 {
 			continue
 		}
-		info, statErr := ent.Info()
-		if statErr != nil {
-			continue
+		// Prefer archived_at from the JSON entry (authoritative; survives
+		// file copies/syncs) and fall back to file mod-time only when the
+		// field is absent (pre-PR or hand-edited archives).
+		t := ae.ArchivedAt
+		if t.IsZero() {
+			if info, statErr := ent.Info(); statErr == nil {
+				t = info.ModTime()
+			} else {
+				continue
+			}
 		}
 		samples = append(samples, sample{
-			modTime: info.ModTime().UnixNano(),
-			perPlan: ae.TotalUSD / float64(len(ae.Plans)),
+			archivedAt: t,
+			perPlan:    ae.TotalUSD / float64(len(ae.Plans)),
 		})
 	}
 
@@ -85,7 +94,7 @@ func EstimatePerPlanUSD(root string, lookback int) (low, high float64, batchCoun
 		return 0, 0, 0
 	}
 
-	sort.Slice(samples, func(i, j int) bool { return samples[i].modTime > samples[j].modTime })
+	sort.Slice(samples, func(i, j int) bool { return samples[i].archivedAt.After(samples[j].archivedAt) })
 	if len(samples) > lookback {
 		samples = samples[:lookback]
 	}

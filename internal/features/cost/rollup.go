@@ -15,6 +15,11 @@ type Rollup struct {
 	PerAdapter   map[string]float64 `json:"per_adapter,omitempty"`
 	Iterations   int                `json:"iterations"`
 	UnpricedRuns int                `json:"unpriced_runs,omitempty"`
+	// SkippedFiles counts cost.json files that existed on disk but could
+	// not be read or decoded. Callers using Rollup for safety logic
+	// (--cost-cap enforcement, resume guard) MUST surface a non-zero
+	// value to the operator so they know the rollup may under-count.
+	SkippedFiles int `json:"skipped_files,omitempty"`
 }
 
 // ComputeRollup walks the live evidence directories under
@@ -47,6 +52,11 @@ func ComputeRollup(root, batchID string) (Rollup, error) {
 
 	walkErr := filepath.WalkDir(execRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			// WalkDir surfaces both directory-traversal errors and per-file
+			// errors here. We can't tell which file would have been visited
+			// from a directory-traversal failure, so count it as one skip
+			// rather than guess at the shape of what was missed.
+			r.SkippedFiles++
 			return nil
 		}
 		if d.IsDir() || filepath.Base(path) != "cost.json" {
@@ -54,10 +64,12 @@ func ComputeRollup(root, batchID string) (Rollup, error) {
 		}
 		data, readErr := os.ReadFile(path)
 		if readErr != nil {
+			r.SkippedFiles++
 			return nil
 		}
 		var c Capture
 		if jsonErr := json.Unmarshal(data, &c); jsonErr != nil {
+			r.SkippedFiles++
 			return nil
 		}
 		r.Iterations++

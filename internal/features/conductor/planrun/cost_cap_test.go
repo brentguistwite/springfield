@@ -66,10 +66,11 @@ func TestSinglePlanCostCapAbortsIterationLoop(t *testing.T) {
 	if res.Status != conductor.StatusInterrupted {
 		t.Errorf("status=%v want StatusInterrupted (cap is resumable, not failure)", res.Status)
 	}
-	// The agent should have been dispatched at most a small number of times
-	// before the cap fired — the loop must NOT have run iterCap (50) times.
-	if len(runner.calls) > 3 {
-		t.Errorf("loop did not abort promptly: %d agent dispatches before cap", len(runner.calls))
+	// The cap fires after the FIRST iteration writes its cost.json ($3 >= $1).
+	// Exact-1 expected; anything else means the cap check is not where the
+	// plan documents it (between WriteCost and the next iteration dispatch).
+	if len(runner.calls) != 1 {
+		t.Errorf("expected exactly 1 agent dispatch before cap; got %d", len(runner.calls))
 	}
 
 	// Verify cost.json landed under the live evidence path so ComputeRollup

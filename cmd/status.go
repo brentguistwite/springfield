@@ -186,13 +186,18 @@ func formatTotalSpendLine(r cost.Rollup) string {
 	if r.UnpricedRuns > 0 {
 		out += fmt.Sprintf(" (%d unpriced — likely gemini)", r.UnpricedRuns)
 	}
+	if r.SkippedFiles > 0 {
+		out += fmt.Sprintf(" (%d files skipped — totals may under-count)", r.SkippedFiles)
+	}
 	return out
 }
 
 // formatSpendLine renders the Spend: line. Per-adapter breakdown is sorted
 // by adapter name for deterministic output. Adapters with zero cost are
 // omitted from the parenthetical. When the rollup includes unpriced runs,
-// "(N unpriced)" is appended.
+// "(N unpriced)" is appended. When the rollup encountered unreadable
+// cost.json files, "(M files skipped — totals may under-count)" is
+// appended so operators know the spend figure is best-effort.
 func formatSpendLine(r cost.Rollup) string {
 	adapters := make([]string, 0, len(r.PerAdapter))
 	for name, amount := range r.PerAdapter {
@@ -214,6 +219,9 @@ func formatSpendLine(r cost.Rollup) string {
 	}
 	if r.UnpricedRuns > 0 {
 		out += fmt.Sprintf(" (%d unpriced)", r.UnpricedRuns)
+	}
+	if r.SkippedFiles > 0 {
+		out += fmt.Sprintf(" (%d files skipped — totals may under-count)", r.SkippedFiles)
 	}
 	return out
 }

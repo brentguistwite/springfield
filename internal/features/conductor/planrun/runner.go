@@ -454,22 +454,10 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			fmt.Fprintf(os.Stderr, "warning: write cost iter %d for plan %s: %v\n", iter, planID, err)
 		}
 
-		// Cost-cap check fires immediately after the iteration's cost is
-		// captured so a runaway plan with many iterations cannot blow past
-		// the cap. Mid-iteration: the iteration that crossed the threshold
-		// is allowed to finish (its evidence is already on disk); the NEXT
-		// iteration is what doesn't dispatch. Uses >= so total == cap fires
-		// (boundary spec).
-		if in.CostCapUSD > 0 {
-			if r, rollupErr := cost.ComputeRollup(in.ControlRoot, ""); rollupErr == nil && r.TotalUSD >= in.CostCapUSD {
-				costCapped = true
-				costCapSpend = r.TotalUSD
-				exitReason = fmt.Sprintf("cost-capped at $%.2f (cap $%.2f)", r.TotalUSD, in.CostCapUSD)
-				_ = AppendProgress(progressPath, fmt.Sprintf("%s cost-capped at $%.2f after iteration %d", now().UTC().Format(time.RFC3339), r.TotalUSD, iter))
-				break
-			}
-		}
-
+		// Story-pass scan happens BEFORE the cost-cap check so any progress
+		// the agent earned during the capping iteration is durably persisted
+		// to the PRD before the loop breaks. Otherwise the agent would have
+		// to redo the same story on resume, wasting both cost and time.
 		passedIDs, complete := ScanMarkers(result.Events)
 		honoredPasses := 0
 		for _, sid := range passedIDs {
@@ -497,6 +485,35 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		}
 		if finalRunErr != nil {
 			break
+		}
+
+		// Cost-cap check fires after evidence + story-pass are durably
+		// persisted so a runaway plan with many iterations cannot blow past
+		// the cap. Mid-iteration: the iteration that crossed the threshold
+		// is allowed to finish (its evidence is already on disk); the NEXT
+		// iteration is what doesn't dispatch. Uses >= so total == cap fires
+		// (boundary spec).
+		if in.CostCapUSD > 0 {
+			r, rollupErr := cost.ComputeRollup(in.ControlRoot, "")
+			if rollupErr != nil {
+				// Rollup error is conservatively treated as cap-not-hit
+				// rather than failing the run; the warning lands in stderr
+				// so the operator can investigate. Failing the plan over
+				// a transient FS hiccup would be a worse outcome than
+				// letting one more iteration run.
+				fmt.Fprintf(os.Stderr, "warning: compute rollup for cost-cap check (plan %s, iter %d): %v\n", planID, iter, rollupErr)
+			} else if r.TotalUSD >= in.CostCapUSD {
+				costCapped = true
+				costCapSpend = r.TotalUSD
+				exitReason = fmt.Sprintf("cost-capped at $%.2f (cap $%.2f)", r.TotalUSD, in.CostCapUSD)
+				_ = AppendProgress(progressPath, fmt.Sprintf("%s cost-capped at $%.2f after iteration %d", now().UTC().Format(time.RFC3339), r.TotalUSD, iter))
+				break
+			} else if r.SkippedFiles > 0 {
+				// Cap not tripped, but some evidence was unreadable. Surface
+				// once per iteration so the operator can investigate before
+				// the silent under-count actually matters.
+				fmt.Fprintf(os.Stderr, "warning: cost-cap check (plan %s, iter %d): %d cost.json file(s) unreadable; rollup may under-count\n", planID, iter, r.SkippedFiles)
+			}
 		}
 
 		// Report passes actually honored, not raw markers scanned — off-target

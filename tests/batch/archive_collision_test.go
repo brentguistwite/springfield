@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"springfield/internal/features/batch"
+	"springfield/internal/features/cost"
 )
 
 func makeBatchForArchive(id string) batch.Batch {
@@ -131,4 +132,64 @@ func names(entries []os.DirEntry) []string {
 		out = append(out, e.Name())
 	}
 	return out
+}
+
+// TestArchiveBatchNormalizedMergesRollupOnIdempotentRecall verifies that when
+// an archive entry already exists with TotalUSD=0 (e.g. orphan recovery wrote
+// a stub first) and a second call lands with the same reason but a real
+// rollup, the cost data overwrites the existing entry rather than being
+// silently dropped. EstimatePerPlanUSD treats TotalUSD==0 as "no signal" so
+// dropping the rollup would erase the batch from historical estimates.
+func TestArchiveBatchNormalizedMergesRollupOnIdempotentRecall(t *testing.T) {
+	dir := t.TempDir()
+	b := makeBatchForArchive("merge-1")
+
+	paths, _ := batch.NewPaths(dir, b.ID)
+	if err := os.MkdirAll(paths.PlanDir(), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(paths.BatchPath(), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// First archive: no rollup (e.g. orphan-recovery-shaped call).
+	if err := batch.ArchiveBatchNormalized(dir, b, "completed", nil); err != nil {
+		t.Fatalf("archive 1: %v", err)
+	}
+	// Re-seed plan dir for the second call.
+	if err := os.MkdirAll(paths.PlanDir(), 0o755); err != nil {
+		t.Fatalf("recreate: %v", err)
+	}
+	if err := os.WriteFile(paths.BatchPath(), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("reseed: %v", err)
+	}
+	// Second archive: same reason, but now we have cost data.
+	rollup := &cost.Rollup{
+		TotalUSD:   2.50,
+		PerAdapter: map[string]float64{"codex": 2.50},
+	}
+	if err := batch.ArchiveBatchNormalized(dir, b, "completed", rollup); err != nil {
+		t.Fatalf("archive 2: %v", err)
+	}
+
+	// Verify the stable file now carries the rollup data.
+	data, err := os.ReadFile(batch.StableArchivePath(dir, b.ID))
+	if err != nil {
+		t.Fatalf("read stable: %v", err)
+	}
+	var entry batch.ArchiveEntry
+	if err := json.Unmarshal(data, &entry); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if entry.TotalUSD != 2.50 {
+		t.Errorf("expected merged TotalUSD=2.50, got %v", entry.TotalUSD)
+	}
+	if entry.CostBreakdown["codex"] != 2.50 {
+		t.Errorf("expected merged codex breakdown, got %v", entry.CostBreakdown)
+	}
+	// Should still be a single entry (no sibling for same-reason call).
+	entries, _ := os.ReadDir(batch.ArchiveDir(dir))
+	if len(entries) != 1 {
+		t.Errorf("expected single archive entry after idempotent merge, got %d: %v", len(entries), names(entries))
+	}
 }

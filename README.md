@@ -235,7 +235,7 @@ Gemini cost capture is not implemented (the CLI does not expose a token usage su
 
 ### Capping spend
 
-`springfield start --cost-cap $X` aborts the batch when the cumulative rollup reaches `$X` USD. The current plan is allowed to finish (so evidence isn't corrupted mid-write); the next plan is the one that doesn't dispatch.
+`springfield start --cost-cap $X` aborts the batch when the cumulative rollup reaches `$X` USD. The check fires immediately after each iteration's `cost.json` is written: the iteration that crossed the threshold finishes (its evidence is already on disk), the next iteration does not dispatch, and the plan is persisted as `interrupted` for clean resumption.
 
 Cap-aborted batches are **resumable**, not terminal:
 

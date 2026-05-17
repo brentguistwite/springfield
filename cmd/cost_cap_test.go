@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,6 +64,45 @@ func TestPrintOrphanStatusOmitsSpend(t *testing.T) {
 	// Orphan output must NOT include a $ figure for spend (evidence gone).
 	if strings.Contains(out, "Spend:") {
 		t.Errorf("orphan output should not contain Spend line, got:\n%s", out)
+	}
+}
+
+// TestPrintBatchStatusSpendLineMultiAdapter exercises the adapter sort in
+// formatSpendLine via the printSpendLine path. Two adapters must render in
+// alphabetical order regardless of which iter wrote first.
+func TestPrintBatchStatusSpendLineMultiAdapter(t *testing.T) {
+	root := t.TempDir()
+
+	// Seed codex first, then claude — formatter must still print claude first.
+	seedOne := func(planKey string, iter int, adapter string, usd float64) {
+		dir := filepath.Join(root, ".springfield", "execution", "plans", planKey, "evidence", fmt.Sprintf("iter-%d", iter))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		c := cost.Capture{Adapter: adapter, Model: "m", CostUSD: usd, CapturedAt: time.Now().UTC()}
+		data, _ := json.MarshalIndent(c, "", "  ")
+		if err := os.WriteFile(filepath.Join(dir, "cost.json"), data, 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	seedOne("plan-a", 1, "codex", 0.25)
+	seedOne("plan-a", 2, "claude", 1.00)
+
+	var buf bytes.Buffer
+	b := batch.Batch{ID: "test-1", Title: "T"}
+	_ = printBatchStatus(&buf, root, b, batch.Run{ActiveBatchID: "test-1"}, conductor.NewState())
+	out := buf.String()
+	// claude must appear before codex in the parenthetical breakdown.
+	claudeIdx := strings.Index(out, "claude")
+	codexIdx := strings.Index(out, "codex")
+	if claudeIdx < 0 || codexIdx < 0 {
+		t.Fatalf("missing adapters in output: %s", out)
+	}
+	if claudeIdx > codexIdx {
+		t.Errorf("adapters not alphabetized: claude at %d, codex at %d in: %s", claudeIdx, codexIdx, out)
+	}
+	if !strings.Contains(out, "Spend: $1.25") {
+		t.Errorf("expected combined total $1.25, got: %s", out)
 	}
 }
 

@@ -218,6 +218,24 @@ func ArchiveBatchNormalized(rootDir string, b Batch, reason string, rollup *cost
 		return fmt.Errorf("remove plan dir (archive at %s): %w", archivePath, err)
 	}
 
+	// Clean execution evidence (per-iter cost.json + meta.json + ...) for
+	// every plan in this batch. Without this, stale iter-N directories from
+	// the just-archived batch leak into the NEXT batch's cost.ComputeRollup
+	// walk — since the conductor reuses plan IDs and iter counters restart
+	// at 1, an old iter-5 from batch A survives into batch B and inflates
+	// B's running spend, potentially tripping --cost-cap immediately on
+	// resume. Best-effort: a removal failure does not block the archive.
+	for _, planID := range b.PlanIDs {
+		planKey := SanitizeID(planID)
+		if planKey == "" {
+			continue
+		}
+		evidenceRoot := filepath.Join(rootDir, springfieldDir, "execution", "plans", planKey)
+		if rmErr := os.RemoveAll(evidenceRoot); rmErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: remove execution evidence for plan %s: %v\n", planID, rmErr)
+		}
+	}
+
 	return nil
 }
 
@@ -248,6 +266,12 @@ func RecoverOrphan(rootDir string, run Run) error {
 	if paths, err := NewPaths(rootDir, run.ActiveBatchID); err == nil {
 		_ = os.RemoveAll(paths.PlanDir())
 	}
+	// Best-effort: wipe any execution evidence the vanished batch may have
+	// left behind. Since run.json being orphaned means no batch is live,
+	// no in-flight evidence is at risk; clearing the whole tree avoids
+	// cross-batch contamination of cost.ComputeRollup once a new batch
+	// runs (see ArchiveBatchNormalized for the same rationale).
+	_ = os.RemoveAll(filepath.Join(rootDir, springfieldDir, "execution", "plans"))
 
 	return ClearRun(rootDir)
 }
@@ -305,6 +329,17 @@ func maybeWriteArchiveSibling(stablePath string, incoming ArchiveEntry) error {
 	}
 
 	if decoded && prior.Reason == incoming.Reason {
+		// Same reason: usually a true idempotent re-archive (no-op). But
+		// if the prior archive has no cost data and the incoming call
+		// carries a real rollup, the cost info would be silently lost.
+		// Overwrite the stable file with the richer entry so historical
+		// estimates can see this batch.
+		if prior.TotalUSD == 0 && incoming.TotalUSD > 0 {
+			merged := prior
+			merged.TotalUSD = incoming.TotalUSD
+			merged.CostBreakdown = incoming.CostBreakdown
+			return writeJSON(stablePath, merged)
+		}
 		return nil
 	}
 

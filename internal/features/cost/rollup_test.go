@@ -152,6 +152,13 @@ func TestEstimatePerPlanUSD_MultipleAveraged(t *testing.T) {
 
 // seedArchive writes a minimal ArchiveEntry JSON to root/.springfield/archive/<batchID>.json.
 // Mirrors the production wire format so the historical decoder exercises real paths.
+// seedArchive uses a monotonically-advancing archivedAt counter (offset by
+// a generation index) so multiple calls produce strictly ordered entries
+// regardless of filesystem mod-time resolution. EstimatePerPlanUSD sorts
+// on the archived_at field directly, so no time.Sleep is needed to make
+// "most-recent" ordering deterministic.
+var seedArchiveGen int
+
 func seedArchive(t *testing.T, root, batchID string, totalUSD float64, planCount int) {
 	t.Helper()
 	dir := filepath.Join(root, ".springfield", "archive")
@@ -162,10 +169,12 @@ func seedArchive(t *testing.T, root, batchID string, totalUSD float64, planCount
 	for i := range plans {
 		plans[i] = map[string]string{"id": "plan-" + itoa(i), "title": "t", "status": "completed"}
 	}
+	seedArchiveGen++
+	ts := time.Date(2026, 5, 15, 12, 0, seedArchiveGen, 0, time.UTC).Format(time.RFC3339Nano)
 	entry := map[string]any{
 		"batch_id":    batchID,
 		"title":       batchID,
-		"archived_at": time.Now().UTC().Format(time.RFC3339Nano),
+		"archived_at": ts,
 		"reason":      "completed",
 		"plans":       plans,
 		"total_usd":   totalUSD,
@@ -174,6 +183,4 @@ func seedArchive(t *testing.T, root, batchID string, totalUSD float64, planCount
 	if err := os.WriteFile(filepath.Join(dir, batchID+".json"), data, 0o644); err != nil {
 		t.Fatalf("write archive: %v", err)
 	}
-	// Stagger mod time so most-recent sort is deterministic.
-	time.Sleep(2 * time.Millisecond)
 }

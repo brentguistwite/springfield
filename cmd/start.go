@@ -94,9 +94,17 @@ func NewStartCommand() *cobra.Command {
 			// silent restart at the same threshold.
 			if hasRun && run.CostCapped {
 				currentSpend := 0.0
-				if r, rollupErr := cost.ComputeRollup(root, run.ActiveBatchID); rollupErr == nil {
-					currentSpend = r.TotalUSD
+				rollup, rollupErr := cost.ComputeRollup(root, run.ActiveBatchID)
+				if rollupErr != nil {
+					// Fail closed: a rollup we can't compute must not silently
+					// look like $0 spend, which would allow ANY positive cap
+					// to pass the strictly-greater check.
+					return fmt.Errorf("cannot read prior spend for cost-capped resume: %w; investigate %s/.springfield/execution/plans/ or `springfield recover`", rollupErr, root)
 				}
+				if rollup.SkippedFiles > 0 {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: %d cost.json file(s) unreadable; prior spend may under-count current actual spend\n", rollup.SkippedFiles)
+				}
+				currentSpend = rollup.TotalUSD
 				if costCap <= 0 {
 					return fmt.Errorf("cost-capped batch requires --cost-cap to resume; current spend $%.2f; pass --cost-cap $Y where Y > current spend", currentSpend)
 				}

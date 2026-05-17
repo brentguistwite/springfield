@@ -57,6 +57,7 @@ func ExtractCost(events []coreexec.Event, model string, now time.Time) cost.Capt
 
 	var explicitCostUSD float64
 	sawExplicitCost := false
+	var resultTokens *claudeUsageBlock
 
 	for _, e := range events {
 		if e.Type != coreexec.EventStdout {
@@ -64,6 +65,26 @@ func ExtractCost(events []coreexec.Event, model string, now time.Time) cost.Capt
 		}
 		var ev claudeUsageEvent
 		if err := json.Unmarshal([]byte(e.Data), &ev); err != nil {
+			continue
+		}
+		// Token accumulation is shape-aware to avoid double-counting against
+		// claude's stream-json: the terminal `result` event carries a
+		// CUMULATIVE usage block that already sums every prior `assistant`
+		// event's message.usage. Summing both inflates tokens ~2x for any
+		// run that emits a result event. We accumulate only from non-result
+		// events (assistant / message_start), then OVERWRITE with the result
+		// event's authoritative total when present.
+		if ev.Type == "result" {
+			if ev.Usage != nil {
+				resultTokens = ev.Usage
+			}
+			if ev.TotalCostUSD > 0 {
+				explicitCostUSD = ev.TotalCostUSD
+				sawExplicitCost = true
+			} else if ev.CostUSD > 0 {
+				explicitCostUSD = ev.CostUSD
+				sawExplicitCost = true
+			}
 			continue
 		}
 		if usage := ev.Usage; usage != nil {
@@ -74,15 +95,10 @@ func ExtractCost(events []coreexec.Event, model string, now time.Time) cost.Capt
 			capture.InputTokens += usage.InputTokens
 			capture.OutputTokens += usage.OutputTokens
 		}
-		if ev.Type == "result" {
-			if ev.TotalCostUSD > 0 {
-				explicitCostUSD = ev.TotalCostUSD
-				sawExplicitCost = true
-			} else if ev.CostUSD > 0 {
-				explicitCostUSD = ev.CostUSD
-				sawExplicitCost = true
-			}
-		}
+	}
+	if resultTokens != nil {
+		capture.InputTokens = resultTokens.InputTokens
+		capture.OutputTokens = resultTokens.OutputTokens
 	}
 
 	if sawExplicitCost {

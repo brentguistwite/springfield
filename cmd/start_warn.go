@@ -32,7 +32,12 @@ func emitClaudeBillingWarning(w io.Writer, root string, agentPriority []string) 
 	low, high, batches := cost.EstimatePerPlanUSD(root, 5)
 	estimate := "(no prior batches with cost data — first run will establish a baseline)"
 	if batches > 0 {
-		estimate = fmt.Sprintf("Estimated cost for this batch: ~$%.2f–$%.2f (mean of last %d batches × plan count)", low, high, batches)
+		// EstimatePerPlanUSD returns a per-plan range. The active batch's
+		// plan count is not known at warning time (the single-plan-unit
+		// path runs before a batch exists), so we surface the per-plan
+		// figure honestly and let the operator scale it by their own plan
+		// count rather than fabricate a total.
+		estimate = fmt.Sprintf("Estimated cost per plan: ~$%.2f–$%.2f (mean of last %d batches; multiply by your plan count for a total)", low, high, batches)
 	}
 
 	fmt.Fprintln(w, "[!] claude is in agent_priority. As of 2026-05-14, `claude -p` headless")
