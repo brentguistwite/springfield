@@ -1268,6 +1268,19 @@ func runOnePlan(ctx context.Context, w io.Writer, project *conductor.Project, ro
 		fmt.Fprintf(w, "Status: cost-capped\n")
 		fmt.Fprintf(w, "Spend: $%.2f (cap: $%.2f)\n", res.SpendUSD, costCap)
 		fmt.Fprintf(w, "Info: rerun with --cost-cap $Y to continue (Y > current spend)\n")
+		// Persist run.CostCapped so the next \`springfield start\` triggers
+		// the resume guard. Without this, the operator could rerun without
+		// --cost-cap (or with a lower cap) and the guard would silently
+		// not fire — defeating the "strictly greater than spend" contract
+		// the batch path enforces. ActiveBatchID is empty because the
+		// single-plan-unit path has no batch; the resume guard only
+		// checks hasRun && run.CostCapped, not ActiveBatchID.
+		existing, _, _ := batch.ReadRun(root)
+		existing.CostCapped = true
+		existing.LastCheckpoint = time.Now().UTC()
+		if writeErr := batch.WriteRun(root, existing); writeErr != nil {
+			fmt.Fprintf(w, "warning: persist cost-capped state: %v\n", writeErr)
+		}
 		return fmt.Errorf("plan %s halted by --cost-cap at $%.2f", res.PlanID, res.SpendUSD)
 	}
 	if res.Err != nil {

@@ -138,3 +138,43 @@ func TestStatusShowsCostCappedStatus(t *testing.T) {
 		t.Errorf("unexpected fatal error label in cost-capped status:\n%s", output)
 	}
 }
+
+// TestStartSinglePlanCostCapPersistsRunCostCapped verifies the round-4 fix
+// for the single-plan-unit path: when --cost-cap fires on a plan-unit-only
+// project (no batch), run.CostCapped must be persisted so the subsequent
+// start invocation's resume guard correctly rejects un-raised caps.
+//
+// Without this, the operator could rerun without --cost-cap (or with a
+// lower cap) and the guard would silently let it through, defeating the
+// "strictly greater than spend" contract documented for the batch path.
+func TestStartSinglePlanCostCapPersistsRunCostCapped(t *testing.T) {
+	// We can't easily fire the cap end-to-end through the binary without
+	// a real agent, but we CAN test the resume-rejection side of the
+	// contract: if run.CostCapped is persisted, the next start without
+	// --cost-cap must be rejected. The round-4 fix added the persistence;
+	// the rejection guard pre-existed.
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeSpringfieldConfig(t, dir, "codex")
+
+	// Simulate the state the round-4 fix produces: CostCapped=true with
+	// NO ActiveBatchID (the single-plan-unit path has no batch).
+	if err := batch.WriteRun(dir, batch.Run{CostCapped: true}); err != nil {
+		t.Fatalf("WriteRun: %v", err)
+	}
+	seedCostJSON(t, dir, "p", 1, cost.Capture{Adapter: "codex", Model: "gpt-5.4", CostUSD: 0.50, CapturedAt: time.Now().UTC()})
+
+	output, err := runBinaryIn(t, bin, dir, "start")
+	if err == nil {
+		t.Fatalf("expected rejection on resume without --cost-cap, got success:\n%s", output)
+	}
+	if !strings.Contains(output, "cost-capped batch requires --cost-cap") {
+		t.Errorf("expected resume-guard rejection message, got:\n%s", output)
+	}
+
+	// Verify CostCapped state is preserved across the rejected invocation.
+	run, _, _ := batch.ReadRun(dir)
+	if !run.CostCapped {
+		t.Error("CostCapped state should persist when resume is rejected")
+	}
+}
