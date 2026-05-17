@@ -58,6 +58,9 @@ func NewStartCommand() *cobra.Command {
 		Long:  "Execute the active Springfield batch for the current project from its saved progress.\n\nRun \"springfield plan\" first to compile a batch.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if costCap < 0 {
+				return fmt.Errorf("--cost-cap must be >= 0 (got %v); use 0 to disable", costCap)
+			}
 			loaded, err := config.LoadFrom(dir)
 			if err != nil {
 				return err

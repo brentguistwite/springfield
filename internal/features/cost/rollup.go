@@ -53,10 +53,15 @@ func ComputeRollup(root, batchID string) (Rollup, error) {
 	walkErr := filepath.WalkDir(execRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			// WalkDir surfaces both directory-traversal errors and per-file
-			// errors here. We can't tell which file would have been visited
-			// from a directory-traversal failure, so count it as one skip
-			// rather than guess at the shape of what was missed.
+			// errors here. For directory errors, skip the subtree so we
+			// don't get spurious per-child errors; count this as one
+			// skipped "entry" which may represent N missed files. The
+			// surfaced count is therefore a lower bound — operators should
+			// investigate any non-zero SkippedFiles, not assume it's exact.
 			r.SkippedFiles++
+			if d != nil && d.IsDir() {
+				return fs.SkipDir
+			}
 			return nil
 		}
 		if d.IsDir() || filepath.Base(path) != "cost.json" {

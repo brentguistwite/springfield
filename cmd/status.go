@@ -187,7 +187,11 @@ func formatTotalSpendLine(r cost.Rollup) string {
 		out += fmt.Sprintf(" (%d unpriced — likely gemini)", r.UnpricedRuns)
 	}
 	if r.SkippedFiles > 0 {
-		out += fmt.Sprintf(" (%d files skipped — totals may under-count)", r.SkippedFiles)
+		noun := "files"
+		if r.SkippedFiles == 1 {
+			noun = "file"
+		}
+		out += fmt.Sprintf(" (%d %s skipped — totals may under-count)", r.SkippedFiles, noun)
 	}
 	return out
 }
@@ -221,7 +225,11 @@ func formatSpendLine(r cost.Rollup) string {
 		out += fmt.Sprintf(" (%d unpriced)", r.UnpricedRuns)
 	}
 	if r.SkippedFiles > 0 {
-		out += fmt.Sprintf(" (%d files skipped — totals may under-count)", r.SkippedFiles)
+		noun := "files"
+		if r.SkippedFiles == 1 {
+			noun = "file"
+		}
+		out += fmt.Sprintf(" (%d %s skipped — totals may under-count)", r.SkippedFiles, noun)
 	}
 	return out
 }

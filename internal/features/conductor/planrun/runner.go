@@ -811,6 +811,22 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 		fmt.Fprintf(os.Stderr, "warning: write cost for plan %s: %v\n", planID, err)
 	}
 
+	// Cost-cap check for the legacy single-dispatch path. The PRD iter loop
+	// has its own check; this mirror exists so --cost-cap is enforced even
+	// on pre-Phase-3 plan units (.md path) that bypass the iter loop. The
+	// dispatch already ran (single-shot), so this gates the NEXT plan in
+	// the batch loop rather than mid-iteration.
+	legacyCostCapped := false
+	var legacyCostSpend float64
+	if in.CostCapUSD > 0 {
+		if r, rollupErr := cost.ComputeRollup(in.ControlRoot, ""); rollupErr == nil && r.TotalUSD >= in.CostCapUSD {
+			legacyCostCapped = true
+			legacyCostSpend = r.TotalUSD
+		} else if rollupErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: compute rollup for cost-cap check (legacy plan %s): %v\n", planID, rollupErr)
+		}
+	}
+
 	finalStatus := conductor.StatusCompleted
 	exitReason := "completed"
 	errOut := ""
@@ -818,6 +834,13 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 		finalStatus = conductor.StatusFailed
 		exitReason = "agent-failed"
 		errOut = runErr.Error()
+	}
+	if legacyCostCapped && runErr == nil {
+		// Cap takes precedence over Completed (legacy plan succeeded but
+		// the batch is paused). Failed-then-capped: failure wins (consistent
+		// with the iter-loop precedence — fatal error always wins).
+		finalStatus = conductor.StatusInterrupted
+		exitReason = fmt.Sprintf("cost-capped at $%.2f (cap $%.2f)", legacyCostSpend, in.CostCapUSD)
 	}
 
 	endState := &conductor.PlanState{
@@ -852,6 +875,9 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 	if runErr != nil {
 		resultReason = exitReason
 	}
+	if legacyCostCapped && runErr == nil {
+		resultReason = exitReason
+	}
 	out := SinglePlanResult{
 		PlanID:       planID,
 		Reason:       resultReason,
@@ -861,6 +887,8 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 		Agent:        string(result.Agent),
 		Status:       finalStatus,
 		Err:          runErr,
+		CostCapped:   legacyCostCapped && runErr == nil,
+		SpendUSD:     legacyCostSpend,
 	}
 	switch {
 	case runErr != nil && saveErr != nil:

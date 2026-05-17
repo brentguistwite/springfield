@@ -15,9 +15,14 @@ import (
 // batch (avoiding a cycle — batch depends on cost for the Rollup type that
 // archive uses).
 type archiveEntry struct {
-	BatchID    string    `json:"batch_id"`
-	TotalUSD   float64   `json:"total_usd"`
-	ArchivedAt time.Time `json:"archived_at"`
+	BatchID  string  `json:"batch_id"`
+	TotalUSD float64 `json:"total_usd"`
+	// ArchivedAt is a pointer so an absent field (legacy archives) and an
+	// empty-string field (hand-edited or partial writes) both decode without
+	// dropping the entire entry. A non-pointer time.Time would fail JSON
+	// unmarshal on "" and silently exclude an otherwise-valid archive from
+	// the historical estimate.
+	ArchivedAt *time.Time `json:"archived_at,omitempty"`
 	// Plans count is derived from the embedded plans array; only its length
 	// is needed for the estimate.
 	Plans []json.RawMessage `json:"plans"`
@@ -75,14 +80,14 @@ func EstimatePerPlanUSD(root string, lookback int) (low, high float64, batchCoun
 		}
 		// Prefer archived_at from the JSON entry (authoritative; survives
 		// file copies/syncs) and fall back to file mod-time only when the
-		// field is absent (pre-PR or hand-edited archives).
-		t := ae.ArchivedAt
-		if t.IsZero() {
-			if info, statErr := ent.Info(); statErr == nil {
-				t = info.ModTime()
-			} else {
-				continue
-			}
+		// field is absent or zero (pre-PR or hand-edited archives).
+		var t time.Time
+		if ae.ArchivedAt != nil && !ae.ArchivedAt.IsZero() {
+			t = *ae.ArchivedAt
+		} else if info, statErr := ent.Info(); statErr == nil {
+			t = info.ModTime()
+		} else {
+			continue
 		}
 		samples = append(samples, sample{
 			archivedAt: t,

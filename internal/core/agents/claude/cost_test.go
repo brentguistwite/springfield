@@ -85,6 +85,37 @@ func TestExtractCost_ResultEventTokensWinWithoutCostUSD(t *testing.T) {
 	}
 }
 
+// TestExtractCost_MultipleResultEventsTakeMax pins defensive multi-result
+// handling: if a stream emits two result events (session restart / retry /
+// error+success sequence), the larger usage block and the larger explicit
+// cost win, so we never under-count by trusting a later smaller value.
+func TestExtractCost_MultipleResultEventsTakeMax(t *testing.T) {
+	events := []coreexec.Event{
+		evt(`{"type":"result","subtype":"error","usage":{"input_tokens":500000,"output_tokens":100000},"total_cost_usd":0.50}`),
+		evt(`{"type":"result","subtype":"success","usage":{"input_tokens":1000000,"output_tokens":200000},"total_cost_usd":1.25}`),
+	}
+	got := claude.ExtractCost(events, "claude-sonnet-4-6", time.Now())
+	if got.InputTokens != 1_000_000 {
+		t.Errorf("input_tokens=%d want 1_000_000 (max of two result events)", got.InputTokens)
+	}
+	if math.Abs(got.CostUSD-1.25) > 1e-9 {
+		t.Errorf("cost_usd=%v want 1.25 (max of two result events)", got.CostUSD)
+	}
+
+	// Reverse order — earlier event has larger values. Max still wins.
+	events = []coreexec.Event{
+		evt(`{"type":"result","subtype":"success","usage":{"input_tokens":1000000,"output_tokens":200000},"total_cost_usd":1.25}`),
+		evt(`{"type":"result","subtype":"error","usage":{"input_tokens":500000,"output_tokens":100000},"total_cost_usd":0.50}`),
+	}
+	got = claude.ExtractCost(events, "claude-sonnet-4-6", time.Now())
+	if got.InputTokens != 1_000_000 {
+		t.Errorf("input_tokens=%d want 1_000_000 (max regardless of order)", got.InputTokens)
+	}
+	if math.Abs(got.CostUSD-1.25) > 1e-9 {
+		t.Errorf("cost_usd=%v want 1.25 (max regardless of order)", got.CostUSD)
+	}
+}
+
 func TestExtractCost_NoEvents(t *testing.T) {
 	got := claude.ExtractCost(nil, "claude-sonnet-4-6", time.Now())
 	if got.CostUSD != 0 || got.InputTokens != 0 || got.OutputTokens != 0 {

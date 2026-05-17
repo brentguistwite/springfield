@@ -75,14 +75,22 @@ func ExtractCost(events []coreexec.Event, model string, now time.Time) cost.Capt
 		// events (assistant / message_start), then OVERWRITE with the result
 		// event's authoritative total when present.
 		if ev.Type == "result" {
+			// Multiple result events are unusual but possible (session
+			// restart, partial+success, error+retry). Defensive choice:
+			// take the MAX of any usage block and any cost field seen so
+			// we don't silently under-count if a later result reports a
+			// smaller value than an earlier one.
 			if ev.Usage != nil {
-				resultTokens = ev.Usage
+				if resultTokens == nil || ev.Usage.InputTokens+ev.Usage.OutputTokens > resultTokens.InputTokens+resultTokens.OutputTokens {
+					resultTokens = ev.Usage
+				}
 			}
-			if ev.TotalCostUSD > 0 {
-				explicitCostUSD = ev.TotalCostUSD
-				sawExplicitCost = true
-			} else if ev.CostUSD > 0 {
-				explicitCostUSD = ev.CostUSD
+			candidate := ev.TotalCostUSD
+			if candidate == 0 {
+				candidate = ev.CostUSD
+			}
+			if candidate > explicitCostUSD {
+				explicitCostUSD = candidate
 				sawExplicitCost = true
 			}
 			continue
