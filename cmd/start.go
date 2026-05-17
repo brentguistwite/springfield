@@ -121,7 +121,7 @@ func NewStartCommand() *cobra.Command {
 			}
 
 			if !hasRun || run.ActiveBatchID == "" {
-				ran, runErr := tryRunSinglePlanUnit(cmd, root, loaded, noKeepAwake)
+				ran, runErr := tryRunSinglePlanUnit(cmd, root, loaded, noKeepAwake, costCap)
 				if runErr != nil {
 					return runErr
 				}
@@ -1072,7 +1072,7 @@ func openAgentTrace(root, batchID string) (coreexec.EventHandler, func()) {
 // failure with state persisted); (false, nil) when no plan-unit registry is
 // configured so the caller can fall through to its legacy "no batch" error;
 // (false, err) when something prevented even attempting plan execution.
-func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded, noKeepAwake bool) (bool, error) {
+func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded, noKeepAwake bool, costCap float64) (bool, error) {
 	project, err := conductor.LoadProject(root)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -1184,7 +1184,7 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 		project.State.Queue.Heartbeat = time.Now()
 		saveQueueState()
 
-		planErr := runOnePlan(ctx, w, project, root, worktreeBase, agentIDs, loaded, local, registry)
+		planErr := runOnePlan(ctx, w, project, root, worktreeBase, agentIDs, loaded, local, registry, costCap)
 		if planErr != nil {
 			project.State.Queue.Status = conductor.QueueHalted
 			project.State.Queue.StopReason = planErr.Error()
@@ -1210,7 +1210,7 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 // in from the caller so the springfield.local.toml load is stable for the
 // whole single-plan batch (loading per-call would let mid-batch edits
 // silently change review behavior).
-func runOnePlan(ctx context.Context, w io.Writer, project *conductor.Project, root, worktreeBase string, agentIDs []agents.ID, loaded config.Loaded, local config.LocalConfig, registry agents.Registry) error {
+func runOnePlan(ctx context.Context, w io.Writer, project *conductor.Project, root, worktreeBase string, agentIDs []agents.ID, loaded config.Loaded, local config.LocalConfig, registry agents.Registry, costCap float64) error {
 	enforceProtected := !loaded.Config.Project.AllowProtectedBase
 
 	if planID, ok := nextNonIntegratedCompletedPlan(project); ok {
@@ -1257,10 +1257,18 @@ func runOnePlan(ctx context.Context, w io.Writer, project *conductor.Project, ro
 		TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(root, ".springfield", "plans"), controlRoot: root},
 		Ctx:                  ctx,
 		MaxTurnsPerIteration: loaded.Config.MaxTurnsPerIteration(),
+		CostCapUSD:           costCap,
 	})
 
 	if res.PlanID == "" && res.Reason == "no-eligible-plan" {
 		return nil
+	}
+	if res.CostCapped {
+		fmt.Fprintf(w, "Plan: %s\n", res.PlanID)
+		fmt.Fprintf(w, "Status: cost-capped\n")
+		fmt.Fprintf(w, "Spend: $%.2f (cap: $%.2f)\n", res.SpendUSD, costCap)
+		fmt.Fprintf(w, "Info: rerun with --cost-cap $Y to continue (Y > current spend)\n")
+		return fmt.Errorf("plan %s halted by --cost-cap at $%.2f", res.PlanID, res.SpendUSD)
 	}
 	if res.Err != nil {
 		fmt.Fprintf(w, "Plan: %s\n", res.PlanID)

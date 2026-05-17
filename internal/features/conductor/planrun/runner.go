@@ -691,6 +691,8 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		out.Status = conductor.StatusFailed
 	}
 	switch {
+	case out.CostCapped:
+		progress(in.Progress, "plan %s: cost-capped (spend $%.2f)\n", planID, out.SpendUSD)
 	case out.Err == nil:
 		progress(in.Progress, "plan %s: completed\n", planID)
 	case finalRunErr != nil && saveErr != nil:
@@ -900,6 +902,8 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 		out.Status = conductor.StatusFailed
 	}
 	switch {
+	case out.CostCapped:
+		progress(in.Progress, "plan %s: cost-capped (spend $%.2f)\n", planID, out.SpendUSD)
 	case out.Err == nil:
 		progress(in.Progress, "plan %s: completed\n", planID)
 	case runErr != nil && saveErr != nil:
