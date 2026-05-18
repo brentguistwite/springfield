@@ -41,8 +41,9 @@ func emitClaudeBillingWarning(w io.Writer, root string, agentPriority []string) 
 	}
 
 	fmt.Fprintln(w, "[!] claude is in agent_priority. As of 2026-05-14, `claude -p` headless")
-	fmt.Fprintln(w, "    invocations bill against your ANTHROPIC_API_KEY at API rates, not your")
-	fmt.Fprintln(w, "    Claude Max/Pro subscription.")
+	fmt.Fprintln(w, "    invocations are metered separately from your Claude Max/Pro subscription:")
+	fmt.Fprintln(w, "    they draw from a Console-account credit pool, then either bill at API")
+	fmt.Fprintln(w, "    rates (if API billing is configured) or rate-limit mid-batch (if not).")
 	fmt.Fprintf(w, "    %s\n", estimate)
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "    To use subscription-friendly agents only: remove \"claude\" from")
