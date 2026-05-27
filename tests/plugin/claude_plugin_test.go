@@ -224,17 +224,6 @@ func TestPluginManifestsAgreeOnVersion(t *testing.T) {
 			t.Fatalf("%s does not list a springfield plugin entry", rel)
 		}
 	}
-
-	checksums, err := os.ReadFile(filepath.Join(root, "hooks", "checksums.txt"))
-	if err != nil {
-		t.Fatalf("read hooks/checksums.txt: %v", err)
-	}
-	for _, target := range []string{"darwin_amd64", "darwin_arm64", "linux_amd64", "linux_arm64"} {
-		archive := "springfield_" + want + "_" + target + ".tar.gz"
-		if !strings.Contains(string(checksums), archive) {
-			t.Fatalf("hooks/checksums.txt missing entry for %s", archive)
-		}
-	}
 }
 
 func TestRegenLoopOmitsStart(t *testing.T) {

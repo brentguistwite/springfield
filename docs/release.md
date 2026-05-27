@@ -1,6 +1,8 @@
 # Springfield Release Workflow
 
-Springfield ships one version across every surface — CLI binary, Claude plugin manifest, Claude marketplace entry, Codex plugin manifest, Codex marketplace entry, release tag, and `hooks/checksums.txt`. The single source of truth is `version.txt`, owned by [release-please](https://github.com/googleapis/release-please). All derived files are generated, not hand-edited.
+Springfield ships one version across every surface — CLI binary, Claude plugin manifest, Claude marketplace entry, Codex plugin manifest, Codex marketplace entry, release tag, and the rendered Homebrew formula. The single source of truth is `version.txt`, owned by [release-please](https://github.com/googleapis/release-please). All derived files are generated, not hand-edited.
+
+The CLI (delivered via Homebrew / release tarballs) and the plugin (skills, delivered via the marketplace) are two artifacts. The CLI is the one users upgrade (`brew upgrade springfield`); the plugin is a thin, stable shim and updates rarely. See the [version model](../README.md#install) for the operator-facing framing.
 
 ## How a release happens now
 
@@ -10,12 +12,11 @@ Day-to-day work merges to `main` with [Conventional Commits](https://www.convent
 2. The [`Release Please`](../.github/workflows/release-please.yml) workflow opens or updates the release PR named `release-please--branches--main`. It bumps `version.txt` based on the commits since the last release.
 3. The [`Release PR Hydrate`](../.github/workflows/release-hydrate.yml) workflow runs on that PR, executes [`go run ./cmd/release-sync`](../cmd/release-sync/main.go), and commits any drift back to the PR branch with the `[release-sync]` sentinel. The hydration step:
    - propagates `version.txt` into all four plugin/marketplace manifests
-   - rebuilds each platform archive with deterministic flags and refreshes `hooks/checksums.txt`
    - runs `go run ./cmd/release-sync -check` to assert idempotency
    - runs `SPRINGFIELD_RELEASE_TAG=v<version> go test ./tests/plugin/...` to assert version parity
-4. A maintainer waits for the hydrate workflow to finish on the release PR (manifests + checksums must be at the new version), reviews the green release PR, and merges it. **No manual tag push.**
+4. A maintainer waits for the hydrate workflow to finish on the release PR (manifests must be at the new version), reviews the green release PR, and merges it. **No manual tag push.**
 5. `release-please` runs again on `main`, sees the merged PR with no tag, and creates both the tag `vX.Y.Z` and the GitHub release object. release-please uses `RELEASE_PLEASE_TOKEN` (a fine-grained PAT) so the release-published event dispatches correctly.
-6. The [`Release`](../.github/workflows/release.yml) workflow is `release: published` triggered. It runs preflight (semver + tag-vs-version.txt + manifest parity + checksum format), rebuilds artifacts with the same `-trimpath -buildvcs=false` flags, verifies the rebuilt binaries against the committed `hooks/checksums.txt`, runs a pre-publish `springfield version` smoke against the linux binary, renders `Formula/springfield.rb`, uploads all assets to the existing release object, and runs a post-publish smoke that re-downloads each asset by its public URL and re-verifies the checksum.
+6. The [`Release`](../.github/workflows/release.yml) workflow is `release: published` triggered. It runs preflight (semver + tag-vs-version.txt + manifest parity), rebuilds artifacts with `-trimpath -buildvcs=false`, runs a pre-publish `springfield version` smoke against the linux binary, renders `Formula/springfield.rb`, uploads all assets to the existing release object, runs a post-publish smoke that re-downloads each tarball and confirms its SHA256 matches the rendered formula, and publishes the formula to the Homebrew tap (see [Homebrew](#homebrew)).
 
 > Earlier iterations used `skip-github-release: true` plus a `push: tags` trigger. release-please-action v4 refuses to tag with that flag set when an untagged merged release PR is outstanding, which deadlocks the chain. The current configuration lets release-please own both tag and release object, and `release.yml` uploads assets to the existing release.
 
@@ -29,6 +30,7 @@ Day-to-day work merges to `main` with [Conventional Commits](https://www.convent
   - `feat:` → minor
   - `!` / `BREAKING CHANGE:` → major
   - Plugin-only changes still get a normal release. We always ship a matching CLI artifact even if Go code did not change, so plugin/CLI versions stay locked.
+- **Backward-compat gate**: within a major version the stable CLI verbs (`plan`, `start`, `status`, `recover`) and their flags/output must keep working for older plugin skills. Plugin updates lag the CLI (manual on both platforms), so "older plugin + newer CLI" is the normal steady state. The skill-side floor check (`skills.MinCLIVersion`) is the safety valve for the rarer "plugin needs a newer CLI" direction — bump it manually and rarely, only when a skill starts depending on a new CLI capability.
 
 ## Plugin metadata is release-critical
 
@@ -39,28 +41,22 @@ Day-to-day work merges to `main` with [Conventional Commits](https://www.convent
 - [`.claude-plugin/marketplace.json`](../.claude-plugin/marketplace.json)
 - [`.codex-plugin/plugin.json`](../.codex-plugin/plugin.json)
 - [`.agents/plugins/marketplace.json`](../.agents/plugins/marketplace.json)
-- [`hooks/checksums.txt`](../hooks/checksums.txt)
-
-`hooks/checksums.txt` is plugin-shipped, not a published release asset. Each line is keyed by archive asset name (`./springfield_<version>_<os>_<arch>.tar.gz`); the hash is the SHA256 of the extracted `springfield` binary inside that archive.
 
 ## Manual sync (rare)
 
-Outside the release-PR flow, regenerate everything locally with:
+Outside the release-PR flow, propagate the version locally with:
 
 ```bash
-go run ./cmd/release-sync           # propagate version.txt + rebuild checksums
+go run ./cmd/release-sync           # propagate version.txt into all manifests
 go run ./cmd/release-sync -check    # idempotency guard
 ```
 
-Use `-skip-build` to update only the manifest version fields.
-
 ## Rollout window
 
-Between "release PR merges into `main`" and "publish workflow uploads assets," `main` advertises `vX.Y.Z` slightly before `vX.Y.Z` assets exist on GitHub. The contract:
+Between "release PR merges into `main`" and "publish workflow uploads assets," `main` advertises `vX.Y.Z` slightly before `vX.Y.Z` assets exist on GitHub. Because the CLI installs via Homebrew/tarball rather than a session hook, this window is benign:
 
-- **Existing installs**: `SessionStart` keeps the previously cached CLI binary if the exact-version asset is still missing. The hook surfaces a visible `springfield: VERSION MISMATCH` warning so operators know an upgrade is in flight.
-- **Fresh installs**: fail visibly during the rollout window. Retrying after the publish workflow finishes recovers cleanly.
-- The `hooks/tests/run.sh` `Test 6` case exercises this rollout-window fallback.
+- **Existing installs**: keep running their current `springfield` binary. `brew upgrade springfield` only resolves the new version once the tap formula is published (the final publish step).
+- **Fresh installs**: `brew install` resolves whatever the tap currently points at. During the window that is the previous version; retrying after the publish workflow finishes picks up the new one.
 
 ## Branch protection (operator setup)
 
@@ -75,7 +71,7 @@ Without these protections, anyone with `contents: write` on the repo can stage c
 ## Rollback
 
 - If publish fails after tag creation but before assets upload: fix the workflow and rerun publish for the same tag. Because the GitHub release object is the final step, the broken state is invisible to the release page.
-- If publish is merely slow: existing installs keep their previous CLI; fresh installs recover automatically once assets land.
+- If publish is merely slow: existing installs keep their previous CLI; `brew upgrade` recovers automatically once the tap formula lands.
 - If a bad release ships: do not retag or mutate the tag. Merge a revert/fix to `main` and let `release-please` cut the next patch.
 
 ## Published Assets
@@ -88,17 +84,30 @@ The workflow publishes:
 - `springfield_<version>_linux_arm64.tar.gz`
 - `springfield.rb`
 
-Each archive contains a single `springfield` binary built with `cmd.Version` set from the Git tag. Before release creation, the workflow unpacks each downloaded `dist/*.tar.gz`, hashes the extracted `springfield` binary, and compares that hash to the committed `hooks/checksums.txt` entry for the matching asset name. `checksums.txt` is not published as a release asset anymore because its semantics are now plugin trust for extracted binaries, not direct verification of tarball bytes.
+Each archive contains a single `springfield` binary built with `cmd.Version` set from the Git tag. The post-publish smoke re-downloads each tarball and confirms its SHA256 appears in the rendered `Formula/springfield.rb` — that tarball↔formula pairing is what `brew install` trusts.
 
 ## Homebrew
 
-`springfield.rb` is rendered during the release from the computed archive URLs and SHA256 values. Keep the generated copy aligned with the marketplace-plugin install path: if the release formula wording drifts back to stale TUI-era text, treat that as a release blocker. Install it straight from the release assets:
+`springfield.rb` is rendered during the release from the computed archive URLs and SHA256 values. Keep the generated copy aligned with the marketplace-plugin install path: if the release formula wording drifts back to stale TUI-era text, treat that as a release blocker.
 
-```bash
-brew install --formula https://github.com/<owner>/<repo>/releases/download/v0.1.0/springfield.rb
-```
+The release publishes the formula two ways:
 
-The checked-in [`Formula/springfield.rb`](../Formula/springfield.rb) file is only a template/reference copy. The release asset is the installable one with real URLs and checksums.
+1. **As a release asset** — installable directly without a tap:
+
+   ```bash
+   brew install --formula https://github.com/<owner>/<repo>/releases/download/v0.1.0/springfield.rb
+   ```
+
+2. **To the shared tap** `brentguistwite/homebrew-tap` (the supported path), giving operators:
+
+   ```bash
+   brew install brentguistwite/tap/springfield
+   brew upgrade springfield
+   ```
+
+   The tap repo hosts other formulas (e.g. `blackbox`); the publish step rewrites only `Formula/springfield.rb` there, leaving siblings untouched. It requires a `HOMEBREW_TAP_TOKEN` repository secret with push access to the tap repo; if the secret is absent the step no-ops with a warning (the release still succeeds, but `brew install` from the tap won't reflect the new version until the formula is pushed).
+
+The checked-in [`Formula/springfield.rb`](../Formula/springfield.rb) file is only a template/reference copy. The release asset and the tap copy are the installable ones with real URLs and checksums.
 
 ## Migration notes
 
@@ -127,3 +136,7 @@ sandbox_mode = "sandbox-exec"
 Headless runs require either `GEMINI_API_KEY` in the environment or a cached OAuth token at `~/.gemini/oauth_token`. On Linux, `sandbox_mode = "sandbox-exec"` is macOS-only — set it to `"docker"`/`"podman"`/`"runsc"` or leave it empty on other platforms.
 
 Springfield injects its control-plane hook via `GEMINI_CLI_SYSTEM_SETTINGS_PATH`, pointing Gemini at a per-invocation override at `.springfield/gemini-system-settings.json`. The installer never mutates your `~/.gemini/settings.json`.
+
+### 2026-05 — Manual CLI install, plugin no longer ships a SessionStart binary fetch
+
+The plugin previously shipped a `SessionStart` hook that downloaded and checksum-verified the matching CLI binary on every Claude Code session. That path was Claude-only (Codex plugins cannot ship a `bin/` or PATH-injecting hook), so it was removed in favor of a symmetric manual install: `brew install brentguistwite/tap/springfield` (macOS) or a release tarball on `PATH` (Linux/Windows). `hooks/checksums.txt` and `hooks/session-start.sh` are gone; `hooks/hooks.json` now carries only a `PreToolUse` guard that blocks interactive writes to `.springfield/`. The skills run a `springfield version` floor check (`skills.MinCLIVersion`) and surface the exact `brew install/upgrade` command when the CLI is missing or too old.

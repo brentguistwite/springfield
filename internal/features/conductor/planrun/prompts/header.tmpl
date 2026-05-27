@@ -1,5 +1,7 @@
 You are executing one Springfield plan in an isolated git worktree.
 
+Never read, write, edit, or delete files under `.springfield/`. That directory is Springfield's control plane; touching it will abort the run.
+
 # Plan: {{.PlanID}} — {{.PlanTitle}}
 
 {{.PlanDescription}}

@@ -26,4 +26,4 @@ jobs:
         run: go test ./...
 
       - name: release-sync idempotency (manifest mode)
-        run: go run ./cmd/release-sync -check -skip-build
+        run: go run ./cmd/release-sync -check

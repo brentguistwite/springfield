@@ -75,6 +75,38 @@ func TestRender_Plan(t *testing.T) {
 	}
 }
 
+// TestRenderedSkillsCarryVersionCheckPreamble pins that every skill (and its
+// command form) opens with the actionable CLI floor check: run the version
+// command, and when the CLI is missing or older than MinCLIVersion, surface the
+// exact brew install/upgrade command rather than failing cryptically.
+func TestRenderedSkillsCarryVersionCheckPreamble(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"plan", "status", "recover"} {
+		skill, err := Render(name)
+		if err != nil {
+			t.Fatalf("Render(%s): %v", name, err)
+		}
+		command, err := RenderCommand(name)
+		if err != nil {
+			t.Fatalf("RenderCommand(%s): %v", name, err)
+		}
+
+		for label, content := range map[string]string{"skill": skill.Content, "command": command.Content} {
+			for _, want := range []string{
+				"springfield version",
+				MinCLIVersion,
+				"brew install brentguistwite/tap/springfield",
+				"brew upgrade springfield",
+			} {
+				if !strings.Contains(content, want) {
+					t.Errorf("%s %s missing version-check token %q", name, label, want)
+				}
+			}
+		}
+	}
+}
+
 func TestRenderCommand_Plan(t *testing.T) {
 	t.Parallel()
 

@@ -19,6 +19,20 @@ Built-in Springfield playbook.
 
 # Current Task
 
+## Before you start — verify the Springfield CLI
+
+Run `springfield version` first. It prints `springfield vX.Y.Z`.
+
+- If the command is **not found**, the CLI is not installed. Tell the user to install it, then stop:
+  - macOS: `brew install brentguistwite/tap/springfield`
+  - Linux/Windows: download the matching `springfield_<version>_<os>_<arch>.tar.gz` from the GitHub Releases page and put the `springfield` binary on PATH.
+- If the reported version is **older than 0.11.0**, tell the user to upgrade, then stop:
+  - macOS: `brew upgrade springfield`
+  - Linux/Windows: download the latest release tarball and replace the binary on PATH.
+- Otherwise continue.
+
+Do not try to work around a missing or too-old CLI — surface the exact command above instead. (A plugin older than the CLI is fine and needs no action; the CLI stays backward-compatible with older skills within a major version.)
+
 Inspect the current Springfield batch for the project and report the current state.
 
 Read project guidance from AGENTS.md first, then CLAUDE.md, then GEMINI.md when present.

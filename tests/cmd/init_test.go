@@ -204,8 +204,58 @@ func TestInitNonTTYPipedAccessibleModeMatchesFlagOutput(t *testing.T) {
 		t.Fatalf("piped accessible-mode config diverged from flag-driven:\n--- flag ---\n%s\n--- pipe ---\n%s", flagBytes, pipeBytes)
 	}
 
-	if !strings.Contains(out, "Next: springfield plan") {
-		t.Errorf("expected post-init Next: line in piped output, got:\n%s", out)
+	// The signpost points at the "plan" skill, not the bare `springfield plan`
+	// CLI verb (which requires a compiled PRD envelope).
+	if !strings.Contains(out, "/springfield:plan") {
+		t.Errorf("expected post-init Next: line to point at the plan skill, got:\n%s", out)
+	}
+	if strings.Contains(out, "Next: springfield plan\n") {
+		t.Errorf("post-init should not signpost the bare `springfield plan` verb, got:\n%s", out)
+	}
+}
+
+// TestInitCreatesNoAgentInstructionFiles pins the Issue-3 removal: init must not
+// create or touch AGENTS.md / CLAUDE.md / GEMINI.md, and must not append any
+// guardrail block. The .springfield/ guard now lives in the plugin PreToolUse
+// hook and the batch prompt header, not in the operator's agent-instruction
+// files.
+func TestInitCreatesNoAgentInstructionFiles(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	if _, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude,codex,gemini"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md", "GEMINI.md"} {
+		if _, err := os.Lstat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Errorf("init should not create %s, lstat err = %v", name, err)
+		}
+	}
+}
+
+// TestInitDoesNotTouchExistingAgentsMd verifies a pre-existing AGENTS.md is left
+// byte-for-byte intact — init no longer appends a guardrail to it.
+func TestInitDoesNotTouchExistingAgentsMd(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	existing := "# My Project\n\nImportant project-specific notes.\n"
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	if err := os.WriteFile(agentsPath, []byte(existing), 0o644); err != nil {
+		t.Fatalf("seed AGENTS.md: %v", err)
+	}
+
+	if _, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude,codex"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	got, err := os.ReadFile(agentsPath)
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+	if string(got) != existing {
+		t.Errorf("init mutated AGENTS.md; got:\n%s\nwant:\n%s", got, existing)
 	}
 }
 

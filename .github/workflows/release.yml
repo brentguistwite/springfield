@@ -47,24 +47,6 @@ jobs:
           SPRINGFIELD_RELEASE_TAG: ${{ github.ref_name }}
         run: go test ./tests/plugin/...
 
-      - name: Verify hooks/checksums.txt asset names are well-formed
-        run: |
-          set -euo pipefail
-          while read -r expected asset; do
-            if [[ -z "$expected" || "$expected" == \#* ]]; then
-              continue
-            fi
-            asset="${asset#./}"
-            if [[ ! "$asset" =~ ^springfield_[0-9]+\.[0-9]+\.[0-9]+_(darwin|linux)_(amd64|arm64)\.tar\.gz$ ]]; then
-              echo "checksums.txt asset name not well-formed: $asset" >&2
-              exit 1
-            fi
-            if [[ ! "$expected" =~ ^[0-9a-f]{64}$ ]]; then
-              echo "checksums.txt hash not well-formed for $asset: $expected" >&2
-              exit 1
-            fi
-          done < hooks/checksums.txt
-
   build:
     needs: preflight
     runs-on: ubuntu-latest
@@ -124,29 +106,6 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-
-      - name: Verify plugin checksum manifest against release binaries
-        run: |
-          set -euo pipefail
-          tmp="$(mktemp -d)"
-          while read -r expected asset; do
-            if [[ -z "$expected" || "$expected" == \#* ]]; then
-              continue
-            fi
-            asset="${asset#./}"
-            if [[ ! "$asset" =~ ^springfield_[0-9]+\.[0-9]+\.[0-9]+_(darwin|linux)_(amd64|arm64)\.tar\.gz$ ]]; then
-              echo "checksums.txt asset name rejected: $asset" >&2
-              exit 1
-            fi
-            extract_dir="$tmp/${asset%.tar.gz}"
-            mkdir -p "$extract_dir"
-            tar -C "$extract_dir" -xzf "dist/$asset" springfield
-            got="$(sha256sum "$extract_dir/springfield" | cut -d' ' -f1)"
-            if [[ "$got" != "$expected" ]]; then
-              echo "checksum mismatch for $asset: $got != $expected" >&2
-              exit 1
-            fi
-          done < hooks/checksums.txt
 
       - name: Pre-publish smoke — extracted binary reports the tagged version
         env:
@@ -223,7 +182,7 @@ jobs:
             dist/*.tar.gz
             Formula/springfield.rb
 
-      - name: Post-publish smoke — published assets match committed checksums
+      - name: Post-publish smoke — published tarballs match the rendered formula
         env:
           REPOSITORY: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
@@ -231,15 +190,10 @@ jobs:
           set -euo pipefail
           version="${TAG#v}"
           smoke_dir="$(mktemp -d)"
-          while read -r expected asset; do
-            if [[ -z "$expected" || "$expected" == \#* ]]; then
-              continue
-            fi
-            asset="${asset#./}"
-            if [[ ! "$asset" =~ ^springfield_[0-9]+\.[0-9]+\.[0-9]+_(darwin|linux)_(amd64|arm64)\.tar\.gz$ ]]; then
-              echo "post-publish smoke: rejecting malformed asset name: $asset" >&2
-              exit 1
-            fi
+          # Each tarball's sha256 must match the sha256 the published formula
+          # advertises for it — that pairing is what `brew install` trusts.
+          for arch in darwin_amd64 darwin_arm64 linux_amd64 linux_arm64; do
+            asset="springfield_${version}_${arch}.tar.gz"
             url="https://github.com/${REPOSITORY}/releases/download/${TAG}/${asset}"
             for attempt in 1 2 3 4 5; do
               if curl --fail --silent --show-error --location \
@@ -254,12 +208,40 @@ jobs:
               echo "post-publish smoke: failed to fetch ${url}" >&2
               exit 1
             fi
-            extract="${smoke_dir}/${asset%.tar.gz}"
-            mkdir -p "${extract}"
-            tar -C "${extract}" -xzf "${smoke_dir}/${asset}" springfield
-            got="$(sha256sum "${extract}/springfield" | cut -d' ' -f1)"
-            if [[ "${got}" != "${expected}" ]]; then
-              echo "post-publish smoke: ${asset} ${got} != ${expected}" >&2
+            got="$(sha256sum "${smoke_dir}/${asset}" | cut -d' ' -f1)"
+            if ! grep -q "${got}" Formula/springfield.rb; then
+              echo "post-publish smoke: ${asset} sha ${got} absent from rendered formula" >&2
               exit 1
             fi
-          done < hooks/checksums.txt
+          done
+
+      # Publish the rendered formula to the shared Homebrew tap so
+      # `brew install brentguistwite/tap/springfield` resolves. The tap repo
+      # hosts other formulas (e.g. blackbox); this only rewrites
+      # Formula/springfield.rb, leaving siblings untouched. Requires a
+      # HOMEBREW_TAP_TOKEN secret with push access to the tap repo.
+      - name: Publish formula to Homebrew tap
+        env:
+          TAG: ${{ github.ref_name }}
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TAP_TOKEN}" ]]; then
+            echo "HOMEBREW_TAP_TOKEN not set; skipping tap publish (set the secret to enable brew install from the tap)" >&2
+            exit 0
+          fi
+          tap_dir="$(mktemp -d)"
+          git clone --depth 1 \
+            "https://x-access-token:${TAP_TOKEN}@github.com/brentguistwite/homebrew-tap.git" \
+            "${tap_dir}"
+          mkdir -p "${tap_dir}/Formula"
+          cp Formula/springfield.rb "${tap_dir}/Formula/springfield.rb"
+          git -C "${tap_dir}" config user.name "github-actions[bot]"
+          git -C "${tap_dir}" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [[ -z "$(git -C "${tap_dir}" status --porcelain)" ]]; then
+            echo "tap formula already up to date for ${TAG}"
+            exit 0
+          fi
+          git -C "${tap_dir}" add Formula/springfield.rb
+          git -C "${tap_dir}" commit -m "springfield ${TAG}"
+          git -C "${tap_dir}" push origin HEAD

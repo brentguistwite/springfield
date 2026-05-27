@@ -332,8 +332,8 @@ func TestInitCreatesProjectInCurrentDir(t *testing.T) {
 	if strings.Contains(output, "springfield conductor setup") {
 		t.Errorf("init should not direct users to the conductor surface, got:\n%s", output)
 	}
-	if !strings.Contains(output, "Next: springfield plan") {
-		t.Errorf("expected post-init Next: line pointing at springfield plan, got:\n%s", output)
+	if !strings.Contains(output, "/springfield:plan") {
+		t.Errorf("expected post-init Next: line pointing at the plan skill, got:\n%s", output)
 	}
 	if !strings.Contains(output, "Then: springfield start") {
 		t.Errorf("expected post-init Then: line pointing at springfield start, got:\n%s", output)
