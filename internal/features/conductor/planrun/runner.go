@@ -342,6 +342,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		}
 
 		passedIDs, complete := ScanMarkers(result.Events)
+		honoredPasses := 0
 		for _, sid := range passedIDs {
 			// Only honour the marker if it matches the current iteration's target story.
 			// Agents may emit pass markers for wrong stories; accepting them would
@@ -356,6 +357,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 				exitReason = fmt.Sprintf("MarkPassed failed: %v", err)
 				break
 			}
+			honoredPasses++
 			// Reflect into in-memory copy.
 			for i := range currentPRD.UserStories {
 				if currentPRD.UserStories[i].ID == sid {
@@ -368,8 +370,10 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			break
 		}
 
+		// Report passes actually honored, not raw markers scanned — off-target
+		// markers are logged as WARN above and must not inflate this count.
 		_ = AppendProgress(progressPath, fmt.Sprintf("%s iteration %d completed (passed=%d complete=%t)",
-			now().UTC().Format(time.RFC3339), iter, len(passedIDs), complete))
+			now().UTC().Format(time.RFC3339), iter, honoredPasses, complete))
 
 		if iterRunErr != nil {
 			finalRunErr = iterRunErr

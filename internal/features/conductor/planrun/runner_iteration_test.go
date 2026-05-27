@@ -979,6 +979,76 @@ func TestSinglePlanIterationRejectsOffTargetStoryPass(t *testing.T) {
 	}
 }
 
+// TestSinglePlanIterationCompletedCountReportsHonoredPasses verifies that the
+// "iteration N completed (passed=X ...)" line reports the number of pass markers
+// actually HONORED, not the raw count scanned from agent output. An agent that
+// emits off-target markers (which are ignored) must not inflate the count — the
+// completed line would otherwise contradict the WARN lines directly above it.
+func TestSinglePlanIterationCompletedCountReportsHonoredPasses(t *testing.T) {
+	// US-001 is the target. Agent emits passes for US-002 and US-003 (both
+	// off target, both ignored). Honored count must be 0.
+	p := prd.PRD{
+		ID:    "feat",
+		Title: "Feature Plan",
+		UserStories: []prd.UserStory{
+			{ID: "US-001", Title: "Story 1", Priority: 1, Passes: false},
+			{ID: "US-002", Title: "Story 2", Priority: 2, Passes: false},
+			{ID: "US-003", Title: "Story 3", Priority: 3, Passes: false},
+		},
+	}
+
+	root, project := projectFixtureWithPRD(t, "feat", p)
+	project.Config.SingleWorkstreamIterations = 1
+	if err := project.SaveConfig(); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	g := newFakeGit()
+	runner := &iterScriptRunner{
+		replies: []coreruntime.Result{
+			{
+				Agent:    agents.AgentClaude,
+				Status:   coreruntime.StatusPassed,
+				ExitCode: 0,
+				Events: []coreexec.Event{
+					{Type: coreexec.EventStdout,
+						Data: "<story-pass>US-002</story-pass><story-pass>US-003</story-pass>",
+						Time: time.Now()},
+				},
+				StartedAt: time.Now().Add(-time.Second),
+				EndedAt:   time.Now(),
+			},
+		},
+	}
+
+	planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentClaude},
+		Runner:       runner,
+		Manager:      &planrun.Manager{Git: g},
+		ProjectRoot:  root,
+	})
+
+	progressPath := filepath.Join(root, ".springfield", "plans", "feat", "progress.md")
+	progressData, err := os.ReadFile(progressPath)
+	if err != nil {
+		t.Fatalf("read progress.md: %v", err)
+	}
+	content := string(progressData)
+
+	// Both off-target markers were scanned (2) but none honored. The completed
+	// line must report passed=0, not passed=2. Match the trailing " complete="
+	// so the count digit is anchored (avoids passed=0 matching passed=0X etc.).
+	if !strings.Contains(content, "iteration 1 completed (passed=0 complete=") {
+		t.Errorf("expected completed line to report honored count passed=0, got:\n%s", content)
+	}
+	if strings.Contains(content, "iteration 1 completed (passed=2 complete=") {
+		t.Errorf("completed line reported scanned count (passed=2) instead of honored count, got:\n%s", content)
+	}
+}
+
 // TestSinglePlanIterationCurrentAndOffTargetPass verifies that when an agent
 // emits both the current target's <story-pass> AND a wrong story's <story-pass>,
 // only the current target is marked; the off-target is silently warned in progress.md.
@@ -1048,5 +1118,11 @@ func TestSinglePlanIterationCurrentAndOffTargetPass(t *testing.T) {
 	}
 	if !strings.Contains(content, "US-002") {
 		t.Errorf("WARN should mention US-002, got:\n%s", content)
+	}
+	// Positive-path count: iter 1 honored US-001 (target) and rejected US-002
+	// (off target), so the completed line must report passed=1 — proving the
+	// honored counter increments for a real pass, not just that it stays 0.
+	if !strings.Contains(content, "iteration 1 completed (passed=1 complete=") {
+		t.Errorf("expected iter 1 completed line to report honored count passed=1, got:\n%s", content)
 	}
 }
