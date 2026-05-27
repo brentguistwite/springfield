@@ -1039,11 +1039,12 @@ func TestSinglePlanIterationCompletedCountReportsHonoredPasses(t *testing.T) {
 	content := string(progressData)
 
 	// Both off-target markers were scanned (2) but none honored. The completed
-	// line must report passed=0, not passed=2.
-	if !strings.Contains(content, "iteration 1 completed (passed=0") {
+	// line must report passed=0, not passed=2. Match the trailing " complete="
+	// so the count digit is anchored (avoids passed=0 matching passed=0X etc.).
+	if !strings.Contains(content, "iteration 1 completed (passed=0 complete=") {
 		t.Errorf("expected completed line to report honored count passed=0, got:\n%s", content)
 	}
-	if strings.Contains(content, "iteration 1 completed (passed=2") {
+	if strings.Contains(content, "iteration 1 completed (passed=2 complete=") {
 		t.Errorf("completed line reported scanned count (passed=2) instead of honored count, got:\n%s", content)
 	}
 }
@@ -1121,7 +1122,7 @@ func TestSinglePlanIterationCurrentAndOffTargetPass(t *testing.T) {
 	// Positive-path count: iter 1 honored US-001 (target) and rejected US-002
 	// (off target), so the completed line must report passed=1 — proving the
 	// honored counter increments for a real pass, not just that it stays 0.
-	if !strings.Contains(content, "iteration 1 completed (passed=1") {
+	if !strings.Contains(content, "iteration 1 completed (passed=1 complete=") {
 		t.Errorf("expected iter 1 completed line to report honored count passed=1, got:\n%s", content)
 	}
 }
