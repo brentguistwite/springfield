@@ -1118,4 +1118,10 @@ func TestSinglePlanIterationCurrentAndOffTargetPass(t *testing.T) {
 	if !strings.Contains(content, "US-002") {
 		t.Errorf("WARN should mention US-002, got:\n%s", content)
 	}
+	// Positive-path count: iter 1 honored US-001 (target) and rejected US-002
+	// (off target), so the completed line must report passed=1 — proving the
+	// honored counter increments for a real pass, not just that it stays 0.
+	if !strings.Contains(content, "iteration 1 completed (passed=1") {
+		t.Errorf("expected iter 1 completed line to report honored count passed=1, got:\n%s", content)
+	}
 }
