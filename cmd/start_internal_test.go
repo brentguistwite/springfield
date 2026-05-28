@@ -310,6 +310,49 @@ func TestRunBatchWithContextMissingExecutionConfigFails(t *testing.T) {
 	}
 }
 
+// TestRunBatchWithContextMalformedLocalTOMLFails verifies that a present-but-
+// malformed springfield.local.toml is surfaced as a wrapped error from
+// runBatchWithContext, so operators see a clear "load springfield.local.toml"
+// prefix instead of a bare TOML decode error.
+func TestRunBatchWithContextMalformedLocalTOMLFails(t *testing.T) {
+	root := t.TempDir()
+
+	if err := os.WriteFile(
+		filepath.Join(root, "springfield.toml"),
+		[]byte("[project]\nagent_priority = [\"claude\"]\n"),
+		0o644,
+	); err != nil {
+		t.Fatalf("write toml: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(root, "springfield.local.toml"),
+		[]byte("[review\nenabled = true\n"),
+		0o644,
+	); err != nil {
+		t.Fatalf("write local toml: %v", err)
+	}
+
+	run := batch.Run{ActiveBatchID: "test-batch"}
+	if err := batch.WriteRun(root, run); err != nil {
+		t.Fatalf("WriteRun: %v", err)
+	}
+
+	b := batch.Batch{
+		ID:      "test-batch",
+		Title:   "Test",
+		PlanIDs: []string{"plan-a"},
+		Phases:  []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"plan-a"}}},
+	}
+
+	_, err := runBatchWithContext(context.Background(), root, run, b, io.Discard, "")
+	if err == nil {
+		t.Fatal("expected error from malformed local toml, got nil")
+	}
+	if !bytes.Contains([]byte(err.Error()), []byte("load springfield.local.toml")) {
+		t.Errorf("error %q missing wrap prefix \"load springfield.local.toml\"", err.Error())
+	}
+}
+
 // TestBatchNextPlanIDPhaseBlocksUntilComplete verifies serial phase semantics:
 // if the first phase has a non-integrated plan, the second phase's plans are
 // not dispatched even if the second phase plans exist.

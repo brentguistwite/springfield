@@ -269,6 +269,11 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 	if err != nil {
 		return BatchRunResult{Error: err.Error()}, err
 	}
+	local, err := config.LoadLocalFrom(loaded.RootDir)
+	if err != nil {
+		e := fmt.Errorf("load springfield.local.toml: %w", err)
+		return BatchRunResult{Error: e.Error()}, e
+	}
 	if len(loaded.Config.Project.AgentPriority) == 0 {
 		e := fmt.Errorf("project has no agents configured: agent_priority is empty")
 		return BatchRunResult{Error: e.Error()}, e
@@ -341,6 +346,7 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 			WorktreeBase:         worktreeBase,
 			AgentIDs:             agentIDs,
 			ExecutionSettings:    loaded.Config.ExecutionSettings(),
+			ReviewConfig:         local.Review,
 			Runner:               runtimeAgentRunner{inner: coreruntime.NewRunner(registry)},
 			Manager:              planrun.NewManager(),
 			OnEvent:              traceHandler,
@@ -356,7 +362,11 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 		}
 		if res.Err != nil {
 			fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
-			fmt.Fprintf(progress, "Status: failed (%s)\n", res.Reason)
+			if res.Status == conductor.StatusNeedsHuman {
+				fmt.Fprintf(progress, "Status: needs human review (%s)\n", res.Reason)
+			} else {
+				fmt.Fprintf(progress, "Status: failed (%s)\n", res.Reason)
+			}
 			fmt.Fprintf(progress, "Error: %s\n", res.Err.Error())
 			return BatchRunResult{Error: res.Err.Error()}, res.Err
 		}
@@ -1105,6 +1115,11 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 func runOnePlan(w io.Writer, project *conductor.Project, root, worktreeBase string, agentIDs []agents.ID, loaded config.Loaded, registry agents.Registry) error {
 	enforceProtected := !loaded.Config.Project.AllowProtectedBase
 
+	local, err := config.LoadLocalFrom(loaded.RootDir)
+	if err != nil {
+		return fmt.Errorf("load springfield.local.toml: %w", err)
+	}
+
 	if planID, ok := nextNonIntegratedCompletedPlan(project); ok {
 		// The fresh-execution path is gated by planrun.Prepare, but a
 		// previously-completed plan that has not yet integrated reaches
@@ -1141,6 +1156,7 @@ func runOnePlan(w io.Writer, project *conductor.Project, root, worktreeBase stri
 		WorktreeBase:         worktreeBase,
 		AgentIDs:             agentIDs,
 		ExecutionSettings:    loaded.Config.ExecutionSettings(),
+		ReviewConfig:         local.Review,
 		Runner:               runtimeAgentRunner{inner: coreruntime.NewRunner(registry)},
 		Manager:              planrun.NewManager(),
 		Progress:             w,
@@ -1157,7 +1173,11 @@ func runOnePlan(w io.Writer, project *conductor.Project, root, worktreeBase stri
 			fmt.Fprintf(w, "Worktree: %s (branch %s, base %s @ %s)\n",
 				res.Context.WorktreeRoot, res.Context.Branch, res.Context.BaseRef, shortSHA(res.Context.BaseHead))
 		}
-		fmt.Fprintf(w, "Status: failed (%s)\n", res.Reason)
+		if res.Status == conductor.StatusNeedsHuman {
+			fmt.Fprintf(w, "Status: needs human review (%s)\n", res.Reason)
+		} else {
+			fmt.Fprintf(w, "Status: failed (%s)\n", res.Reason)
+		}
 		fmt.Fprintf(w, "Error: %s\n", res.Err.Error())
 		return fmt.Errorf("plan %s failed: %w", res.PlanID, res.Err)
 	}
