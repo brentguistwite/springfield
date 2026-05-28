@@ -40,18 +40,20 @@ Then:
 
 - If the command is **not found**, the CLI is not installed. Tell the user to install it, then stop:
   - macOS: ` + "`brew install brentguistwite/tap/springfield`" + `
-  - Linux/Windows: download the matching ` + "`springfield_<version>_<os>_<arch>.tar.gz`" + ` from the GitHub Releases page and put the ` + "`springfield`" + ` binary on PATH.
+  - Linux: download the matching ` + "`springfield_<version>_linux_<arch>.tar.gz`" + ` from the GitHub Releases page and put the ` + "`springfield`" + ` binary on PATH.
+  - Windows: build from source with ` + "`go install .`" + ` inside the Springfield repo (no Windows release tarballs are published yet).
 - If the output is ` + "`springfield dev`" + `, this is a local development build. Continue without a floor check — the user is responsible for keeping it current.
 - If the reported version is **older than v` + MinCLIVersion + `** (compare semver-style after stripping the leading ` + "`v`" + ` from the reported version), tell the user to upgrade, then stop:
   - macOS: ` + "`brew upgrade springfield`" + `
-  - Linux/Windows: download the latest release tarball and replace the binary on PATH.
+  - Linux: download the latest ` + "`springfield_<version>_linux_<arch>.tar.gz`" + ` from the GitHub Releases page and replace the binary on PATH.
+  - Windows: ` + "`go install .`" + ` inside the Springfield repo (no Windows release tarballs yet).
 - Otherwise continue.
 
 Do not try to work around a missing or too-old CLI — surface the exact command above instead. (A plugin older than the CLI is fine and needs no action; the CLI stays backward-compatible with older skills within a major version.)
 
 ## Springfield control plane
 
-Never read, write, edit, or delete files under ` + "`.springfield/`" + `. That directory is Springfield's internal state — the CLI is your interface for changing it. Writing there directly will abort the current batch. This applies regardless of which agent is invoking the skill.
+**Reads are allowed** — recover and status flows specifically inspect ` + "`.springfield/run.json`" + ` and per-plan ` + "`prd.json`" + `. **Never write, edit, or delete** files under ` + "`.springfield/`" + `. That directory is Springfield's state — the CLI is your only interface for mutating it. Writing there directly will abort the current batch. This applies regardless of which agent is invoking the skill.
 
 ---
 `)
@@ -295,6 +297,8 @@ Keep Springfield as the only user-facing surface.
 If the user asks what Springfield does, explain the current project context and Springfield guidance before planning or execution.
 When work is requested, ask clarifying questions when needed, then drive toward a concrete Springfield work definition with named workstreams.
 Stay aligned with the shared Springfield playbook and the current project's guidance.
+
+Control plane: reads are allowed for diagnosis; never write, edit, or delete files under the .springfield/ directory. The Springfield CLI is the only interface for mutating that state.
 `),
 	},
 	{
@@ -311,6 +315,8 @@ Keep Springfield as the only user-facing surface.
 If the user asks what Springfield does, explain the current project context and Springfield guidance before planning or execution.
 When work is requested, ask clarifying questions when needed, then drive toward a concrete Springfield work definition with named workstreams.
 Stay aligned with the shared Springfield playbook and the current project's guidance.
+
+Control plane: reads are allowed for diagnosis; never write, edit, or delete files under the .springfield/ directory. The Springfield CLI is the only interface for mutating that state.
 `),
 	},
 }

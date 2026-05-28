@@ -146,7 +146,7 @@ springfield init
 springfield doctor
 ```
 
-If you need local host integration instead of marketplace/catalog install:
+For local slash-command / skill sync outside the plugin install flow (or as a fallback):
 
 ```bash
 springfield install
@@ -191,8 +191,8 @@ Notes:
 - `springfield init` runs an interactive TUI: multi-select agents, pick a model per agent (or take the adapter default), then confirm a summary before write. Shift+Tab navigates back; Esc edits any answer. For non-interactive installs, pass `--agents claude,codex` and optionally `--model claude=<id>,codex=<id>,gemini=<id>` — or pipe answers on stdin and Springfield falls through to huh's accessible plain-text mode.
 - `springfield init` scaffolds `springfield.toml` + `.springfield/` with recommended execution settings for each selected agent.
 - Gemini is execution-supported but opt-in. Pass `--agents claude,codex,gemini` (or edit `agent_priority`) to include it. See [`docs/release.md`](docs/release.md#2026-04-gemini-cli-execution-support) for the migration note.
-- Primary end-user install is the Claude marketplace or Codex plugin/catalog flow.
-- `springfield install` is the local sync/bootstrap/fallback path after `init`.
+- Primary install is two pieces: the CLI via Homebrew (or tarball/source on non-mac) and the plugin via the Claude or Codex marketplace — see [Install](#install).
+- `springfield install` is an additive local-host sync (writes slash-command/skill helpers into `~/.claude/` and `~/.agents/`); use it when the plugin install flow isn't available, or as a fallback.
 - Re-running `init` preserves existing config, only filling in missing recommended defaults and agent priority. Use `springfield init --reset` to back up the current config and rewrite it from scratch.
 - `auto_branch = true` (default) auto-cuts a feature branch (`springfield/batch-<id>`) when you run `springfield start` from `main` or `master`, switches to it for the run, and switches you back when the batch finishes. See [Recommended Workflow](#recommended-workflow). Override the name with `auto_branch_pattern = "feat/{id}"` (only `{id}` is supported). Set `auto_branch = false` to disable.
 - `allow_protected_base = false` (default) refuses to ff-merge plan results into `main` or `master`. Only consulted when `auto_branch = false` (otherwise the auto-cut feature branch becomes the base and the guard does not apply).
