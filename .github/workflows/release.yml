@@ -209,8 +209,17 @@ jobs:
               exit 1
             fi
             got="$(sha256sum "${smoke_dir}/${asset}" | cut -d' ' -f1)"
-            if ! grep -q "${got}" Formula/springfield.rb; then
-              echo "post-publish smoke: ${asset} sha ${got} absent from rendered formula" >&2
+            # Check the sha against the formula's sha256 entry that pairs with
+            # THIS asset's URL specifically — not any sha anywhere in the file.
+            # Catches a sha-to-platform swap in the rendering step (e.g.,
+            # darwin_amd64's hash accidentally written next to darwin_arm64's URL).
+            formula_sha="$(grep -A1 "/${asset}\"" Formula/springfield.rb | grep -oE '[a-f0-9]{64}' | head -n1)"
+            if [[ -z "${formula_sha}" ]]; then
+              echo "post-publish smoke: rendered formula has no sha256 entry paired with ${asset}" >&2
+              exit 1
+            fi
+            if [[ "${got}" != "${formula_sha}" ]]; then
+              echo "post-publish smoke: ${asset} downloaded sha ${got} != formula sha ${formula_sha}" >&2
               exit 1
             fi
           done
@@ -224,11 +233,17 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          # Missing token is a hard failure: a green release without an
+          # up-to-date tap silently leaves `brew install brentguistwite/tap/springfield`
+          # serving the previous version. Better to turn the release red so
+          # the operator must consciously set the secret and re-run.
           if [[ -z "${TAP_TOKEN}" ]]; then
-            echo "HOMEBREW_TAP_TOKEN not set; skipping tap publish (set the secret to enable brew install from the tap)" >&2
-            exit 0
+            echo "::error::HOMEBREW_TAP_TOKEN is not set; cannot publish formula to brentguistwite/homebrew-tap." >&2
+            echo "Add a fine-grained PAT with Contents:Read+Write on brentguistwite/homebrew-tap as the HOMEBREW_TAP_TOKEN secret, then re-run this workflow." >&2
+            exit 1
           fi
           tap_dir="$(mktemp -d)"
           git clone --depth 1 \
@@ -243,5 +258,7 @@ jobs:
             exit 0
           fi
           git -C "${tap_dir}" add Formula/springfield.rb
-          git -C "${tap_dir}" commit -m "springfield ${TAG}"
+          # Embed the source springfield-repo SHA so the tap commit traces
+          # back to the exact release commit that produced the formula.
+          git -C "${tap_dir}" commit -m "springfield ${TAG} (from ${SOURCE_SHA:0:7})"
           git -C "${tap_dir}" push origin HEAD

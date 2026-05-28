@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -73,6 +74,69 @@ func TestRender_Plan(t *testing.T) {
 	if !strings.Contains(r.Content, "Compile a Springfield batch") {
 		t.Errorf("rendered content missing TaskBody opener:\n%s", r.Content)
 	}
+}
+
+// TestMinCLIVersionDoesNotExceedCurrentVersion guards the hand-maintained floor
+// against accidentally drifting past the shipped CLI: a floor higher than the
+// current release would tell every existing user to upgrade to something that
+// does not yet exist. The floor is meant to be a *generous* minimum, bumped
+// only when a skill starts needing a new capability — never preemptively.
+func TestMinCLIVersionDoesNotExceedCurrentVersion(t *testing.T) {
+	t.Parallel()
+
+	// Walk up to repo root so we can read version.txt independent of cwd.
+	_, file, _, _ := runtime.Caller(0)
+	root := file
+	for {
+		root = filepath.Dir(root)
+		if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
+			break
+		}
+		if filepath.Dir(root) == root {
+			t.Fatal("could not locate go.mod from skills_test.go")
+		}
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "version.txt"))
+	if err != nil {
+		t.Fatalf("read version.txt: %v", err)
+	}
+	current := strings.TrimSpace(string(data))
+
+	if cmp := compareSemver(t, MinCLIVersion, current); cmp > 0 {
+		t.Fatalf("MinCLIVersion (%s) must not exceed current version.txt (%s) — a floor above the shipped CLI tells every user to upgrade to a release that does not exist", MinCLIVersion, current)
+	}
+}
+
+// compareSemver returns -1, 0, or 1 for MAJOR.MINOR.PATCH triples.
+func compareSemver(t *testing.T, a, b string) int {
+	t.Helper()
+	parse := func(s string) [3]int {
+		s = strings.TrimPrefix(s, "v")
+		parts := strings.Split(s, ".")
+		if len(parts) != 3 {
+			t.Fatalf("not strict MAJOR.MINOR.PATCH: %q", s)
+		}
+		var out [3]int
+		for i, p := range parts {
+			n, err := strconv.Atoi(p)
+			if err != nil {
+				t.Fatalf("non-integer semver component in %q: %v", s, err)
+			}
+			out[i] = n
+		}
+		return out
+	}
+	ap, bp := parse(a), parse(b)
+	for i := range ap {
+		switch {
+		case ap[i] < bp[i]:
+			return -1
+		case ap[i] > bp[i]:
+			return 1
+		}
+	}
+	return 0
 }
 
 // TestRenderedSkillsCarryVersionCheckPreamble pins that every skill (and its

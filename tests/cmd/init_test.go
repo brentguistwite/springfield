@@ -234,28 +234,44 @@ func TestInitCreatesNoAgentInstructionFiles(t *testing.T) {
 	}
 }
 
-// TestInitDoesNotTouchExistingAgentsMd verifies a pre-existing AGENTS.md is left
-// byte-for-byte intact — init no longer appends a guardrail to it.
-func TestInitDoesNotTouchExistingAgentsMd(t *testing.T) {
+// TestInitDoesNotTouchExistingAgentInstructionFiles verifies pre-existing
+// AGENTS.md, CLAUDE.md, and GEMINI.md are left byte-for-byte intact — init no
+// longer appends a guardrail to any of them. Table-driven so each filename is
+// exercised in isolation (a single greenfield scratch dir per row).
+func TestInitDoesNotTouchExistingAgentInstructionFiles(t *testing.T) {
 	bin := buildBinary(t)
-	dir := t.TempDir()
 
-	existing := "# My Project\n\nImportant project-specific notes.\n"
-	agentsPath := filepath.Join(dir, "AGENTS.md")
-	if err := os.WriteFile(agentsPath, []byte(existing), 0o644); err != nil {
-		t.Fatalf("seed AGENTS.md: %v", err)
+	cases := []struct {
+		name     string
+		agents   string
+		filename string
+	}{
+		{"agents-md", "claude,codex", "AGENTS.md"},
+		{"claude-md", "claude", "CLAUDE.md"},
+		{"gemini-md", "gemini", "GEMINI.md"},
 	}
 
-	if _, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude,codex"); err != nil {
-		t.Fatalf("init: %v", err)
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			existing := "# My Project\n\nImportant project-specific notes.\n"
+			path := filepath.Join(dir, tc.filename)
+			if err := os.WriteFile(path, []byte(existing), 0o644); err != nil {
+				t.Fatalf("seed %s: %v", tc.filename, err)
+			}
 
-	got, err := os.ReadFile(agentsPath)
-	if err != nil {
-		t.Fatalf("read AGENTS.md: %v", err)
-	}
-	if string(got) != existing {
-		t.Errorf("init mutated AGENTS.md; got:\n%s\nwant:\n%s", got, existing)
+			if _, err := runBinaryIn(t, bin, dir, "init", "--agents", tc.agents); err != nil {
+				t.Fatalf("init: %v", err)
+			}
+
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read %s: %v", tc.filename, err)
+			}
+			if string(got) != existing {
+				t.Errorf("init mutated %s; got:\n%s\nwant:\n%s", tc.filename, got, existing)
+			}
+		})
 	}
 }
 

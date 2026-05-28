@@ -41,7 +41,10 @@ func TestHooksJSONBlocksControlPlane(t *testing.T) {
 		t.Fatal("hooks.json missing PreToolUse guard")
 	}
 	entry := pre[0]
-	for _, tool := range []string{"Write", "Edit"} {
+	// Bash is included so `bash -c "echo x > .springfield/state"` is also
+	// routed through hook-guard, matching the runtime adapter's matcher in
+	// internal/core/agents/claude/adapter.go.
+	for _, tool := range []string{"Write", "Edit", "MultiEdit", "NotebookEdit", "Bash"} {
 		if !strings.Contains(entry.Matcher, tool) {
 			t.Errorf("PreToolUse matcher %q should include %q", entry.Matcher, tool)
 		}
