@@ -3,11 +3,16 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<script>document.documentElement.classList.add('js')</script>
 <title>Springfield: an agent orchestrator</title>
 <meta name="description" content="Springfield turns a plan into a sequential batch of AI coding-agent runs, with isolated worktrees, per-step evidence, and automatic fallback across Claude, Codex, and Gemini. Local-first, nothing outbound." />
 <meta property="og:title" content="Springfield: an agent orchestrator" />
 <meta property="og:description" content="Queue a plan. Walk away. Review the evidence. A local-first conductor for AI coding agents." />
 <meta property="og:type" content="website" />
+<meta name="theme-color" content="#f5f1e8" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)" />
+<link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32.png" />
+<link rel="icon" type="image/png" sizes="64x64" href="img/favicon-64.png" />
 <style>
   /* Self-hosted fonts (SIL Open Font License). No external requests. */
   @font-face{font-family:'Fraunces';font-style:italic;font-weight:500;font-display:swap;src:url(fonts/fraunces-500-italic.woff2) format('woff2')}
@@ -28,6 +33,7 @@
     --rule:#ddd5c5; --accent:#c4441c; --accent-soft:#f0d8cb; --code-bg:#efe9dc;
     --ok:#2f7d52; --warn:#a9740d; --kill:#b3402e;
     --shadow:0 1px 2px rgba(27,24,19,.06),0 8px 30px rgba(27,24,19,.07);
+    --shadow-lg:0 8px 18px rgba(27,24,19,.10),0 22px 50px rgba(27,24,19,.13);
   }
   @media (prefers-color-scheme: dark){
     :root{
@@ -35,6 +41,7 @@
       --rule:#34322c; --accent:#ff6b3d; --accent-soft:#3a241b; --code-bg:#26241f;
       --ok:#5fbf86; --warn:#e0a23a; --kill:#e8705c;
       --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 34px rgba(0,0,0,.45);
+      --shadow-lg:0 10px 22px rgba(0,0,0,.5),0 26px 56px rgba(0,0,0,.55);
     }
   }
   *{box-sizing:border-box}
@@ -144,16 +151,72 @@
   footer a:hover{text-decoration:underline}
   .foot-mono{font-family:"JetBrains Mono",monospace;font-size:12px}
 
-  .reveal{opacity:0;transform:translateY(18px);transition:opacity .6s cubic-bezier(.2,.7,.2,1),transform .6s cubic-bezier(.2,.7,.2,1)}
+  /* ---- brand lockup (mark + wordmark) ---- */
+  .brand{gap:11px;text-decoration:none;color:var(--fg);font-family:"Spline Sans",sans-serif;font-weight:700;font-size:15px;letter-spacing:.09em;text-transform:uppercase;line-height:1;display:flex;align-items:center}
+  .brand .mark{height:30px;width:auto;display:block;flex:0 0 auto;transition:transform .25s ease}
+  .brand:hover .mark{transform:translateX(2px)}
+  @media (prefers-color-scheme:dark){.brand .mark{filter:invert(1)}}
+
+  /* ---- topbar scroll state ---- */
+  .topbar{transition:box-shadow .3s ease,background .3s ease}
+  .topbar.scrolled{background:color-mix(in srgb,var(--bg) 92%,transparent);box-shadow:0 6px 24px rgba(0,0,0,.08)}
+
+  /* ---- nav underline ---- */
+  .nav a:not(.gh){position:relative}
+  .nav a:not(.gh)::after{content:"";position:absolute;left:0;right:0;bottom:-5px;height:2px;background:var(--accent);transform:scaleX(0);transform-origin:left;transition:transform .25s ease}
+  .nav a:not(.gh):hover::after,.nav a:not(.gh).active::after{transform:scaleX(1)}
+  .nav a.gh{transition:border-color .2s ease,color .2s ease,transform .15s ease}
+  .nav a.gh:hover{transform:translateY(-1px)}
+
+  /* ---- hero polish ---- */
+  .hero{position:relative;overflow:hidden}
+  .hero::before{content:"";position:absolute;top:-12%;right:-6%;width:64vw;height:64vw;max-width:760px;max-height:760px;background:radial-gradient(circle,color-mix(in srgb,var(--accent) 15%,transparent),transparent 60%);pointer-events:none;z-index:0}
+  .hero .wrap{position:relative;z-index:1}
+  .hero .wrap > *{animation:rise .7s cubic-bezier(.2,.7,.2,1) backwards}
+  .hero .wrap > *:nth-child(1){animation-delay:.06s}
+  .hero .wrap > *:nth-child(2){animation-delay:.14s}
+  .hero .wrap > *:nth-child(3){animation-delay:.22s}
+  .hero .wrap > *:nth-child(4){animation-delay:.30s}
+  .hero .wrap > *:nth-child(5){animation-delay:.38s}
+  @keyframes rise{from{opacity:0;transform:translateY(22px)}to{opacity:1;transform:none}}
+  .scrollcue{position:absolute;bottom:26px;left:50%;transform:translateX(-50%);z-index:1;color:var(--muted);font-size:22px;line-height:1;animation:bob 1.9s ease-in-out infinite;opacity:.6;transition:opacity .4s ease}
+  body.scrolled .scrollcue{opacity:0}
+  @keyframes bob{0%,100%{transform:translate(-50%,0)}50%{transform:translate(-50%,7px)}}
+
+  /* ---- hover micro-interactions ---- */
+  .card{transition:transform .22s ease,box-shadow .22s ease,border-color .22s ease}
+  .card:hover{transform:translateY(-4px);box-shadow:var(--shadow-lg);border-color:color-mix(in srgb,var(--accent) 28%,var(--rule))}
+  .stage{transition:transform .2s ease,border-color .2s ease}
+  .stage:hover{transform:translateY(-3px);border-color:color-mix(in srgb,var(--accent) 30%,var(--rule))}
+  .cmd{transition:border-color .2s ease,background .2s ease}
+  .cmd:hover{background:color-mix(in srgb,var(--accent) 6%,var(--code-bg))}
+  .btn{transition:transform .15s ease,box-shadow .2s ease,background .2s ease}
+  .btn-primary:hover{box-shadow:0 10px 24px color-mix(in srgb,var(--accent) 38%,transparent)}
+  .btn-ghost:hover{transform:translateY(-2px)}
+  summary{transition:color .2s ease}
+  summary:hover{color:var(--accent)}
+
+  /* ---- feature icons ---- */
+  .ic.svg{display:flex;width:40px;height:40px;align-items:center;justify-content:center;border-radius:11px;background:var(--accent-soft);margin-bottom:14px}
+  .ic.svg svg{width:22px;height:22px;stroke:var(--accent);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+  /* ---- reduced motion ---- */
+  @media (prefers-reduced-motion:reduce){
+    .hero .wrap > *,.mark .b,.scrollcue{animation:none}
+    .card:hover,.stage:hover,.btn:hover,.nav a.gh:hover{transform:none}
+  }
+
+  .js .reveal{opacity:0;transform:translateY(18px)}
+  .reveal{transition:opacity .6s cubic-bezier(.2,.7,.2,1),transform .6s cubic-bezier(.2,.7,.2,1)}
   .reveal.in{opacity:1;transform:none}
-  @media (prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}html{scroll-behavior:auto}}
+  @media (prefers-reduced-motion:reduce){.js .reveal{opacity:1;transform:none;transition:none}html{scroll-behavior:auto}}
 </style>
 </head>
 <body>
 
 <div class="progress" id="progress"></div>
 <div class="topbar">
-  <div class="brand"><span class="dot"></span>Springfield</div>
+  <div class="brand"><img class="mark" src="img/logo.png" alt="" aria-hidden="true"><span>Springfield</span></div>
   <nav class="nav">
     <a href="#problem">Problem</a>
     <a href="#what">What it is</a>
@@ -180,6 +243,7 @@
       <a class="btn btn-ghost" href="https://github.com/brentguistwite/springfield" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true" fill="currentColor"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A8.013 8.013 0 0 1 0 8c0-4.42 3.58-8 8-8Z"></path></svg>View on GitHub</a>
     </div>
   </div>
+  <div class="scrollcue" aria-hidden="true">↓</div>
 </header>
 
 <section id="problem">
@@ -201,9 +265,9 @@
     <h2>An orchestrator that <span class="accent">drives</span> the agents.<br>It doesn't write the code itself.</h2>
     <p class="lead">Think of a CI runner: it doesn't compile your code, it runs the steps that do, in order, and keeps the logs. Springfield is that, for AI coding agents. You hand it a plan; it runs each piece through an agent in an isolated worktree, and keeps the evidence.</p>
     <div class="grid g3" style="margin-top:30px">
-      <div class="card"><div class="ic">↦</div><h3>Sequential batches</h3><p>A plan compiles into an ordered batch of work units, each with its own stories and acceptance criteria.</p></div>
-      <div class="card"><div class="ic">⊞</div><h3>Plugin-distributed</h3><p>Installed through the Claude Code &amp; Codex marketplace plugin flow. One command and the CLI comes with it.</p></div>
-      <div class="card"><div class="ic">⌂</div><h3>Local-first</h3><p>State lives in project-local <span class="cmdinline">.springfield/</span>. No global machine state, and nothing outbound from Springfield itself.</p></div>
+      <div class="card"><div class="ic svg"><svg viewBox="0 0 24 24" aria-hidden="true"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="15" y2="12"/><line x1="4" y1="17" x2="18" y2="17"/></svg></div><h3>Sequential batches</h3><p>A plan compiles into an ordered batch of work units, each with its own stories and acceptance criteria.</p></div>
+      <div class="card"><div class="ic svg"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.6"/></svg></div><h3>Plugin-distributed</h3><p>Installed through the Claude Code &amp; Codex marketplace plugin flow. One command and the CLI comes with it.</p></div>
+      <div class="card"><div class="ic svg"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-6 8 6"/><path d="M6 10v9h12v-9"/></svg></div><h3>Local-first</h3><p>State lives in project-local <span class="cmdinline">.springfield/</span>. No global machine state, and nothing outbound from Springfield itself.</p></div>
     </div>
   </div>
 </section>
@@ -391,7 +455,8 @@
 
 <script>
   const prog=document.getElementById('progress');
-  const onScroll=()=>{const h=document.documentElement;prog.style.width=(h.scrollTop/(h.scrollHeight-h.clientHeight)*100)+'%';};
+  const tb=document.querySelector('.topbar');
+  const onScroll=()=>{const h=document.documentElement;const y=h.scrollTop;prog.style.width=(y/(h.scrollHeight-h.clientHeight)*100)+'%';tb.classList.toggle('scrolled',y>16);document.body.classList.toggle('scrolled',y>140);};
   document.addEventListener('scroll',onScroll,{passive:true});onScroll();
   const io=new IntersectionObserver((es)=>{es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}})},{threshold:.12});
   document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
