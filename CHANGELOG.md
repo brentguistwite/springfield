@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.14.0](https://github.com/brentguistwite/springfield/compare/v0.13.0...v0.14.0) (2026-05-28)
+
+
+### Features
+
+* manual CLI install + zero-mutation .springfield guards (onboarding papercuts) ([#66](https://github.com/brentguistwite/springfield/issues/66)) ([a314cae](https://github.com/brentguistwite/springfield/commit/a314caef96c89e67d9fd2128b9186d8b48cb21b0))
+
+
+### Bug Fixes
+
+* **planrun:** report honored passes, not scanned markers, in progress.md ([#64](https://github.com/brentguistwite/springfield/issues/64)) ([c0131fe](https://github.com/brentguistwite/springfield/commit/c0131fee363f08ad1a104d51d34db0d3d35bbd68))
+
 ## [0.13.0](https://github.com/brentguistwite/springfield/compare/v0.12.0...v0.13.0) (2026-05-14)
 
 
