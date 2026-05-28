@@ -266,7 +266,7 @@
     <p class="lead">Think of a CI runner: it doesn't compile your code, it runs the steps that do, in order, and keeps the logs. Springfield is that, for AI coding agents. You hand it a plan; it runs each piece through an agent in an isolated worktree, and keeps the evidence.</p>
     <div class="grid g3" style="margin-top:30px">
       <div class="card"><div class="ic svg"><svg viewBox="0 0 24 24" aria-hidden="true"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="15" y2="12"/><line x1="4" y1="17" x2="18" y2="17"/></svg></div><h3>Sequential batches</h3><p>A plan compiles into an ordered batch of work units, each with its own stories and acceptance criteria.</p></div>
-      <div class="card"><div class="ic svg"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.6"/></svg></div><h3>Plugin-distributed</h3><p>Installed through the Claude Code &amp; Codex marketplace plugin flow. One command and the CLI comes with it.</p></div>
+      <div class="card"><div class="ic svg"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.6"/></svg></div><h3>Drops into your tools</h3><p>Homebrew installs the CLI; one slash-command in Claude Code or Codex installs the skills. Teammates pick it up in minutes.</p></div>
       <div class="card"><div class="ic svg"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-6 8 6"/><path d="M6 10v9h12v-9"/></svg></div><h3>Local-first</h3><p>State lives in project-local <span class="cmdinline">.springfield/</span>. No global machine state, and nothing outbound from Springfield itself.</p></div>
     </div>
   </div>
@@ -396,29 +396,34 @@
 <section id="get-started">
   <div class="wrap reveal">
     <div class="kicker">Get started</div>
-    <h2>Install in one step.</h2>
-    <p class="lead">Springfield installs through the Claude Code / Codex marketplace plugin flow. The plugin ships the slash commands <em>and</em> pulls the matching <span class="cmdinline">springfield</span> CLI binary, with no separate download.</p>
+    <h2>Two pieces. A few minutes.</h2>
+    <p class="lead">Springfield ships as a <strong>CLI</strong> (the binary that does the work) and a <strong>plugin</strong> (the skills and slash-commands your agent runs). Install both.</p>
 
-    <h3 style="margin-top:36px">1 · Install the plugin</h3>
+    <h3 style="margin-top:36px">1 · Install the CLI</h3>
+    <div class="cmd"><span class="p">$</span><span class="c">brew install brentguistwite/tap/springfield</span><span class="note">macOS</span></div>
+    <div class="cmd"><span class="p">$</span><span class="c">springfield version</span><span class="note">confirm it's on PATH</span></div>
+    <p style="color:var(--muted);font-size:14.5px;margin-top:8px">Linux or Windows: grab a tarball from <a href="https://github.com/brentguistwite/springfield/releases" style="color:var(--accent)">Releases</a>, or run <span class="cmdinline">go install .</span> from source (Go 1.26+).</p>
+
+    <h3 style="margin-top:34px">2 · Install the plugin</h3>
+    <p style="color:var(--muted);margin:0 0 8px 0">Inside Claude Code:</p>
     <div class="cmd"><span class="p">›</span><span class="c">/plugin marketplace add brentguistwite/springfield</span></div>
     <div class="cmd"><span class="p">›</span><span class="c">/plugin install springfield@brentguistwite</span></div>
-    <p style="color:var(--muted);font-size:14.5px;margin-top:8px">Add <span class="cmdinline">~/.local/bin</span> to your <span class="cmdinline">PATH</span> once. The plugin symlinks the CLI there. Afterwards <span class="cmdinline">/plugin update</span> refreshes both the commands and the binary together.</p>
+    <p style="color:var(--muted);font-size:14.5px;margin-top:8px">You get the slash-commands <span class="cmdinline">/springfield:plan</span>, <span class="cmdinline">/springfield:status</span>, and <span class="cmdinline">/springfield:recover</span>. Codex CLI has the same flow with <span class="cmdinline">codex plugin marketplace add</span>; see the <a href="https://github.com/brentguistwite/springfield#codex-plugin-directory" style="color:var(--accent)">README</a> for the exact commands.</p>
 
-    <h3 style="margin-top:34px">2 · Run a batch</h3>
+    <h3 style="margin-top:34px">3 · Run a batch</h3>
     <div class="cmd"><span class="p">$</span><span class="c">springfield init</span><span class="note">scaffold config + state</span></div>
     <div class="cmd"><span class="p">$</span><span class="c">springfield doctor</span><span class="note">check which agents are available</span></div>
     <div class="cmd"><span class="p">$</span><span class="c">springfield plan --prd plan.json</span><span class="note">compile a batch</span></div>
     <div class="cmd"><span class="p">$</span><span class="c">springfield start</span><span class="note">run it</span></div>
-    <p style="color:var(--muted);font-size:14.5px;margin-top:8px">Slash commands after install: <span class="cmdinline">/springfield:plan</span>, <span class="cmdinline">/springfield:status</span>, <span class="cmdinline">/springfield:recover</span>.</p>
 
     <div class="grid g2" style="margin-top:36px">
       <div class="card">
         <h3>Requirements</h3>
-        <p style="color:var(--muted)">At least one supported agent CLI, installed and authenticated: <b style="color:var(--fg)">Claude Code</b>, <b style="color:var(--fg)">Codex</b>, or <b style="color:var(--fg)">Gemini</b>. macOS or Linux (amd64/arm64) for the plugin auto-install path.</p>
+        <p style="color:var(--muted)">A git repo, and at least one supported agent CLI installed and authenticated: <b style="color:var(--fg)">Claude Code</b>, <b style="color:var(--fg)">Codex</b>, or <b style="color:var(--fg)">Gemini</b>.</p>
       </div>
       <div class="card">
-        <h3>Other install paths</h3>
-        <p style="color:var(--muted)">Prefer the CLI outside the plugin flow? Grab a tarball or Homebrew formula from <a href="https://github.com/brentguistwite/springfield/releases" style="color:var(--accent)">Releases</a>, or build from source with <span class="cmdinline">go install .</span> (Go 1.26+).</p>
+        <h3>Upgrading</h3>
+        <p style="color:var(--muted)"><span class="cmdinline">brew upgrade springfield</span> is the upgrade you'll actually run. The plugin is a thin shim over the CLI verbs, so plugin updates are manual and rare. Run one only when a skill tells you to.</p>
       </div>
     </div>
   </div>
@@ -436,7 +441,7 @@
     <details><summary>The agent runs with broad permissions. Is that safe?</summary><div class="ans">The default profile lets agents work without per-action prompts so an unattended batch isn't blocked. The mitigations: <b>worktree isolation</b> (blast radius is a throwaway branch), the <b>evidence trail</b> (every action recorded), and <b>you review the diff before merging</b>. It's a setting in <span class="cmdinline">springfield.toml</span>, not a hardcode.</div></details>
     <details><summary>Does Springfield write the code?</summary><div class="ans">No. It's the conductor, not the orchestra. It builds prompts, dispatches the agent, watches for completion markers, classifies errors, and records evidence. The editing is done by Claude Code / Codex / Gemini.</div></details>
     <details><summary>Is it production-ready?</summary><div class="ans">It's <b>early, pre-1.0</b> (currently v0.13). It works and it's in active use, but interfaces may still shift before 1.0. Treat it accordingly and pin a version if you depend on it.</div></details>
-    <details><summary>Does it have a plugin or extension API?</summary><div class="ans">No. "Plugin-distributed" means Springfield is <em>installed via</em> the Claude Code / Codex marketplace plugin flow. It doesn't currently expose a plugin API of its own.</div></details>
+    <details><summary>Does it have a plugin or extension API?</summary><div class="ans">No. The Claude Code / Codex plugin ships only the skills and slash-commands; the CLI itself installs via Homebrew (or a tarball, or <span class="cmdinline">go install</span>). Springfield doesn't expose a plugin or extension API of its own.</div></details>
   </div>
 </section>
 
