@@ -52,6 +52,8 @@ Do not try to work around a missing or too-old CLI — surface the exact command
 ## Springfield control plane
 
 Never read, write, edit, or delete files under ` + "`.springfield/`" + `. That directory is Springfield's internal state — the CLI is your interface for changing it. Writing there directly will abort the current batch. This applies regardless of which agent is invoking the skill.
+
+---
 `)
 
 // Skill describes one canonical Springfield skill file.

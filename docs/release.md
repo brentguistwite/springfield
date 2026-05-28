@@ -70,8 +70,9 @@ Without these protections, anyone with `contents: write` on the repo can stage c
 
 ## Rollback
 
-- If publish fails after tag creation but before assets upload: fix the workflow and rerun publish for the same tag. Because the GitHub release object is the final step, the broken state is invisible to the release page.
-- If publish is merely slow: existing installs keep their previous CLI; `brew upgrade` recovers automatically once the tap formula lands.
+- If publish fails **before** assets upload (preflight, build, render formula): fix the workflow and rerun for the same tag. The release object exists (release-please created it) but is empty, so users see no usable artifacts and `brew install` from the tap still serves the previous version.
+- If publish fails **after** assets upload but before tap publish (e.g. post-publish smoke fails, or HOMEBREW_TAP_TOKEN is missing): the release object is visible with tarballs attached, but the tap is stale. Re-running the workflow is safe — the assets-upload step is effectively idempotent (softprops/action-gh-release replaces files of the same name), and the tap-publish step skips when the formula content is unchanged.
+- If publish is merely slow: existing installs keep their previous CLI; `brew upgrade` resolves the new version automatically once the tap formula lands.
 - If a bad release ships: do not retag or mutate the tag. Merge a revert/fix to `main` and let `release-please` cut the next patch.
 
 ## Published Assets

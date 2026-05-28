@@ -50,7 +50,7 @@ func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "springfield",
 		Short:         "Springfield is plugin-first for agent-native work.",
-		Long:          "Springfield is plugin-first for agent-native work.\n\nPrimary install path: use the Claude marketplace or Codex plugin/catalog entry.\nUse plan to compile a work request into a runnable batch, start to execute it,\nstatus to inspect progress, and doctor to verify local tooling.",
+		Long:          "Springfield is plugin-first for agent-native work.\n\nPrimary CLI install: brew install brentguistwite/tap/springfield (macOS) or the release tarball on PATH (Linux/Windows).\nThe Claude/Codex plugin ships the skills and slash commands separately — see the README.\nUse plan to compile a work request into a runnable batch, start to execute it,\nstatus to inspect progress, and doctor to verify local tooling.",
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		CompletionOptions: cobra.CompletionOptions{
@@ -60,7 +60,7 @@ func NewRootCommand() *cobra.Command {
 			if err := cmd.Help(); err != nil {
 				return err
 			}
-			_, err := fmt.Fprintln(cmd.OutOrStdout(), "\nPrimary install path: use the Claude marketplace or Codex plugin/catalog entry.\nFor local host sync or fallback: run \"springfield install\".")
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), "\nPrimary CLI install: brew install brentguistwite/tap/springfield (macOS) or the release tarball on PATH (Linux/Windows).\nFor local host sync or fallback: run \"springfield install\".")
 			return err
 		},
 	}

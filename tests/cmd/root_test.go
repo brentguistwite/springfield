@@ -399,7 +399,7 @@ func TestSpringfieldBareShowsInstallGuidance(t *testing.T) {
 	}
 
 	for _, marker := range []string{
-		"Primary install path: use the Claude marketplace or Codex plugin/catalog entry.",
+		"Primary CLI install: brew install brentguistwite/tap/springfield",
 		"springfield install",
 	} {
 		if !strings.Contains(output, marker) {
@@ -420,7 +420,7 @@ func TestSpringfieldWithoutArgsShowsHelpAndGuidance(t *testing.T) {
 	for _, marker := range []string{
 		"Usage:",
 		"springfield install",
-		"Primary install path: use the Claude marketplace or Codex plugin/catalog entry.",
+		"Primary CLI install: brew install brentguistwite/tap/springfield",
 	} {
 		if !strings.Contains(output, marker) {
 			t.Fatalf("expected bare springfield output to contain %q, got:\n%s", marker, output)

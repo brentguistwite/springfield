@@ -190,6 +190,24 @@ jobs:
           set -euo pipefail
           version="${TAG#v}"
           smoke_dir="$(mktemp -d)"
+          # Pull the published formula from the GitHub release object so we
+          # validate what `brew install --formula <release-url>` would see,
+          # not just the local workspace copy. Catches an upload that 200'd
+          # but truncated the formula body.
+          formula_url="https://github.com/${REPOSITORY}/releases/download/${TAG}/springfield.rb"
+          for attempt in 1 2 3 4 5; do
+            if curl --fail --silent --show-error --location \
+              --connect-timeout 10 --max-time 60 \
+              -o "${smoke_dir}/springfield.rb" "${formula_url}"; then
+              break
+            fi
+            echo "post-publish smoke: formula download attempt ${attempt} failed; retrying" >&2
+            sleep 5
+          done
+          if [[ ! -s "${smoke_dir}/springfield.rb" ]]; then
+            echo "post-publish smoke: failed to fetch ${formula_url}" >&2
+            exit 1
+          fi
           # Each tarball's sha256 must match the sha256 the published formula
           # advertises for it — that pairing is what `brew install` trusts.
           for arch in darwin_amd64 darwin_arm64 linux_amd64 linux_arm64; do
@@ -209,17 +227,19 @@ jobs:
               exit 1
             fi
             got="$(sha256sum "${smoke_dir}/${asset}" | cut -d' ' -f1)"
-            # Check the sha against the formula's sha256 entry that pairs with
-            # THIS asset's URL specifically — not any sha anywhere in the file.
-            # Catches a sha-to-platform swap in the rendering step (e.g.,
-            # darwin_amd64's hash accidentally written next to darwin_arm64's URL).
-            formula_sha="$(grep -A1 "/${asset}\"" Formula/springfield.rb | grep -oE '[a-f0-9]{64}' | head -n1)"
+            # Check the sha against the PUBLISHED formula's sha256 entry that
+            # pairs with THIS asset's URL specifically — not any sha anywhere
+            # in the file. Catches a sha-to-platform swap in the rendering
+            # step (e.g., darwin_amd64's hash accidentally written next to
+            # darwin_arm64's URL). `grep -F` forces literal matching so dots
+            # in the version do not match arbitrary chars.
+            formula_sha="$(grep -F -A1 "/${asset}\"" "${smoke_dir}/springfield.rb" | grep -oE '[a-f0-9]{64}' | head -n1)"
             if [[ -z "${formula_sha}" ]]; then
-              echo "post-publish smoke: rendered formula has no sha256 entry paired with ${asset}" >&2
+              echo "post-publish smoke: published formula has no sha256 entry paired with ${asset}" >&2
               exit 1
             fi
             if [[ "${got}" != "${formula_sha}" ]]; then
-              echo "post-publish smoke: ${asset} downloaded sha ${got} != formula sha ${formula_sha}" >&2
+              echo "post-publish smoke: ${asset} downloaded sha ${got} != published-formula sha ${formula_sha}" >&2
               exit 1
             fi
           done

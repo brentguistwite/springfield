@@ -43,6 +43,8 @@ Do not try to work around a missing or too-old CLI — surface the exact command
 
 Never read, write, edit, or delete files under `.springfield/`. That directory is Springfield's internal state — the CLI is your interface for changing it. Writing there directly will abort the current batch. This applies regardless of which agent is invoking the skill.
 
+---
+
 Compile a Springfield batch from the user's work request.
 
 Read project guidance from AGENTS.md first, then CLAUDE.md, then GEMINI.md when present.
