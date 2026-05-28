@@ -23,6 +23,10 @@ type Git interface {
 	// state contains the SHA the slice promises to record even if the
 	// process dies before merge integration runs.
 	Head(dir string) (string, error)
+	// Diff returns `git diff <baseRef>...HEAD` run inside dir — the plan
+	// branch's net changes since it diverged from baseRef. Used to feed the
+	// reviewer the work under review.
+	Diff(dir, baseRef string) (string, error)
 }
 
 // CLIGit shells out to the system git binary. dir is the git repo root used
@@ -153,6 +157,12 @@ func (g CLIGit) WorktreeAddExistingBranch(dir, path, branch string) error {
 // Head returns the SHA at HEAD inside dir.
 func (g CLIGit) Head(dir string) (string, error) {
 	return g.run(dir, "rev-parse", "HEAD")
+}
+
+// Diff returns the net change between baseRef and HEAD using the
+// symmetric-difference form `git diff baseRef...HEAD`.
+func (g CLIGit) Diff(dir, baseRef string) (string, error) {
+	return g.run(dir, "diff", baseRef+"...HEAD")
 }
 
 // SwitchCreate creates branch from current HEAD and switches the repo to it.

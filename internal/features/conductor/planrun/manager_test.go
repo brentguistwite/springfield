@@ -60,6 +60,7 @@ func (g *fakeGit) BranchExists(_, branch string) (bool, error) {
 }
 func (g *fakeGit) WorktreeListPaths(string) ([]string, error) { return g.worktreePaths, nil }
 func (g *fakeGit) Head(string) (string, error)                { return "headcafef00d", nil }
+func (g *fakeGit) Diff(_, _ string) (string, error)           { return "fake-diff", nil }
 func (g *fakeGit) WorktreeAddNewBranch(_, path, branch, base string) error {
 	g.createNew = append(g.createNew, path+"|"+branch+"|"+base)
 	g.branches[branch] = struct{}{}
