@@ -53,6 +53,13 @@ export const nodes: LifecycleNode[] = [
     machine: 'plan',
     cliSnippet: 'springfield recover --diagnose --plan <plan-id>',
   },
+  {
+    id: 'plan-needs-human',
+    label: 'Needs human',
+    description: 'Pre-merge review halted or the fix-loop exhausted its budget; worktree/branch preserved for operator review.',
+    machine: 'plan',
+    cliSnippet: 'springfield recover --diagnose --plan <plan-id>',
+  },
 
   // queue machine — mirrors QueueStatus consts
   {
@@ -127,6 +134,8 @@ export const edges: LifecycleEdge[] = [
   { id: 'plan-running__interrupted', source: 'plan-running', target: 'plan-interrupted', kind: 'failure', label: 'signal/exit' },
   { id: 'plan-interrupted__running', source: 'plan-interrupted', target: 'plan-running', kind: 'recovery', label: 'resume' },
   { id: 'plan-failed__pending', source: 'plan-failed', target: 'plan-pending', kind: 'recovery', label: 'recover' },
+  { id: 'plan-running__needs-human', source: 'plan-running', target: 'plan-needs-human', kind: 'failure', label: 'review halted' },
+  { id: 'plan-needs-human__pending', source: 'plan-needs-human', target: 'plan-pending', kind: 'recovery', label: 'recover' },
 
   // queue transitions
   { id: 'queue-idle__running', source: 'queue-idle', target: 'queue-running', kind: 'normal', label: 'start' },
@@ -149,6 +158,6 @@ export const edges: LifecycleEdge[] = [
   { id: 'merge-succeeded__queue-running', source: 'merge-succeeded', target: 'queue-running', kind: 'normal', label: 'next plan' },
 ]
 
-export const EXPECTED_PLAN_NODE_COUNT = 5
+export const EXPECTED_PLAN_NODE_COUNT = 6
 export const EXPECTED_QUEUE_NODE_COUNT = 5
 export const EXPECTED_MERGE_NODE_COUNT = 4
