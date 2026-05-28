@@ -1,5 +1,13 @@
 package config
 
+import (
+	"errors"
+	"os"
+	"path/filepath"
+
+	"github.com/BurntSushi/toml"
+)
+
 // LocalFileName is the git-ignored, per-operator override file that carries
 // review configuration. It sits beside springfield.toml (FileName) and is
 // never committed — so a personal review prompt that references a personal
@@ -41,4 +49,23 @@ func (r ReviewConfig) MaxReviewIterationsOrDefault() int {
 // the zero value, which leaves review disabled.
 type LocalConfig struct {
 	Review ReviewConfig `toml:"review"`
+}
+
+// LoadLocalFrom loads springfield.local.toml from rootDir. A missing file is
+// NOT an error: it returns the zero LocalConfig (review disabled), so review is
+// strictly opt-in. A present-but-malformed file returns an *InvalidConfigError,
+// mirroring how the main loader reports a bad springfield.toml.
+//
+// rootDir is the project root (Loaded.RootDir from the main config load), so
+// the local override sits beside the springfield.toml it augments.
+func LoadLocalFrom(rootDir string) (LocalConfig, error) {
+	path := filepath.Join(rootDir, LocalFileName)
+	var lc LocalConfig
+	if _, err := toml.DecodeFile(path, &lc); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return LocalConfig{}, nil
+		}
+		return LocalConfig{}, &InvalidConfigError{Path: path, Reason: err.Error()}
+	}
+	return lc, nil
 }
