@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.2](https://github.com/brentguistwite/springfield/compare/v0.14.1...v0.14.2) (2026-05-28)
+
+
+### Bug Fixes
+
+* **planrun:** exclude UserStory.Passes from InputDigest (drift-neutral resume) ([9b5e372](https://github.com/brentguistwite/springfield/commit/9b5e372aa634d7ea7c2702057bd3dc1f931aa7c6))
+
 ## [0.14.1](https://github.com/brentguistwite/springfield/compare/v0.14.0...v0.14.1) (2026-05-28)
 
 
