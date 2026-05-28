@@ -95,8 +95,10 @@
 
   .grid{display:grid;gap:18px}
   .g3{grid-template-columns:repeat(3,1fr)}
-  .g2{grid-template-columns:repeat(2,1fr)}
-  @media (max-width:820px){.g3,.g2{grid-template-columns:1fr}}
+  .g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+  @media (max-width:820px){.g3,.g2{grid-template-columns:minmax(0,1fr)}}
+  /* Plugin-install grid stacks earlier so the long Codex command gets full width. */
+  @media (max-width:960px){.g2.g2-wide{grid-template-columns:minmax(0,1fr)}}
   .card{background:var(--panel);border:1px solid var(--rule);border-radius:14px;padding:24px;box-shadow:var(--shadow)}
   .card .ic{font-family:"Fraunces",serif;font-weight:900;font-size:26px;color:var(--accent);line-height:1;margin-bottom:12px}
   .card p{font-size:15.5px;color:var(--muted);margin:0}
@@ -406,7 +408,7 @@
 
     <h3 style="margin-top:34px">2 · Install the plugin</h3>
     <p style="color:var(--muted);margin:0 0 14px 0">Same skills either way: <span class="cmdinline">/springfield:plan</span>, <span class="cmdinline">/springfield:status</span>, and <span class="cmdinline">/springfield:recover</span>. Install on whichever host CLI you use, or both.</p>
-    <div class="grid g2" style="margin-top:6px;align-items:start">
+    <div class="grid g2 g2-wide" style="margin-top:6px;align-items:start">
       <div class="card">
         <h3>Claude Code</h3>
         <div class="cmd"><span class="p">›</span><span class="c">/plugin marketplace add brentguistwite/springfield</span></div>
@@ -416,7 +418,8 @@
         <h3>Codex</h3>
         <div class="cmd"><span class="p">$</span><span class="c">codex plugin marketplace add brentguistwite/springfield --sparse .agents/plugins</span></div>
         <div class="cmd"><span class="p">$</span><span class="c">codex</span></div>
-        <div class="cmd"><span class="p">›</span><span class="c">/plugins</span><span class="note">then install "springfield"</span></div>
+        <div class="cmd"><span class="p">›</span><span class="c">/plugins</span></div>
+        <p style="color:var(--muted);font-size:13.5px;margin:10px 0 0">An interactive menu opens. Pick the <b style="color:var(--fg)">Brent Guistwite</b> marketplace, then install <b style="color:var(--fg)">springfield</b>.</p>
       </div>
     </div>
 
