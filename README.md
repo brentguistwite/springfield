@@ -267,10 +267,6 @@ Per-plan override: set `Ref = "feat/other"` on a `PlanUnit` to integrate that on
 
 > Drift caveat: ff-only merge refuses if the base branch advanced between plan start and integrate. Pick a base branch you control during the run; don't `git pull` mid-batch.
 
-## Lifecycle
-
-Interactive lifecycle diagram: <https://brentguistwite.github.io/springfield/> — plan → queue → merge state machines and the recovery edges between them. Open it alongside [Debugging a stuck run](#debugging-a-stuck-run) when triaging a stalled batch.
-
 ## Critical Concepts
 
 - **PRD with user stories** — one or more atomic stories per plan; runner loops until `<promise>COMPLETE</promise>` or iteration cap. Story completion is reported via `<story-pass>US-XXX</story-pass>` output markers. Springfield writes back per-story `passes` state; agents never write to `.springfield/`.
