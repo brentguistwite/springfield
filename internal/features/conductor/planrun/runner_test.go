@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"springfield/internal/core/agents"
+	"springfield/internal/core/config"
 	coreexec "springfield/internal/core/exec"
 	coreruntime "springfield/internal/core/runtime"
 	"springfield/internal/features/conductor"
@@ -736,4 +737,95 @@ func TestTargetPlanIDOverridesDefaultSelection(t *testing.T) {
 			t.Fatalf("expected 1 agent call, got %d", len(runner.calls))
 		}
 	})
+}
+
+// queuedAgentRunner returns successive coreruntime.Results from a queue, one per
+// Run call. Used to script story → review → fix sequences without inventing a
+// new fake harness shape.
+type queuedAgentRunner struct {
+	results []coreruntime.Result
+	calls   []coreruntime.Request
+}
+
+func (q *queuedAgentRunner) Run(_ context.Context, req coreruntime.Request) coreruntime.Result {
+	q.calls = append(q.calls, req)
+	if len(q.calls) > len(q.results) {
+		// Out of scripted results — return a generic success with no events so
+		// any unexpected extra call surfaces as a test failure downstream rather
+		// than a panic here.
+		return coreruntime.Result{Agent: agents.AgentClaude, Status: coreruntime.StatusPassed}
+	}
+	return q.results[len(q.calls)-1]
+}
+
+// TestSinglePlanReviewHaltYieldsNeedsHuman exercises the wiring: when
+// ReviewConfig.Enabled=true and the reviewer emits <review-verdict>halt</…>,
+// the plan terminates as StatusNeedsHuman with a non-nil error and NO pending
+// merge — so Integrate never runs and the worktree/branch are preserved.
+func TestSinglePlanReviewHaltYieldsNeedsHuman(t *testing.T) {
+	root := projectFixtureWithUnpassedStory(t, "alpha")
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+	g := newFakeGit()
+
+	// Call 1: story prompt → mark passed + COMPLETE.
+	// Call 2: review prompt → halt verdict.
+	runner := &queuedAgentRunner{results: []coreruntime.Result{
+		{
+			Agent:  agents.AgentClaude,
+			Status: coreruntime.StatusPassed,
+			Events: []coreexec.Event{{Type: coreexec.EventStdout, Data: "<story-pass>US-001</story-pass><promise>COMPLETE</promise>"}},
+		},
+		{
+			Agent:  agents.AgentClaude,
+			Status: coreruntime.StatusPassed,
+			Events: []coreexec.Event{{Type: coreexec.EventStdout, Data: "<review-verdict>halt</review-verdict>"}},
+		},
+	}}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentClaude},
+		Runner:       runner,
+		Manager:      &planrun.Manager{Git: g},
+		ReviewConfig: config.ReviewConfig{Enabled: true},
+	})
+
+	if res.Status != conductor.StatusNeedsHuman {
+		t.Fatalf("Status = %v, want StatusNeedsHuman", res.Status)
+	}
+	if res.Err == nil {
+		t.Fatalf("Err must be non-nil so the batch loop halts; got nil")
+	}
+	if len(runner.calls) != 2 {
+		t.Fatalf("expected exactly 2 agent calls (story + review halt), got %d", len(runner.calls))
+	}
+
+	reloaded, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("re-LoadProject: %v", err)
+	}
+	st := reloaded.State.Plans["alpha"]
+	if st == nil {
+		t.Fatalf("no persisted state for alpha")
+	}
+	if st.Status != conductor.StatusNeedsHuman {
+		t.Fatalf("persisted Status = %v, want StatusNeedsHuman", st.Status)
+	}
+	if st.Merge != nil {
+		t.Fatalf("Merge must be nil on needs-human (Integrate must not run); got %+v", st.Merge)
+	}
+
+	summaryPath := filepath.Join(res.EvidencePath, "summary.json")
+	data, err := os.ReadFile(summaryPath)
+	if err != nil {
+		t.Fatalf("read summary.json: %v", err)
+	}
+	if !strings.Contains(string(data), `"terminal_status": "needs-human"`) {
+		t.Fatalf("summary.json must record needs-human, got:\n%s", string(data))
+	}
 }

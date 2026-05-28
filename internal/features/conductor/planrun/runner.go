@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"springfield/internal/core/agents"
+	"springfield/internal/core/config"
 	"springfield/internal/core/exec"
 	coreruntime "springfield/internal/core/runtime"
 	"springfield/internal/features/conductor"
@@ -81,6 +82,10 @@ type SinglePlanInput struct {
 	// after. On detected tamper the plan is marked failed and the loop aborts.
 	// Nil disables tamper detection.
 	TamperGuard TamperGuard
+	// ReviewConfig is the resolved [review] block from springfield.local.toml.
+	// Zero value (Enabled=false) disables review; the per-plan prd.PRD.Review
+	// flag can still override per config.ReviewEnabledForPlan.
+	ReviewConfig config.ReviewConfig
 }
 
 // SinglePlanResult summarizes the outcome.
@@ -255,16 +260,61 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 	var (
 		finalRunErr       error
 		completedNormally bool
+		needsHuman        bool
 		exitReason        = "completed"
 		lastAgent         agents.ID
 		iterCount         int
 	)
 
+	// finishWithReview gates plan completion on the pre-merge review fix-loop.
+	// Called at BOTH completion sites (top-of-loop short-circuit AND post-COMPLETE
+	// check) so a needs-human retry that re-enters with all stories already passed
+	// re-reviews instead of merging unreviewed.
+	finishWithReview := func() {
+		if !config.ReviewEnabledForPlan(in.ReviewConfig, currentPRD.Review) {
+			completedNormally = true
+			return
+		}
+		pr := in.ProjectRoot
+		if pr == "" {
+			pr = in.ControlRoot
+		}
+		gate := runReviewGate(reviewGateInput{
+			Runner:            in.Runner,
+			Git:               in.Manager.Git,
+			ImplementerAgents: in.AgentIDs,
+			ExecutionSettings: in.ExecutionSettings,
+			ReviewConfig:      in.ReviewConfig,
+			WorktreeRoot:      ctx.WorktreeRoot,
+			BaseRef:           ctx.BaseRef,
+			PRD:               currentPRD,
+			ContextMD:         string(contextMDBytes),
+			ProjectGuidance:   projectGuidance,
+			ProjectRoot:       pr,
+			EvidenceDir:       evidenceDir,
+			OnEvent:           in.OnEvent,
+		})
+		switch gate.Outcome {
+		case reviewPassed:
+			completedNormally = true
+		case reviewNeedsHuman:
+			needsHuman = true
+			exitReason = "review-needs-human"
+			finalRunErr = errors.New("pre-merge review halted: needs human attention (see review evidence)")
+		case reviewErrored:
+			finalRunErr = gate.Err
+			exitReason = "review-errored"
+		}
+	}
+
 	for iter := 1; iter <= iterCap; iter++ {
 		story, pickStatus := NextStory(currentPRD)
 		if pickStatus == PickAllPassed {
-			// All stories already passed on first check or after marking.
-			completedNormally = true
+			// All stories already passed: either a fresh final iteration, OR a
+			// resume/retry of already-complete work (e.g. a needs-human retry).
+			// Gate on review at this site too — otherwise the retry would merge
+			// unreviewed.
+			finishWithReview()
 			break
 		}
 		if pickStatus == PickBlocked {
@@ -383,7 +433,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 
 		if complete {
 			if _, stillStatus := NextStory(currentPRD); stillStatus == PickAllPassed {
-				completedNormally = true
+				finishWithReview()
 				break
 			}
 			// Premature COMPLETE — log warning, continue.
@@ -393,14 +443,19 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 	}
 
 	// After loop: check if cap was hit without completion.
-	if !completedNormally && finalRunErr == nil {
+	if !completedNormally && !needsHuman && finalRunErr == nil {
 		finalRunErr = fmt.Errorf("iteration cap reached without completion marker")
 		exitReason = "iteration cap reached without completion marker"
 	}
 
 	// Write summary.json once at loop exit.
 	terminalStatus := "completed"
-	if finalRunErr != nil {
+	switch { // needsHuman MUST be evaluated before finalRunErr != nil — the
+	// review-halt path sets BOTH (a non-nil err halts the batch loop) and is
+	// status needs-human, not failed.
+	case needsHuman:
+		terminalStatus = "needs-human"
+	case finalRunErr != nil:
 		terminalStatus = "failed"
 	}
 	summary := iterationSummary{
@@ -417,7 +472,12 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 
 	// Terminal state construction — same path for both success conditions.
 	finalStatus := conductor.StatusCompleted
-	if finalRunErr != nil {
+	switch { // needsHuman MUST be evaluated before finalRunErr != nil — see
+	// matching switch above for the summary writer.
+	case needsHuman:
+		finalStatus = conductor.StatusNeedsHuman
+		exitReason = terminalExitReason(exitReason, finalRunErr)
+	case finalRunErr != nil:
 		finalStatus = conductor.StatusFailed
 		exitReason = terminalExitReason(exitReason, finalRunErr)
 	}
