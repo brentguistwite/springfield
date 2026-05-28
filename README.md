@@ -26,9 +26,8 @@ When you run `springfield start`, the conductor will:
   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`)
   - [Codex CLI](https://github.com/openai/codex)
   - [Gemini CLI](https://github.com/google-gemini/gemini-cli) (opt-in; set `GEMINI_API_KEY` or sign in headless)
-- macOS or Linux (amd64/arm64) for the plugin auto-install path. Windows installs via [Alternate Install Paths](#alternate-install-paths).
-- `~/.local/bin` on `PATH` if installing through the Claude marketplace plugin (the SessionStart hook symlinks the binary there).
-- Go 1.26+ if you're building from source (`go install .`); not needed for the plugin install path.
+- macOS (amd64/arm64) for the `brew` install path. Linux/Windows install the CLI via [Alternate Install Paths](#alternate-install-paths).
+- Go 1.26+ if you're building the CLI from source (`go install .`); not needed for the brew install path.
 
 ## Public CLI
 
@@ -53,22 +52,39 @@ Supported agents (all fully executable):
 
 ## Install
 
-Primary path (one step for both plugin skills and CLI binary):
+Springfield ships as two pieces: the **CLI** (the `springfield` binary that does all the work) and a **plugin** (the skills/slash-commands your agent runs). Install both.
+
+### 1. CLI — Homebrew (macOS)
+
+```bash
+brew install brentguistwite/tap/springfield
+springfield version
+```
+
+`brew upgrade springfield` is the one upgrade you normally think about — new features land in the CLI and arrive here. Linux/Windows: install via [Alternate Install Paths](#alternate-install-paths).
+
+### 2. Plugin — skills + slash commands
+
+Claude Code:
 
 ```
 /plugin marketplace add brentguistwite/springfield
 /plugin install springfield@brentguistwite
 ```
 
-The plugin ships a `SessionStart` hook that downloads the matching `springfield` CLI binary from the GitHub release pinned by the installed plugin version, verifies it against the plugin-shipped `hooks/checksums.txt` manifest, caches it under `~/.cache/springfield/<version>/`, and symlinks it to `~/.local/bin/springfield`. Add `~/.local/bin` to your `PATH` once; afterwards every `/plugin update springfield@brentguistwite` refreshes the plugin skills **and** the CLI binary in a single step — no `go install` or `brew upgrade` needed.
+Slash commands available after install: `/springfield:plan`, `/springfield:status`, `/springfield:recover`. To execute a batch, run `springfield start` in a terminal. (For the Codex plugin, see [Codex Plugin Directory](#codex-plugin-directory).)
 
-Slash commands available after install: `/springfield:plan`, `/springfield:status`, `/springfield:recover`. To execute a batch, run `springfield start` in a terminal.
+The plugin is a thin, stable shim over the CLI verbs (`plan`, `start`, `status`, `recover`), so it changes rarely. **Plugin updates are manual on both platforms** — run them only if a skill tells you to:
 
-Manage the install:
+- Claude Code: `/plugin marketplace update springfield`, then `/plugin install springfield@brentguistwite`
+- Codex: `codex plugin marketplace upgrade brentguistwite`
+
+A plugin older than the CLI is the normal steady state and needs no action; the CLI stays backward-compatible with older skills within a major version. If a skill ever needs a newer CLI than you have, it will tell you to run `brew upgrade springfield`.
+
+Manage the plugin:
 
 ```
 /plugin list                               # verify install
-/plugin update springfield@brentguistwite  # pull latest plugin + CLI
 /plugin uninstall springfield@brentguistwite
 ```
 
@@ -76,13 +92,11 @@ Manage the install:
 
 ### Alternate Install Paths
 
-Use these only if you need the CLI outside the plugin flow:
+Install the CLI off the Homebrew path:
 
-- Tarball: download from [Releases](https://github.com/brentguistwite/springfield/releases), then `tar -xzf springfield_<version>_<os>_<arch>.tar.gz && install -m 0755 springfield /usr/local/bin/springfield`.
-- Homebrew formula from release asset: `brew install --formula https://github.com/brentguistwite/springfield/releases/download/vX.Y.Z/springfield.rb`.
+- Linux/Windows tarball: download from [Releases](https://github.com/brentguistwite/springfield/releases), then `tar -xzf springfield_<version>_<os>_<arch>.tar.gz && install -m 0755 springfield /usr/local/bin/springfield` (or place the binary anywhere on `PATH`). Upgrade by downloading the latest tarball and replacing the binary.
+- Homebrew formula from a release asset (no tap): `brew install --formula https://github.com/brentguistwite/springfield/releases/download/vX.Y.Z/springfield.rb`.
 - From source: `go install .` inside this repo.
-
-The SessionStart hook currently supports macOS and Linux (amd64/arm64). Windows CLI users must install via the alternate paths above.
 
 ### Codex Plugin Directory
 
@@ -132,7 +146,7 @@ springfield init
 springfield doctor
 ```
 
-If you need local host integration instead of marketplace/catalog install:
+For local slash-command / skill sync outside the plugin install flow (or as a fallback):
 
 ```bash
 springfield install
@@ -177,8 +191,8 @@ Notes:
 - `springfield init` runs an interactive TUI: multi-select agents, pick a model per agent (or take the adapter default), then confirm a summary before write. Shift+Tab navigates back; Esc edits any answer. For non-interactive installs, pass `--agents claude,codex` and optionally `--model claude=<id>,codex=<id>,gemini=<id>` — or pipe answers on stdin and Springfield falls through to huh's accessible plain-text mode.
 - `springfield init` scaffolds `springfield.toml` + `.springfield/` with recommended execution settings for each selected agent.
 - Gemini is execution-supported but opt-in. Pass `--agents claude,codex,gemini` (or edit `agent_priority`) to include it. See [`docs/release.md`](docs/release.md#2026-04-gemini-cli-execution-support) for the migration note.
-- Primary end-user install is the Claude marketplace or Codex plugin/catalog flow.
-- `springfield install` is the local sync/bootstrap/fallback path after `init`.
+- Primary install is two pieces: the CLI via Homebrew (or tarball/source on non-mac) and the plugin via the Claude or Codex marketplace — see [Install](#install).
+- `springfield install` is an additive local-host sync (writes slash-command/skill helpers into `~/.claude/` and `~/.agents/`); use it when the plugin install flow isn't available, or as a fallback.
 - Re-running `init` preserves existing config, only filling in missing recommended defaults and agent priority. Use `springfield init --reset` to back up the current config and rewrite it from scratch.
 - `auto_branch = true` (default) auto-cuts a feature branch (`springfield/batch-<id>`) when you run `springfield start` from `main` or `master`, switches to it for the run, and switches you back when the batch finishes. See [Recommended Workflow](#recommended-workflow). Override the name with `auto_branch_pattern = "feat/{id}"` (only `{id}` is supported). Set `auto_branch = false` to disable.
 - `allow_protected_base = false` (default) refuses to ff-merge plan results into `main` or `master`. Only consulted when `auto_branch = false` (otherwise the auto-cut feature branch becomes the base and the guard does not apply).
@@ -398,7 +412,7 @@ Tagged releases publish:
 - `springfield_<version>_linux_arm64.tar.gz`
 - `springfield.rb`
 
-The SessionStart hook downloads the matching tarball automatically on `/plugin install` / `/plugin update`, then verifies the extracted binary against plugin-shipped `hooks/checksums.txt`. Manual install instructions live under [Alternate Install Paths](#alternate-install-paths).
+The Homebrew formula (`springfield.rb`) and the tap consume these tarballs; `brew install brentguistwite/tap/springfield` resolves to the matching one. Manual install instructions live under [Alternate Install Paths](#alternate-install-paths).
 
 ## Development
 
@@ -419,7 +433,7 @@ git config core.hooksPath .githooks
 
 ## Release Workflow
 
-Springfield uses [release-please](https://github.com/googleapis/release-please) on `main` to maintain a single open release PR driven by [Conventional Commits](https://www.conventionalcommits.org/). A hydration workflow on that PR runs `go run ./cmd/release-sync` to keep `version.txt`, every plugin/marketplace manifest, and `hooks/checksums.txt` in lock-step. Merging the release PR creates the tag, which triggers the publish workflow. Maintainer details live in [docs/release.md](docs/release.md).
+Springfield uses [release-please](https://github.com/googleapis/release-please) on `main` to maintain a single open release PR driven by [Conventional Commits](https://www.conventionalcommits.org/). A hydration workflow on that PR runs `go run ./cmd/release-sync` to keep `version.txt` and every plugin/marketplace manifest in lock-step. Merging the release PR creates the tag, which triggers the publish workflow (build tarballs, render the Homebrew formula, push it to the tap). Maintainer details live in [docs/release.md](docs/release.md).
 
 ## License
 

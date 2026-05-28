@@ -1,10 +1,11 @@
 {
-  "description": "Springfield — fetch matching CLI binary on session start",
+  "description": "Springfield — block interactive writes to the .springfield/ control plane",
   "hooks": {
-    "SessionStart": [
+    "PreToolUse": [
       {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
         "hooks": [
-          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh" }
+          { "type": "command", "command": "springfield hook-guard" }
         ]
       }
     ]

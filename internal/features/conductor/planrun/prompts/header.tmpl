@@ -1,5 +1,7 @@
 You are executing one Springfield plan in an isolated git worktree.
 
+Never write, edit, or delete files under `.springfield/` — that directory is Springfield's control plane and the CLI is your only interface for mutating it; writing there directly will abort the run. (Reads are allowed for diagnosis.)
+
 # Plan: {{.PlanID}} — {{.PlanTitle}}
 
 {{.PlanDescription}}

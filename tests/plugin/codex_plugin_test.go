@@ -35,20 +35,15 @@ func TestReleaseMetadataStaysPluginFirst(t *testing.T) {
 	if !strings.Contains(workflow, `go test ./tests/plugin/...`) {
 		t.Fatal("release workflow should validate plugin metadata before packaging")
 	}
-	for _, want := range []string{
-		"hooks/checksums.txt",
-		"-xzf \"dist/$asset\" springfield",
-	} {
-		if !strings.Contains(workflow, want) {
-			t.Fatalf("release workflow should enforce committed checksum manifest: want %q", want)
-		}
-	}
+	// The plugin no longer ships a checksum manifest; the release must not
+	// re-introduce any of the retired checksum-verification flows.
 	for _, stale := range []string{
+		"hooks/checksums.txt",
 		"dist/checksums.txt",
 		"sha256sum -c checksums.txt",
 	} {
 		if strings.Contains(workflow, stale) {
-			t.Fatalf("release workflow should not use stale release checksums asset flow: found %q", stale)
+			t.Fatalf("release workflow should not reference the retired checksum manifest: found %q", stale)
 		}
 	}
 	if !strings.Contains(workflow, wantFormulaDesc) {
@@ -56,6 +51,16 @@ func TestReleaseMetadataStaysPluginFirst(t *testing.T) {
 	}
 	if strings.Contains(workflow, "Local-first CLI and TUI") {
 		t.Fatal("release workflow still contains stale TUI-era formula wording")
+	}
+	// The formula must be published to the shared Homebrew tap so
+	// `brew install brentguistwite/tap/springfield` resolves.
+	for _, want := range []string{
+		"homebrew-tap",
+		"HOMEBREW_TAP_TOKEN",
+	} {
+		if !strings.Contains(workflow, want) {
+			t.Fatalf("release workflow should publish the formula to the tap: want %q", want)
+		}
 	}
 
 	formula := string(readFile(t, root, "Formula/springfield.rb"))
@@ -68,7 +73,6 @@ func TestReleaseMetadataStaysPluginFirst(t *testing.T) {
 		".claude-plugin/plugin.json",
 		".claude-plugin/marketplace.json",
 		".codex-plugin/plugin.json",
-		"hooks/checksums.txt",
 	} {
 		if !strings.Contains(releaseDoc, rel) {
 			t.Fatalf("release doc should mark %s as release-critical", rel)
@@ -77,19 +81,19 @@ func TestReleaseMetadataStaysPluginFirst(t *testing.T) {
 	if !strings.Contains(strings.ToLower(releaseDoc), "release-critical") {
 		t.Fatal("release doc should explicitly call plugin metadata release-critical")
 	}
-	if !strings.Contains(strings.ToLower(releaseDoc), "plugin-shipped") {
-		t.Fatal("release doc should explain that the hook trusts plugin-shipped checksums")
-	}
-	if strings.Contains(releaseDoc, "- `checksums.txt`") {
-		t.Fatal("release doc should not list checksums.txt as a published release asset")
+	// The retired checksum manifest must not reappear in the release-critical
+	// list. (A migration note documenting its removal is fine, so this checks
+	// the list line specifically, not the whole doc.)
+	if strings.Contains(releaseDoc, "- [`hooks/checksums.txt`]") {
+		t.Fatal("release doc should not list hooks/checksums.txt as release-critical")
 	}
 
 	readme := string(readFile(t, root, "README.md"))
-	if !strings.Contains(readme, "plugin-shipped") || !strings.Contains(readme, "hooks/checksums.txt") {
-		t.Fatal("README should explain that SessionStart trusts plugin-shipped hooks/checksums.txt")
+	if !strings.Contains(readme, "brew install brentguistwite/tap/springfield") {
+		t.Fatal("README should document the Homebrew tap install command")
 	}
-	if strings.Contains(readme, "- `checksums.txt`") {
-		t.Fatal("README should not list checksums.txt as a published release asset")
+	if strings.Contains(readme, "hooks/checksums.txt") {
+		t.Fatal("README should no longer reference the retired hooks/checksums.txt manifest")
 	}
 
 	for _, rel := range []string{

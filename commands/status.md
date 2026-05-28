@@ -19,6 +19,33 @@ Built-in Springfield playbook.
 
 # Current Task
 
+## Before you start — verify the Springfield CLI
+
+Run `springfield version` first. It prints one of:
+- `springfield vX.Y.Z` — a released build.
+- `springfield dev` — a local source build (e.g. `go install .`).
+
+Then:
+
+- If the command is **not found**, the CLI is not installed. Tell the user to install it, then stop:
+  - macOS: `brew install brentguistwite/tap/springfield`
+  - Linux: download the matching `springfield_<version>_linux_<arch>.tar.gz` from the GitHub Releases page and put the `springfield` binary on PATH.
+  - Windows: build from source with `go install .` inside the Springfield repo (no Windows release tarballs are published yet).
+- If the output is `springfield dev`, this is a local development build. Continue without a floor check — the user is responsible for keeping it current.
+- If the reported version is **older than v0.11.0** (compare semver-style after stripping the leading `v` from the reported version), tell the user to upgrade, then stop:
+  - macOS: `brew upgrade springfield`
+  - Linux: download the latest `springfield_<version>_linux_<arch>.tar.gz` from the GitHub Releases page and replace the binary on PATH.
+  - Windows: `go install .` inside the Springfield repo (no Windows release tarballs yet).
+- Otherwise continue.
+
+Do not try to work around a missing or too-old CLI — surface the exact command above instead. (A plugin older than the CLI is fine and needs no action; the CLI stays backward-compatible with older skills within a major version.)
+
+## Springfield control plane
+
+**Reads are allowed** — recover and status flows specifically inspect `.springfield/run.json` and per-plan `prd.json`. **Never write, edit, or delete** files under `.springfield/`. That directory is Springfield's state — the CLI is your only interface for mutating it. Writing there directly will abort the current batch. This applies regardless of which agent is invoking the skill.
+
+---
+
 Inspect the current Springfield batch for the project and report the current state.
 
 Read project guidance from AGENTS.md first, then CLAUDE.md, then GEMINI.md when present.

@@ -2,8 +2,6 @@ package plugin_test
 
 import (
 	"encoding/json"
-	"slices"
-	"strings"
 	"testing"
 )
 
@@ -82,66 +80,9 @@ func TestReleasePleaseUpdatesVersionBearingReleaseArtifacts(t *testing.T) {
 		}
 	}
 
-	file, ok := files["hooks/checksums.txt"]
-	if !ok {
-		t.Fatal("release-please extra-files missing hooks/checksums.txt")
-	}
-	if file.Type != "generic" {
-		t.Fatalf("hooks/checksums.txt extra-file = %+v, want generic updater", file)
-	}
-}
-
-func TestChecksumsManifestCarriesReleasePleaseVersionAnnotations(t *testing.T) {
-	root := repoRoot(t)
-	text := string(readFile(t, root, "hooks/checksums.txt"))
-
-	for _, marker := range []string{
-		"x-release-please-start-version",
-		"x-release-please-end",
-	} {
-		if !strings.Contains(text, marker) {
-			t.Fatalf("hooks/checksums.txt missing %q annotation", marker)
-		}
-	}
-
-	start := strings.Index(text, "x-release-please-start-version")
-	end := strings.Index(text, "x-release-please-end")
-	if start == -1 || end == -1 || start > end {
-		t.Fatal("hooks/checksums.txt release-please version annotation block is malformed")
-	}
-}
-
-func TestReleaseWorkflowSkipsChecksumsAnnotationLines(t *testing.T) {
-	root := repoRoot(t)
-	workflow := string(readFile(t, root, ".github/workflows/release.yml"))
-
-	if got := strings.Count(workflow, `"$expected" == \#*`); got < 3 {
-		t.Fatalf("release.yml should skip checksum comment lines in each checksum loop, got %d guards", got)
-	}
-}
-
-func TestChecksumsReaderIgnoresReleasePleaseAnnotations(t *testing.T) {
-	root := repoRoot(t)
-	entries := readChecksumsManifest(t, root)
-	version := strings.TrimSpace(string(readFile(t, root, "version.txt")))
-
-	want := []string{
-		"./springfield_" + version + "_darwin_amd64.tar.gz",
-		"./springfield_" + version + "_darwin_arm64.tar.gz",
-		"./springfield_" + version + "_linux_amd64.tar.gz",
-		"./springfield_" + version + "_linux_arm64.tar.gz",
-	}
-	for _, key := range want {
-		if _, ok := entries[key]; !ok {
-			t.Fatalf("checksums manifest missing %s", key)
-		}
-	}
-	if len(entries) != len(want) {
-		keys := make([]string, 0, len(entries))
-		for key := range entries {
-			keys = append(keys, key)
-		}
-		slices.Sort(keys)
-		t.Fatalf("checksums entries = %v, want only %v", keys, want)
+	// The plugin no longer ships hooks/checksums.txt, so release-please must
+	// not carry a generic updater for it.
+	if _, ok := files["hooks/checksums.txt"]; ok {
+		t.Fatal("release-please extra-files should no longer reference hooks/checksums.txt")
 	}
 }

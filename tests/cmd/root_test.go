@@ -332,8 +332,8 @@ func TestInitCreatesProjectInCurrentDir(t *testing.T) {
 	if strings.Contains(output, "springfield conductor setup") {
 		t.Errorf("init should not direct users to the conductor surface, got:\n%s", output)
 	}
-	if !strings.Contains(output, "Next: springfield plan") {
-		t.Errorf("expected post-init Next: line pointing at springfield plan, got:\n%s", output)
+	if !strings.Contains(output, "/springfield:plan") {
+		t.Errorf("expected post-init Next: line pointing at the plan skill, got:\n%s", output)
 	}
 	if !strings.Contains(output, "Then: springfield start") {
 		t.Errorf("expected post-init Then: line pointing at springfield start, got:\n%s", output)
@@ -399,7 +399,7 @@ func TestSpringfieldBareShowsInstallGuidance(t *testing.T) {
 	}
 
 	for _, marker := range []string{
-		"Primary install path: use the Claude marketplace or Codex plugin/catalog entry.",
+		"Primary CLI install: brew install brentguistwite/tap/springfield",
 		"springfield install",
 	} {
 		if !strings.Contains(output, marker) {
@@ -420,7 +420,7 @@ func TestSpringfieldWithoutArgsShowsHelpAndGuidance(t *testing.T) {
 	for _, marker := range []string{
 		"Usage:",
 		"springfield install",
-		"Primary install path: use the Claude marketplace or Codex plugin/catalog entry.",
+		"Primary CLI install: brew install brentguistwite/tap/springfield",
 	} {
 		if !strings.Contains(output, marker) {
 			t.Fatalf("expected bare springfield output to contain %q, got:\n%s", marker, output)

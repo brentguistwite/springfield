@@ -204,8 +204,74 @@ func TestInitNonTTYPipedAccessibleModeMatchesFlagOutput(t *testing.T) {
 		t.Fatalf("piped accessible-mode config diverged from flag-driven:\n--- flag ---\n%s\n--- pipe ---\n%s", flagBytes, pipeBytes)
 	}
 
-	if !strings.Contains(out, "Next: springfield plan") {
-		t.Errorf("expected post-init Next: line in piped output, got:\n%s", out)
+	// The signpost points at the "plan" skill, not the bare `springfield plan`
+	// CLI verb (which requires a compiled PRD envelope).
+	if !strings.Contains(out, "/springfield:plan") {
+		t.Errorf("expected post-init Next: line to point at the plan skill, got:\n%s", out)
+	}
+	if strings.Contains(out, "Next: springfield plan\n") {
+		t.Errorf("post-init should not signpost the bare `springfield plan` verb, got:\n%s", out)
+	}
+}
+
+// TestInitCreatesNoAgentInstructionFiles pins the Issue-3 removal: init must not
+// create or touch AGENTS.md / CLAUDE.md / GEMINI.md, and must not append any
+// guardrail block. The .springfield/ guard now lives in the plugin PreToolUse
+// hook and the batch prompt header, not in the operator's agent-instruction
+// files.
+func TestInitCreatesNoAgentInstructionFiles(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	if _, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude,codex,gemini"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md", "GEMINI.md"} {
+		if _, err := os.Lstat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Errorf("init should not create %s, lstat err = %v", name, err)
+		}
+	}
+}
+
+// TestInitDoesNotTouchExistingAgentInstructionFiles verifies pre-existing
+// AGENTS.md, CLAUDE.md, and GEMINI.md are left byte-for-byte intact — init no
+// longer appends a guardrail to any of them. Table-driven so each filename is
+// exercised in isolation (a single greenfield scratch dir per row).
+func TestInitDoesNotTouchExistingAgentInstructionFiles(t *testing.T) {
+	bin := buildBinary(t)
+
+	cases := []struct {
+		name     string
+		agents   string
+		filename string
+	}{
+		{"agents-md", "claude,codex", "AGENTS.md"},
+		{"claude-md", "claude", "CLAUDE.md"},
+		{"gemini-md", "gemini", "GEMINI.md"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			existing := "# My Project\n\nImportant project-specific notes.\n"
+			path := filepath.Join(dir, tc.filename)
+			if err := os.WriteFile(path, []byte(existing), 0o644); err != nil {
+				t.Fatalf("seed %s: %v", tc.filename, err)
+			}
+
+			if _, err := runBinaryIn(t, bin, dir, "init", "--agents", tc.agents); err != nil {
+				t.Fatalf("init: %v", err)
+			}
+
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read %s: %v", tc.filename, err)
+			}
+			if string(got) != existing {
+				t.Errorf("init mutated %s; got:\n%s\nwant:\n%s", tc.filename, got, existing)
+			}
+		})
 	}
 }
 
