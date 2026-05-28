@@ -183,6 +183,12 @@ func availableActions(ps *PlanState, wt *WorktreeInspection) []RecoveryOption {
 		}
 		actions = append(actions, RecoveryOption{Action: "retry", Description: desc})
 
+	case StatusNeedsHuman:
+		actions = append(actions, RecoveryOption{
+			Action:      "retry",
+			Description: "Re-review: address the reviewer's findings (edit in the preserved worktree, or revise the plan), then reset to pending and re-run on next \"springfield start\" — the plan re-enters the pre-merge review gate (it does NOT skip review).",
+		})
+
 	case StatusCompleted:
 		if ps.Merge == nil {
 			// Completed with no merge record — legacy flow or save failure
