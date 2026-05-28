@@ -405,10 +405,20 @@
     <p style="color:var(--muted);font-size:14.5px;margin-top:8px">Linux or Windows: grab a tarball from <a href="https://github.com/brentguistwite/springfield/releases" style="color:var(--accent)">Releases</a>, or run <span class="cmdinline">go install .</span> from source (Go 1.26+).</p>
 
     <h3 style="margin-top:34px">2 · Install the plugin</h3>
-    <p style="color:var(--muted);margin:0 0 8px 0">Inside Claude Code:</p>
-    <div class="cmd"><span class="p">›</span><span class="c">/plugin marketplace add brentguistwite/springfield</span></div>
-    <div class="cmd"><span class="p">›</span><span class="c">/plugin install springfield@brentguistwite</span></div>
-    <p style="color:var(--muted);font-size:14.5px;margin-top:8px">You get the slash-commands <span class="cmdinline">/springfield:plan</span>, <span class="cmdinline">/springfield:status</span>, and <span class="cmdinline">/springfield:recover</span>. Codex CLI has the same flow with <span class="cmdinline">codex plugin marketplace add</span>; see the <a href="https://github.com/brentguistwite/springfield#codex-plugin-directory" style="color:var(--accent)">README</a> for the exact commands.</p>
+    <p style="color:var(--muted);margin:0 0 14px 0">Same skills either way: <span class="cmdinline">/springfield:plan</span>, <span class="cmdinline">/springfield:status</span>, and <span class="cmdinline">/springfield:recover</span>. Install on whichever host CLI you use, or both.</p>
+    <div class="grid g2" style="margin-top:6px;align-items:start">
+      <div class="card">
+        <h3>Claude Code</h3>
+        <div class="cmd"><span class="p">›</span><span class="c">/plugin marketplace add brentguistwite/springfield</span></div>
+        <div class="cmd"><span class="p">›</span><span class="c">/plugin install springfield@brentguistwite</span></div>
+      </div>
+      <div class="card">
+        <h3>Codex</h3>
+        <div class="cmd"><span class="p">$</span><span class="c">codex plugin marketplace add brentguistwite/springfield --sparse .agents/plugins</span></div>
+        <div class="cmd"><span class="p">$</span><span class="c">codex</span></div>
+        <div class="cmd"><span class="p">›</span><span class="c">/plugins</span><span class="note">then install "springfield"</span></div>
+      </div>
+    </div>
 
     <h3 style="margin-top:34px">3 · Run a batch</h3>
     <div class="cmd"><span class="p">$</span><span class="c">springfield init</span><span class="note">scaffold config + state</span></div>
