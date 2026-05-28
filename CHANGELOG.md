@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.1](https://github.com/brentguistwite/springfield/compare/v0.14.0...v0.14.1) (2026-05-28)
+
+
+### Bug Fixes
+
+* **exec:** raise scanner buffer to 16 MiB, surface scanner errors ([a926798](https://github.com/brentguistwite/springfield/commit/a9267988aeb76fa8550af598df818e3511f49fe7))
+
 ## [0.14.0](https://github.com/brentguistwite/springfield/compare/v0.13.0...v0.14.0) (2026-05-28)
 
 
