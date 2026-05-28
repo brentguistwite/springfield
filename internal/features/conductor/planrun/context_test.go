@@ -146,6 +146,103 @@ func TestInputDigestChangesWhenGuidanceAdded(t *testing.T) {
 	}
 }
 
+// TestInputDigestStableWhenOnlyStoryPassesChange is the regression for the
+// drift bug where Springfield's own MarkPassed writes (flipping a story's
+// `passes` field to true) invalidated the recorded input_digest, so any
+// resume after partial progress hit preflight-input-drift. The fix is to
+// exclude the runner-mutated `passes` field from the digest. Other prd.json
+// content (id/title/description/acceptance_criteria/priority/deps) still
+// affects the digest — covered by the sibling test below.
+func TestInputDigestStableWhenOnlyStoryPassesChange(t *testing.T) {
+	root := t.TempDir()
+	planRel := ".springfield/plans/p/prd.json"
+	body1 := `{"id":"p","title":"T","description":"D","tags":[],` +
+		`"user_stories":[` +
+		`{"id":"US-001","title":"first","description":"d1","acceptance_criteria":["c1"],"priority":1,"passes":false,"deps":[],"notes":"","evidence_path":""},` +
+		`{"id":"US-002","title":"second","description":"d2","acceptance_criteria":["c2"],"priority":2,"passes":false,"deps":["US-001"],"notes":"","evidence_path":""}` +
+		`]}`
+	mustWrite(t, filepath.Join(root, planRel), body1)
+
+	unit := conductor.PlanUnit{ID: "p", Path: planRel}
+	before, err := planrun.InputDigest(root, unit)
+	if err != nil {
+		t.Fatalf("InputDigest before: %v", err)
+	}
+
+	// Mutate ONLY `passes` on US-001 — same as what MarkPassed would write.
+	body2 := `{"id":"p","title":"T","description":"D","tags":[],` +
+		`"user_stories":[` +
+		`{"id":"US-001","title":"first","description":"d1","acceptance_criteria":["c1"],"priority":1,"passes":true,"deps":[],"notes":"","evidence_path":""},` +
+		`{"id":"US-002","title":"second","description":"d2","acceptance_criteria":["c2"],"priority":2,"passes":false,"deps":["US-001"],"notes":"","evidence_path":""}` +
+		`]}`
+	mustWrite(t, filepath.Join(root, planRel), body2)
+
+	after, err := planrun.InputDigest(root, unit)
+	if err != nil {
+		t.Fatalf("InputDigest after: %v", err)
+	}
+	if before != after {
+		t.Fatalf("digest changed after mutating only `passes`; runner's own writes must be drift-neutral.\nbefore=%s\nafter =%s", before, after)
+	}
+}
+
+// TestInputDigestChangesWhenPRDDescriptionChanges confirms the fix doesn't
+// over-correct — actual content changes to the agent-facing fields still
+// move the digest. Guards against a regression where the canonicalization
+// also accidentally stripped fields it shouldn't.
+func TestInputDigestChangesWhenPRDDescriptionChanges(t *testing.T) {
+	root := t.TempDir()
+	planRel := ".springfield/plans/p/prd.json"
+	body1 := `{"id":"p","title":"T","description":"D","tags":[],` +
+		`"user_stories":[{"id":"US-001","title":"x","description":"","acceptance_criteria":["c"],"priority":1,"passes":false,"deps":[]}]}`
+	mustWrite(t, filepath.Join(root, planRel), body1)
+	unit := conductor.PlanUnit{ID: "p", Path: planRel}
+	before, err := planrun.InputDigest(root, unit)
+	if err != nil {
+		t.Fatalf("InputDigest before: %v", err)
+	}
+
+	body2 := `{"id":"p","title":"T","description":"DIFFERENT","tags":[],` +
+		`"user_stories":[{"id":"US-001","title":"x","description":"","acceptance_criteria":["c"],"priority":1,"passes":false,"deps":[]}]}`
+	mustWrite(t, filepath.Join(root, planRel), body2)
+
+	after, err := planrun.InputDigest(root, unit)
+	if err != nil {
+		t.Fatalf("InputDigest after: %v", err)
+	}
+	if before == after {
+		t.Fatalf("digest did not change after mutating description; content drift must still be detected")
+	}
+}
+
+// TestInputDigestChangesWhenAcceptanceCriteriaChanges — same regression
+// shape as the description test but for a deeper-nested field. Catches a
+// canonicalization bug that ignored the inner user_stories[].acceptance_criteria.
+func TestInputDigestChangesWhenAcceptanceCriteriaChanges(t *testing.T) {
+	root := t.TempDir()
+	planRel := ".springfield/plans/p/prd.json"
+	body1 := `{"id":"p","title":"T","description":"D","tags":[],` +
+		`"user_stories":[{"id":"US-001","title":"x","description":"","acceptance_criteria":["one"],"priority":1,"passes":false,"deps":[]}]}`
+	mustWrite(t, filepath.Join(root, planRel), body1)
+	unit := conductor.PlanUnit{ID: "p", Path: planRel}
+	before, err := planrun.InputDigest(root, unit)
+	if err != nil {
+		t.Fatalf("InputDigest before: %v", err)
+	}
+
+	body2 := `{"id":"p","title":"T","description":"D","tags":[],` +
+		`"user_stories":[{"id":"US-001","title":"x","description":"","acceptance_criteria":["one","two"],"priority":1,"passes":false,"deps":[]}]}`
+	mustWrite(t, filepath.Join(root, planRel), body2)
+
+	after, err := planrun.InputDigest(root, unit)
+	if err != nil {
+		t.Fatalf("InputDigest after: %v", err)
+	}
+	if before == after {
+		t.Fatalf("digest did not change after mutating acceptance_criteria")
+	}
+}
+
 func mustWrite(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

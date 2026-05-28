@@ -3,6 +3,7 @@ package planrun
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"springfield/internal/features/batch"
 	"springfield/internal/features/conductor"
+	"springfield/internal/features/prd"
 )
 
 // Context carries the explicit ControlRoot vs WorktreeRoot boundary plus the
@@ -103,7 +105,7 @@ var GuidanceFiles = []string{"AGENTS.md", "CLAUDE.md", "GEMINI.md"}
 func InputDigest(controlRoot string, unit conductor.PlanUnit) (string, error) {
 	h := sha256.New()
 	planAbs := filepath.Join(controlRoot, filepath.FromSlash(unit.Path))
-	if err := hashRequiredFile(h, "plan:"+unit.Path, planAbs, unit); err != nil {
+	if err := hashPlanFile(h, "plan:"+unit.Path, planAbs, unit); err != nil {
 		return "", err
 	}
 	files := append([]string(nil), GuidanceFiles...)
@@ -114,6 +116,54 @@ func InputDigest(controlRoot string, unit conductor.PlanUnit) (string, error) {
 		}
 	}
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// hashPlanFile routes prd.json plans through the canonical-subset path so
+// runner-mutated bookkeeping (UserStory.Passes) is drift-neutral, and falls
+// back to raw-bytes hashing for legacy plain-text plan files (e.g. .md).
+//
+// Why a subset for prd.json: MarkPassed (the only Springfield-internal writer
+// of prd.json) flips UserStory.Passes from false to true as stories complete.
+// If the raw file bytes feed the digest, every successful iteration silently
+// invalidates the recorded digest, so a resume after partial progress fails
+// preflight-input-drift even though only Springfield's own bookkeeping moved.
+// Excluding Passes restores the digest's intended semantics: drift = the
+// agent-facing inputs (id/title/description/criteria/priority/deps + guidance
+// files) changed between attempts.
+func hashPlanFile(h io.Writer, label, path string, unit conductor.PlanUnit) error {
+	if filepath.Base(path) != "prd.json" {
+		// Legacy plain-text plan (.md): raw bytes preserve the existing
+		// digest semantics. Same behavior as the pre-fix hashRequiredFile.
+		return hashRequiredFile(h, label, path, unit)
+	}
+	fmt.Fprintf(h, "%s\n", label)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("plan %q file missing at %s", unit.ID, path)
+		}
+		return fmt.Errorf("digest %s: %w", path, err)
+	}
+	var p prd.PRD
+	if err := json.Unmarshal(data, &p); err != nil {
+		return fmt.Errorf("parse plan %q for digest: %w", unit.ID, err)
+	}
+	// Zero out the only runner-mutated field. Every other field
+	// (id/title/description/tags + per-story id/title/description/
+	// acceptance_criteria/priority/deps/notes/evidence_path) still feeds the
+	// digest, so genuine operator edits to the plan still trip drift.
+	for i := range p.UserStories {
+		p.UserStories[i].Passes = false
+	}
+	canonical, err := json.Marshal(p)
+	if err != nil {
+		return fmt.Errorf("canonicalize plan %q for digest: %w", unit.ID, err)
+	}
+	if _, err := h.Write(canonical); err != nil {
+		return fmt.Errorf("digest %s: %w", path, err)
+	}
+	fmt.Fprintf(h, "\nendfile\n")
+	return nil
 }
 
 func hashRequiredFile(h io.Writer, label, path string, unit conductor.PlanUnit) error {
