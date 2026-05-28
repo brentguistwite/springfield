@@ -23,6 +23,14 @@ type PlanInterruption struct {
 	WorktreePath string
 }
 
+// PlanNeedsHuman describes a plan whose pre-merge review could not converge and
+// is awaiting operator attention. Its worktree/branch are preserved.
+type PlanNeedsHuman struct {
+	Plan         string
+	Error        string
+	EvidencePath string
+}
+
 // Diagnosis summarizes current conductor progress and next action.
 type Diagnosis struct {
 	Completed   int
@@ -30,6 +38,7 @@ type Diagnosis struct {
 	Done        bool
 	Failures    []PlanFailure
 	Interrupted []PlanInterruption
+	NeedsHuman  []PlanNeedsHuman
 	// MergeIssues lists plans whose execution succeeded but whose merge
 	// integration was refused or failed — surfaced separately so a
 	// preserved merge worktree or refused publish doesn't hide behind a
@@ -65,6 +74,7 @@ func Diagnose(project *Project) *Diagnosis {
 
 	failures := make([]PlanFailure, 0)
 	interruptions := make([]PlanInterruption, 0)
+	needsHuman := make([]PlanNeedsHuman, 0)
 	mergeIssues := make([]MergeIssue, 0)
 	for _, name := range project.AllPlans() {
 		switch project.PlanStatus(name) {
@@ -83,6 +93,12 @@ func Diagnose(project *Project) *Diagnosis {
 				Error:        project.PlanError(name),
 				Attempts:     project.PlanAttempts(name),
 				WorktreePath: ps.WorktreePath,
+			})
+		case StatusNeedsHuman:
+			needsHuman = append(needsHuman, PlanNeedsHuman{
+				Plan:         name,
+				Error:        project.PlanError(name),
+				EvidencePath: project.PlanEvidencePath(name),
 			})
 		}
 		ps, ok := project.State.Plans[name]
@@ -129,6 +145,7 @@ func Diagnose(project *Project) *Diagnosis {
 		Done:        done,
 		Failures:    failures,
 		Interrupted: interruptions,
+		NeedsHuman:  needsHuman,
 		MergeIssues: mergeIssues,
 		NextStep:    nextStep,
 	}
@@ -178,6 +195,17 @@ func (d *Diagnosis) Report() string {
 			if p.Attempts > 0 {
 				fmt.Fprintf(&builder, "    Attempts: %d\n", p.Attempts)
 			}
+		}
+	}
+
+	if len(d.NeedsHuman) > 0 {
+		fmt.Fprintf(&builder, "\nPlans needing human review (%d):\n", len(d.NeedsHuman))
+		for _, n := range d.NeedsHuman {
+			fmt.Fprintf(&builder, "  - %s: %s\n", n.Plan, n.Error)
+			if n.EvidencePath != "" {
+				fmt.Fprintf(&builder, "    Evidence: %s\n", n.EvidencePath)
+			}
+			fmt.Fprintf(&builder, "    Recover: springfield recover --plan %s (re-review retry)\n", n.Plan)
 		}
 	}
 
