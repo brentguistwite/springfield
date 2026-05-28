@@ -80,3 +80,39 @@ func TestLoadLocalFromMalformedReturnsInvalidConfigError(t *testing.T) {
 		t.Fatalf("expected *InvalidConfigError, got %T", err)
 	}
 }
+
+func boolPtr(b bool) *bool { return &b }
+
+func TestReviewEnabledForPlanPrecedence(t *testing.T) {
+	cases := []struct {
+		name        string
+		globalOn    bool
+		perPlan     *bool
+		wantEnabled bool
+	}{
+		{"omitted flag → global off", false, nil, false},
+		{"omitted flag → global on", true, nil, true},
+		{"per-plan true overrides global off", false, boolPtr(true), true},
+		{"per-plan false overrides global on", true, boolPtr(false), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			global := ReviewConfig{Enabled: tc.globalOn}
+			if got := ReviewEnabledForPlan(global, tc.perPlan); got != tc.wantEnabled {
+				t.Fatalf("ReviewEnabledForPlan = %v, want %v", got, tc.wantEnabled)
+			}
+		})
+	}
+}
+
+func TestReviewAgentOrImplementerFallback(t *testing.T) {
+	if got := ReviewAgentOrImplementer(ReviewConfig{Agent: "codex"}, "claude"); got != "codex" {
+		t.Fatalf("configured agent should win, got %q", got)
+	}
+	if got := ReviewAgentOrImplementer(ReviewConfig{Agent: ""}, "claude"); got != "claude" {
+		t.Fatalf("empty agent should fall back to implementer, got %q", got)
+	}
+	if got := ReviewAgentOrImplementer(ReviewConfig{Agent: "  "}, "claude"); got != "claude" {
+		t.Fatalf("whitespace agent should fall back to implementer, got %q", got)
+	}
+}

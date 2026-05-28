@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -68,4 +69,26 @@ func LoadLocalFrom(rootDir string) (LocalConfig, error) {
 		return LocalConfig{}, &InvalidConfigError{Path: path, Reason: err.Error()}
 	}
 	return lc, nil
+}
+
+// ReviewEnabledForPlan resolves whether review runs for one plan. An explicit
+// per-plan flag wins over the global default in BOTH directions; a nil per-plan
+// flag falls back to the global Enabled. (Design: per-plan true enables even
+// when global is off; per-plan false suppresses even when globally on.)
+func ReviewEnabledForPlan(global ReviewConfig, perPlan *bool) bool {
+	if perPlan != nil {
+		return *perPlan
+	}
+	return global.Enabled
+}
+
+// ReviewAgentOrImplementer returns the configured reviewer agent, or the
+// implementing CLI when none is set. The same-CLI fallback guarantees a
+// review:true plan is always runnable even with no [review] section (zero-config
+// default), without forcing a new tool dependency on the operator.
+func ReviewAgentOrImplementer(global ReviewConfig, implementerAgent string) string {
+	if a := strings.TrimSpace(global.Agent); a != "" {
+		return a
+	}
+	return implementerAgent
 }
