@@ -636,3 +636,49 @@ func TestValidationResultHelpers(t *testing.T) {
 		t.Error("result with warning should HasWarnings")
 	}
 }
+
+func TestPRDReviewTriStateRoundTrips(t *testing.T) {
+	tru := true
+	fls := false
+	cases := []struct {
+		name    string
+		review  *bool
+		wantKey bool
+	}{
+		{"nil omits key", nil, false},
+		{"true round-trips", &tru, true},
+		{"false round-trips", &fls, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := prd.PRD{ID: "PLAN-1", Title: "t", Review: tc.review}
+			b, err := json.Marshal(in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			hasKey := containsJSONKey(b, "review")
+			if hasKey != tc.wantKey {
+				t.Fatalf("json %s: review-key present=%v want=%v", b, hasKey, tc.wantKey)
+			}
+			var out prd.PRD
+			if err := json.Unmarshal(b, &out); err != nil {
+				t.Fatal(err)
+			}
+			if (out.Review == nil) != (tc.review == nil) {
+				t.Fatalf("nil-ness lost: got %v want %v", out.Review, tc.review)
+			}
+			if tc.review != nil && *out.Review != *tc.review {
+				t.Fatalf("value lost: got %v want %v", *out.Review, *tc.review)
+			}
+		})
+	}
+}
+
+func containsJSONKey(b []byte, key string) bool {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		return false
+	}
+	_, ok := m[key]
+	return ok
+}
