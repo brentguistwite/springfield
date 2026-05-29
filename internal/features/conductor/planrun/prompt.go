@@ -109,6 +109,43 @@ func BuildPromptForPlan(plan prd.PRD, contextMD string, projectGuidance string,
 	return b.String(), nil
 }
 
+// BuildReviewFixPrompt builds the prompt for a review fix-iteration: the same
+// header/footer envelope as a story prompt, but the body instructs the
+// implementer to address the reviewer's findings (all stories already pass, so
+// there is no current story) and re-emit the completion marker.
+func BuildReviewFixPrompt(plan prd.PRD, contextMD, projectGuidance, findings, projectRoot string) (string, error) {
+	data := promptData{
+		PlanID:          plan.ID,
+		PlanTitle:       plan.Title,
+		PlanDescription: plan.Description,
+		ContextMD:       contextMD,
+		ProjectGuidance: projectGuidance,
+	}
+	headerStr, err := loadTemplate(projectRoot, "header.tmpl", prompts.HeaderTmpl)
+	if err != nil {
+		return "", err
+	}
+	footerStr, err := loadTemplate(projectRoot, "footer.tmpl", prompts.FooterTmpl)
+	if err != nil {
+		return "", err
+	}
+	header, err := renderTemplate("header", headerStr, data)
+	if err != nil {
+		return "", fmt.Errorf("render header template: %w", err)
+	}
+	footer, err := renderTemplate("footer", footerStr, data)
+	if err != nil {
+		return "", fmt.Errorf("render footer template: %w", err)
+	}
+	var b strings.Builder
+	b.WriteString(header)
+	b.WriteString("\n\nA reviewer examined your completed work and requires changes before it can be merged. Address every point below, COMMIT your fixes (the next review round diffs HEAD against the base ref — uncommitted changes are invisible to the reviewer AND to the eventual merge), then re-emit <promise>COMPLETE</promise> when the work is ready for re-review.\n\nREVIEW FINDINGS:\n")
+	b.WriteString(findings)
+	b.WriteString("\n\n")
+	b.WriteString(footer)
+	return b.String(), nil
+}
+
 // loadTemplate returns the template string for name. Tries operator override
 // at <projectRoot>/springfield/prompts/<name> first. Missing = silent fallback
 // to embedded. Present but parse-failing = loud error.

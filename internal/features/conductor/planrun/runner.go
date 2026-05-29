@@ -10,8 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"springfield/internal/core/agents"
+	"springfield/internal/core/config"
 	"springfield/internal/core/exec"
 	coreruntime "springfield/internal/core/runtime"
 	"springfield/internal/features/conductor"
@@ -81,6 +83,16 @@ type SinglePlanInput struct {
 	// after. On detected tamper the plan is marked failed and the loop aborts.
 	// Nil disables tamper detection.
 	TamperGuard TamperGuard
+	// ReviewConfig is the resolved [review] block from springfield.local.toml.
+	// Zero value (Enabled=false) disables review; the per-plan prd.PRD.Review
+	// flag can still override per config.ReviewEnabledForPlan.
+	ReviewConfig config.ReviewConfig
+	// Ctx, when non-nil, is the parent context for in-loop agent runs that
+	// participate in cooperative cancellation. The legacy story-iteration
+	// dispatch sites use context.Background (no cancellation surface); the
+	// review fix-loop honours Ctx so a SIGINT mid-review unwinds promptly.
+	// nil → context.Background, preserving prior behavior.
+	Ctx context.Context
 }
 
 // SinglePlanResult summarizes the outcome.
@@ -255,16 +267,70 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 	var (
 		finalRunErr       error
 		completedNormally bool
+		needsHuman        bool
 		exitReason        = "completed"
 		lastAgent         agents.ID
 		iterCount         int
 	)
 
+	// finishWithReview gates plan completion on the pre-merge review fix-loop.
+	// Called at BOTH completion sites (top-of-loop short-circuit AND post-COMPLETE
+	// check) so a needs-human retry that re-enters with all stories already passed
+	// re-reviews instead of merging unreviewed.
+	finishWithReview := func() {
+		if !config.ReviewEnabledForPlan(in.ReviewConfig, currentPRD.Review) {
+			completedNormally = true
+			return
+		}
+		pr := in.ProjectRoot
+		if pr == "" {
+			pr = in.ControlRoot
+		}
+		gate := runReviewGate(reviewGateInput{
+			Runner:            in.Runner,
+			Git:               in.Manager.Git,
+			ImplementerAgents: in.AgentIDs,
+			ExecutionSettings: in.ExecutionSettings,
+			ReviewConfig:      in.ReviewConfig,
+			WorktreeRoot:      ctx.WorktreeRoot,
+			BaseRef:           ctx.BaseRef,
+			PRD:               currentPRD,
+			ContextMD:         string(contextMDBytes),
+			ProjectGuidance:   projectGuidance,
+			ProjectRoot:       pr,
+			EvidenceDir:       evidenceDir,
+			OnEvent:           in.OnEvent,
+			TamperGuard:       in.TamperGuard,
+			Ctx:               in.Ctx,
+		})
+		switch gate.Outcome {
+		case reviewPassed:
+			completedNormally = true
+		case reviewNeedsHuman:
+			needsHuman = true
+			exitReason = "review-needs-human"
+			if excerpt := truncateForError(gate.Findings, 200); excerpt != "" {
+				finalRunErr = fmt.Errorf("pre-merge review halted: %s (full findings in evidence)", excerpt)
+			} else {
+				// Reviewer emitted halt with no prose (rare but possible — the
+				// verdict marker line itself is stripped from Findings). Avoid
+				// the awkward "halted:  (…)" double-space.
+				finalRunErr = fmt.Errorf("pre-merge review halted (full findings in evidence)")
+			}
+		case reviewErrored:
+			finalRunErr = gate.Err
+			exitReason = "review-errored"
+		}
+	}
+
 	for iter := 1; iter <= iterCap; iter++ {
 		story, pickStatus := NextStory(currentPRD)
 		if pickStatus == PickAllPassed {
-			// All stories already passed on first check or after marking.
-			completedNormally = true
+			// All stories already passed: either a fresh final iteration, OR a
+			// resume/retry of already-complete work (e.g. a needs-human retry).
+			// Gate on review at this site too — otherwise the retry would merge
+			// unreviewed.
+			finishWithReview()
 			break
 		}
 		if pickStatus == PickBlocked {
@@ -383,7 +449,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 
 		if complete {
 			if _, stillStatus := NextStory(currentPRD); stillStatus == PickAllPassed {
-				completedNormally = true
+				finishWithReview()
 				break
 			}
 			// Premature COMPLETE — log warning, continue.
@@ -393,14 +459,19 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 	}
 
 	// After loop: check if cap was hit without completion.
-	if !completedNormally && finalRunErr == nil {
+	if !completedNormally && !needsHuman && finalRunErr == nil {
 		finalRunErr = fmt.Errorf("iteration cap reached without completion marker")
 		exitReason = "iteration cap reached without completion marker"
 	}
 
 	// Write summary.json once at loop exit.
 	terminalStatus := "completed"
-	if finalRunErr != nil {
+	switch { // needsHuman MUST be evaluated before finalRunErr != nil — the
+	// review-halt path sets BOTH (a non-nil err halts the batch loop) and is
+	// status needs-human, not failed.
+	case needsHuman:
+		terminalStatus = "needs-human"
+	case finalRunErr != nil:
 		terminalStatus = "failed"
 	}
 	summary := iterationSummary{
@@ -417,7 +488,12 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 
 	// Terminal state construction — same path for both success conditions.
 	finalStatus := conductor.StatusCompleted
-	if finalRunErr != nil {
+	switch { // needsHuman MUST be evaluated before finalRunErr != nil — see
+	// matching switch above for the summary writer.
+	case needsHuman:
+		finalStatus = conductor.StatusNeedsHuman
+		exitReason = terminalExitReason(exitReason, finalRunErr)
+	case finalRunErr != nil:
 		finalStatus = conductor.StatusFailed
 		exitReason = terminalExitReason(exitReason, finalRunErr)
 	}
@@ -498,6 +574,15 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit,
 	ctx Context, decision PrepareDecision, startState *conductor.PlanState, now func() time.Time,
 ) SinglePlanResult {
+	// Loudly warn when review is enabled but the plan is legacy-format. The
+	// pre-merge review gate only runs on PRD-format plans (it lives inside the
+	// PRD iteration loop, after PickAllPassed); a legacy `.md` plan that
+	// completes with [review].enabled=true still merges unreviewed. Operators
+	// migrating to PRD format need to know exactly which plans bypass the gate.
+	if in.ReviewConfig.Enabled {
+		progress(in.Progress, "plan %s: WARNING review.enabled=true but plan is legacy .md format; pre-merge review gate is PRD-only and will NOT run for this plan\n", planID)
+	}
+
 	// Write running state before dispatch (same as PRD path).
 	in.Project.State.Plans[planID] = startState
 	if err := in.Project.SaveState(); err != nil {
@@ -635,6 +720,26 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 		progress(in.Progress, "plan %s: state save failed — %v (agent succeeded but on-disk state may be stale)\n", planID, saveErr)
 	}
 	return out
+}
+
+// truncateForError reduces s to at most max runes (NOT bytes), replacing the
+// tail with an ellipsis when truncation happens. Used to inline a short
+// review-findings excerpt into the error message without dumping multi-KB
+// diagnostics into state files; the full findings stay in evidence.
+//
+// Rune-based truncation is load-bearing: reviewer findings routinely contain
+// multi-byte UTF-8 (em-dashes, smart quotes, non-ASCII identifiers, emoji).
+// Byte-slicing at an arbitrary position would land mid-rune and produce
+// invalid UTF-8 that gets persisted into .springfield state files and surfaced
+// in `springfield status`.
+func truncateForError(s string, max int) string {
+	s = strings.TrimSpace(s)
+	s = strings.Join(strings.Fields(s), " ")
+	if max <= 0 || utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	runes := []rune(s)
+	return string(runes[:max]) + "…"
 }
 
 // terminalExitReason returns the canonical exit reason for the failed state.

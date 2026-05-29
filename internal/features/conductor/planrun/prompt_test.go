@@ -200,3 +200,16 @@ func TestBuildPromptProjectGuidanceSection(t *testing.T) {
 		t.Errorf("missing guidance text")
 	}
 }
+
+func TestBuildReviewFixPromptEmbedsFindingsAndCompleteMarker(t *testing.T) {
+	plan := prd.PRD{ID: "PLAN-9", Title: "T", Description: "D"}
+	got, err := planrun.BuildReviewFixPrompt(plan, "", "", "FINDING: missing nil check.", "")
+	if err != nil {
+		t.Fatalf("BuildReviewFixPrompt: %v", err)
+	}
+	for _, want := range []string{"FINDING: missing nil check.", "<promise>COMPLETE</promise>", "PLAN-9"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("review-fix prompt missing %q\n---\n%s", want, got)
+		}
+	}
+}

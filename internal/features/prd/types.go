@@ -23,6 +23,15 @@ type PRD struct {
 	Description string      `json:"description"`
 	Tags        []string    `json:"tags"`
 	UserStories []UserStory `json:"user_stories"`
+
+	// Review is the per-plan pre-merge review toggle. Tri-state:
+	//   nil   → use the project-global [review].enabled default
+	//   true  → force review on for this plan (even if globally disabled)
+	//   false → suppress review for this plan (even if globally enabled)
+	// Authored in the BatchPRDEnvelope and marshaled verbatim into prd.json by
+	// batch.Compile, so it reaches the runner via prd.ParseFile. Resolved with
+	// config.ReviewEnabledForPlan.
+	Review *bool `json:"review,omitempty"`
 }
 
 // PhasePRD describes one execution phase inside a BatchPRDEnvelope.

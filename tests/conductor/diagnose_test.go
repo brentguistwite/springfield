@@ -247,3 +247,36 @@ func TestDiagnoseCompletedPendingMergeGuidesResume(t *testing.T) {
 		t.Fatalf("next step = %q", diagnosis.NextStep)
 	}
 }
+
+func TestDiagnoseSurfacesNeedsHuman(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root)
+	writeRegisteredPlanUnitConfig(t, root, []string{"01-bootstrap"})
+
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("load project: %v", err)
+	}
+	// Seed a needs-human plan directly (mirrors how the existing tests set
+	// State.Plans, e.g. the merge-issue cases). AllPlans() reads Config.PlanUnits,
+	// so "01-bootstrap" must be a registered unit (above) to be diagnosed.
+	project.State.Plans["01-bootstrap"] = &conductor.PlanState{
+		Status:       conductor.StatusNeedsHuman,
+		Error:        "review halted",
+		EvidencePath: "/ev/P",
+	}
+
+	d := conductor.Diagnose(project)
+	if len(d.NeedsHuman) != 1 {
+		t.Fatalf("NeedsHuman: got %d want 1", len(d.NeedsHuman))
+	}
+	if d.NeedsHuman[0].Plan != "01-bootstrap" {
+		t.Fatalf("plan: got %q want 01-bootstrap", d.NeedsHuman[0].Plan)
+	}
+	out := d.Report()
+	for _, want := range []string{"human review", "review halted", "/ev/P"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("Report missing %q:\n%s", want, out)
+		}
+	}
+}

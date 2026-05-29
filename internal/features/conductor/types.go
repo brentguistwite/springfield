@@ -42,6 +42,11 @@ const (
 	StatusInterrupted PlanStatus = "interrupted"
 	StatusCompleted   PlanStatus = "completed"
 	StatusFailed      PlanStatus = "failed"
+	// StatusNeedsHuman marks a plan whose pre-merge review could not converge
+	// (reviewer halted, or the fix-loop hit max_review_iterations). The plan's
+	// worktree/branch are preserved automatically (Integrate is never called for
+	// a non-completed plan) and the batch halts for operator attention.
+	StatusNeedsHuman PlanStatus = "needs-human"
 )
 
 const (

@@ -269,6 +269,11 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 	if err != nil {
 		return BatchRunResult{Error: err.Error()}, err
 	}
+	local, err := config.LoadLocalFrom(loaded.RootDir)
+	if err != nil {
+		e := fmt.Errorf("load springfield.local.toml: %w", err)
+		return BatchRunResult{Error: e.Error()}, e
+	}
 	if len(loaded.Config.Project.AgentPriority) == 0 {
 		e := fmt.Errorf("project has no agents configured: agent_priority is empty")
 		return BatchRunResult{Error: e.Error()}, e
@@ -341,6 +346,7 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 			WorktreeBase:         worktreeBase,
 			AgentIDs:             agentIDs,
 			ExecutionSettings:    loaded.Config.ExecutionSettings(),
+			ReviewConfig:         local.Review,
 			Runner:               runtimeAgentRunner{inner: coreruntime.NewRunner(registry)},
 			Manager:              planrun.NewManager(),
 			OnEvent:              traceHandler,
@@ -348,6 +354,7 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 			TargetPlanID:         planID,
 			EnforceProtectedBase: enforceProtected,
 			TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(root, ".springfield", "plans"), controlRoot: root},
+			Ctx:                  ctx,
 		})
 		if res.Reason == "no-eligible-plan" {
 			// The target plan is not registered in the conductor schedule —
@@ -356,7 +363,11 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 		}
 		if res.Err != nil {
 			fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
-			fmt.Fprintf(progress, "Status: failed (%s)\n", res.Reason)
+			if res.Status == conductor.StatusNeedsHuman {
+				fmt.Fprintf(progress, "Status: needs human review (%s)\n", res.Reason)
+			} else {
+				fmt.Fprintf(progress, "Status: failed (%s)\n", res.Reason)
+			}
 			fmt.Fprintf(progress, "Error: %s\n", res.Err.Error())
 			return BatchRunResult{Error: res.Err.Error()}, res.Err
 		}
@@ -1036,6 +1047,15 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 		worktreeBase = ".worktrees"
 	}
 
+	// Load springfield.local.toml ONCE per CLI invocation. Loading inside the
+	// per-plan loop would let a mid-batch edit silently take effect on the
+	// next plan, diverging from the batch-path semantics where review config
+	// is stable for the whole batch.
+	local, err := config.LoadLocalFrom(loaded.RootDir)
+	if err != nil {
+		return true, fmt.Errorf("load springfield.local.toml: %w", err)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -1079,7 +1099,7 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 		project.State.Queue.Heartbeat = time.Now()
 		saveQueueState()
 
-		planErr := runOnePlan(w, project, root, worktreeBase, agentIDs, loaded, registry)
+		planErr := runOnePlan(ctx, w, project, root, worktreeBase, agentIDs, loaded, local, registry)
 		if planErr != nil {
 			project.State.Queue.Status = conductor.QueueHalted
 			project.State.Queue.StopReason = planErr.Error()
@@ -1101,8 +1121,11 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 }
 
 // runOnePlan executes or merge-integrates the next eligible plan. Returns nil
-// on success, error on failure/merge-refused/cleanup-failed.
-func runOnePlan(w io.Writer, project *conductor.Project, root, worktreeBase string, agentIDs []agents.ID, loaded config.Loaded, registry agents.Registry) error {
+// on success, error on failure/merge-refused/cleanup-failed. local is passed
+// in from the caller so the springfield.local.toml load is stable for the
+// whole single-plan batch (loading per-call would let mid-batch edits
+// silently change review behavior).
+func runOnePlan(ctx context.Context, w io.Writer, project *conductor.Project, root, worktreeBase string, agentIDs []agents.ID, loaded config.Loaded, local config.LocalConfig, registry agents.Registry) error {
 	enforceProtected := !loaded.Config.Project.AllowProtectedBase
 
 	if planID, ok := nextNonIntegratedCompletedPlan(project); ok {
@@ -1141,11 +1164,13 @@ func runOnePlan(w io.Writer, project *conductor.Project, root, worktreeBase stri
 		WorktreeBase:         worktreeBase,
 		AgentIDs:             agentIDs,
 		ExecutionSettings:    loaded.Config.ExecutionSettings(),
+		ReviewConfig:         local.Review,
 		Runner:               runtimeAgentRunner{inner: coreruntime.NewRunner(registry)},
 		Manager:              planrun.NewManager(),
 		Progress:             w,
 		EnforceProtectedBase: enforceProtected,
 		TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(root, ".springfield", "plans"), controlRoot: root},
+		Ctx:                  ctx,
 	})
 
 	if res.PlanID == "" && res.Reason == "no-eligible-plan" {
@@ -1157,8 +1182,19 @@ func runOnePlan(w io.Writer, project *conductor.Project, root, worktreeBase stri
 			fmt.Fprintf(w, "Worktree: %s (branch %s, base %s @ %s)\n",
 				res.Context.WorktreeRoot, res.Context.Branch, res.Context.BaseRef, shortSHA(res.Context.BaseHead))
 		}
-		fmt.Fprintf(w, "Status: failed (%s)\n", res.Reason)
+		if res.Status == conductor.StatusNeedsHuman {
+			fmt.Fprintf(w, "Status: needs human review (%s)\n", res.Reason)
+		} else {
+			fmt.Fprintf(w, "Status: failed (%s)\n", res.Reason)
+		}
 		fmt.Fprintf(w, "Error: %s\n", res.Err.Error())
+		// Match the wrap prefix to the actual terminal state. The returned
+		// error is propagated into project.State.Queue.StopReason, and a
+		// "plan X failed: …" prefix for a plan whose own status is `needs-human`
+		// is operator-confusing (the raw state file contradicts itself).
+		if res.Status == conductor.StatusNeedsHuman {
+			return fmt.Errorf("plan %s needs human review: %w", res.PlanID, res.Err)
+		}
 		return fmt.Errorf("plan %s failed: %w", res.PlanID, res.Err)
 	}
 

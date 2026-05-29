@@ -65,6 +65,8 @@ func nextPlannedAction(project *Project) string {
 		return fmt.Sprintf("Run \"springfield start\" to resume interrupted plan %q.", planID)
 	case StatusFailed:
 		return fmt.Sprintf("Inspect plan %q failure above, fix the underlying cause if needed, then re-run: springfield start", planID)
+	case StatusNeedsHuman:
+		return fmt.Sprintf("Plan %q halted in pre-merge review (needs-human). Address findings in the preserved worktree (commit), then: springfield recover --plan %s", planID, planID)
 	case StatusCompleted:
 		if plan.Merge != nil && plan.Merge.Status == MergePending {
 			return fmt.Sprintf("Run \"springfield start\" to continue merge integration for completed plan %q.", planID)

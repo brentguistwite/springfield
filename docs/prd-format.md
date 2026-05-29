@@ -62,6 +62,7 @@ Field reference:
 | `plans[].title` | string | yes | Short display title. |
 | `plans[].description` | string | no | One-paragraph task summary passed to the agent prompt. |
 | `plans[].context_md` | string | no | Plan-specific context injected into the agent prompt. Project-wide guidance (root `AGENTS.md` / `CLAUDE.md` / `GEMINI.md`) is auto-loaded by the runner — do **not** duplicate it here. Max 256 KB (hard error). Warn if > 32 KB. |
+| `plans[].review` | boolean | no | Per-plan pre-merge review toggle. Omit to inherit the project default (`[review].enabled` in `springfield.local.toml`). `true` forces review on for this plan even when globally disabled; `false` suppresses it even when globally enabled. See [Per-plan review toggle](#per-plan-review-toggle). |
 | `plans[].user_stories` | array | yes | Ordered list of stories. At least one required (hard error if empty). |
 | `user_stories[].id` | string | yes | Story identifier matching `^US-\d{3,}$` (hard error otherwise — runtime marker scanner only matches this shape). |
 | `user_stories[].title` | string | yes | One-line story title. |
@@ -110,6 +111,20 @@ This file is the runner's working copy of story state. Springfield is the sole w
 ```
 
 The optional `context.md` file (sibling of `prd.json`) holds the raw `context_md` string for prompt injection. It is not part of `prd.json` to avoid duplicating potentially large blobs in the state file.
+
+### Per-plan review toggle
+
+The optional `plans[].review` field controls whether Springfield runs pre-merge review for that plan. It is tri-state at the schema level (the key may be omitted) even though the JSON type is `boolean`:
+
+| Envelope value | Resolved behavior |
+|----------------|-------------------|
+| key omitted | Inherit the global default: `[review].enabled` in `springfield.local.toml` (defaults to `false`). |
+| `true` | Force review on for this plan, even when the project-global default is disabled. |
+| `false` | Suppress review for this plan, even when the project-global default is enabled. |
+
+Per-plan values always win over the global default in both directions. The global review configuration lives in `springfield.local.toml` (git-ignored, per-operator) beside `springfield.toml`; a missing local file is equivalent to `[review] enabled = false`, so review is opt-in by default.
+
+When `omitempty` strips the field from `prd.json`, the runner re-reads it as the inherit case. Set `false` explicitly to lock review off for a plan regardless of how a teammate has the global flag set.
 
 ### `context_md` scope
 

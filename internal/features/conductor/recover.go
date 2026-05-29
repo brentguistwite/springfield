@@ -5,7 +5,9 @@ import (
 	"time"
 )
 
-// RecoverRetry resets a failed or interrupted plan to pending for re-execution.
+// RecoverRetry resets a failed, interrupted, or needs-human plan to pending for
+// re-execution. A needs-human plan re-enters the pre-merge review gate on re-run
+// (its stories stay passed, so the runner hits the top-of-loop completion path).
 // The recovery action is appended to the plan's history; the caller must persist
 // via SaveState.
 //
@@ -20,8 +22,8 @@ func (p *Project) RecoverRetry(planID string) (*RecoveryAction, error) {
 	if !ok {
 		return nil, fmt.Errorf("plan %q has no recorded state", planID)
 	}
-	if ps.Status != StatusFailed && ps.Status != StatusInterrupted {
-		return nil, fmt.Errorf("retry requires failed or interrupted status (plan %q is %s)", planID, ps.Status)
+	if ps.Status != StatusFailed && ps.Status != StatusInterrupted && ps.Status != StatusNeedsHuman {
+		return nil, fmt.Errorf("retry requires failed, interrupted, or needs-human status (plan %q is %s)", planID, ps.Status)
 	}
 
 	rec := RecoveryAction{
