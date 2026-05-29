@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -78,6 +79,34 @@ func TestLoadLocalFromMalformedReturnsInvalidConfigError(t *testing.T) {
 	var invalid *InvalidConfigError
 	if !errors.As(err, &invalid) {
 		t.Fatalf("expected *InvalidConfigError, got %T", err)
+	}
+}
+
+// TestLoadLocalFromUnknownKeyReturnsInvalidConfigError pins strict-mode
+// decoding for the local file: a typo like `eanbled = true` or
+// `max_review_iteration` (missing s) must produce a diagnostic error, not
+// silently leave review disabled. The file is tiny and operator-edited, so
+// typos are the most likely failure mode.
+func TestLoadLocalFromUnknownKeyReturnsInvalidConfigError(t *testing.T) {
+	dir := t.TempDir()
+	body := `
+[review]
+enabled = true
+eanbled = true  # typo, should error
+`
+	if err := os.WriteFile(filepath.Join(dir, LocalFileName), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadLocalFrom(dir)
+	if err == nil {
+		t.Fatal("expected error on unknown key, got nil")
+	}
+	var invalid *InvalidConfigError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("expected *InvalidConfigError, got %T", err)
+	}
+	if !strings.Contains(invalid.Reason, "unknown") {
+		t.Fatalf("error reason should mention unknown keys: %q", invalid.Reason)
 	}
 }
 

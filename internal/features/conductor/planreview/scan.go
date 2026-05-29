@@ -7,15 +7,22 @@ import (
 	coreexec "springfield/internal/core/exec"
 )
 
-// reviewVerdictRe matches a verdict marker that occupies its OWN line. The
-// `(?m)^...\s*$` anchoring is load-bearing: the diff under review is embedded
-// verbatim in the reviewer prompt, and the reviewer commonly quotes the diff
-// in its analysis. Without the line anchors a `<review-verdict>halt</…>`
-// literal in the code being reviewed (test fixture, string constant, doc
-// comment) would force a spurious needs-human verdict — an arbitrary
-// implementer agent could plant the literal to escape the gate. The prompt
-// asks reviewers to emit the marker on its own line; this anchor enforces it.
-var reviewVerdictRe = regexp.MustCompile(`(?m)^[ \t]*<review-verdict>(pass|revise|halt)</review-verdict>[ \t]*$`)
+// reviewVerdictRe matches a verdict marker that occupies its OWN line with NO
+// leading or trailing whitespace (a single optional `\r` before EOL handles
+// CRLF agent output). The strict-anchoring is load-bearing: the diff under
+// review is embedded verbatim in the reviewer prompt, and the reviewer commonly
+// quotes the diff in its analysis. Without these anchors a
+// `<review-verdict>halt</…>` literal in the code being reviewed (test fixture,
+// string constant, doc comment) would force a spurious needs-human verdict —
+// an arbitrary implementer agent could plant the literal to escape the gate.
+//
+// We REJECT leading whitespace specifically because an implementer could
+// commit a file containing an indented `  <review-verdict>pass</…>` line; if
+// the reviewer quotes that snippet in its analysis without emitting its own
+// verdict, an allow-indent regex would accept the quoted line as a real pass
+// and bypass the gate entirely. The prompt's verdict-line examples are kept
+// at column 0 to satisfy this regex.
+var reviewVerdictRe = regexp.MustCompile(`(?m)^<review-verdict>(pass|revise|halt)</review-verdict>\r?$`)
 
 var severityRank = map[string]int{"pass": 0, "revise": 1, "halt": 2}
 var classBySeverity = []VerdictClass{VerdictPass, VerdictRevise, VerdictHalt}
@@ -46,5 +53,31 @@ func ScanReviewVerdict(events []coreexec.Event) (verdict Verdict, found bool) {
 	if severity < 0 {
 		return Verdict{}, false
 	}
-	return Verdict{Class: classBySeverity[severity], Findings: strings.Join(stdout, "\n")}, true
+	// Strip bare verdict-marker lines from the findings echo. The marker line
+	// itself is protocol, not analysis — leaving it in Findings risks the
+	// fix-iteration implementer reproducing the line verbatim into a commit
+	// message or file, which a subsequent review's scan could pick up as a
+	// false verdict. The own-line regex anchor bounds this, but defense-in-depth
+	// is cheap here.
+	findings := stripVerdictMarkers(strings.Join(stdout, "\n"))
+	return Verdict{Class: classBySeverity[severity], Findings: findings}, true
+}
+
+// stripVerdictMarkers removes lines that consist solely of a verdict marker
+// (with optional trailing CR for CRLF agent output). Non-marker lines, and
+// marker-like text that appears inline within a line, are preserved unchanged.
+func stripVerdictMarkers(s string) string {
+	if s == "" {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	out := lines[:0]
+	for _, line := range lines {
+		stripped := strings.TrimRight(line, "\r")
+		if reviewVerdictRe.MatchString(stripped) {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
 }

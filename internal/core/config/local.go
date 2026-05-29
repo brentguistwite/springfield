@@ -57,16 +57,32 @@ type LocalConfig struct {
 // strictly opt-in. A present-but-malformed file returns an *InvalidConfigError,
 // mirroring how the main loader reports a bad springfield.toml.
 //
+// Unknown keys are rejected. The file is tiny and operator-edited; silently
+// dropping a typo like `eanbled = true` or `max_review_iteration` (missing s)
+// would leave review off with no diagnostic, which is exactly the surprise
+// the gate's opt-in design is meant to avoid.
+//
 // rootDir is the project root (Loaded.RootDir from the main config load), so
 // the local override sits beside the springfield.toml it augments.
 func LoadLocalFrom(rootDir string) (LocalConfig, error) {
 	path := filepath.Join(rootDir, LocalFileName)
 	var lc LocalConfig
-	if _, err := toml.DecodeFile(path, &lc); err != nil {
+	md, err := toml.DecodeFile(path, &lc)
+	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return LocalConfig{}, nil
 		}
 		return LocalConfig{}, &InvalidConfigError{Path: path, Reason: err.Error()}
+	}
+	if undecoded := md.Undecoded(); len(undecoded) > 0 {
+		keys := make([]string, 0, len(undecoded))
+		for _, k := range undecoded {
+			keys = append(keys, k.String())
+		}
+		return LocalConfig{}, &InvalidConfigError{
+			Path:   path,
+			Reason: "unknown keys: " + strings.Join(keys, ", "),
+		}
 	}
 	return lc, nil
 }

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"springfield/internal/core/agents"
 	"springfield/internal/core/config"
@@ -566,6 +567,15 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit,
 	ctx Context, decision PrepareDecision, startState *conductor.PlanState, now func() time.Time,
 ) SinglePlanResult {
+	// Loudly warn when review is enabled but the plan is legacy-format. The
+	// pre-merge review gate only runs on PRD-format plans (it lives inside the
+	// PRD iteration loop, after PickAllPassed); a legacy `.md` plan that
+	// completes with [review].enabled=true still merges unreviewed. Operators
+	// migrating to PRD format need to know exactly which plans bypass the gate.
+	if in.ReviewConfig.Enabled {
+		progress(in.Progress, "plan %s: WARNING review.enabled=true but plan is legacy .md format; pre-merge review gate is PRD-only and will NOT run for this plan\n", planID)
+	}
+
 	// Write running state before dispatch (same as PRD path).
 	in.Project.State.Plans[planID] = startState
 	if err := in.Project.SaveState(); err != nil {
@@ -705,21 +715,24 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 	return out
 }
 
-// truncateForError reduces s to at most max runes, replacing the tail with an
-// ellipsis when truncation happens. Used to inline a short review-findings
-// excerpt into the error message without dumping multi-KB diagnostics into
-// state files; the full findings stay in evidence.
+// truncateForError reduces s to at most max runes (NOT bytes), replacing the
+// tail with an ellipsis when truncation happens. Used to inline a short
+// review-findings excerpt into the error message without dumping multi-KB
+// diagnostics into state files; the full findings stay in evidence.
+//
+// Rune-based truncation is load-bearing: reviewer findings routinely contain
+// multi-byte UTF-8 (em-dashes, smart quotes, non-ASCII identifiers, emoji).
+// Byte-slicing at an arbitrary position would land mid-rune and produce
+// invalid UTF-8 that gets persisted into .springfield state files and surfaced
+// in `springfield status`.
 func truncateForError(s string, max int) string {
 	s = strings.TrimSpace(s)
-	if max <= 0 || len(s) <= max {
-		// Collapse internal whitespace runs so the excerpt is one readable line.
-		return strings.Join(strings.Fields(s), " ")
-	}
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) <= max {
+	if max <= 0 || utf8.RuneCountInString(s) <= max {
 		return s
 	}
-	return s[:max] + "…"
+	runes := []rune(s)
+	return string(runes[:max]) + "…"
 }
 
 // terminalExitReason returns the canonical exit reason for the failed state.

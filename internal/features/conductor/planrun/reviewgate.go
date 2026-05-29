@@ -44,11 +44,15 @@ type reviewGateInput struct {
 	ProjectRoot       string
 	EvidenceDir       string
 	OnEvent           coreexec.EventHandler
-	// TamperGuard, when non-nil, wraps the fix-iteration agent run (NOT the
-	// reviewer call — the reviewer is read-only by contract). The fix
-	// iteration dispatches an implementer agent that can absolutely touch
-	// .springfield/, so it must be wrapped in the same snapshot/detect/restore
-	// the main story loop uses.
+	// TamperGuard, when non-nil, wraps BOTH the reviewer agent run AND the
+	// fix-iteration agent run. The reviewer is read-only "by contract" but the
+	// contract is only as strong as the underlying agent's compliance: under
+	// cross-agent review (e.g. Codex reviewing a Claude-implemented plan) a
+	// prompt-injected diff fragment could instruct the reviewer to write a
+	// crafted .springfield/ state file before the fix runs, silently shifting
+	// the baseline that the fix-iteration guard then snapshots. Wrapping the
+	// reviewer call closes that window: any tamper from the reviewer is
+	// detected and restored before the next iteration's snapshot is taken.
 	TamperGuard TamperGuard
 }
 
@@ -89,6 +93,16 @@ func runReviewGate(in reviewGateInput) reviewGateResult {
 		if err != nil {
 			return reviewGateResult{Outcome: reviewErrored, Err: fmt.Errorf("compute review diff: %w", err)}
 		}
+		// Snapshot control plane before the reviewer runs. The reviewer is
+		// nominally read-only, but under cross-agent review a prompt-injected
+		// diff could coerce it into writing .springfield/ state. Detecting
+		// before the fix-iteration's own snapshot prevents reviewer tamper
+		// from silently becoming the new baseline.
+		if in.TamperGuard != nil {
+			if snapErr := in.TamperGuard.Snapshot(); snapErr != nil {
+				return reviewGateResult{Outcome: reviewErrored, Err: fmt.Errorf("tamper guard snapshot (review %d): %w", round, snapErr)}
+			}
+		}
 		rev := planreview.Review(ctx, planreview.ReviewInput{
 			Runner:            in.Runner,
 			AgentIDs:          reviewerAgents,
@@ -101,6 +115,16 @@ func runReviewGate(in reviewGateInput) reviewGateResult {
 		})
 		writeReviewEvidence(in.EvidenceDir, fmt.Sprintf("review-iter-%d", round),
 			planreview.BuildReviewPrompt(diff, criteria, in.ReviewConfig.Prompt), string(rev.Agent), rev.Events, rev.Err)
+		if in.TamperGuard != nil {
+			tamperReason, detectErr := in.TamperGuard.Detect()
+			if detectErr != nil {
+				return reviewGateResult{Outcome: reviewErrored, Err: fmt.Errorf("tamper guard detect (review %d): %w", round, detectErr)}
+			}
+			if tamperReason != "" {
+				_ = in.TamperGuard.Restore()
+				return reviewGateResult{Outcome: reviewErrored, Err: fmt.Errorf("tamper-detected during review %d: %s", round, tamperReason)}
+			}
+		}
 		if rev.Err != nil {
 			return reviewGateResult{Outcome: reviewErrored, Err: fmt.Errorf("reviewer agent failed: %w", rev.Err)}
 		}

@@ -1181,6 +1181,13 @@ func runOnePlan(ctx context.Context, w io.Writer, project *conductor.Project, ro
 			fmt.Fprintf(w, "Status: failed (%s)\n", res.Reason)
 		}
 		fmt.Fprintf(w, "Error: %s\n", res.Err.Error())
+		// Match the wrap prefix to the actual terminal state. The returned
+		// error is propagated into project.State.Queue.StopReason, and a
+		// "plan X failed: …" prefix for a plan whose own status is `needs-human`
+		// is operator-confusing (the raw state file contradicts itself).
+		if res.Status == conductor.StatusNeedsHuman {
+			return fmt.Errorf("plan %s needs human review: %w", res.PlanID, res.Err)
+		}
 		return fmt.Errorf("plan %s failed: %w", res.PlanID, res.Err)
 	}
 
