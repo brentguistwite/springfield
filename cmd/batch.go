@@ -9,6 +9,7 @@ import (
 	"springfield/internal/core/config"
 	"springfield/internal/features/batch"
 	"springfield/internal/features/conductor"
+	"springfield/internal/features/conductor/planmerge"
 )
 
 // NewBatchCommand groups lifecycle operations on the active Springfield batch.
@@ -98,13 +99,35 @@ func runBatchAbort(w io.Writer, root string) error {
 		}
 	}
 
+	// Before archive: best-effort remove each plan's worktree. A leaked worktree
+	// here would block a subsequent batch that reuses any of these plan IDs
+	// ("fatal: '<path>' is already a working tree"). We use --force so a dirty
+	// checkout cannot block the abort, and the call is best-effort because the
+	// recorded WorktreePath may already be gone (e.g., a prior failed run, or
+	// `git worktree prune` already cleaned it). Per-failure warnings preserve
+	// visibility without aborting the teardown.
+	git := planmerge.CLIGit{}
+	for _, planID := range b.PlanIDs {
+		ps := project.State.Plans[planID]
+		if ps == nil || ps.WorktreePath == "" {
+			continue
+		}
+		if err := git.WorktreeRemoveForce(root, ps.WorktreePath); err != nil {
+			fmt.Fprintf(w, "[warn] removing worktree for plan %q (%s): %v — git worktree prune may be needed before the same plan ID is reused\n",
+				planID, ps.WorktreePath, err)
+		}
+	}
+
 	// Archive the batch, then clear run.json immediately so there is no window
 	// where run.json points at the now-removed batch dir.
 	if err := batch.ArchiveBatchNormalized(root, b, "aborted"); err != nil {
 		return fmt.Errorf("archive active batch: %w", err)
 	}
 	if err := batch.ClearRun(root); err != nil {
-		return fmt.Errorf("clear run after archive (run \"springfield recover\" to clean up): %w", err)
+		// "springfield recover" alone will NOT clean up: it reads run.json and
+		// no-ops when none exists. The fix is a fresh plan via the
+		// springfield:plan skill, which compiles a new batch and rebuilds run.json.
+		return fmt.Errorf("clear run after archive (invoke the springfield:plan skill to compile a new batch — \"springfield recover\" will no-op without run.json): %w", err)
 	}
 
 	// Remove only the aborted batch's plan units; older non-batch units stay.
@@ -112,7 +135,11 @@ func runBatchAbort(w io.Writer, root string) error {
 		_ = project.RemovePlanUnit(planID) // best-effort; may not be registered
 	}
 	if err := project.SaveConfig(); err != nil {
-		return fmt.Errorf("save execution config (run \"springfield recover\" to clean up): %w", err)
+		// At this point run.json is already cleared; stale plan-units remain
+		// registered. The recovery is "springfield plan --replace --prd <new>",
+		// which rebuilds the registry from the new envelope. "springfield recover"
+		// no-ops without run.json.
+		return fmt.Errorf("save execution config (re-run \"springfield plan --replace --prd ...\" to rebuild the registry — \"springfield recover\" will no-op without run.json): %w", err)
 	}
 
 	fmt.Fprintf(w, "Aborted batch %q: archived to .springfield/archive/ and cleared run state.\n", b.ID)

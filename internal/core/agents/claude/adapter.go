@@ -470,9 +470,16 @@ func errorString(err error) string {
 // (e.g. an app that "returned HTTP 500"). Those are the agent's task failures,
 // not upstream Anthropic issues, and must stay Fatal — so stdout only trips on
 // the explicit structured-signal fields below.
+//
+// Entries here are STRUCTURED stream-json field names ONLY, never generic
+// English phrases. "rate_limit_event" is safe because it is a literal JSON key
+// the claude-code stream emits; "rate limit" / "rate-limit" / "usage limit"
+// would also match a tool_result whose body happens to mention rate limiting
+// (e.g. an app under test logging "rate-limit exceeded"). Those plain-text
+// phrases live in [claudeRetryableNeedles] (stderr) where the source is always
+// claude-code's own diagnostics.
 var claudeRetryableStdoutNeedles = []string{
-	"rate limit",
-	"rate-limit",
+	"rate_limit_event",
 	"rate_limit",
 	"api_error_status",
 	"overloaded_error",
@@ -502,9 +509,18 @@ func claudeRetryableText(s string) bool {
 // needle list. Dropping the prior stderr-only filter lets the structured
 // rate_limit_event / api_error_status payloads that stream-json emits on
 // stdout become visible to the retryable scan.
+//
+// The dispatch is explicit per event type — any non-stdout / non-stderr event
+// (system / meta / future event kinds) does NOT get scanned, so a future
+// EventType added to coreexec cannot accidentally start matching the full
+// needle list and produce false-positive retries.
 func claudeRetryableEvent(event coreexec.Event) bool {
-	if event.Type == coreexec.EventStdout {
+	switch event.Type {
+	case coreexec.EventStdout:
 		return containsRetryableNeedle(event.Data, claudeRetryableStdoutNeedles)
+	case coreexec.EventStderr:
+		return claudeRetryableText(event.Data)
+	default:
+		return false
 	}
-	return claudeRetryableText(event.Data)
 }

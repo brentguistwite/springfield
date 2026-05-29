@@ -108,6 +108,13 @@ func (p *Project) MarkPlanCompleted(planID string, stories []prd.UserStory) (*Re
 	if ps.Status == StatusCompleted {
 		return nil, fmt.Errorf("plan %q is already completed; use retry-merge or retry-integration to re-drive its merge", planID)
 	}
+	// A running plan is mid-flight; the active runner will overwrite this
+	// status flip with its own MarkPassed/MarkFailed call when it finishes,
+	// silently discarding the operator's intent. Refuse and tell the operator
+	// to wait or recover the run first — same shape as plan --replace's guard.
+	if ps.Status == StatusRunning {
+		return nil, fmt.Errorf("plan %q is currently running (status=running); wait for it to finish or run \"springfield recover --plan %s\" to normalize state before marking completed", planID, planID)
+	}
 	if len(stories) == 0 {
 		return nil, fmt.Errorf("plan %q has no stories in prd.json; refusing to mark completed", planID)
 	}
@@ -162,6 +169,21 @@ func (p *Project) AcceptInputDrift(planID, digest string) (*RecoveryAction, erro
 	}
 	if ps.Status == StatusCompleted {
 		return nil, fmt.Errorf("plan %q is already completed; accept-drift resets a non-completed plan for re-run with changed inputs", planID)
+	}
+	// A running plan is mid-flight; the active runner committed to the
+	// preflight-time digest, and rewriting InputDigest now would leave it
+	// inconsistent with what the runner is actually executing against. Refuse.
+	if ps.Status == StatusRunning {
+		return nil, fmt.Errorf("plan %q is currently running (status=running); wait for it to finish or run \"springfield recover --plan %s\" to normalize state before accepting drift", planID, planID)
+	}
+	// Idempotence: if the plan is already pending AND the recorded digest
+	// already matches the supplied digest, there is no drift to accept. Reject
+	// rather than appending a misleading "accepted drift" history entry for a
+	// no-op invocation. Same shape as RecoverRetryMerge's "merge already
+	// succeeded" guard — operator-driven escape hatches are explicit about
+	// no-ops to keep the recovery history honest.
+	if ps.Status == StatusPending && ps.InputDigest == digest {
+		return nil, fmt.Errorf("plan %q is already pending with the supplied digest; nothing to accept", planID)
 	}
 
 	rec := RecoveryAction{

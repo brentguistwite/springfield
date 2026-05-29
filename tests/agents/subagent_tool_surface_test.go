@@ -65,17 +65,29 @@ func TestClaudeSubagentDeniesParentHarnessPrimitives(t *testing.T) {
 		deniedSet[d] = true
 	}
 
+	// Must cover EVERY entry in subagentDeniedTools(). A drop here is a silent
+	// regression — if a future refactor removes "ExitPlanMode" from the deny
+	// list, the subagent could exit plan-mode in the parent harness session.
 	mustDeny := []string{
+		// Subagent spawning / orchestration.
+		"Task",
+		"TaskCreate", "TaskGet", "TaskList", "TaskOutput", "TaskStop", "TaskUpdate",
+		"Workflow",
+		// Scheduling / background wakeups.
 		"ScheduleWakeup",
-		"TaskCreate", "TaskList", "TaskUpdate",
-		"WebFetch", "WebSearch",
 		"CronCreate", "CronDelete", "CronList",
+		"Monitor",
+		// Network reach.
+		"WebFetch", "WebSearch",
+		// Outbound notification / remote-trigger / messaging.
 		"PushNotification",
 		"RemoteTrigger",
 		"SendMessage",
+		// Team management.
 		"TeamCreate", "TeamDelete",
-		"EnterPlanMode",
-		"EnterWorktree",
+		// Plan / worktree mode switches owned by the parent harness.
+		"EnterPlanMode", "ExitPlanMode",
+		"EnterWorktree", "ExitWorktree",
 	}
 	for _, tool := range mustDeny {
 		if !deniedSet[tool] {

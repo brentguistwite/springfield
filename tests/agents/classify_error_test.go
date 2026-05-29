@@ -313,6 +313,29 @@ func TestClaudeClassifyErrorCleanExitWithRetryableEventIsRetryable(t *testing.T)
 	}
 }
 
+// TestClaudeClassifyErrorToolResultRateLimitPhraseIsFatal locks in the narrow-
+// stdout-needle policy: an app under test that surfaces the phrase "rate limit"
+// inside a tool_result body must NOT trip the retryable scan. Plain-English
+// phrases like "rate limit" live on the stderr needle list (where the producer
+// is always claude-code's own diagnostics) but are deliberately absent from
+// the stdout list (which trips on tool_result content too).
+func TestClaudeClassifyErrorToolResultRateLimitPhraseIsFatal(t *testing.T) {
+	classifier, ok := claude.New(osexec.LookPath).(agents.ErrorClassifier)
+	if !ok {
+		t.Fatal("claude adapter does not implement ErrorClassifier")
+	}
+
+	events := append(
+		loadFixtureEvents(t, filepath.Join("fixtures", "claude", "tool-error-all.json")),
+		coreexec.Event{Type: coreexec.EventStdout, Data: `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_04","content":"upstream API responded: rate limit exceeded for this endpoint","is_error":true}]}}`},
+	)
+
+	got := classifier.ClassifyError(events, 1, assertErr("claude failed"))
+	if got != agents.ErrorClassFatal {
+		t.Fatalf("ClassifyError() = %q, want %q (app-level rate-limit text in tool_result must stay fatal)", got, agents.ErrorClassFatal)
+	}
+}
+
 func TestCodexClassifyErrorCommandOutputHTTP429IsFatal(t *testing.T) {
 	classifier, ok := codex.New(osexec.LookPath).(agents.ErrorClassifier)
 	if !ok {

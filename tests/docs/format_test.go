@@ -48,3 +48,42 @@ func TestPRDFormatHasNoCopyablePassMarkers(t *testing.T) {
 		}
 	}
 }
+
+// TestPlanSurfacesRequireExplicitFilePaths pins C2: both the agent-facing
+// commands/plan.md and the human-facing skills/plan/SKILL.md must carry the
+// "documentation AC names an explicit target file" constraint. A future edit
+// that softens or drops the rule would let the dogfood ~75-turn-thrash failure
+// mode (agent hunting for a doc file the criterion never named) recur.
+//
+// Asserted against both surfaces so a partial edit (one source updated, the
+// other left behind) is also caught — same pattern as the off-target marker
+// test above.
+func TestPlanSurfacesRequireExplicitFilePaths(t *testing.T) {
+	root := repoRoot(t)
+	surfaces := []string{
+		filepath.Join(root, "commands", "plan.md"),
+		filepath.Join(root, "skills", "plan", "SKILL.md"),
+	}
+
+	// Distinguishing phrase from the C2 constraint block. Checking for both
+	// the heading and an example token (`path/to/file.md`) catches a partial
+	// rewrite that keeps the heading but loses the operational example.
+	required := []string{
+		"documentation acceptance criteria must name an explicit target file",
+		"path/to/file.md",
+	}
+
+	for _, path := range surfaces {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		content := string(data)
+		for _, phrase := range required {
+			if !strings.Contains(content, phrase) {
+				t.Errorf("%s missing required C2 phrase %q (explicit-file-targets constraint must remain documented on every plan surface)",
+					path, phrase)
+			}
+		}
+	}
+}

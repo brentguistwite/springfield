@@ -158,6 +158,84 @@ func TestSinglePlanFailsWhenCompleteButStoryStillPending(t *testing.T) {
 	}
 }
 
+// TestSinglePlanFailsWhenWorktreeDidNotAdvance pins the worktree-advanced
+// guard (A7 regression): an agent that emits every story-pass + COMPLETE and
+// then exits non-zero, but the worktree has NO commits beyond the base, must
+// STILL be judged FAILED. Two of the three conditions hold (COMPLETE honored +
+// all stories pass) but the third (worktree advanced past base) does not — and
+// the three-condition gate is intentionally AND-ed: any missing condition
+// means the crash is genuine, not post-completion teardown noise. Without this
+// guard a marker-emitting agent that wrote NO code could fake completion.
+//
+// The pre-existing fakeGit returns a different Head than the resolved base
+// SHA, so the worktree-advanced check normally passes. Aligning Head ==
+// BaseHead simulates "the agent committed nothing."
+func TestSinglePlanFailsWhenWorktreeDidNotAdvance(t *testing.T) {
+	p := prd.PRD{
+		ID:    "feat",
+		Title: "Feature Plan",
+		UserStories: []prd.UserStory{
+			{ID: "US-001", Title: "Story 1", Priority: 1, Passes: false},
+		},
+	}
+
+	root, project := projectFixtureWithPRD(t, "feat", p)
+	g := newFakeGit()
+	// Force Head() == BaseHead (which Prepare resolves from "main" -> the
+	// fakeGit.resolveOK entry). The worktree-advanced check returns false.
+	g.resolveOK["main"] = "headcafef00d"
+
+	// Agent passes US-001 + emits COMPLETE (so all stories pass AND COMPLETE
+	// is honored — two of three conditions), then exits non-zero.
+	runner := &iterScriptRunner{
+		replies: []coreruntime.Result{
+			{
+				Agent:    agents.AgentClaude,
+				Status:   coreruntime.StatusFailed,
+				ExitCode: 1,
+				Err:      errors.New("crash without producing any commits"),
+				Events: []coreexec.Event{
+					{Type: coreexec.EventStdout, Data: "<story-pass>US-001</story-pass><promise>COMPLETE</promise>", Time: time.Now()},
+				},
+				StartedAt: time.Now().Add(-time.Second),
+				EndedAt:   time.Now(),
+			},
+		},
+	}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentClaude},
+		Runner:       runner,
+		Manager:      &planrun.Manager{Git: g},
+		ProjectRoot:  root,
+	})
+
+	if res.Err == nil {
+		t.Fatal("expected failure: COMPLETE + all-stories-pass without a worktree commit is not a post-success crash")
+	}
+	if res.Status != conductor.StatusFailed {
+		t.Fatalf("Status = %s, want failed (worktree-advanced guard must catch zero-commit completions)", res.Status)
+	}
+
+	reloaded, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("re-LoadProject: %v", err)
+	}
+	st := reloaded.State.Plans["feat"]
+	if st == nil {
+		t.Fatal("expected persisted state for feat")
+	}
+	if st.Status != conductor.StatusFailed {
+		t.Fatalf("persisted Status = %s, want failed", st.Status)
+	}
+	if st.Merge != nil {
+		t.Fatalf("failed plan must not be marked MergePending, got %+v", st.Merge)
+	}
+}
+
 // TestSinglePlanFailsWhenStoriesPassButNoComplete pins the COMPLETE guard (A7
 // regression): an agent that passes the (only) story but NEVER emits
 // <promise>COMPLETE</promise>, then exits non-zero, must be judged FAILED.

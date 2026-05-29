@@ -14,18 +14,39 @@ import (
 	"springfield/internal/features/prd"
 )
 
-// resultEvent builds a stream-json terminal result event carrying num_turns,
-// mirroring claude's --output-format stream-json output.
-func resultEvent(numTurns int, complete bool) coreexec.Event {
-	data := fmt.Sprintf(`{"type":"result","subtype":"success","is_error":false,"num_turns":%d}`, numTurns)
+// resultEvents builds a stream-json transcript: one terminal result event
+// carrying num_turns, optionally preceded by a COMPLETE assistant event. Each
+// JSON object is its OWN coreexec.Event — packing two JSON objects into one
+// Event.Data string breaks json.Unmarshal in [scanNumTurns], which would make
+// the cap silently never see the turn count and let tests pass for the wrong
+// reason (e.g. a COMPLETE-wins-over-cap test that only "passes" because
+// num_turns was never parsed).
+func resultEvents(numTurns int, complete bool) []coreexec.Event {
+	evs := []coreexec.Event{}
 	if complete {
-		data = `{"type":"assistant","message":{"content":[{"type":"text","text":"<promise>COMPLETE</promise>"}]}}` + "\n" + data
+		evs = append(evs, coreexec.Event{
+			Type: coreexec.EventStdout,
+			Data: `{"type":"assistant","message":{"content":[{"type":"text","text":"<promise>COMPLETE</promise>"}]}}`,
+			Time: time.Now(),
+		})
 	}
-	return coreexec.Event{Type: coreexec.EventStdout, Data: data, Time: time.Now()}
+	evs = append(evs, coreexec.Event{
+		Type: coreexec.EventStdout,
+		Data: fmt.Sprintf(`{"type":"result","subtype":"success","is_error":false,"num_turns":%d}`, numTurns),
+		Time: time.Now(),
+	})
+	return evs
+}
+
+// resultEvent is the single-event form for tests that don't need a COMPLETE
+// marker (over-cap, within-cap, no-result). Kept as a thin wrapper so the
+// existing callsites stay one-liners.
+func resultEvent(numTurns int) coreexec.Event {
+	return resultEvents(numTurns, false)[0]
 }
 
 func TestEnforceTurnCapOverCapWithoutCompleteFails(t *testing.T) {
-	err := planrun.EnforceTurnCap([]coreexec.Event{resultEvent(84, false)}, 40)
+	err := planrun.EnforceTurnCap([]coreexec.Event{resultEvent(84)}, 40)
 	if err == nil {
 		t.Fatal("num_turns 84 > cap 40 without COMPLETE must synthesize an error")
 	}
@@ -38,24 +59,33 @@ func TestEnforceTurnCapOverCapWithoutCompleteFails(t *testing.T) {
 }
 
 func TestEnforceTurnCapWithinCapNoError(t *testing.T) {
-	if err := planrun.EnforceTurnCap([]coreexec.Event{resultEvent(40, false)}, 40); err != nil {
+	if err := planrun.EnforceTurnCap([]coreexec.Event{resultEvent(40)}, 40); err != nil {
 		t.Fatalf("num_turns == cap must not error, got %v", err)
 	}
-	if err := planrun.EnforceTurnCap([]coreexec.Event{resultEvent(12, false)}, 40); err != nil {
+	if err := planrun.EnforceTurnCap([]coreexec.Event{resultEvent(12)}, 40); err != nil {
 		t.Fatalf("num_turns < cap must not error, got %v", err)
 	}
 }
 
 func TestEnforceTurnCapCompleteWinsOverCap(t *testing.T) {
 	// 999 turns is far over the cap, but COMPLETE was emitted: the work is done,
-	// so the cap must not fire.
-	if err := planrun.EnforceTurnCap([]coreexec.Event{resultEvent(999, true)}, 40); err != nil {
+	// so the cap must not fire. The COMPLETE event and the result event MUST be
+	// separate Events — packing them into a single Event.Data string breaks the
+	// num_turns parse, and the test would pass even with the guard removed.
+	evs := resultEvents(999, true)
+	if err := planrun.EnforceTurnCap(evs, 40); err != nil {
 		t.Fatalf("COMPLETE must win over the turn cap regardless of num_turns, got %v", err)
+	}
+	// Sanity: without the COMPLETE event, the same 999-turn result MUST trip
+	// the cap. This locks in that the previous assertion is exercising the
+	// COMPLETE guard, not a parse failure.
+	if err := planrun.EnforceTurnCap(evs[1:], 40); err == nil {
+		t.Fatal("999 turns without COMPLETE must trip the cap (sanity check that the prior test exercises the guard, not a parse failure)")
 	}
 }
 
 func TestEnforceTurnCapDisabledWhenZero(t *testing.T) {
-	if err := planrun.EnforceTurnCap([]coreexec.Event{resultEvent(500, false)}, 0); err != nil {
+	if err := planrun.EnforceTurnCap([]coreexec.Event{resultEvent(500)}, 0); err != nil {
 		t.Fatalf("cap of 0 disables enforcement, got %v", err)
 	}
 }
@@ -87,7 +117,7 @@ func TestSinglePlanTripsTurnCap(t *testing.T) {
 		Agent:    agents.AgentClaude,
 		Status:   coreruntime.StatusPassed,
 		ExitCode: 0,
-		Events:   []coreexec.Event{resultEvent(84, false)},
+		Events:   []coreexec.Event{resultEvent(84)},
 	}
 	runner := &iterScriptRunner{replies: []coreruntime.Result{thrash}}
 

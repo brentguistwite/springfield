@@ -78,3 +78,39 @@ func TestAcceptInputDriftRejectsUnknownPlan(t *testing.T) {
 		t.Fatal("AcceptInputDrift on an unregistered plan should error")
 	}
 }
+
+// TestAcceptInputDriftRejectsRunning pins the StatusRunning guard: a running
+// plan committed to the preflight-time digest, and rewriting InputDigest while
+// the runner is mid-flight leaves the recorded value out of sync with what the
+// runner is actually executing against.
+func TestAcceptInputDriftRejectsRunning(t *testing.T) {
+	p := newProjectWithPlan("P", StatusRunning)
+	if _, err := p.AcceptInputDrift("P", "sha256:fresh"); err == nil {
+		t.Fatal("AcceptInputDrift on a running plan should error (would race the live runner)")
+	}
+}
+
+// TestAcceptInputDriftIdempotentOnMatchingDigest pins the no-op guard: a
+// pending plan whose recorded digest already matches the supplied digest has
+// no drift to accept. Appending a "accepted drift" history entry for a no-op
+// would silently misrepresent the recovery log.
+func TestAcceptInputDriftIdempotentOnMatchingDigest(t *testing.T) {
+	p := newProjectWithPlan("P", StatusPending)
+	p.State.Plans["P"].InputDigest = "sha256:same"
+	if _, err := p.AcceptInputDrift("P", "sha256:same"); err == nil {
+		t.Fatal("AcceptInputDrift on pending+matching-digest should error as a no-op")
+	}
+	if got := p.State.Plans["P"]; len(got.RecoveryHistory) != 0 {
+		t.Fatalf("no-op accept-drift must NOT append history, got %+v", got.RecoveryHistory)
+	}
+}
+
+// TestMarkPlanCompletedRejectsRunning pins the StatusRunning guard for the A9
+// path: a live runner's next SaveState would silently overwrite the operator's
+// flip to StatusCompleted.
+func TestMarkPlanCompletedRejectsRunning(t *testing.T) {
+	p := newProjectWithPlan("P", StatusRunning)
+	if _, err := p.MarkPlanCompleted("P", nil); err == nil {
+		t.Fatal("MarkPlanCompleted on a running plan should error (would race the live runner)")
+	}
+}
