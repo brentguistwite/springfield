@@ -3,6 +3,8 @@ package exec_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -190,6 +192,57 @@ func TestRunCommandEnvOverridesParent(t *testing.T) {
 	stdout := filterEvents(result.Events, exec.EventStdout)
 	if len(stdout) == 0 || stdout[0].Data != "override_val" {
 		t.Fatalf("env override: want override_val, got %v", stdout)
+	}
+}
+
+// TestRunCapturesLargeStdoutLine is a regression for the bug where
+// claude-code stream-json events wrapping a tool_result for a Read of a
+// moderately large file (~50 KB) exceeded bufio.Scanner's default 64 KiB
+// per-line cap, silently terminating Springfield's stdout reader and losing
+// every subsequent event. Lines well above 64 KiB must round-trip intact.
+func TestRunCapturesLargeStdoutLine(t *testing.T) {
+	const lineLen = 200 * 1024 // 200 KiB — comfortably past the 64 KiB default
+	script := fmt.Sprintf(`head -c %d < /dev/zero | tr '\0' 'x'; echo`, lineLen)
+
+	result := exec.Run(context.Background(), exec.Command{
+		Name: "sh",
+		Args: []string{"-c", script},
+	}, nil)
+
+	if result.Err != nil {
+		t.Fatalf("unexpected error: %v", result.Err)
+	}
+	stdout := filterEvents(result.Events, exec.EventStdout)
+	if len(stdout) != 1 {
+		t.Fatalf("expected exactly one stdout event, got %d", len(stdout))
+	}
+	if got := len(stdout[0].Data); got != lineLen {
+		t.Fatalf("captured line length = %d, want %d (scanner likely hit default 64 KiB cap)", got, lineLen)
+	}
+	if strings.Count(stdout[0].Data, "x") != lineLen {
+		t.Fatalf("captured content corrupted: not all 'x' characters")
+	}
+}
+
+// TestRunCapturesLargeStderrLine — same regression on the stderr scanner.
+func TestRunCapturesLargeStderrLine(t *testing.T) {
+	const lineLen = 200 * 1024
+	script := fmt.Sprintf(`head -c %d < /dev/zero | tr '\0' 'x' >&2; echo >&2`, lineLen)
+
+	result := exec.Run(context.Background(), exec.Command{
+		Name: "sh",
+		Args: []string{"-c", script},
+	}, nil)
+
+	if result.Err != nil {
+		t.Fatalf("unexpected error: %v", result.Err)
+	}
+	stderr := filterEvents(result.Events, exec.EventStderr)
+	if len(stderr) != 1 {
+		t.Fatalf("expected exactly one stderr event, got %d", len(stderr))
+	}
+	if got := len(stderr[0].Data); got != lineLen {
+		t.Fatalf("captured line length = %d, want %d", got, lineLen)
 	}
 }
 

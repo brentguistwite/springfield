@@ -3,12 +3,23 @@ package exec
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"time"
 )
+
+// maxScannerLine caps a single line read from a subprocess's stdout or
+// stderr. The default bufio.Scanner cap is 64 KiB, which is too small for
+// stream-json events emitted by claude-code's --output-format stream-json:
+// a tool_result wrapping a Read of any moderately large file (a ~50 KB Go
+// source file already blows past it) silently terminates the scanner AND
+// blocks the subprocess once the OS pipe buffer fills, deadlocking the
+// run. 16 MiB fits any plausible tool_result while leaving a memory cap
+// against a runaway process.
+const maxScannerLine = 16 * 1024 * 1024
 
 // Run executes a subprocess, streams output via handler, and returns
 // a structured result. If cmd.Timeout > 0, the context is wrapped
@@ -63,15 +74,35 @@ func Run(ctx context.Context, cmd Command, handler EventHandler) Result {
 	go func() {
 		defer wg.Done()
 		scanner := bufio.NewScanner(stdout)
+		scanner.Buffer(make([]byte, 0, 64*1024), maxScannerLine)
 		for scanner.Scan() {
 			emit(Event{Type: EventStdout, Data: scanner.Text(), Time: time.Now()})
+		}
+		// A silent scanner exit on ErrTooLong has historically swallowed
+		// every event after the offending line; surface the failure so
+		// callers (and operators reading evidence) see it. Emitted on
+		// stderr so existing classifiers can act on it.
+		if err := scanner.Err(); err != nil {
+			emit(Event{
+				Type: EventStderr,
+				Data: fmt.Sprintf("springfield: stdout scanner error: %v", err),
+				Time: time.Now(),
+			})
 		}
 	}()
 	go func() {
 		defer wg.Done()
 		scanner := bufio.NewScanner(stderr)
+		scanner.Buffer(make([]byte, 0, 64*1024), maxScannerLine)
 		for scanner.Scan() {
 			emit(Event{Type: EventStderr, Data: scanner.Text(), Time: time.Now()})
+		}
+		if err := scanner.Err(); err != nil {
+			emit(Event{
+				Type: EventStderr,
+				Data: fmt.Sprintf("springfield: stderr scanner error: %v", err),
+				Time: time.Now(),
+			})
 		}
 	}()
 

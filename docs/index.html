@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<script>document.documentElement.classList.add('js')</script>
+<title>Springfield: an agent orchestrator</title>
+<meta name="description" content="Springfield turns a plan into a sequential batch of AI coding-agent runs, with isolated worktrees, per-step evidence, and automatic fallback across Claude, Codex, and Gemini. Local-first, nothing outbound." />
+<meta property="og:title" content="Springfield: an agent orchestrator" />
+<meta property="og:description" content="Queue a plan. Walk away. Review the evidence. A local-first conductor for AI coding agents." />
+<meta property="og:type" content="website" />
+<meta name="theme-color" content="#f5f1e8" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)" />
+<link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32.png" />
+<link rel="icon" type="image/png" sizes="64x64" href="img/favicon-64.png" />
+<style>
+  /* Self-hosted fonts (SIL Open Font License). No external requests. */
+  @font-face{font-family:'Fraunces';font-style:italic;font-weight:500;font-display:swap;src:url(fonts/fraunces-500-italic.woff2) format('woff2')}
+  @font-face{font-family:'Fraunces';font-style:normal;font-weight:400;font-display:swap;src:url(fonts/fraunces-400.woff2) format('woff2')}
+  @font-face{font-family:'Fraunces';font-style:normal;font-weight:600;font-display:swap;src:url(fonts/fraunces-600.woff2) format('woff2')}
+  @font-face{font-family:'Fraunces';font-style:normal;font-weight:900;font-display:swap;src:url(fonts/fraunces-900.woff2) format('woff2')}
+  @font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400;font-display:swap;src:url(fonts/jetbrains-mono-400.woff2) format('woff2')}
+  @font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:500;font-display:swap;src:url(fonts/jetbrains-mono-500.woff2) format('woff2')}
+  @font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:700;font-display:swap;src:url(fonts/jetbrains-mono-700.woff2) format('woff2')}
+  @font-face{font-family:'Spline Sans';font-style:normal;font-weight:400;font-display:swap;src:url(fonts/spline-sans-400.woff2) format('woff2')}
+  @font-face{font-family:'Spline Sans';font-style:normal;font-weight:500;font-display:swap;src:url(fonts/spline-sans-500.woff2) format('woff2')}
+  @font-face{font-family:'Spline Sans';font-style:normal;font-weight:600;font-display:swap;src:url(fonts/spline-sans-600.woff2) format('woff2')}
+  @font-face{font-family:'Spline Sans';font-style:normal;font-weight:700;font-display:swap;src:url(fonts/spline-sans-700.woff2) format('woff2')}
+</style>
+<style>
+  :root{
+    --bg:#f5f1e8; --panel:#fbf8f1; --fg:#1b1813; --muted:#6c655a;
+    --rule:#ddd5c5; --accent:#c4441c; --accent-soft:#f0d8cb; --code-bg:#efe9dc;
+    --ok:#2f7d52; --warn:#a9740d; --kill:#b3402e;
+    --shadow:0 1px 2px rgba(27,24,19,.06),0 8px 30px rgba(27,24,19,.07);
+    --shadow-lg:0 8px 18px rgba(27,24,19,.10),0 22px 50px rgba(27,24,19,.13);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#1a1a1a; --panel:#212020; --fg:#e8e6e0; --muted:#9c958a;
+      --rule:#34322c; --accent:#ff6b3d; --accent-soft:#3a241b; --code-bg:#26241f;
+      --ok:#5fbf86; --warn:#e0a23a; --kill:#e8705c;
+      --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 34px rgba(0,0,0,.45);
+      --shadow-lg:0 10px 22px rgba(0,0,0,.5),0 26px 56px rgba(0,0,0,.55);
+    }
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;background:var(--bg);color:var(--fg);
+    font-family:"Spline Sans",system-ui,sans-serif;font-size:17px;line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(circle at 1px 1px, var(--rule) 1px, transparent 0);
+    background-size:34px 34px;
+  }
+  ::selection{background:var(--accent);color:var(--bg)}
+
+  .progress{position:fixed;top:0;left:0;height:3px;background:var(--accent);width:0;z-index:60;transition:width .1s linear}
+  .topbar{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;align-items:center;justify-content:space-between;padding:14px 26px;backdrop-filter:blur(9px);background:color-mix(in srgb, var(--bg) 82%, transparent);border-bottom:1px solid var(--rule)}
+  .brand{font-family:"Fraunces",serif;font-weight:900;letter-spacing:-.02em;font-size:19px;display:flex;align-items:center;gap:10px}
+  .brand .dot{width:11px;height:11px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 4px var(--accent-soft)}
+  .nav{display:flex;gap:18px;font-size:13px;font-weight:500;align-items:center}
+  .nav a{color:var(--muted);text-decoration:none;transition:color .2s}
+  .nav a:hover,.nav a.active{color:var(--accent)}
+  .nav a.gh{color:var(--fg);border:1px solid var(--rule);border-radius:8px;padding:6px 12px;display:inline-flex;gap:7px;align-items:center}
+  .nav a.gh:hover{border-color:var(--accent);color:var(--accent)}
+  @media (max-width:820px){.nav a:not(.gh){display:none}}
+
+  .wrap{max-width:1080px;margin:0 auto;padding:0 26px}
+  section{padding:84px 0;border-bottom:1px solid var(--rule)}
+  .kicker{font-family:"JetBrains Mono",monospace;font-size:12.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--accent);font-weight:500}
+  h2{font-family:"Fraunces",serif;font-weight:600;font-size:clamp(28px,4.4vw,46px);line-height:1.04;letter-spacing:-.02em;margin:.25em 0 .35em}
+  h3{font-family:"Fraunces",serif;font-weight:600;font-size:20px;margin:0 0 .4em;letter-spacing:-.01em}
+  p{margin:0 0 1em}
+  .lead{font-size:20px;color:var(--muted);max-width:64ch}
+  strong{font-weight:600}
+  .accent{color:var(--accent)}
+
+  .hero{min-height:94vh;display:flex;flex-direction:column;justify-content:center;border-bottom:1px solid var(--rule)}
+  .hero .wordmark{font-family:"Fraunces",serif;font-weight:900;font-size:clamp(60px,15vw,168px);line-height:.86;letter-spacing:-.04em;margin:.08em 0 .1em}
+  .hero .wordmark em{font-style:italic;font-weight:500;color:var(--accent)}
+  .hero .tag{font-family:"JetBrains Mono",monospace;font-size:13px;letter-spacing:.24em;text-transform:uppercase;color:var(--accent)}
+  .hero .sub{font-size:clamp(20px,2.6vw,28px);max-width:34ch;color:var(--fg);font-weight:500;margin-top:.2em}
+  .metarow{display:flex;flex-wrap:wrap;gap:10px;margin-top:30px}
+  .chip{font-family:"JetBrains Mono",monospace;font-size:12.5px;border:1px solid var(--rule);background:var(--panel);border-radius:999px;padding:6px 14px;color:var(--muted)}
+  .chip b{color:var(--fg);font-weight:700}
+  .chip.badge{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,var(--rule))}
+
+  .cta{display:flex;gap:14px;margin-top:34px;flex-wrap:wrap}
+  .btn{display:inline-flex;align-items:center;gap:9px;font-family:"Spline Sans";font-weight:600;font-size:15px;padding:12px 22px;border-radius:10px;text-decoration:none;border:1.5px solid var(--accent);transition:transform .15s ease,background .2s}
+  .btn-primary{background:var(--accent);color:var(--bg)}
+  .btn-primary:hover{transform:translateY(-2px)}
+  .btn-ghost{background:transparent;color:var(--accent)}
+  .btn-ghost:hover{background:var(--accent-soft)}
+
+  .grid{display:grid;gap:18px}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+  @media (max-width:820px){.g3,.g2{grid-template-columns:minmax(0,1fr)}}
+  .card{background:var(--panel);border:1px solid var(--rule);border-radius:14px;padding:24px;box-shadow:var(--shadow)}
+  .card .ic{font-family:"Fraunces",serif;font-weight:900;font-size:26px;color:var(--accent);line-height:1;margin-bottom:12px}
+  .card p{font-size:15.5px;color:var(--muted);margin:0}
+  .card.pain{border-top:3px solid var(--kill)}
+
+  .flow{display:flex;align-items:stretch;flex-wrap:wrap;margin-top:8px}
+  .stage{flex:1;min-width:150px;background:var(--panel);border:1px solid var(--rule);border-radius:12px;padding:18px}
+  .stage .n{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--accent);letter-spacing:.1em}
+  .stage h4{font-family:"Fraunces",serif;margin:.3em 0 .25em;font-size:17px;font-weight:600}
+  .stage p{font-size:13.5px;color:var(--muted);margin:0}
+  .arrow{display:flex;align-items:center;justify-content:center;color:var(--accent);font-size:22px;padding:0 6px;flex:0 0 auto}
+  @media (max-width:820px){.arrow{transform:rotate(90deg);padding:6px 0;width:100%}}
+
+  .diagram{margin-top:22px;border:1px solid var(--rule);border-radius:14px;background:var(--panel);box-shadow:var(--shadow);padding:20px 18px;overflow-x:auto}
+  .diagram svg{width:100%;min-width:700px;height:auto;display:block}
+
+  .cmd{font-family:"JetBrains Mono",monospace;font-size:14px;background:var(--code-bg);border:1px solid var(--rule);border-left:3px solid var(--accent);border-radius:8px;padding:11px 14px;margin:8px 0;display:flex;gap:12px;align-items:baseline;overflow-x:auto}
+  .cmd .p{color:var(--accent);font-weight:700;user-select:none}
+  .cmd .c{color:var(--fg);white-space:pre}
+  .cmd .note{color:var(--muted);margin-left:auto;font-size:12px;white-space:nowrap}
+  pre.block{font-family:"JetBrains Mono",monospace;font-size:13px;background:var(--code-bg);border:1px solid var(--rule);border-radius:10px;padding:16px;overflow-x:auto;line-height:1.55;color:var(--fg)}
+  pre.block .mut{color:var(--muted)}
+  pre.block .ac{color:var(--accent)}
+  .cmdinline{font-family:"JetBrains Mono",monospace;font-size:.86em;background:var(--code-bg);border:1px solid var(--rule);border-radius:5px;padding:1px 6px;color:var(--accent);white-space:nowrap}
+
+  .tblwrap{overflow-x:auto;border:1px solid var(--rule);border-radius:14px;background:var(--panel);box-shadow:var(--shadow)}
+  table{border-collapse:collapse;width:100%;font-size:14.5px}
+  th,td{text-align:left;padding:14px 18px;border-bottom:1px solid var(--rule);vertical-align:top}
+  thead th{font-family:"JetBrains Mono",monospace;font-size:11.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:500}
+  tbody tr:last-child td{border-bottom:none}
+  td.dim{color:var(--muted)}
+  th.lab{font-family:"Spline Sans";font-weight:600;text-transform:none;letter-spacing:0;font-size:14.5px;color:var(--fg);width:21%}
+  .col-sf{background:color-mix(in srgb, var(--accent-soft) 55%, transparent)}
+  .yes{color:var(--ok);font-weight:600}
+  .no{color:var(--kill);font-weight:600}
+
+  details{background:var(--panel);border:1px solid var(--rule);border-radius:12px;margin:12px 0;overflow:hidden}
+  details[open]{box-shadow:var(--shadow)}
+  summary{cursor:pointer;padding:18px 22px;font-family:"Fraunces",serif;font-weight:600;font-size:17.5px;list-style:none;display:flex;align-items:center;gap:12px}
+  summary::-webkit-details-marker{display:none}
+  summary::before{content:"Q";font-family:"JetBrains Mono",monospace;font-size:13px;color:var(--accent);border:1px solid var(--accent);border-radius:6px;width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;font-weight:700}
+  details[open] summary{border-bottom:1px solid var(--rule)}
+  .ans{padding:18px 22px 20px 22px;color:var(--muted);font-size:15.5px}
+  .ans b{color:var(--fg)}
+
+  .callout{border-left:3px solid var(--warn);background:color-mix(in srgb,var(--warn) 9%,var(--panel));border-radius:0 10px 10px 0;padding:16px 20px;margin:18px 0;font-size:15px}
+  .callout b{color:var(--fg)}
+
+  footer{padding:54px 0 72px}
+  footer .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:space-between;align-items:center;color:var(--muted);font-size:13.5px}
+  footer a{color:var(--accent);text-decoration:none}
+  footer a:hover{text-decoration:underline}
+  .foot-mono{font-family:"JetBrains Mono",monospace;font-size:12px}
+
+  /* ---- brand lockup (mark + wordmark) ---- */
+  .brand{gap:11px;text-decoration:none;color:var(--fg);font-family:"Spline Sans",sans-serif;font-weight:700;font-size:15px;letter-spacing:.09em;text-transform:uppercase;line-height:1;display:flex;align-items:center}
+  .brand .mark{height:30px;width:auto;display:block;flex:0 0 auto;transition:transform .25s ease}
+  .brand:hover .mark{transform:translateX(2px)}
+  @media (prefers-color-scheme:dark){.brand .mark{filter:invert(1)}}
+
+  /* ---- topbar scroll state ---- */
+  .topbar{transition:box-shadow .3s ease,background .3s ease}
+  .topbar.scrolled{background:color-mix(in srgb,var(--bg) 92%,transparent);box-shadow:0 6px 24px rgba(0,0,0,.08)}
+
+  /* ---- nav underline ---- */
+  .nav a:not(.gh){position:relative}
+  .nav a:not(.gh)::after{content:"";position:absolute;left:0;right:0;bottom:-5px;height:2px;background:var(--accent);transform:scaleX(0);transform-origin:left;transition:transform .25s ease}
+  .nav a:not(.gh):hover::after,.nav a:not(.gh).active::after{transform:scaleX(1)}
+  .nav a.gh{transition:border-color .2s ease,color .2s ease,transform .15s ease}
+  .nav a.gh:hover{transform:translateY(-1px)}
+
+  /* ---- hero polish ---- */
+  .hero{position:relative;overflow:hidden}
+  .hero::before{content:"";position:absolute;top:-12%;right:-6%;width:64vw;height:64vw;max-width:760px;max-height:760px;background:radial-gradient(circle,color-mix(in srgb,var(--accent) 15%,transparent),transparent 60%);pointer-events:none;z-index:0}
+  .hero .wrap{position:relative;z-index:1}
+  .hero .wrap > *{animation:rise .7s cubic-bezier(.2,.7,.2,1) backwards}
+  .hero .wrap > *:nth-child(1){animation-delay:.06s}
+  .hero .wrap > *:nth-child(2){animation-delay:.14s}
+  .hero .wrap > *:nth-child(3){animation-delay:.22s}
+  .hero .wrap > *:nth-child(4){animation-delay:.30s}
+  .hero .wrap > *:nth-child(5){animation-delay:.38s}
+  @keyframes rise{from{opacity:0;transform:translateY(22px)}to{opacity:1;transform:none}}
+  .scrollcue{position:absolute;bottom:26px;left:50%;transform:translateX(-50%);z-index:1;color:var(--muted);font-size:22px;line-height:1;animation:bob 1.9s ease-in-out infinite;opacity:.6;transition:opacity .4s ease}
+  body.scrolled .scrollcue{opacity:0}
+  @keyframes bob{0%,100%{transform:translate(-50%,0)}50%{transform:translate(-50%,7px)}}
+
+  /* ---- hover micro-interactions ---- */
+  .card{transition:transform .22s ease,box-shadow .22s ease,border-color .22s ease}
+  .card:hover{transform:translateY(-4px);box-shadow:var(--shadow-lg);border-color:color-mix(in srgb,var(--accent) 28%,var(--rule))}
+  .stage{transition:transform .2s ease,border-color .2s ease}
+  .stage:hover{transform:translateY(-3px);border-color:color-mix(in srgb,var(--accent) 30%,var(--rule))}
+  .cmd{transition:border-color .2s ease,background .2s ease}
+  .cmd:hover{background:color-mix(in srgb,var(--accent) 6%,var(--code-bg))}
+  .btn{transition:transform .15s ease,box-shadow .2s ease,background .2s ease}
+  .btn-primary:hover{box-shadow:0 10px 24px color-mix(in srgb,var(--accent) 38%,transparent)}
+  .btn-ghost:hover{transform:translateY(-2px)}
+  summary{transition:color .2s ease}
+  summary:hover{color:var(--accent)}
+
+  /* ---- feature icons ---- */
+  .ic.svg{display:flex;width:40px;height:40px;align-items:center;justify-content:center;border-radius:11px;background:var(--accent-soft);margin-bottom:14px}
+  .ic.svg svg{width:22px;height:22px;stroke:var(--accent);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+  /* ---- reduced motion ---- */
+  @media (prefers-reduced-motion:reduce){
+    .hero .wrap > *,.mark .b,.scrollcue{animation:none}
+    .card:hover,.stage:hover,.btn:hover,.nav a.gh:hover{transform:none}
+  }
+
+  .js .reveal{opacity:0;transform:translateY(18px)}
+  .reveal{transition:opacity .6s cubic-bezier(.2,.7,.2,1),transform .6s cubic-bezier(.2,.7,.2,1)}
+  .reveal.in{opacity:1;transform:none}
+  @media (prefers-reduced-motion:reduce){.js .reveal{opacity:1;transform:none;transition:none}html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+
+<div class="progress" id="progress"></div>
+<div class="topbar">
+  <div class="brand"><img class="mark" src="img/logo.png" alt="" aria-hidden="true"><span>Springfield</span></div>
+  <nav class="nav">
+    <a href="#problem">Problem</a>
+    <a href="#what">What it is</a>
+    <a href="#how">How it works</a>
+    <a href="#why">vs Ralph</a>
+    <a href="#get-started">Get started</a>
+    <a class="gh" href="https://github.com/brentguistwite/springfield" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="currentColor"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A8.013 8.013 0 0 1 0 8c0-4.42 3.58-8 8-8Z"></path></svg>GitHub</a>
+  </nav>
+</div>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="tag">Agent Orchestrator · Local-first · Open source</div>
+    <h1 class="wordmark">Spring<em>field</em></h1>
+    <p class="sub">Queue a plan. Walk away. Review the evidence.</p>
+    <div class="metarow">
+      <span class="chip"><b>Drives</b> Claude Code · Codex · Gemini</span>
+      <span class="chip"><b>Isolates</b> a git worktree per run</span>
+      <span class="chip"><b>Records</b> per-step evidence</span>
+      <span class="chip badge">v0.13 · early / pre-1.0</span>
+    </div>
+    <div class="cta">
+      <a class="btn btn-primary" href="#get-started">Get started</a>
+      <a class="btn btn-ghost" href="https://github.com/brentguistwite/springfield" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true" fill="currentColor"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A8.013 8.013 0 0 1 0 8c0-4.42 3.58-8 8-8Z"></path></svg>View on GitHub</a>
+    </div>
+  </div>
+  <div class="scrollcue" aria-hidden="true">↓</div>
+</header>
+
+<section id="problem">
+  <div class="wrap reveal">
+    <div class="kicker">The problem</div>
+    <h2>Coding agents are powerful, and you<br>still have to babysit them.</h2>
+    <p class="lead">AI coding agents can do real work. The workflow around them is still manual, fragile, and unrecorded. Three pains, specifically:</p>
+    <div class="grid g3" style="margin-top:30px">
+      <div class="card pain"><div class="ic">01</div><h3>One task at a time</h3><p>You feed the agent a step, watch it, feed the next. A multi-step plan is a string of supervised sessions. You are the for-loop.</p></div>
+      <div class="card pain"><div class="ic">02</div><h3>The rate-limit wall</h3><p>Your agent hits a usage limit mid-task and you're stuck, even though another capable agent is sitting right there, idle.</p></div>
+      <div class="card pain"><div class="ic">03</div><h3>No record of what happened</h3><p>The reasoning, the exact prompt, the changes: all of it scrolls off in a terminal. Nothing auditable, nothing to hand to a teammate.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="what">
+  <div class="wrap reveal">
+    <div class="kicker">What it is</div>
+    <h2>An orchestrator that <span class="accent">drives</span> the agents.<br>It doesn't write the code itself.</h2>
+    <p class="lead">Think of a CI runner: it doesn't compile your code, it runs the steps that do, in order, and keeps the logs. Springfield is that, for AI coding agents. You hand it a plan; it runs each piece through an agent in an isolated worktree, and keeps the evidence.</p>
+    <div class="grid g3" style="margin-top:30px">
+      <div class="card"><div class="ic svg"><svg viewBox="0 0 24 24" aria-hidden="true"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="15" y2="12"/><line x1="4" y1="17" x2="18" y2="17"/></svg></div><h3>Sequential batches</h3><p>A plan compiles into an ordered batch of work units, each with its own stories and acceptance criteria.</p></div>
+      <div class="card"><div class="ic svg"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.6"/></svg></div><h3>Drops into your tools</h3><p>Homebrew installs the CLI; one slash-command in Claude Code or Codex installs the skills. Teammates pick it up in minutes.</p></div>
+      <div class="card"><div class="ic svg"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-6 8 6"/><path d="M6 10v9h12v-9"/></svg></div><h3>Local-first</h3><p>State lives in project-local <span class="cmdinline">.springfield/</span>. No global machine state, and nothing outbound from Springfield itself.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap reveal">
+    <div class="kicker">How it works</div>
+    <h2>Plan in. A branch of vetted commits out.</h2>
+    <p class="lead">A plan compiles into a <strong>batch</strong> of units, each with user stories. Springfield runs them sequentially, each in its own worktree, tracking story-level completion as the agent reports it.</p>
+    <div class="flow" style="margin-top:30px">
+      <div class="stage"><div class="n">IN</div><h4>Plan</h4><p>Units → stories → acceptance criteria.</p></div>
+      <div class="arrow">→</div>
+      <div class="stage"><div class="n">COMPILE</div><h4>Batch</h4><p><span class="cmdinline">plan</span> validates &amp; compiles it.</p></div>
+      <div class="arrow">→</div>
+      <div class="stage"><div class="n">RUN</div><h4>Worktree runs</h4><p>Auto-branch off main; each unit in isolation.</p></div>
+      <div class="arrow">→</div>
+      <div class="stage"><div class="n">OUT</div><h4>Branch + evidence</h4><p>Commits on a feature branch; full trail on disk.</p></div>
+    </div>
+
+    <h3 style="margin-top:46px">Inside one unit: the iteration engine</h3>
+    <p style="color:var(--muted);max-width:64ch">For each unit, Springfield runs a loop: build the prompt, run an agent, scan the output for completion markers. Not done? Iterate. Agent rate-limited? Fall sideways to the next agent. All stories pass? Merge and bank the evidence.</p>
+    <div class="diagram">
+      <svg viewBox="0 0 1080 410" role="img" aria-label="Springfield per-unit iteration engine: build prompt, run agent, scan markers, loop until all stories pass, then merge.">
+        <style>
+          .d-box{fill:var(--bg);stroke:var(--rule);stroke-width:1.5}
+          .d-boxA{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.5}
+          .d-ln{stroke:var(--muted);stroke-width:1.7;fill:none}
+          .d-acc{stroke:var(--accent);stroke-width:1.9;fill:none}
+          .d-dash{stroke-dasharray:6 5}
+          .d-ah{fill:var(--muted)} .d-ahA{fill:var(--accent)}
+          .d-t{fill:var(--fg);font-family:"Spline Sans",sans-serif;font-weight:600;font-size:15px}
+          .d-s{fill:var(--muted);font-family:"Spline Sans",sans-serif;font-size:12px}
+          .d-m{fill:var(--accent);font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.04em}
+          .d-cap{fill:var(--muted);font-family:"JetBrains Mono",monospace;font-size:11px}
+        </style>
+        <defs>
+          <marker id="d-arrow" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L8,4 L0,8 Z" class="d-ah"/></marker>
+          <marker id="d-arrowA" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L8,4 L0,8 Z" class="d-ahA"/></marker>
+        </defs>
+        <rect class="d-box" x="20" y="84" width="120" height="64" rx="12"/>
+        <text class="d-m" x="80" y="112" text-anchor="middle">PLAN</text>
+        <text class="d-s" x="80" y="131" text-anchor="middle">stories + AC</text>
+        <rect class="d-box" x="182" y="78" width="188" height="76" rx="12"/>
+        <text class="d-t" x="276" y="110" text-anchor="middle">Build prompt</text>
+        <text class="d-s" x="276" y="130" text-anchor="middle">header · context · story</text>
+        <rect class="d-box" x="436" y="64" width="188" height="76" rx="12" opacity="0.4"/>
+        <rect class="d-box" x="428" y="71" width="188" height="76" rx="12" opacity="0.7"/>
+        <rect class="d-box" x="420" y="78" width="188" height="76" rx="12"/>
+        <text class="d-t" x="514" y="121" text-anchor="middle">Run agent</text>
+        <rect class="d-box" x="672" y="78" width="188" height="76" rx="12"/>
+        <text class="d-t" x="766" y="108" text-anchor="middle">Scan output</text>
+        <text class="d-m" x="766" y="130" text-anchor="middle">&lt;story-pass&gt;</text>
+        <rect class="d-boxA" x="918" y="78" width="142" height="76" rx="12"/>
+        <text class="d-t" x="989" y="108" text-anchor="middle">Unit complete</text>
+        <text class="d-m" x="989" y="130" text-anchor="middle">COMPLETE ✓</text>
+        <path class="d-ln" d="M140,116 H180" marker-end="url(#d-arrow)"/>
+        <path class="d-ln" d="M370,116 H418" marker-end="url(#d-arrow)"/>
+        <path class="d-ln" d="M608,116 H670" marker-end="url(#d-arrow)"/>
+        <path class="d-acc" d="M860,116 H916" marker-end="url(#d-arrowA)"/>
+        <text class="d-cap" x="888" y="103" text-anchor="middle">all pass</text>
+        <text class="d-m" x="514" y="180" text-anchor="middle">Claude → Codex → Gemini</text>
+        <text class="d-cap" x="514" y="197" text-anchor="middle">rate-limited → fall to next agent</text>
+        <path class="d-ln d-dash" d="M720,154 V224 a12,12 0 0 1 -12,12 H288 a12,12 0 0 1 -12,-12 V158" marker-end="url(#d-arrow)"/>
+        <text class="d-cap" x="497" y="254" text-anchor="middle">story not done → re-dispatch, next iteration</text>
+        <path class="d-acc" d="M989,154 V298" marker-end="url(#d-arrowA)"/>
+        <rect class="d-box" x="600" y="300" width="460" height="92" rx="12"/>
+        <text class="d-t" x="830" y="330" text-anchor="middle">Merge → springfield/batch-…</text>
+        <text class="d-s" x="830" y="352" text-anchor="middle">the agent's commits land on a feature branch</text>
+        <text class="d-m" x="830" y="374" text-anchor="middle">evidence: prompt · events · response · verdict</text>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<section id="why">
+  <div class="wrap reveal">
+    <div class="kicker">vs a Ralph bash loop</div>
+    <h2>"Isn't this just a <span class="accent">while-loop</span> around an agent?"</h2>
+    <p class="lead">A Ralph loop (<span class="cmdinline">while …; do claude -p "$PROMPT"; done</span>) is a great hack and the right ancestor to credit. Springfield is that loop, made durable, multi-agent, and shareable.</p>
+    <div class="tblwrap" style="margin-top:28px">
+      <table>
+        <thead><tr><th class="lab">Dimension</th><th>Ralph bash loop</th><th class="col-sf">Springfield</th></tr></thead>
+        <tbody>
+          <tr><th class="lab">Unit of work</th><td class="dim">One prompt, looped until you stop it</td><td class="col-sf">A batch of units, each with tracked stories</td></tr>
+          <tr><th class="lab">Isolation</th><td class="dim"><span class="no">Runs in your working tree</span></td><td class="col-sf"><span class="yes">Dedicated git worktree per run</span></td></tr>
+          <tr><th class="lab">Branching</th><td class="dim">You manage it by hand</td><td class="col-sf">Auto-cuts a feature branch off main, switches back when done</td></tr>
+          <tr><th class="lab">Completion</th><td class="dim">You eyeball output / grep for a string</td><td class="col-sf">Structured markers tracked to pass/fail per story</td></tr>
+          <tr><th class="lab">Evidence</th><td class="dim"><span class="no">Terminal scrollback only</span></td><td class="col-sf"><span class="yes">Per-iteration prompt, events, response &amp; verdict on disk</span></td></tr>
+          <tr><th class="lab">Multi-agent</th><td class="dim"><span class="no">One agent; hard stop on limit</span></td><td class="col-sf"><span class="yes">Priority chain Claude → Codex → Gemini, lateral fallback</span></td></tr>
+          <tr><th class="lab">Resume</th><td class="dim">Re-run from scratch</td><td class="col-sf">Resumes from saved progress, so finished units aren't redone</td></tr>
+          <tr><th class="lab">State</th><td class="dim">Ad-hoc / in your head</td><td class="col-sf">Project-local <span class="cmdinline">.springfield/</span>, no global state, nothing outbound</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin-top:20px;color:var(--muted);font-size:15px"><strong>A Ralph loop gets one agent through one prompt; Springfield gets a plan through a fleet, with a paper trail.</strong></p>
+  </div>
+</section>
+
+<section id="fallback">
+  <div class="wrap reveal">
+    <div class="kicker">When an agent hits a limit</div>
+    <h2>Fallback is <span class="accent">lateral</span>, not temporal.</h2>
+    <p class="lead">When the active agent is rate-limited, Springfield doesn't sit and wait for the limit to reset. It stamps a cooldown and tries the <strong>next agent in your priority chain</strong>, so the batch keeps moving. With several agents configured, a usage limit becomes a transparent hiccup instead of a hard stop.</p>
+    <div class="callout"><b>With a single agent</b> there's no lateral move, so the unit parks, and the batch resumes where it left off when you re-run, with finished work preserved. The cooldown is in-memory, never persisted, so a fresh run cleanly re-attempts rather than honoring a stale guess.</div>
+  </div>
+</section>
+
+<section id="evidence">
+  <div class="wrap reveal">
+    <div class="kicker">Evidence</div>
+    <h2>Every iteration is on disk and auditable.</h2>
+    <p class="lead">This is the biggest jump over a bash loop. For each unit, Springfield writes a per-iteration record plus a rollup, so "what did the agent actually do?" has a real answer.</p>
+    <pre class="block"><span class="mut"># per unit</span>
+.springfield/execution/plans/<span class="ac">&lt;id&gt;</span>/evidence/
+  iter-1/
+    prompt.txt           <span class="mut"># the exact prompt the runner built</span>
+    events.jsonl         <span class="mut"># full dispatched event stream</span>
+    assistant_text.txt   <span class="mut"># the agent's raw response</span>
+    meta.json            <span class="mut"># verdict: agent, exit_code, timing</span>
+  iter-2/ … iter-N/
+  summary.json           <span class="mut"># iteration_count, terminal_status, exit_reason</span></pre>
+    <p style="color:var(--muted);font-size:15px">Surfaced through <span class="cmdinline">springfield status</span>. The files are there when you need to prove what happened.</p>
+  </div>
+</section>
+
+<section id="get-started">
+  <div class="wrap reveal">
+    <div class="kicker">Get started</div>
+    <h2>Two pieces. A few minutes.</h2>
+    <p class="lead">Springfield ships as a <strong>CLI</strong> (the binary that does the work) and a <strong>plugin</strong> (the skills and slash-commands your agent runs). Install both.</p>
+
+    <h3 style="margin-top:36px">1 · Install the CLI</h3>
+    <div class="cmd"><span class="p">$</span><span class="c">brew install brentguistwite/tap/springfield</span><span class="note">macOS</span></div>
+    <div class="cmd"><span class="p">$</span><span class="c">springfield version</span><span class="note">confirm it's on PATH</span></div>
+    <p style="color:var(--muted);font-size:14.5px;margin-top:8px">Linux or Windows: grab a tarball from <a href="https://github.com/brentguistwite/springfield/releases" style="color:var(--accent)">Releases</a>, or run <span class="cmdinline">go install .</span> from source (Go 1.26+).</p>
+
+    <h3 style="margin-top:34px">2 · Install the plugin</h3>
+    <p style="color:var(--muted);margin:0 0 14px 0">Same skills either way: <span class="cmdinline">/springfield:plan</span>, <span class="cmdinline">/springfield:status</span>, and <span class="cmdinline">/springfield:recover</span>. Install on whichever host CLI you use, or both.</p>
+    <div class="grid" style="margin-top:6px;grid-template-columns:minmax(0,1fr)">
+      <div class="card">
+        <h3>Claude Code</h3>
+        <div class="cmd"><span class="p">›</span><span class="c">/plugin marketplace add brentguistwite/springfield</span></div>
+        <div class="cmd"><span class="p">›</span><span class="c">/plugin install springfield@brentguistwite</span></div>
+      </div>
+      <div class="card">
+        <h3>Codex</h3>
+        <div class="cmd"><span class="p">$</span><span class="c">codex plugin marketplace add brentguistwite/springfield --sparse .agents/plugins</span></div>
+        <div class="cmd"><span class="p">$</span><span class="c">codex</span></div>
+        <div class="cmd"><span class="p">›</span><span class="c">/plugins</span></div>
+        <p style="color:var(--muted);font-size:13.5px;margin:10px 0 0">An interactive menu opens. Pick the <b style="color:var(--fg)">Brent Guistwite</b> marketplace, then install <b style="color:var(--fg)">springfield</b>.</p>
+      </div>
+    </div>
+
+    <h3 style="margin-top:34px">3 · Run a batch</h3>
+    <div class="cmd"><span class="p">$</span><span class="c">springfield init</span><span class="note">scaffold config + state</span></div>
+    <div class="cmd"><span class="p">$</span><span class="c">springfield doctor</span><span class="note">check which agents are available</span></div>
+    <div class="cmd"><span class="p">$</span><span class="c">springfield plan --prd plan.json</span><span class="note">compile a batch</span></div>
+    <div class="cmd"><span class="p">$</span><span class="c">springfield start</span><span class="note">run it</span></div>
+
+    <div class="grid g2" style="margin-top:36px">
+      <div class="card">
+        <h3>Requirements</h3>
+        <p style="color:var(--muted)">A git repo, and at least one supported agent CLI installed and authenticated: <b style="color:var(--fg)">Claude Code</b>, <b style="color:var(--fg)">Codex</b>, or <b style="color:var(--fg)">Gemini</b>.</p>
+      </div>
+      <div class="card">
+        <h3>Upgrading</h3>
+        <p style="color:var(--muted)"><span class="cmdinline">brew upgrade springfield</span> is the upgrade you'll actually run. The plugin is a thin shim over the CLI verbs, so plugin updates are manual and rare. Run one only when a skill tells you to.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap reveal">
+    <div class="kicker">FAQ</div>
+    <h2>Questions you're probably asking.</h2>
+
+    <details><summary>Which agents do I need?</summary><div class="ans">At least one of <b>Claude Code</b>, <b>Codex</b>, or <b>Gemini</b>, installed and authenticated. Configure more than one and Springfield falls through them in priority order when a run is rate-limited.</div></details>
+    <details><summary>Does my code leave my machine?</summary><div class="ans"><b>Nothing leaves via Springfield.</b> It's local-first: no telemetry, no data collection, nothing outbound from the tool itself. State stays in project-local <span class="cmdinline">.springfield/</span>. (The agents themselves still call their own provider APIs, but that's the agent, not Springfield.)</div></details>
+    <details><summary>Will it mess with my git history or working tree?</summary><div class="ans">No. Each run happens in an <b>isolated git worktree</b>. Starting from <span class="cmdinline">main</span>/<span class="cmdinline">master</span>, Springfield auto-cuts a local <span class="cmdinline">springfield/batch-&lt;id&gt;</span> branch and switches you back when it finishes. It never pushes, so opening PRs stays your call.</div></details>
+    <details><summary>Does it run agents in parallel?</summary><div class="ans">No, and that's deliberate. Springfield runs <b>sequentially</b>, one unit then the next. The value is unattended throughput over time plus a clean evidence trail, not racing agents against each other.</div></details>
+    <details><summary>The agent runs with broad permissions. Is that safe?</summary><div class="ans">The default profile lets agents work without per-action prompts so an unattended batch isn't blocked. The mitigations: <b>worktree isolation</b> (blast radius is a throwaway branch), the <b>evidence trail</b> (every action recorded), and <b>you review the diff before merging</b>. It's a setting in <span class="cmdinline">springfield.toml</span>, not a hardcode.</div></details>
+    <details><summary>Does Springfield write the code?</summary><div class="ans">No. It's the conductor, not the orchestra. It builds prompts, dispatches the agent, watches for completion markers, classifies errors, and records evidence. The editing is done by Claude Code / Codex / Gemini.</div></details>
+    <details><summary>Is it production-ready?</summary><div class="ans">It's <b>early, pre-1.0</b> (currently v0.13). It works and it's in active use, but interfaces may still shift before 1.0. Treat it accordingly and pin a version if you depend on it.</div></details>
+    <details><summary>Does it have a plugin or extension API?</summary><div class="ans">No. The Claude Code / Codex plugin ships only the skills and slash-commands; the CLI itself installs via Homebrew (or a tarball, or <span class="cmdinline">go install</span>). Springfield doesn't expose a plugin or extension API of its own.</div></details>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <div style="font-family:'Fraunces',serif;font-weight:900;font-size:18px;color:var(--fg)">Springfield</div>
+      <div style="margin-top:6px">An agent orchestrator · local-first · open source.</div>
+    </div>
+    <div class="foot-mono" style="text-align:right">
+      <a href="https://github.com/brentguistwite/springfield" target="_blank" rel="noopener">github.com/brentguistwite/springfield</a><br>
+      MIT License · v0.13 (pre-1.0)
+    </div>
+  </div>
+</footer>
+
+<script>
+  const prog=document.getElementById('progress');
+  const tb=document.querySelector('.topbar');
+  const onScroll=()=>{const h=document.documentElement;const y=h.scrollTop;prog.style.width=(y/(h.scrollHeight-h.clientHeight)*100)+'%';tb.classList.toggle('scrolled',y>16);document.body.classList.toggle('scrolled',y>140);};
+  document.addEventListener('scroll',onScroll,{passive:true});onScroll();
+  const io=new IntersectionObserver((es)=>{es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}})},{threshold:.12});
+  document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+  const links=[...document.querySelectorAll('.nav a:not(.gh)')];
+  const map=links.map(a=>({a,sec:document.querySelector(a.getAttribute('href'))})).filter(x=>x.sec);
+  const navIO=new IntersectionObserver((es)=>{es.forEach(e=>{if(e.isIntersecting){links.forEach(l=>l.classList.remove('active'));const m=map.find(x=>x.sec===e.target);if(m)m.a.classList.add('active');}})},{rootMargin:'-45% 0px -50% 0px'});
+  map.forEach(x=>navIO.observe(x.sec));
+</script>
+</body>
+</html>

@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.14.2](https://github.com/brentguistwite/springfield/compare/v0.14.1...v0.14.2) (2026-05-28)
+
+
+### Bug Fixes
+
+* **planrun:** exclude UserStory.Passes from InputDigest (drift-neutral resume) ([9b5e372](https://github.com/brentguistwite/springfield/commit/9b5e372aa634d7ea7c2702057bd3dc1f931aa7c6))
+
+## [0.14.1](https://github.com/brentguistwite/springfield/compare/v0.14.0...v0.14.1) (2026-05-28)
+
+
+### Bug Fixes
+
+* **exec:** raise scanner buffer to 16 MiB, surface scanner errors ([a926798](https://github.com/brentguistwite/springfield/commit/a9267988aeb76fa8550af598df818e3511f49fe7))
+
+## [0.14.0](https://github.com/brentguistwite/springfield/compare/v0.13.0...v0.14.0) (2026-05-28)
+
+
+### Features
+
+* manual CLI install + zero-mutation .springfield guards (onboarding papercuts) ([#66](https://github.com/brentguistwite/springfield/issues/66)) ([a314cae](https://github.com/brentguistwite/springfield/commit/a314caef96c89e67d9fd2128b9186d8b48cb21b0))
+
+
+### Bug Fixes
+
+* **planrun:** report honored passes, not scanned markers, in progress.md ([#64](https://github.com/brentguistwite/springfield/issues/64)) ([c0131fe](https://github.com/brentguistwite/springfield/commit/c0131fee363f08ad1a104d51d34db0d3d35bbd68))
+
 ## [0.13.0](https://github.com/brentguistwite/springfield/compare/v0.12.0...v0.13.0) (2026-05-14)
 
 
