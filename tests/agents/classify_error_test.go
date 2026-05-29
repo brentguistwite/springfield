@@ -293,6 +293,26 @@ func TestClaudeClassifyErrorToolResultAppHTTP500IsFatal(t *testing.T) {
 	}
 }
 
+func TestClaudeClassifyErrorCleanExitWithRetryableEventIsRetryable(t *testing.T) {
+	classifier, ok := claude.New(osexec.LookPath).(agents.ErrorClassifier)
+	if !ok {
+		t.Fatal("claude adapter does not implement ErrorClassifier")
+	}
+
+	// Clean exit (exitCode 0) with a synthesized validator error, but the
+	// events carry a rate_limit signal. The retryable scan must run before
+	// the exitCode==0 fatal bail-out, so this classifies retryable and the
+	// agent_priority fallback can fire.
+	events := []coreexec.Event{
+		{Type: coreexec.EventStderr, Data: "rate_limit exceeded, retry later"},
+	}
+
+	got := classifier.ClassifyError(events, 0, assertErr("claude exited without a successful tool_result"))
+	if got != agents.ErrorClassRetryable {
+		t.Fatalf("ClassifyError() = %q, want %q", got, agents.ErrorClassRetryable)
+	}
+}
+
 func TestCodexClassifyErrorCommandOutputHTTP429IsFatal(t *testing.T) {
 	classifier, ok := codex.New(osexec.LookPath).(agents.ErrorClassifier)
 	if !ok {

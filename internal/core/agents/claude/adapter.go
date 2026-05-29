@@ -149,9 +149,6 @@ func (a *adapter) SuggestedModels() []string {
 }
 
 func (a *adapter) ClassifyError(events []coreexec.Event, exitCode int, err error) agents.ErrorClass {
-	if exitCode == 0 {
-		return agents.ErrorClassFatal
-	}
 	if errors.Is(err, osexec.ErrNotFound) {
 		return agents.ErrorClassRetryable
 	}
@@ -162,6 +159,15 @@ func (a *adapter) ClassifyError(events []coreexec.Event, exitCode int, err error
 		if claudeRetryableEvent(event) {
 			return agents.ErrorClassRetryable
 		}
+	}
+	// Clean-exit fatal bail-out runs LAST, after the retryable scans.
+	// ValidateResult synthesizes an error on a clean (exitCode 0) run when
+	// the transcript lacks a paired tool_result — the truncation pattern that
+	// rate-limits and API errors produce. Scanning the events first lets that
+	// synthesized error classify retryable so the agent_priority fallback can
+	// fire, while a genuinely clean exit with no retryable signal stays fatal.
+	if exitCode == 0 {
+		return agents.ErrorClassFatal
 	}
 	return agents.ErrorClassFatal
 }
