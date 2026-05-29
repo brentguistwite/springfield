@@ -378,6 +378,7 @@ var claudeRetryableNeedles = []string{
 	"rate limit",
 	"rate-limit",
 	"rate_limit",
+	"api_error_status",
 	"too many requests",
 	"429",
 	"quota exceeded",
@@ -407,12 +408,30 @@ func errorString(err error) string {
 	return err.Error()
 }
 
-func claudeRetryableText(s string) bool {
+// claudeRetryableStdoutNeedles is the NARROW list scanned against stdout.
+// stdout carries two unrelated kinds of text under --output-format stream-json:
+// claude-code's own structured API signals (rate_limit_event, api_error_status,
+// overloaded_error) AND the verbatim content of tool_result events — i.e. the
+// output of whatever tool the agent ran. Bare numeric/phrase needles like "500"
+// or "service unavailable" are meaningful on stderr (claude-code's diagnostics)
+// but would falsely match app-level errors echoed inside tool_result content
+// (e.g. an app that "returned HTTP 500"). Those are the agent's task failures,
+// not upstream Anthropic issues, and must stay Fatal — so stdout only trips on
+// the explicit structured-signal fields below.
+var claudeRetryableStdoutNeedles = []string{
+	"rate limit",
+	"rate-limit",
+	"rate_limit",
+	"api_error_status",
+	"overloaded_error",
+}
+
+func containsRetryableNeedle(s string, needles []string) bool {
 	s = strings.ToLower(strings.TrimSpace(s))
 	if s == "" {
 		return false
 	}
-	for _, needle := range claudeRetryableNeedles {
+	for _, needle := range needles {
 		if strings.Contains(s, needle) {
 			return true
 		}
@@ -420,9 +439,20 @@ func claudeRetryableText(s string) bool {
 	return false
 }
 
+func claudeRetryableText(s string) bool {
+	return containsRetryableNeedle(s, claudeRetryableNeedles)
+}
+
+// claudeRetryableEvent scans a single output event for retryable signals,
+// stream-aware: stdout is matched against the narrow structured-signal list
+// (claudeRetryableStdoutNeedles) so app-level tool_result errors don't false-
+// positive, while stderr — claude-code's own diagnostics — uses the full
+// needle list. Dropping the prior stderr-only filter lets the structured
+// rate_limit_event / api_error_status payloads that stream-json emits on
+// stdout become visible to the retryable scan.
 func claudeRetryableEvent(event coreexec.Event) bool {
-	if event.Type != coreexec.EventStderr {
-		return false
+	if event.Type == coreexec.EventStdout {
+		return containsRetryableNeedle(event.Data, claudeRetryableStdoutNeedles)
 	}
 	return claudeRetryableText(event.Data)
 }
