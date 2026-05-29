@@ -176,14 +176,20 @@ func (p *Project) AcceptInputDrift(planID, digest string) (*RecoveryAction, erro
 	if ps.Status == StatusRunning {
 		return nil, fmt.Errorf("plan %q is currently running (status=running); wait for it to finish or run \"springfield recover --plan %s\" to normalize state before accepting drift", planID, planID)
 	}
-	// Idempotence: if the plan is already pending AND the recorded digest
-	// already matches the supplied digest, there is no drift to accept. Reject
-	// rather than appending a misleading "accepted drift" history entry for a
-	// no-op invocation. Same shape as RecoverRetryMerge's "merge already
-	// succeeded" guard — operator-driven escape hatches are explicit about
-	// no-ops to keep the recovery history honest.
-	if ps.Status == StatusPending && ps.InputDigest == digest {
-		return nil, fmt.Errorf("plan %q is already pending with the supplied digest; nothing to accept", planID)
+	// Idempotence + misuse guard: if the recorded digest already matches the
+	// supplied digest, there is NO DRIFT — regardless of plan status. The
+	// pending case is a true no-op; the failed/interrupted/needs-human case
+	// with matching digest is operator misuse (they want RecoverRetry, not
+	// accept-drift, because the failure wasn't from changed inputs). Both
+	// should reject with a clear pointer to the right path, rather than
+	// silently rewriting the digest to the same value and appending a
+	// misleading "accepted drift" history entry. Adversarial review round 2
+	// (R3F3) caught the broader case; the original guard only covered pending.
+	if ps.InputDigest == digest {
+		if ps.Status == StatusPending {
+			return nil, fmt.Errorf("plan %q is already pending with the supplied digest; nothing to accept", planID)
+		}
+		return nil, fmt.Errorf("plan %q already has the supplied digest recorded; the failure was not caused by input drift — use \"springfield recover --plan %s\" to retry instead", planID, planID)
 	}
 
 	rec := RecoveryAction{

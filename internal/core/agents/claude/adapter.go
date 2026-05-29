@@ -480,7 +480,11 @@ func errorString(err error) string {
 // claude-code's own diagnostics.
 var claudeRetryableStdoutNeedles = []string{
 	"rate_limit_event",
-	"rate_limit",
+	// "rate_limit" (underscore) intentionally removed: it false-positives on
+	// app tool_result content like `{"error":"rate_limit_exceeded"}`. The
+	// "rate_limit_event" entry above already structurally covers Claude's
+	// actual rate-limit stream event (Contains-style match catches it
+	// regardless of surrounding JSON wrapping).
 	"api_error_status",
 	"overloaded_error",
 }

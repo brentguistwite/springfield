@@ -3,6 +3,7 @@ package docs_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -37,15 +38,15 @@ func TestPRDFormatHasNoCopyablePassMarkers(t *testing.T) {
 	}
 	content := string(data)
 
-	forbidden := []string{
-		"<story-pass>US-001</story-pass>",
-		"<story-pass>US-099</story-pass>",
-	}
-	for _, lit := range forbidden {
-		if strings.Contains(content, lit) {
-			t.Errorf("docs/prd-format.md contains copyable marker literal %q; "+
-				"use abstract US-NNN placeholder notation instead", lit)
-		}
+	// Match ANY concrete US-NNN id inside a <story-pass> marker, not just the
+	// two original offenders (US-001, US-099). Without this generalization a
+	// future edit introducing e.g. <story-pass>US-042</story-pass> would sail
+	// through and recreate the same hallucination footgun.
+	concretePassMarker := regexp.MustCompile(`<story-pass>US-\d+</story-pass>`)
+	if matches := concretePassMarker.FindAllString(content, -1); len(matches) > 0 {
+		t.Errorf("docs/prd-format.md contains %d copyable marker literal(s) %v; "+
+			"all <story-pass> examples in this doc must use abstract US-NNN placeholder notation, "+
+			"never a concrete numeric id", len(matches), matches)
 	}
 }
 

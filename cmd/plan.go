@@ -215,17 +215,27 @@ func NewPlanCommand() *cobra.Command {
 					sameUnit := func(a, b conductor.PlanUnit) bool {
 						return a.Title == b.Title && a.Path == b.Path && a.Order == b.Order
 					}
+					// Two-pass to avoid order-slot collisions between preserved units
+					// that swap Order values. If A: order 1→2 and B: order 2→1, a
+					// single-pass drop-and-add of A would re-add A at order 2 while B
+					// still occupies that slot, causing AddPlanUnit to fail with
+					// "order N already used" — after archive has already run, leaving
+					// the operator stranded. Pass 1: drop every drifted/new ID up
+					// front so no preserved unit blocks a slot the new envelope
+					// wants. Pass 2: add every unit unconditionally.
 					for _, unit := range replaceOut.Units {
-						if prior, already := existing[unit.ID]; already {
-							if sameUnit(prior, unit) {
-								continue
-							}
-							// Drift in Title/Path/Order — drop the stale record so the
-							// new envelope's values take effect. RemovePlanUnit on a
-							// known-registered ID returns nil; ignoring its error here
-							// is safe because the next AddPlanUnit call would surface
-							// the same condition.
-							_ = project.RemovePlanUnit(unit.ID)
+						if prior, already := existing[unit.ID]; already && sameUnit(prior, unit) {
+							continue
+						}
+						// Drift (or new ID not in existing). RemovePlanUnit on an
+						// unregistered ID is a safe no-op for this purpose; ignoring
+						// its error is intentional, the next AddPlanUnit would surface
+						// any real condition.
+						_ = project.RemovePlanUnit(unit.ID)
+					}
+					for _, unit := range replaceOut.Units {
+						if prior, already := existing[unit.ID]; already && sameUnit(prior, unit) {
+							continue
 						}
 						if _, err := project.AddPlanUnit(conductor.PlanUnitInput{
 							ID:    unit.ID,

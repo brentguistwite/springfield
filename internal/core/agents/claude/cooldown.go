@@ -37,9 +37,14 @@ var (
 	// reRateLimitEvent / reResetsAt parse claude-code's structured
 	// --output-format stream-json rate_limit_event:
 	// {"type":"rate_limit_event","rate_limit_info":{"resetsAt":<epoch>,...}}
-	// resetsAt is a Unix-second epoch, so it feeds capReset directly — no
-	// wall-clock or timezone inference. Both must appear on the same line
-	// (one JSON event per stream-json line) for the structured branch to fire.
+	// resetsAt is a Unix-second epoch (observed values in 2026 are 10 digits,
+	// e.g. 1748506800 — confirmed against live stream-json output during the
+	// 2026-05-28 dogfood batch). \d{9,11} bounds matches to plausible Unix-
+	// second ranges and deliberately rejects ms-precision values (13 digits)
+	// so a future schema change to ms would silently fall through to
+	// text-based parsing rather than installing a cooldown 1000× too long.
+	// Both regexes must match on the same line (one JSON event per
+	// stream-json line) for the structured branch to fire.
 	reRateLimitEvent = regexp.MustCompile(`"type"\s*:\s*"rate_limit_event"`)
 	reResetsAt       = regexp.MustCompile(`"resetsAt"\s*:\s*(\d{9,11})`)
 )

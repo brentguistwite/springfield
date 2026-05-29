@@ -65,6 +65,51 @@ func TestStatusSuppressesFatalErrorAfterRecover(t *testing.T) {
 	}
 }
 
+// TestStatusKeepsFatalErrorForNeedsHumanHalt pins the round-2 adversarial-review
+// fix (R3F2): a batch halted on StatusNeedsHuman writes FatalError to run.json
+// the same way StatusFailed does (cmd/start.go), but the previous version of
+// batchHasFailedPlan only checked StatusFailed — silently suppressing the error
+// message for needs-human halts even though the plan still needs operator
+// attention. With the broadened predicate, both halting statuses keep the error
+// visible until they are actually resolved.
+func TestStatusKeepsFatalErrorForNeedsHumanHalt(t *testing.T) {
+	bin := buildBinary(t)
+	root := t.TempDir()
+	writeSpringfieldConfig(t, root, "claude")
+
+	plans := []conductor.PlanUnit{
+		{ID: "alpha", Title: "Alpha", Path: ".springfield/plans/alpha/prd.json", Order: 1},
+	}
+	writePRDJSON(t, root, "alpha")
+	writeConductorConfigBinary(t, root, &conductor.Config{
+		PlansDir:                   ".springfield/plans",
+		WorktreeBase:               ".worktrees",
+		MaxRetries:                 2,
+		SingleWorkstreamIterations: 50,
+		SingleWorkstreamTimeout:    3600,
+		Tool:                       "claude",
+		PlanUnits:                  plans,
+	})
+
+	writeActiveBatchBinaryN(t, root, "batch-001", "Active Batch", []string{"alpha"})
+	if err := batch.WriteRun(root, batch.Run{ActiveBatchID: "batch-001", FatalError: "pre-merge review halted: needs human attention"}); err != nil {
+		t.Fatalf("WriteRun: %v", err)
+	}
+	writeConductorStateBinary(t, root, &conductor.State{
+		Plans: map[string]*conductor.PlanState{
+			"alpha": {Status: conductor.StatusNeedsHuman, Error: "halt verdict from reviewer", Attempts: 1},
+		},
+	})
+
+	out, err := runBinaryIn(t, bin, root, "status")
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Fatal error") {
+		t.Fatalf("needs-human halts must keep the batch-level fatal error visible (operator still owes attention):\n%s", out)
+	}
+}
+
 // TestStatusSuppressesFatalErrorAfterMarkCompleted pins D1 for the A9 path:
 // `recover --plan X --mark-completed` flips a failed plan to StatusCompleted,
 // and `status` must also suppress the stale batch-level fatal error in that

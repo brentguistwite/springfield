@@ -336,6 +336,29 @@ func TestClaudeClassifyErrorToolResultRateLimitPhraseIsFatal(t *testing.T) {
 	}
 }
 
+// TestClaudeClassifyErrorToolResultRateLimitUnderscoreIsFatal pins the round-2
+// adversarial-review fix (R1F1 + R2F1, two reviewers agreed): the stdout needle
+// list previously contained "rate_limit" (underscore form) which substring-
+// matched app-emitted tool_result bodies like `{"error":"rate_limit_exceeded"}`,
+// misclassifying a successful app run as Retryable. The sibling test above
+// covers the space variant; this covers the underscore variant.
+func TestClaudeClassifyErrorToolResultRateLimitUnderscoreIsFatal(t *testing.T) {
+	classifier, ok := claude.New(osexec.LookPath).(agents.ErrorClassifier)
+	if !ok {
+		t.Fatal("claude adapter does not implement ErrorClassifier")
+	}
+
+	events := append(
+		loadFixtureEvents(t, filepath.Join("fixtures", "claude", "tool-error-all.json")),
+		coreexec.Event{Type: coreexec.EventStdout, Data: `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_05","content":"{\"error\":\"rate_limit_exceeded\",\"detail\":\"per-tenant quota\"}","is_error":true}]}}`},
+	)
+
+	got := classifier.ClassifyError(events, 1, assertErr("claude failed"))
+	if got != agents.ErrorClassFatal {
+		t.Fatalf("ClassifyError() = %q, want %q (app-level rate_limit_exceeded in tool_result must stay fatal — the structured rate_limit_event needle covers Claude's actual signal)", got, agents.ErrorClassFatal)
+	}
+}
+
 func TestCodexClassifyErrorCommandOutputHTTP429IsFatal(t *testing.T) {
 	classifier, ok := codex.New(osexec.LookPath).(agents.ErrorClassifier)
 	if !ok {

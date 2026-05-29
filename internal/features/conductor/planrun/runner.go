@@ -481,10 +481,13 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		}
 
 		// B2 thrash circuit-breaker: a clean-exiting iteration that burned more
-		// than the configured turn cap without completing is treated as a
-		// failure rather than allowed to spin (dogfood: 84 turns → API 400).
-		// COMPLETE always wins, so this never fires on a completed iteration.
-		if turnErr := EnforceTurnCap(result.Events, in.MaxTurnsPerIteration); turnErr != nil {
+		// than the configured turn cap without legitimately completing is
+		// treated as a failure rather than allowed to spin (dogfood: 84 turns
+		// → API 400). completeHonored is checked above so completed iterations
+		// never reach this; we pass it explicitly anyway so EnforceTurnCap can
+		// distinguish a HONORED COMPLETE from a PREMATURE COMPLETE (the latter
+		// must NOT defuse the cap — adversarial review round 2 caught this).
+		if turnErr := EnforceTurnCap(result.Events, in.MaxTurnsPerIteration, completeHonored); turnErr != nil {
 			_ = AppendProgress(progressPath, fmt.Sprintf("%s %s", now().UTC().Format(time.RFC3339), turnErr.Error()))
 			finalRunErr = turnErr
 			exitReason = TurnCapExceededReason

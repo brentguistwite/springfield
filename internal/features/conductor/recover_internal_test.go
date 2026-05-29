@@ -1,6 +1,9 @@
 package conductor
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func newProjectWithPlan(id string, status PlanStatus) *Project {
 	return &Project{
@@ -102,6 +105,37 @@ func TestAcceptInputDriftIdempotentOnMatchingDigest(t *testing.T) {
 	}
 	if got := p.State.Plans["P"]; len(got.RecoveryHistory) != 0 {
 		t.Fatalf("no-op accept-drift must NOT append history, got %+v", got.RecoveryHistory)
+	}
+}
+
+// TestAcceptInputDriftRejectsFailedWithMatchingDigest pins the round-2
+// adversarial-review fix (R3F3): the original no-op guard only covered
+// StatusPending+matching-digest. A failed (or interrupted, or needs-human)
+// plan whose recorded digest still matches the supplied digest means the
+// failure was NOT caused by input drift — accept-drift is the wrong tool.
+// The fix broadens the guard so any matching-digest invocation rejects with a
+// pointer to "springfield recover --plan X" instead of silently rewriting
+// the digest to the same value and appending a misleading history entry.
+func TestAcceptInputDriftRejectsFailedWithMatchingDigest(t *testing.T) {
+	p := newProjectWithPlan("P", StatusFailed)
+	p.State.Plans["P"].InputDigest = "sha256:same"
+	p.State.Plans["P"].Error = "agent crashed"
+	_, err := p.AcceptInputDrift("P", "sha256:same")
+	if err == nil {
+		t.Fatal("AcceptInputDrift on failed+matching-digest should error — failure wasn't from drift")
+	}
+	// Error message should point operator at the right path (recover, not
+	// accept-drift) so they don't double down on the wrong tool.
+	if !strings.Contains(err.Error(), "springfield recover --plan") {
+		t.Fatalf("error must direct operator to recover --plan, got: %v", err)
+	}
+	// History must be untouched — no misleading "accept-drift" entry.
+	if got := p.State.Plans["P"]; len(got.RecoveryHistory) != 0 {
+		t.Fatalf("rejected accept-drift must NOT append history, got %+v", got.RecoveryHistory)
+	}
+	// Status must be untouched — the failed plan stays failed.
+	if got := p.State.Plans["P"].Status; got != StatusFailed {
+		t.Fatalf("rejected accept-drift must NOT mutate status, got %q", got)
 	}
 }
 

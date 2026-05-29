@@ -46,9 +46,9 @@ func resultEvent(numTurns int) coreexec.Event {
 }
 
 func TestEnforceTurnCapOverCapWithoutCompleteFails(t *testing.T) {
-	err := planrun.EnforceTurnCap([]coreexec.Event{resultEvent(84)}, 40)
+	err := planrun.EnforceTurnCap([]coreexec.Event{resultEvent(84)}, 40, false)
 	if err == nil {
-		t.Fatal("num_turns 84 > cap 40 without COMPLETE must synthesize an error")
+		t.Fatal("num_turns 84 > cap 40 without honored COMPLETE must synthesize an error")
 	}
 	if !strings.Contains(err.Error(), planrun.TurnCapExceededReason) {
 		t.Fatalf("error must carry %q tag, got %q", planrun.TurnCapExceededReason, err.Error())
@@ -59,33 +59,46 @@ func TestEnforceTurnCapOverCapWithoutCompleteFails(t *testing.T) {
 }
 
 func TestEnforceTurnCapWithinCapNoError(t *testing.T) {
-	if err := planrun.EnforceTurnCap([]coreexec.Event{resultEvent(40)}, 40); err != nil {
+	if err := planrun.EnforceTurnCap([]coreexec.Event{resultEvent(40)}, 40, false); err != nil {
 		t.Fatalf("num_turns == cap must not error, got %v", err)
 	}
-	if err := planrun.EnforceTurnCap([]coreexec.Event{resultEvent(12)}, 40); err != nil {
+	if err := planrun.EnforceTurnCap([]coreexec.Event{resultEvent(12)}, 40, false); err != nil {
 		t.Fatalf("num_turns < cap must not error, got %v", err)
 	}
 }
 
-func TestEnforceTurnCapCompleteWinsOverCap(t *testing.T) {
-	// 999 turns is far over the cap, but COMPLETE was emitted: the work is done,
-	// so the cap must not fire. The COMPLETE event and the result event MUST be
-	// separate Events — packing them into a single Event.Data string breaks the
-	// num_turns parse, and the test would pass even with the guard removed.
+func TestEnforceTurnCapHonoredCompleteWinsOverCap(t *testing.T) {
+	// 999 turns is far over the cap, but the caller confirms COMPLETE was
+	// honored (all stories passed): the work is done, so the cap must not
+	// fire. Honored-ness is the caller's signal — EnforceTurnCap does not
+	// derive it from events because ScanMarkers can't distinguish a honored
+	// COMPLETE from a premature one (the bug the explicit parameter fixes).
 	evs := resultEvents(999, true)
-	if err := planrun.EnforceTurnCap(evs, 40); err != nil {
-		t.Fatalf("COMPLETE must win over the turn cap regardless of num_turns, got %v", err)
+	if err := planrun.EnforceTurnCap(evs, 40, true); err != nil {
+		t.Fatalf("honored COMPLETE must win over the turn cap regardless of num_turns, got %v", err)
 	}
-	// Sanity: without the COMPLETE event, the same 999-turn result MUST trip
-	// the cap. This locks in that the previous assertion is exercising the
-	// COMPLETE guard, not a parse failure.
-	if err := planrun.EnforceTurnCap(evs[1:], 40); err == nil {
-		t.Fatal("999 turns without COMPLETE must trip the cap (sanity check that the prior test exercises the guard, not a parse failure)")
+}
+
+func TestEnforceTurnCapPrematureCompleteDoesNotDefuse(t *testing.T) {
+	// Premature COMPLETE (marker emitted before all stories passed) is signaled
+	// by the caller passing completeHonored=false. The cap MUST still fire on
+	// over-cap turn counts — this is the dogfood-incident protection (84 turns
+	// of thrash, agent emits COMPLETE prematurely, runner ignores marker, cap
+	// must still trip rather than letting the iteration loop spin to 50× cap).
+	// Adversarial review round 2 R1F3 + R3 caught this; the old EnforceTurnCap
+	// internally called ScanMarkers and was defused by ANY COMPLETE marker.
+	evs := resultEvents(999, true) // event stream contains COMPLETE, but caller says NOT honored
+	err := planrun.EnforceTurnCap(evs, 40, false)
+	if err == nil {
+		t.Fatal("premature COMPLETE (completeHonored=false) MUST NOT defuse the cap; want non-nil error")
+	}
+	if !strings.Contains(err.Error(), planrun.TurnCapExceededReason) {
+		t.Fatalf("error must carry %q tag, got %q", planrun.TurnCapExceededReason, err.Error())
 	}
 }
 
 func TestEnforceTurnCapDisabledWhenZero(t *testing.T) {
-	if err := planrun.EnforceTurnCap([]coreexec.Event{resultEvent(500)}, 0); err != nil {
+	if err := planrun.EnforceTurnCap([]coreexec.Event{resultEvent(500)}, 0, false); err != nil {
 		t.Fatalf("cap of 0 disables enforcement, got %v", err)
 	}
 }
@@ -94,7 +107,7 @@ func TestEnforceTurnCapNoResultEventNoError(t *testing.T) {
 	// Agents that never report num_turns (codex, gemini) leave the field at 0
 	// and must never be capped by this monitor.
 	ev := coreexec.Event{Type: coreexec.EventStdout, Data: "some non-json agent chatter", Time: time.Now()}
-	if err := planrun.EnforceTurnCap([]coreexec.Event{ev}, 40); err != nil {
+	if err := planrun.EnforceTurnCap([]coreexec.Event{ev}, 40, false); err != nil {
 		t.Fatalf("absent num_turns must not trip the cap, got %v", err)
 	}
 }
