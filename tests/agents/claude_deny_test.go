@@ -34,8 +34,13 @@ func TestClaudeAdapterInjectsControlPlaneHookSettings(t *testing.T) {
 		t.Fatalf("parse --settings JSON %q: %v", jsonVal, err)
 	}
 
-	if _, ok := raw["permissions"]; ok {
-		t.Fatalf("expected no permissions key in settings, got %v", raw)
+	// permissions.deny carries the subagent tool-surface restriction (see
+	// TestClaudeSubagentDeniesParentHarnessPrimitives). The hook below is a
+	// separate, independent control-plane guard; both coexist in the payload.
+	if perms, ok := raw["permissions"].(map[string]any); !ok {
+		t.Fatalf("expected permissions map in settings, got %v", raw)
+	} else if _, ok := perms["deny"]; !ok {
+		t.Fatalf("expected permissions.deny in settings, got %v", perms)
 	}
 
 	hooks, ok := raw["hooks"].(map[string]any)

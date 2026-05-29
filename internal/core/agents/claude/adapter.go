@@ -213,6 +213,9 @@ func (a *adapter) springfieldControlPlaneSettingsJSON() string {
 				}},
 			}},
 		},
+		"permissions": map[string]any{
+			"deny": subagentDeniedTools(),
+		},
 	}
 
 	pluginDisables := a.resolveSubagentPluginDisables()
@@ -227,6 +230,47 @@ func (a *adapter) springfieldControlPlaneSettingsJSON() string {
 		return `{"hooks":{"PreToolUse":[{"matcher":"Write|Edit|MultiEdit|NotebookEdit|Bash","hooks":[{"type":"command","command":"` + hookCommand + `"}]}]}}`
 	}
 	return string(data)
+}
+
+// subagentDeniedTools returns the built-in parent-harness primitives that a
+// Springfield-managed subagent must NOT inherit. They are emitted under
+// permissions.deny in the --settings payload.
+//
+// Why a deny list (not a positive allowlist): in Claude Code settings.json,
+// permissions.allow only PRE-APPROVES a tool (skips the prompt) — it does not
+// remove unlisted tools. permissions.deny is the only settings.json mechanism
+// that actually strips a tool from the subagent's surface (`--disallowedTools`
+// is the CLI-flag equivalent; there is no top-level disallowedTools key in
+// settings.json). A deny list also leaves project-configured MCP tools
+// (mcp__*) and the implementer tool surface (Bash, Edit, Glob, Grep,
+// MultiEdit, NotebookEdit, Read, Skill, ToolSearch, Write) untouched for free
+// — a positive allowlist would have to enumerate unknowable MCP tool names.
+//
+// These primitives are no-op footguns inside a managed subagent: the dogfood
+// plan-04 agent actually invoked ScheduleWakeup from within one, burning a
+// turn on a tool that can never fire in this context.
+func subagentDeniedTools() []string {
+	return []string{
+		// Subagent spawning / orchestration — prevents recursion.
+		"Task",
+		"TaskCreate", "TaskGet", "TaskList", "TaskOutput", "TaskStop", "TaskUpdate",
+		"Workflow",
+		// Scheduling / background wakeups — meaningless in a one-shot run.
+		"ScheduleWakeup",
+		"CronCreate", "CronDelete", "CronList",
+		"Monitor",
+		// Network reach beyond the agent CLIs' own calls.
+		"WebFetch", "WebSearch",
+		// Outbound notification / remote-trigger / messaging surfaces.
+		"PushNotification",
+		"RemoteTrigger",
+		"SendMessage",
+		// Team management.
+		"TeamCreate", "TeamDelete",
+		// Plan / worktree mode switches owned by the parent harness.
+		"EnterPlanMode", "ExitPlanMode",
+		"EnterWorktree", "ExitWorktree",
+	}
 }
 
 // resolveSubagentPluginDisables reads ~/.claude/settings.json at Command time
