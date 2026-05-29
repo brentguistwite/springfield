@@ -73,7 +73,11 @@ func printBatchStatus(w io.Writer, b batch.Batch, run batch.Run, state *conducto
 		printProgressBlock(w, b, state)
 	}
 
-	if run.FatalError != "" {
+	// The batch-level fatal error is a post-mortem of the plan that halted the
+	// run. Once that plan has been recovered (no plan in the batch is failed
+	// anymore), the error is stale — suppress it so it does not sit beside a
+	// fresh "Next:" gate and confuse the operator (D1).
+	if run.FatalError != "" && batchHasFailedPlan(b, state) {
 		fmt.Fprintf(w, "Fatal error: %s\n", run.FatalError)
 	}
 	if len(run.LastRetry) > 0 {
@@ -111,6 +115,24 @@ func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State) {
 	case len(p.Pending) > 0:
 		fmt.Fprintf(w, "Next: %s\n", p.Pending[0])
 	}
+}
+
+// batchHasFailedPlan reports whether any plan in the batch is still in a failed
+// state per the conductor snapshot. It gates whether the batch-level fatal error
+// is still relevant: a sequential batch halts on the plan it leaves failed, so
+// once that plan is recovered (e.g. via "springfield recover --plan X") no plan
+// remains failed and the now-stale error is dropped. When state is nil the
+// snapshot is unavailable, so the error cannot be proven stale and is kept.
+func batchHasFailedPlan(b batch.Batch, state *conductor.State) bool {
+	if state == nil {
+		return true
+	}
+	for _, id := range b.PlanIDs {
+		if ps, ok := state.Plans[id]; ok && ps != nil && ps.Status == conductor.StatusFailed {
+			return true
+		}
+	}
+	return false
 }
 
 func printPlanRegistry(w io.Writer, root string) error {

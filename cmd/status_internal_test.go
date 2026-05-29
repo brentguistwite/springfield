@@ -361,6 +361,67 @@ func TestStatusDoesNotRewriteRunningPlanWhileStartLockHeld(t *testing.T) {
 	}
 }
 
+// TestStatusSuppressesStaleFatalErrorAfterRecover pins D1: once the failed plan
+// the fatal error refers to has been recovered (back to pending), the stale
+// batch-level "Fatal error" line must not render beside the fresh gate.
+func TestStatusSuppressesStaleFatalErrorAfterRecover(t *testing.T) {
+	root := newStatusRoot(t)
+	writeStatusPlan(t, root, "feature.md")
+	writeStatusConfig(t, root, []map[string]any{
+		{"id": "01", "path": ".springfield/plans/feature.md", "order": 1},
+	})
+	writeActiveBatch(t, root, "batch-001", "Active Batch")
+	// A prior failure recorded a batch-level fatal error...
+	if err := batch.WriteRun(root, batch.Run{ActiveBatchID: "batch-001", FatalError: "plan 01 crashed: boom"}); err != nil {
+		t.Fatalf("write run: %v", err)
+	}
+	// ...then recovery reset plan 01 back to pending.
+	writeStatusState(t, root, map[string]any{
+		"plans": map[string]any{
+			"01": map[string]any{"status": "pending"},
+		},
+	})
+
+	out, err := runStatusIn(root)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if strings.Contains(out, "Fatal error") {
+		t.Fatalf("stale fatal error should be suppressed after recover:\n%s", out)
+	}
+}
+
+// TestStatusKeepsFatalErrorWhileAnotherPlanStillFailed pins the multi-plan half
+// of D1: recovering one plan must not hide an error while another plan in the
+// batch is still failed.
+func TestStatusKeepsFatalErrorWhileAnotherPlanStillFailed(t *testing.T) {
+	root := newStatusRoot(t)
+	writeStatusPlan(t, root, "feature.md")
+	writeStatusConfig(t, root, []map[string]any{
+		{"id": "01", "path": ".springfield/plans/feature.md", "order": 1},
+		{"id": "02", "path": ".springfield/plans/feature.md", "order": 2},
+	})
+	writeActiveBatchN(t, root, "batch-001", "Active Batch", []string{"01", "02"})
+	if err := batch.WriteRun(root, batch.Run{ActiveBatchID: "batch-001", FatalError: "plan 02 crashed: boom"}); err != nil {
+		t.Fatalf("write run: %v", err)
+	}
+	// 01 recovered to pending, 02 still failed.
+	writeStatusState(t, root, map[string]any{
+		"plans": map[string]any{
+			"01": map[string]any{"status": "pending"},
+			"02": map[string]any{"status": "failed", "error": "boom"},
+		},
+	})
+
+	out, err := runStatusIn(root)
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if !strings.Contains(out, "Fatal error") {
+		t.Fatalf("fatal error must remain while a plan is still failed:\n%s", out)
+	}
+}
+
 // --- helpers ---
 
 func newStatusRoot(t *testing.T) string {
