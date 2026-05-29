@@ -17,9 +17,10 @@ import (
 // NewRecoverCommand handles plan-failure recovery (--plan) and orphan-batch recovery.
 func NewRecoverCommand() *cobra.Command {
 	var (
-		dir      string
-		diagnose bool
-		planID   string
+		dir           string
+		diagnose      bool
+		planID        string
+		markCompleted bool
 	)
 
 	cmd := &cobra.Command{
@@ -29,7 +30,10 @@ func NewRecoverCommand() *cobra.Command {
 			"Without --plan: archive an orphaned batch (run.json with missing batch.json)\n" +
 			"and clear run state.\n\n" +
 			"With --plan <id>: diagnose or recover a failed/interrupted plan.\n" +
-			"Use --diagnose to inspect without modifying state.",
+			"Use --diagnose to inspect without modifying state.\n\n" +
+			"With --plan <id> --mark-completed: flip a non-completed plan to completed\n" +
+			"once every story in its prd.json passes, and queue the merge for the next\n" +
+			"\"springfield start\". Rejected if any story is unpassed.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			loaded, err := config.LoadFrom(dir)
@@ -38,6 +42,16 @@ func NewRecoverCommand() *cobra.Command {
 			}
 			root := loaded.RootDir
 			w := cmd.OutOrStdout()
+
+			if markCompleted {
+				if planID == "" {
+					return fmt.Errorf("--mark-completed requires --plan <id>")
+				}
+				if diagnose {
+					return fmt.Errorf("--mark-completed cannot be combined with --diagnose")
+				}
+				return runPlanMarkCompleted(w, root, planID)
+			}
 
 			if planID != "" {
 				return runPlanRecover(w, root, planID, diagnose)
@@ -50,7 +64,19 @@ func NewRecoverCommand() *cobra.Command {
 	cmd.Flags().StringVar(&dir, "dir", ".", "project root or nested path inside the Springfield project")
 	cmd.Flags().BoolVar(&diagnose, "diagnose", false, "print what Springfield can see without modifying state")
 	cmd.Flags().StringVar(&planID, "plan", "", "plan ID to diagnose or recover (omit for orphan-batch recovery)")
+	cmd.Flags().BoolVar(&markCompleted, "mark-completed", false, "with --plan: mark a non-completed plan completed (requires all stories passing) and queue its merge")
 	return cmd
+}
+
+func runPlanMarkCompleted(w io.Writer, root, planID string) error {
+	rec, err := execution.MarkPlanCompleted(root, planID)
+	if err != nil {
+		return fmt.Errorf("mark plan %q completed: %w", planID, err)
+	}
+
+	fmt.Fprintf(w, "Marked plan %q completed: %s\n", planID, rec.Reason)
+	fmt.Fprintln(w, "Run \"springfield start\" to perform the merge.")
+	return nil
 }
 
 func runPlanRecover(w io.Writer, root, planID string, diagnoseOnly bool) error {

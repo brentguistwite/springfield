@@ -2,7 +2,10 @@ package conductor
 
 import (
 	"fmt"
+	"strings"
 	"time"
+
+	"springfield/internal/features/prd"
 )
 
 // RecoverRetry resets a failed, interrupted, or needs-human plan to pending for
@@ -77,6 +80,60 @@ func (p *Project) RecoverRetryMerge(planID string) (*RecoveryAction, error) {
 	}
 
 	ps.Merge = nil
+	ps.Cleanup = nil
+	ps.RecoveryHistory = append(ps.RecoveryHistory, rec)
+	return &rec, nil
+}
+
+// MarkPlanCompleted is the operator escape hatch (A9) for a plan whose work
+// finished in the worktree but which Springfield recorded as failed,
+// interrupted, or needs-human. It validates that every story in stories has
+// Passes=true — rejecting with an error that names the unpassed stories
+// otherwise — then flips the plan to StatusCompleted and queues a pending
+// merge. The caller must persist via SaveState.
+//
+// Merge is set to MergePending, not MergeSucceeded: mark-completed never
+// publishes a merge itself. The next springfield start re-enters the normal
+// merge integration phase, which still runs the target-drift check and the
+// ff-only publish against the recorded base_head. An already-completed plan is
+// rejected; its merge is re-driven via RecoverRetryMerge/RecoverRetryIntegration.
+//
+// prd.json is the source of truth for per-story passes state; the caller reads
+// it and passes the stories in so this method stays free of file IO.
+func (p *Project) MarkPlanCompleted(planID string, stories []prd.UserStory) (*RecoveryAction, error) {
+	ps, ok := p.State.Plans[planID]
+	if !ok {
+		return nil, fmt.Errorf("plan %q has no recorded state", planID)
+	}
+	if ps.Status == StatusCompleted {
+		return nil, fmt.Errorf("plan %q is already completed; use retry-merge or retry-integration to re-drive its merge", planID)
+	}
+	if len(stories) == 0 {
+		return nil, fmt.Errorf("plan %q has no stories in prd.json; refusing to mark completed", planID)
+	}
+
+	var unpassed []string
+	for _, s := range stories {
+		if !s.Passes {
+			unpassed = append(unpassed, s.ID)
+		}
+	}
+	if len(unpassed) > 0 {
+		return nil, fmt.Errorf("cannot mark plan %q completed: %d of %d stories not passing: %s",
+			planID, len(unpassed), len(stories), strings.Join(unpassed, ", "))
+	}
+
+	now := time.Now()
+	rec := RecoveryAction{
+		Action: "mark-completed",
+		Reason: fmt.Sprintf("operator marked completed from %s; queued pending merge", ps.Status),
+		At:     now,
+	}
+
+	ps.Status = StatusCompleted
+	ps.Error = ""
+	ps.ExitReason = ""
+	ps.Merge = &MergeOutcome{Status: MergePending, AttemptedAt: now}
 	ps.Cleanup = nil
 	ps.RecoveryHistory = append(ps.RecoveryHistory, rec)
 	return &rec, nil
