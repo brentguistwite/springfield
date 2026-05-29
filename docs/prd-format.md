@@ -162,12 +162,12 @@ Agents signal story and plan completion via output markers scanned by the Spring
 ### Per-story completion
 
 ```
-<story-pass>US-001</story-pass>
+<story-pass>US-NNN</story-pass>
 ```
 
-Emit one marker for the story assigned to the current iteration, only when its acceptance criteria are verifiably met. Springfield sets `passes: true` on the matching story in `prd.json`.
+`US-NNN` is a placeholder — substitute the actual story ID assigned to the current iteration (e.g. the id Springfield names in the iteration prompt). Emit one marker for that story, only when its acceptance criteria are verifiably met. Springfield sets `passes: true` on the matching story in `prd.json`.
 
-**Off-target markers are ignored.** The runner only marks the story it assigned to the current iteration. If the agent emits `<story-pass>US-099</story-pass>` while the iteration target is `US-001`, the marker is logged as a warning to `progress.md` and discarded — `US-099` is not marked passed. This prevents a misbehaving agent from skipping future stories.
+**Off-target markers are ignored.** The runner only marks the story it assigned to the current iteration. If the agent emits a marker for any story ID *other than* the current iteration target, the marker is logged as a warning to `progress.md` and discarded — the named story is not marked passed. This prevents a misbehaving agent from skipping future stories.
 
 ### Plan completion
 
