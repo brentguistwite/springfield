@@ -17,7 +17,7 @@ const defaultReviewMethodology = `Act as a rigorous, independent code reviewer. 
 // Verbs: %[1]s = methodology, %[2]s = criteria, %[3]s = diff.
 const reviewPromptShell = `%[1]s
 
-You are reviewing a completed unit of work before it is merged into the feature branch. Emit EXACTLY ONE verdict marker on its own line, then write your findings as prose:
+You are reviewing a completed unit of work before it is merged into the feature branch. Emit EXACTLY ONE verdict marker as the ONLY content on its own line (no surrounding prose, no quoting). The scanner ignores verdict-shaped text that appears mid-line or inside quoted code — if your marker is on the same line as anything else (including quoted snippets from the diff) it will be ignored and your review will be treated as verdict-less.
 
   <review-verdict>pass</review-verdict>   — satisfies the acceptance criteria; safe to merge.
   <review-verdict>revise</review-verdict> — has problems an agent can fix; describe each so the implementer can address it.

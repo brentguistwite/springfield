@@ -11,7 +11,10 @@ import (
 	"springfield/internal/features/prd"
 )
 
-// seqRunner returns queued results in order, one per Run call.
+// seqRunner returns queued results in order, one per Run call. If a test makes
+// more Run calls than were scripted, fall back to a generic success with no
+// events so the extra call surfaces as a downstream assertion failure rather
+// than an `index out of range` panic that obscures the real test gap.
 type seqRunner struct {
 	results []coreruntime.Result
 	calls   int
@@ -20,6 +23,10 @@ type seqRunner struct {
 
 func (s *seqRunner) Run(_ context.Context, req coreruntime.Request) coreruntime.Result {
 	s.reqs = append(s.reqs, req)
+	if s.calls >= len(s.results) {
+		s.calls++
+		return coreruntime.Result{Agent: agents.AgentClaude}
+	}
 	r := s.results[s.calls]
 	s.calls++
 	return r

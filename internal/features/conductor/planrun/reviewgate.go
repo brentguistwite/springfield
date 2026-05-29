@@ -30,6 +30,7 @@ const (
 // reviewGateInput is everything the fix-loop needs. All dependencies (runner,
 // git) are injected so the gate is unit-testable with fakes.
 type reviewGateInput struct {
+	Ctx               context.Context
 	Runner            AgentRunner
 	Git               Git
 	ImplementerAgents []agents.ID
@@ -43,6 +44,12 @@ type reviewGateInput struct {
 	ProjectRoot       string
 	EvidenceDir       string
 	OnEvent           coreexec.EventHandler
+	// TamperGuard, when non-nil, wraps the fix-iteration agent run (NOT the
+	// reviewer call — the reviewer is read-only by contract). The fix
+	// iteration dispatches an implementer agent that can absolutely touch
+	// .springfield/, so it must be wrapped in the same snapshot/detect/restore
+	// the main story loop uses.
+	TamperGuard TamperGuard
 }
 
 type reviewGateResult struct {
@@ -59,6 +66,11 @@ type reviewGateResult struct {
 func runReviewGate(in reviewGateInput) reviewGateResult {
 	max := in.ReviewConfig.MaxReviewIterationsOrDefault()
 
+	ctx := in.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	var criteria []string
 	for _, s := range in.PRD.UserStories {
 		criteria = append(criteria, s.AcceptanceCriteria...)
@@ -70,11 +82,14 @@ func runReviewGate(in reviewGateInput) reviewGateResult {
 	}
 
 	for round := 1; ; round++ {
+		if err := ctx.Err(); err != nil {
+			return reviewGateResult{Outcome: reviewErrored, Err: err}
+		}
 		diff, err := in.Git.Diff(in.WorktreeRoot, in.BaseRef)
 		if err != nil {
 			return reviewGateResult{Outcome: reviewErrored, Err: fmt.Errorf("compute review diff: %w", err)}
 		}
-		rev := planreview.Review(context.Background(), planreview.ReviewInput{
+		rev := planreview.Review(ctx, planreview.ReviewInput{
 			Runner:            in.Runner,
 			AgentIDs:          reviewerAgents,
 			ExecutionSettings: in.ExecutionSettings,
@@ -110,7 +125,16 @@ func runReviewGate(in reviewGateInput) reviewGateResult {
 		if err != nil {
 			return reviewGateResult{Outcome: reviewErrored, Err: fmt.Errorf("build review-fix prompt: %w", err)}
 		}
-		fix := in.Runner.Run(context.Background(), coreruntime.Request{
+
+		// Snapshot control plane before the fix-iteration agent runs — the
+		// implementer can absolutely touch .springfield/ and the same protection
+		// the main story loop uses must apply here.
+		if in.TamperGuard != nil {
+			if snapErr := in.TamperGuard.Snapshot(); snapErr != nil {
+				return reviewGateResult{Outcome: reviewErrored, Err: fmt.Errorf("tamper guard snapshot (review-fix %d): %w", round, snapErr)}
+			}
+		}
+		fix := in.Runner.Run(ctx, coreruntime.Request{
 			AgentIDs:          in.ImplementerAgents,
 			Prompt:            fixPrompt,
 			WorkDir:           in.WorktreeRoot,
@@ -118,6 +142,16 @@ func runReviewGate(in reviewGateInput) reviewGateResult {
 			ExecutionSettings: in.ExecutionSettings,
 		})
 		writeReviewEvidence(in.EvidenceDir, fmt.Sprintf("review-fix-%d", round), fixPrompt, string(fix.Agent), fix.Events, fix.Err)
+		if in.TamperGuard != nil {
+			tamperReason, detectErr := in.TamperGuard.Detect()
+			if detectErr != nil {
+				return reviewGateResult{Outcome: reviewErrored, Err: fmt.Errorf("tamper guard detect (review-fix %d): %w", round, detectErr)}
+			}
+			if tamperReason != "" {
+				_ = in.TamperGuard.Restore()
+				return reviewGateResult{Outcome: reviewErrored, Err: fmt.Errorf("tamper-detected during review-fix %d: %s", round, tamperReason)}
+			}
+		}
 		if fix.Err != nil {
 			return reviewGateResult{Outcome: reviewErrored, Err: fmt.Errorf("review-fix iteration failed: %w", fix.Err)}
 		}

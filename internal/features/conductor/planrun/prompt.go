@@ -139,7 +139,7 @@ func BuildReviewFixPrompt(plan prd.PRD, contextMD, projectGuidance, findings, pr
 	}
 	var b strings.Builder
 	b.WriteString(header)
-	b.WriteString("\n\nA reviewer examined your completed work and requires changes before it can be merged. Address every point below, then re-emit <promise>COMPLETE</promise> when the work is ready for re-review.\n\nREVIEW FINDINGS:\n")
+	b.WriteString("\n\nA reviewer examined your completed work and requires changes before it can be merged. Address every point below, COMMIT your fixes (the next review round diffs HEAD against the base ref — uncommitted changes are invisible to the reviewer AND to the eventual merge), then re-emit <promise>COMPLETE</promise> when the work is ready for re-review.\n\nREVIEW FINDINGS:\n")
 	b.WriteString(findings)
 	b.WriteString("\n\n")
 	b.WriteString(footer)

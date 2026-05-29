@@ -70,6 +70,13 @@ The halted plan's **worktree and branch are preserved**, so you can:
 The findings to address are in `springfield status` and in the plan's review
 evidence.
 
+> **Commit your edits.** The review gate diffs the plan branch's `HEAD` against
+> its base ref; uncommitted working-tree changes are invisible both to the
+> re-review and to the eventual merge. After editing the worktree, run
+> `git -C <worktree> commit -am '...'` (or equivalent) before `springfield
+> recover`/`start`. If you forget, the next review round will see the same
+> stale code and loop on the same findings.
+
 ### 3. Reset with `springfield recover`
 
 ```

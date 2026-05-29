@@ -829,3 +829,68 @@ func TestSinglePlanReviewHaltYieldsNeedsHuman(t *testing.T) {
 		t.Fatalf("summary.json must record needs-human, got:\n%s", string(data))
 	}
 }
+
+// TestSinglePlanReviewGateFiresAtTopOfLoopOnAllPassed pins the dual-site
+// invariant: when SinglePlan re-enters a plan whose stories are ALREADY all
+// passed (e.g. a needs-human retry — recover resets status to pending but
+// leaves prd.json untouched, so the runner hits PickAllPassed on the very
+// first NextStory call), the runner MUST run the review gate at the
+// top-of-loop short-circuit, not merge unreviewed.
+//
+// Regression guard: a refactor that drops the finishWithReview() call inside
+// the `if pickStatus == PickAllPassed { ... break }` arm at the top of the
+// loop would let the retry merge without re-review and silently break the
+// needs-human recovery path. Coverage proof: this test triggers ZERO story
+// dispatches — the only agent call is the review itself.
+func TestSinglePlanReviewGateFiresAtTopOfLoopOnAllPassed(t *testing.T) {
+	root := projectFixture(t, "alpha") // story already passed
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+	g := newFakeGit()
+
+	// Only ONE Run call expected: the review itself. No story iteration.
+	runner := &queuedAgentRunner{results: []coreruntime.Result{
+		{
+			Agent:  agents.AgentClaude,
+			Status: coreruntime.StatusPassed,
+			Events: []coreexec.Event{{Type: coreexec.EventStdout, Data: "<review-verdict>halt</review-verdict>"}},
+		},
+	}}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentClaude},
+		Runner:       runner,
+		Manager:      &planrun.Manager{Git: g},
+		ReviewConfig: config.ReviewConfig{Enabled: true},
+	})
+
+	if res.Status != conductor.StatusNeedsHuman {
+		t.Fatalf("Status = %v, want StatusNeedsHuman (review at top-of-loop must fire)", res.Status)
+	}
+	if res.Err == nil {
+		t.Fatal("Err must be non-nil so the batch loop halts on the retry too")
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("expected exactly 1 agent call (review only, no story dispatch), got %d", len(runner.calls))
+	}
+
+	reloaded, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("re-LoadProject: %v", err)
+	}
+	st := reloaded.State.Plans["alpha"]
+	if st == nil {
+		t.Fatalf("no persisted state for alpha")
+	}
+	if st.Status != conductor.StatusNeedsHuman {
+		t.Fatalf("persisted Status = %v, want StatusNeedsHuman", st.Status)
+	}
+	if st.Merge != nil {
+		t.Fatalf("Merge must be nil on needs-human (Integrate must not run); got %+v", st.Merge)
+	}
+}

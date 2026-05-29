@@ -354,6 +354,7 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 			TargetPlanID:         planID,
 			EnforceProtectedBase: enforceProtected,
 			TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(root, ".springfield", "plans"), controlRoot: root},
+			Ctx:                  ctx,
 		})
 		if res.Reason == "no-eligible-plan" {
 			// The target plan is not registered in the conductor schedule —
@@ -1089,7 +1090,7 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 		project.State.Queue.Heartbeat = time.Now()
 		saveQueueState()
 
-		planErr := runOnePlan(w, project, root, worktreeBase, agentIDs, loaded, registry)
+		planErr := runOnePlan(ctx, w, project, root, worktreeBase, agentIDs, loaded, registry)
 		if planErr != nil {
 			project.State.Queue.Status = conductor.QueueHalted
 			project.State.Queue.StopReason = planErr.Error()
@@ -1112,7 +1113,7 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 
 // runOnePlan executes or merge-integrates the next eligible plan. Returns nil
 // on success, error on failure/merge-refused/cleanup-failed.
-func runOnePlan(w io.Writer, project *conductor.Project, root, worktreeBase string, agentIDs []agents.ID, loaded config.Loaded, registry agents.Registry) error {
+func runOnePlan(ctx context.Context, w io.Writer, project *conductor.Project, root, worktreeBase string, agentIDs []agents.ID, loaded config.Loaded, registry agents.Registry) error {
 	enforceProtected := !loaded.Config.Project.AllowProtectedBase
 
 	local, err := config.LoadLocalFrom(loaded.RootDir)
@@ -1162,6 +1163,7 @@ func runOnePlan(w io.Writer, project *conductor.Project, root, worktreeBase stri
 		Progress:             w,
 		EnforceProtectedBase: enforceProtected,
 		TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(root, ".springfield", "plans"), controlRoot: root},
+		Ctx:                  ctx,
 	})
 
 	if res.PlanID == "" && res.Reason == "no-eligible-plan" {

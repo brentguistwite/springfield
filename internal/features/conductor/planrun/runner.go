@@ -86,6 +86,12 @@ type SinglePlanInput struct {
 	// Zero value (Enabled=false) disables review; the per-plan prd.PRD.Review
 	// flag can still override per config.ReviewEnabledForPlan.
 	ReviewConfig config.ReviewConfig
+	// Ctx, when non-nil, is the parent context for in-loop agent runs that
+	// participate in cooperative cancellation. The legacy story-iteration
+	// dispatch sites use context.Background (no cancellation surface); the
+	// review fix-loop honours Ctx so a SIGINT mid-review unwinds promptly.
+	// nil → context.Background, preserving prior behavior.
+	Ctx context.Context
 }
 
 // SinglePlanResult summarizes the outcome.
@@ -293,6 +299,8 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			ProjectRoot:       pr,
 			EvidenceDir:       evidenceDir,
 			OnEvent:           in.OnEvent,
+			TamperGuard:       in.TamperGuard,
+			Ctx:               in.Ctx,
 		})
 		switch gate.Outcome {
 		case reviewPassed:
@@ -300,7 +308,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		case reviewNeedsHuman:
 			needsHuman = true
 			exitReason = "review-needs-human"
-			finalRunErr = errors.New("pre-merge review halted: needs human attention (see review evidence)")
+			finalRunErr = fmt.Errorf("pre-merge review halted: %s (full findings in evidence)", truncateForError(gate.Findings, 200))
 		case reviewErrored:
 			finalRunErr = gate.Err
 			exitReason = "review-errored"
@@ -695,6 +703,23 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 		progress(in.Progress, "plan %s: state save failed — %v (agent succeeded but on-disk state may be stale)\n", planID, saveErr)
 	}
 	return out
+}
+
+// truncateForError reduces s to at most max runes, replacing the tail with an
+// ellipsis when truncation happens. Used to inline a short review-findings
+// excerpt into the error message without dumping multi-KB diagnostics into
+// state files; the full findings stay in evidence.
+func truncateForError(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if max <= 0 || len(s) <= max {
+		// Collapse internal whitespace runs so the excerpt is one readable line.
+		return strings.Join(strings.Fields(s), " ")
+	}
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
 }
 
 // terminalExitReason returns the canonical exit reason for the failed state.
