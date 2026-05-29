@@ -378,6 +378,14 @@ var claudeRetryableNeedles = []string{
 	"rate limit",
 	"rate-limit",
 	"rate_limit",
+	// "usage limit" is claude-code's canonical rate-limit diagnostic
+	// ("Claude AI usage limit reached|<epoch>"). It surfaces on stderr/err,
+	// and cooldown.go's reRateLimitPhrase already treats it as a rate-limit
+	// phrase — classification must agree so the parsed reset actually gets
+	// installed instead of bailing Fatal. Kept OUT of the narrow stdout list
+	// (claudeRetryableStdoutNeedles) on purpose: that list trips on tool_result
+	// content too, and "usage limit" is generic enough to false-positive there.
+	"usage limit",
 	"api_error_status",
 	"too many requests",
 	"429",
