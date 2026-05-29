@@ -16,6 +16,7 @@ import (
 	coreruntime "springfield/internal/core/runtime"
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/conductor/planrun"
+	"springfield/internal/features/prd"
 )
 
 // fakeAgentRunner is an in-memory AgentRunner for SinglePlan tests.
@@ -946,5 +947,92 @@ func TestSinglePlanReviewAgentErrorYieldsStatusFailed(t *testing.T) {
 	}
 	if st.Merge != nil {
 		t.Fatalf("Merge must be nil on failed; got %+v", st.Merge)
+	}
+}
+
+// TestSinglePlanCompletesOnPostCompletionCrash pins A7 across a MULTI-story
+// plan: the agent passes each story in its own clean iteration, then on the
+// final iteration emits the last <story-pass> + <promise>COMPLETE</promise> AND
+// exits non-zero with an arbitrary error. Once every story is honored as passed
+// and the worktree has advanced, that terminal crash is post-success teardown
+// noise — the plan must be judged COMPLETED with MergePending and no surfaced
+// error so the batch loop proceeds to merge.
+//
+// Distinct from TestSinglePlanCompletesWhenWorkDoneThenCrash (single story, one
+// iteration): this proves completeHonored is derived from accumulated prd.json
+// pass state across iterations, not just the crashing reply in isolation.
+func TestSinglePlanCompletesOnPostCompletionCrash(t *testing.T) {
+	p := prd.PRD{
+		ID:    "feat",
+		Title: "Feature Plan",
+		UserStories: []prd.UserStory{
+			{ID: "US-001", Title: "Story 1", Priority: 1, Passes: false},
+			{ID: "US-002", Title: "Story 2", Priority: 2, Passes: false},
+			{ID: "US-003", Title: "Story 3", Priority: 3, Passes: false},
+		},
+	}
+
+	root, project := projectFixtureWithPRD(t, "feat", p)
+	g := newFakeGit() // Head() ≠ base head, so the worktree-advanced check holds.
+
+	// Final iteration: passes the last story + COMPLETE, then exits 1 with an
+	// arbitrary error (the post-completion crash).
+	crashReply := coreruntime.Result{
+		Agent:    agents.AgentClaude,
+		Status:   coreruntime.StatusFailed,
+		ExitCode: 1,
+		Err:      errors.New("claude API 400 after completion"),
+		Events: []coreexec.Event{
+			{Type: coreexec.EventStdout, Data: "<story-pass>US-003</story-pass><promise>COMPLETE</promise>", Time: time.Now()},
+		},
+		StartedAt: time.Now().Add(-time.Second),
+		EndedAt:   time.Now(),
+	}
+	runner := &iterScriptRunner{
+		replies: []coreruntime.Result{
+			makePassResult("US-001"),
+			makePassResult("US-002"),
+			crashReply,
+		},
+	}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentClaude},
+		Runner:       runner,
+		Manager:      &planrun.Manager{Git: g},
+		ProjectRoot:  root,
+	})
+
+	if res.Err != nil {
+		t.Fatalf("post-completion crash must not surface as failure, got: %v", res.Err)
+	}
+	if res.Status != conductor.StatusCompleted {
+		t.Fatalf("Status = %s, want completed", res.Status)
+	}
+	if runner.calls != 3 {
+		t.Fatalf("expected 3 agent calls (one per story), got %d", runner.calls)
+	}
+
+	// Persisted state must record completed + MergePending so the batch loop
+	// proceeds to merge integration.
+	reloaded, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("re-LoadProject: %v", err)
+	}
+	st := reloaded.State.Plans["feat"]
+	if st == nil {
+		t.Fatal("expected persisted state for feat")
+	}
+	if st.Status != conductor.StatusCompleted {
+		t.Fatalf("persisted Status = %s, want completed", st.Status)
+	}
+	if st.Merge == nil || st.Merge.Status != conductor.MergePending {
+		t.Fatalf("expected MergePending, got %+v", st.Merge)
+	}
+	if st.Error != "" {
+		t.Fatalf("completed plan must not persist an error, got %q", st.Error)
 	}
 }
