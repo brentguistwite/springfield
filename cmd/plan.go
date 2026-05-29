@@ -162,8 +162,23 @@ func NewPlanCommand() *cobra.Command {
 					if err := batch.ClearRun(rootDir); err != nil {
 						return fmt.Errorf("clear run after archive: %w", err)
 					}
-					// Remove prior batch's plan units from conductor config.
-					for _, id := range priorBatch.PlanIDs {
+					// --replace is a full reset: remove every registered plan unit whose
+					// ID is not in the new envelope, not just the prior batch's IDs. The
+					// registry can drift from the active batch (standalone "plans add", or
+					// a partially-failed earlier replace), and a stale unit holding an order
+					// slot would collide with the new units below ("order N already used").
+					// Snapshot stale IDs first — RemovePlanUnit mutates the slice we range.
+					newIDs := make(map[string]struct{}, len(replaceOut.Units))
+					for _, unit := range replaceOut.Units {
+						newIDs[unit.ID] = struct{}{}
+					}
+					var staleIDs []string
+					for _, u := range project.Config.PlanUnits {
+						if _, keep := newIDs[u.ID]; !keep {
+							staleIDs = append(staleIDs, u.ID)
+						}
+					}
+					for _, id := range staleIDs {
 						_ = project.RemovePlanUnit(id) // best-effort; may not be registered
 					}
 					priorBatch = nil
