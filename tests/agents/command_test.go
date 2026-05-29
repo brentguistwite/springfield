@@ -189,6 +189,28 @@ func TestClaudeAdapterAppendsModelWhenConfigured(t *testing.T) {
 	assertArgsContain(t, cmd.Args, "--model", "claude-sonnet-4-6")
 }
 
+// TestClaudeAdapterDoesNotPassUnsupportedMaxTurns pins the B2 mechanism
+// decision: the installed claude CLI exposes no --max-turns flag (verified via
+// `claude --help`; it has only --max-budget-usd), so Springfield MUST NOT emit
+// one — an unknown flag would abort every run. The per-iteration turn cap is
+// enforced by monitoring the stream-json result event's num_turns field instead
+// (see planrun.EnforceTurnCap). If a future claude CLI adds --max-turns and
+// someone wires flag pass-through, this test is the canary to update.
+func TestClaudeAdapterDoesNotPassUnsupportedMaxTurns(t *testing.T) {
+	adapter := claude.New(exec.LookPath)
+	commander := adapter.(agents.Commander)
+
+	cmd, err := commander.Command(agents.CommandInput{
+		Prompt:  "implement the login feature",
+		WorkDir: "/tmp/project",
+	})
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
+
+	assertArgsDoNotContain(t, cmd.Args, "--max-turns")
+}
+
 func TestCodexAdapterUsesExecJsonByDefault(t *testing.T) {
 	adapter := codex.New(exec.LookPath)
 	commander := adapter.(agents.Commander)

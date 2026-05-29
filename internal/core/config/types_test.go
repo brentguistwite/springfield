@@ -50,6 +50,90 @@ func TestAutoBranchPatternCustom(t *testing.T) {
 	}
 }
 
+func TestMaxTurnsPerIterationOmittedDefaults(t *testing.T) {
+	var c Config
+	if got := c.MaxTurnsPerIteration(); got != DefaultMaxTurnsPerIteration {
+		t.Fatalf("omitted max_turns_per_iteration got %d, want %d", got, DefaultMaxTurnsPerIteration)
+	}
+}
+
+func TestMaxTurnsPerIterationExplicitPositiveKept(t *testing.T) {
+	n := 12
+	c := Config{Project: ProjectConfig{MaxTurnsPerIteration: &n}}
+	if got := c.MaxTurnsPerIteration(); got != 12 {
+		t.Fatalf("explicit positive got %d, want 12", got)
+	}
+}
+
+func TestMaxTurnsPerIterationExplicitZeroDisables(t *testing.T) {
+	z := 0
+	c := Config{Project: ProjectConfig{MaxTurnsPerIteration: &z}}
+	if got := c.MaxTurnsPerIteration(); got != 0 {
+		t.Fatalf("explicit 0 must disable the cap (return 0), got %d", got)
+	}
+}
+
+func TestMaxTurnsPerIterationNegativeTreatedAsDisabled(t *testing.T) {
+	neg := -5
+	c := Config{Project: ProjectConfig{MaxTurnsPerIteration: &neg}}
+	if got := c.MaxTurnsPerIteration(); got != 0 {
+		t.Fatalf("negative max_turns_per_iteration must be treated as disabled (0), got %d", got)
+	}
+}
+
+func TestLoadMaxTurnsPerIterationFromTOML(t *testing.T) {
+	dir := t.TempDir()
+	content := `[project]
+agent_priority = ["claude"]
+max_turns_per_iteration = 25
+`
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(content), 0o644); err != nil {
+		t.Fatalf("write toml: %v", err)
+	}
+	loaded, err := LoadFrom(dir)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if got := loaded.Config.MaxTurnsPerIteration(); got != 25 {
+		t.Fatalf("max_turns_per_iteration from toml got %d, want 25", got)
+	}
+}
+
+func TestLoadMaxTurnsPerIterationOmittedDefaultsFromTOML(t *testing.T) {
+	dir := t.TempDir()
+	content := `[project]
+agent_priority = ["claude"]
+`
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(content), 0o644); err != nil {
+		t.Fatalf("write toml: %v", err)
+	}
+	loaded, err := LoadFrom(dir)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if got := loaded.Config.MaxTurnsPerIteration(); got != DefaultMaxTurnsPerIteration {
+		t.Fatalf("omitted toml key got %d, want %d", got, DefaultMaxTurnsPerIteration)
+	}
+}
+
+func TestLoadMaxTurnsPerIterationExplicitZeroFromTOML(t *testing.T) {
+	dir := t.TempDir()
+	content := `[project]
+agent_priority = ["claude"]
+max_turns_per_iteration = 0
+`
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(content), 0o644); err != nil {
+		t.Fatalf("write toml: %v", err)
+	}
+	loaded, err := LoadFrom(dir)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if got := loaded.Config.MaxTurnsPerIteration(); got != 0 {
+		t.Fatalf("explicit 0 in toml must disable (0), got %d", got)
+	}
+}
+
 func TestLoadAutoBranchFromTOML(t *testing.T) {
 	dir := t.TempDir()
 	content := `[project]

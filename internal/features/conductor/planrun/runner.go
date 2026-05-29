@@ -93,6 +93,13 @@ type SinglePlanInput struct {
 	// review fix-loop honours Ctx so a SIGINT mid-review unwinds promptly.
 	// nil → context.Background, preserving prior behavior.
 	Ctx context.Context
+	// MaxTurnsPerIteration caps the agent turns a single PRD iteration may
+	// consume before the run is failed with [TurnCapExceededReason] — the B2
+	// thrash circuit-breaker. Callers pass config.Config.MaxTurnsPerIteration()
+	// (which defaults to 40 when the springfield.toml key is omitted). The zero
+	// value disables the check, so tests and legacy callers that leave it unset
+	// keep their prior behavior.
+	MaxTurnsPerIteration int
 }
 
 // SinglePlanResult summarizes the outcome.
@@ -472,6 +479,18 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			finishWithReview()
 			break
 		}
+
+		// B2 thrash circuit-breaker: a clean-exiting iteration that burned more
+		// than the configured turn cap without completing is treated as a
+		// failure rather than allowed to spin (dogfood: 84 turns → API 400).
+		// COMPLETE always wins, so this never fires on a completed iteration.
+		if turnErr := EnforceTurnCap(result.Events, in.MaxTurnsPerIteration); turnErr != nil {
+			_ = AppendProgress(progressPath, fmt.Sprintf("%s %s", now().UTC().Format(time.RFC3339), turnErr.Error()))
+			finalRunErr = turnErr
+			exitReason = TurnCapExceededReason
+			break
+		}
+
 		if complete {
 			// Premature COMPLETE — log warning, continue.
 			_ = AppendProgress(progressPath, fmt.Sprintf("%s WARN: COMPLETE emitted but stories remain pending; ignoring marker",
