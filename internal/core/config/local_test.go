@@ -134,14 +134,3 @@ func TestReviewEnabledForPlanPrecedence(t *testing.T) {
 	}
 }
 
-func TestReviewAgentOrImplementerFallback(t *testing.T) {
-	if got := ReviewAgentOrImplementer(ReviewConfig{Agent: "codex"}, "claude"); got != "codex" {
-		t.Fatalf("configured agent should win, got %q", got)
-	}
-	if got := ReviewAgentOrImplementer(ReviewConfig{Agent: ""}, "claude"); got != "claude" {
-		t.Fatalf("empty agent should fall back to implementer, got %q", got)
-	}
-	if got := ReviewAgentOrImplementer(ReviewConfig{Agent: "  "}, "claude"); got != "claude" {
-		t.Fatalf("whitespace agent should fall back to implementer, got %q", got)
-	}
-}

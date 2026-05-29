@@ -26,8 +26,8 @@ type ReviewConfig struct {
 	// review spawns extra (possibly cross-agent) runs and costs tokens/time.
 	Enabled bool `toml:"enabled"`
 	// Agent names the reviewer agent (e.g. "codex"). Empty → fall back to the
-	// implementing CLI (see ReviewAgentOrImplementer). Cross-agent is the
-	// recommended upgrade for independence.
+	// implementing CLI (the runner resolves the fallback at review time).
+	// Cross-agent is the recommended upgrade for independence.
 	Agent string `toml:"agent"`
 	// Prompt is the bring-your-own review methodology. Empty → planreview's
 	// built-in default prompt (resolved in impl plan 2, not here).
@@ -98,13 +98,3 @@ func ReviewEnabledForPlan(global ReviewConfig, perPlan *bool) bool {
 	return global.Enabled
 }
 
-// ReviewAgentOrImplementer returns the configured reviewer agent, or the
-// implementing CLI when none is set. The same-CLI fallback guarantees a
-// review:true plan is always runnable even with no [review] section (zero-config
-// default), without forcing a new tool dependency on the operator.
-func ReviewAgentOrImplementer(global ReviewConfig, implementerAgent string) string {
-	if a := strings.TrimSpace(global.Agent); a != "" {
-		return a
-	}
-	return implementerAgent
-}

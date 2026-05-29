@@ -3,6 +3,7 @@ package planrun_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -892,5 +893,58 @@ func TestSinglePlanReviewGateFiresAtTopOfLoopOnAllPassed(t *testing.T) {
 	}
 	if st.Merge != nil {
 		t.Fatalf("Merge must be nil on needs-human (Integrate must not run); got %+v", st.Merge)
+	}
+}
+
+// TestSinglePlanReviewAgentErrorYieldsStatusFailed pins the third terminal
+// state of the review gate: when the reviewer agent itself errors (network,
+// timeout, crash), the plan must surface as StatusFailed — NOT needs-human
+// (no halt verdict was emitted) and NOT completed. Without this integration
+// test a refactor that conflated reviewErrored with reviewNeedsHuman inside
+// finishWithReview would silently downgrade a failed reviewer into a
+// human-recoverable state, hiding the operational signal.
+func TestSinglePlanReviewAgentErrorYieldsStatusFailed(t *testing.T) {
+	root := projectFixture(t, "alpha") // story already passed
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+	g := newFakeGit()
+
+	boom := errors.New("reviewer-agent boom")
+	runner := &queuedAgentRunner{results: []coreruntime.Result{
+		{Agent: agents.AgentClaude, Err: boom},
+	}}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentClaude},
+		Runner:       runner,
+		Manager:      &planrun.Manager{Git: g},
+		ReviewConfig: config.ReviewConfig{Enabled: true},
+	})
+
+	if res.Status != conductor.StatusFailed {
+		t.Fatalf("Status = %v, want StatusFailed (reviewer error is not human-recoverable)", res.Status)
+	}
+	if res.Err == nil {
+		t.Fatal("Err must be non-nil when review errors")
+	}
+
+	reloaded, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("re-LoadProject: %v", err)
+	}
+	st := reloaded.State.Plans["alpha"]
+	if st == nil {
+		t.Fatalf("no persisted state for alpha")
+	}
+	if st.Status != conductor.StatusFailed {
+		t.Fatalf("persisted Status = %v, want StatusFailed", st.Status)
+	}
+	if st.Merge != nil {
+		t.Fatalf("Merge must be nil on failed; got %+v", st.Merge)
 	}
 }

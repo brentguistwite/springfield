@@ -1047,6 +1047,15 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 		worktreeBase = ".worktrees"
 	}
 
+	// Load springfield.local.toml ONCE per CLI invocation. Loading inside the
+	// per-plan loop would let a mid-batch edit silently take effect on the
+	// next plan, diverging from the batch-path semantics where review config
+	// is stable for the whole batch.
+	local, err := config.LoadLocalFrom(loaded.RootDir)
+	if err != nil {
+		return true, fmt.Errorf("load springfield.local.toml: %w", err)
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -1090,7 +1099,7 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 		project.State.Queue.Heartbeat = time.Now()
 		saveQueueState()
 
-		planErr := runOnePlan(ctx, w, project, root, worktreeBase, agentIDs, loaded, registry)
+		planErr := runOnePlan(ctx, w, project, root, worktreeBase, agentIDs, loaded, local, registry)
 		if planErr != nil {
 			project.State.Queue.Status = conductor.QueueHalted
 			project.State.Queue.StopReason = planErr.Error()
@@ -1112,14 +1121,12 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 }
 
 // runOnePlan executes or merge-integrates the next eligible plan. Returns nil
-// on success, error on failure/merge-refused/cleanup-failed.
-func runOnePlan(ctx context.Context, w io.Writer, project *conductor.Project, root, worktreeBase string, agentIDs []agents.ID, loaded config.Loaded, registry agents.Registry) error {
+// on success, error on failure/merge-refused/cleanup-failed. local is passed
+// in from the caller so the springfield.local.toml load is stable for the
+// whole single-plan batch (loading per-call would let mid-batch edits
+// silently change review behavior).
+func runOnePlan(ctx context.Context, w io.Writer, project *conductor.Project, root, worktreeBase string, agentIDs []agents.ID, loaded config.Loaded, local config.LocalConfig, registry agents.Registry) error {
 	enforceProtected := !loaded.Config.Project.AllowProtectedBase
-
-	local, err := config.LoadLocalFrom(loaded.RootDir)
-	if err != nil {
-		return fmt.Errorf("load springfield.local.toml: %w", err)
-	}
 
 	if planID, ok := nextNonIntegratedCompletedPlan(project); ok {
 		// The fresh-execution path is gated by planrun.Prepare, but a

@@ -53,9 +53,14 @@ review, with the reviewer's findings, the evidence path, and the recover hint:
 ```
 Plans needing human review (1):
   - 04-recovery-and-status: review could not converge
-    Evidence: /…/.springfield/evidence/04-recovery-and-status/review
+    Evidence: /…/.springfield/execution/plans/04-recovery-and-status/evidence
     Recover: springfield recover --plan 04-recovery-and-status (re-review retry)
 ```
+
+Within that evidence directory, each review round writes a `review-iter-N`
+sub-directory (the reviewer's prompt and output) and each fix-iteration writes
+a `review-fix-N` sub-directory (the implementer's prompt and output) so you
+can trace what the reviewer saw and how the fix-loop responded.
 
 `springfield recover --plan <id> --diagnose` shows the same plan's available
 actions, including the re-review **retry**.

@@ -309,7 +309,14 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		case reviewNeedsHuman:
 			needsHuman = true
 			exitReason = "review-needs-human"
-			finalRunErr = fmt.Errorf("pre-merge review halted: %s (full findings in evidence)", truncateForError(gate.Findings, 200))
+			if excerpt := truncateForError(gate.Findings, 200); excerpt != "" {
+				finalRunErr = fmt.Errorf("pre-merge review halted: %s (full findings in evidence)", excerpt)
+			} else {
+				// Reviewer emitted halt with no prose (rare but possible — the
+				// verdict marker line itself is stripped from Findings). Avoid
+				// the awkward "halted:  (…)" double-space.
+				finalRunErr = fmt.Errorf("pre-merge review halted (full findings in evidence)")
+			}
 		case reviewErrored:
 			finalRunErr = gate.Err
 			exitReason = "review-errored"

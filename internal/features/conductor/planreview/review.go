@@ -31,12 +31,15 @@ type ReviewInput struct {
 
 // ReviewResult is the outcome of one review invocation. Found is false when the
 // reviewer emitted no verdict marker; Err is set when the agent run itself
-// failed. The caller decides how to treat each.
+// failed. Prompt is the exact text sent to the agent — exposed so the caller's
+// evidence writer can persist the SAME prompt the agent saw (no risk of
+// re-build drift when reviewer config changes).
 type ReviewResult struct {
 	Verdict Verdict
 	Found   bool
 	Agent   agents.ID
 	Events  []coreexec.Event
+	Prompt  string
 	Err     error
 }
 
@@ -53,8 +56,8 @@ func Review(ctx context.Context, in ReviewInput) ReviewResult {
 		ExecutionSettings: in.ExecutionSettings,
 	})
 	if res.Err != nil {
-		return ReviewResult{Agent: res.Agent, Events: res.Events, Err: res.Err}
+		return ReviewResult{Agent: res.Agent, Events: res.Events, Prompt: prompt, Err: res.Err}
 	}
 	verdict, found := ScanReviewVerdict(res.Events)
-	return ReviewResult{Verdict: verdict, Found: found, Agent: res.Agent, Events: res.Events}
+	return ReviewResult{Verdict: verdict, Found: found, Agent: res.Agent, Events: res.Events, Prompt: prompt}
 }

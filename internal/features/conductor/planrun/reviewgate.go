@@ -15,6 +15,12 @@ import (
 	"springfield/internal/features/prd"
 )
 
+// reviewDiffWarnBytes is the soft cap above which we emit a warning that the
+// review diff may overflow the reviewer agent's context. Chosen as a safe
+// midpoint: smaller than typical 100k-token windows even with verbose tooling,
+// large enough that normal feature branches do not trip it.
+const reviewDiffWarnBytes = 256 * 1024
+
 // reviewOutcome is the gate's three-way verdict. reviewPassed means the work
 // satisfies the criteria; reviewNeedsHuman means the reviewer halted OR the
 // fix-loop hit max_review_iterations; reviewErrored means an agent invocation
@@ -89,9 +95,33 @@ func runReviewGate(in reviewGateInput) reviewGateResult {
 		if err := ctx.Err(); err != nil {
 			return reviewGateResult{Outcome: reviewErrored, Err: err}
 		}
+		// Warn if the worktree has uncommitted changes — the reviewer sees only
+		// the committed diff via baseRef...HEAD. The common trip-wire is a
+		// needs-human retry where the operator edited files but forgot to
+		// commit; without this warning the reviewer reviews stale code and
+		// likely halts again with no diagnostic explaining the invisible edits.
+		// docs/review.md tells the operator to commit before recover, but the
+		// surface-it-in-the-log redundancy is cheap and catches the slip.
+		if dirty, dirtyErr := in.Git.IsDirty(in.WorktreeRoot); dirtyErr == nil && dirty && in.OnEvent != nil {
+			in.OnEvent(coreexec.Event{Type: coreexec.EventStderr, Data: fmt.Sprintf(
+				"WARN: review-iter %d sees a dirty worktree at %s — uncommitted changes will NOT be reviewed; commit them first or the reviewer is judging stale code",
+				round, in.WorktreeRoot,
+			)})
+		}
 		diff, err := in.Git.Diff(in.WorktreeRoot, in.BaseRef)
 		if err != nil {
 			return reviewGateResult{Outcome: reviewErrored, Err: fmt.Errorf("compute review diff: %w", err)}
+		}
+		// Warn the operator (via the event stream) when the diff is large
+		// enough to risk overflowing the reviewer agent's context window. We
+		// do NOT clamp — the operator's calibration is unknown; we surface a
+		// distinct signal so an opaque "context length exceeded" failure later
+		// has an attributable cause in evidence.
+		if len(diff) > reviewDiffWarnBytes && in.OnEvent != nil {
+			in.OnEvent(coreexec.Event{Type: coreexec.EventStderr, Data: fmt.Sprintf(
+				"WARN: review diff is %d bytes (round %d); reviewer agent may exceed context window. If review fails with an opaque API error, this is the likely cause.",
+				len(diff), round,
+			)})
 		}
 		// Snapshot control plane before the reviewer runs. The reviewer is
 		// nominally read-only, but under cross-agent review a prompt-injected
@@ -114,14 +144,16 @@ func runReviewGate(in reviewGateInput) reviewGateResult {
 			OnEvent:           in.OnEvent,
 		})
 		writeReviewEvidence(in.EvidenceDir, fmt.Sprintf("review-iter-%d", round),
-			planreview.BuildReviewPrompt(diff, criteria, in.ReviewConfig.Prompt), string(rev.Agent), rev.Events, rev.Err)
+			rev.Prompt, string(rev.Agent), rev.Events, rev.Err)
 		if in.TamperGuard != nil {
 			tamperReason, detectErr := in.TamperGuard.Detect()
 			if detectErr != nil {
 				return reviewGateResult{Outcome: reviewErrored, Err: fmt.Errorf("tamper guard detect (review %d): %w", round, detectErr)}
 			}
 			if tamperReason != "" {
-				_ = in.TamperGuard.Restore()
+				if restoreErr := in.TamperGuard.Restore(); restoreErr != nil {
+					return reviewGateResult{Outcome: reviewErrored, Err: fmt.Errorf("tamper-detected during review %d: %s (restore also failed: %w)", round, tamperReason, restoreErr)}
+				}
 				return reviewGateResult{Outcome: reviewErrored, Err: fmt.Errorf("tamper-detected during review %d: %s", round, tamperReason)}
 			}
 		}
@@ -172,7 +204,9 @@ func runReviewGate(in reviewGateInput) reviewGateResult {
 				return reviewGateResult{Outcome: reviewErrored, Err: fmt.Errorf("tamper guard detect (review-fix %d): %w", round, detectErr)}
 			}
 			if tamperReason != "" {
-				_ = in.TamperGuard.Restore()
+				if restoreErr := in.TamperGuard.Restore(); restoreErr != nil {
+					return reviewGateResult{Outcome: reviewErrored, Err: fmt.Errorf("tamper-detected during review-fix %d: %s (restore also failed: %w)", round, tamperReason, restoreErr)}
+				}
 				return reviewGateResult{Outcome: reviewErrored, Err: fmt.Errorf("tamper-detected during review-fix %d: %s", round, tamperReason)}
 			}
 		}
