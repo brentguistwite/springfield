@@ -11,6 +11,7 @@ import (
 	"springfield/internal/core/config"
 	"springfield/internal/features/batch"
 	"springfield/internal/features/conductor"
+	"springfield/internal/features/conductor/planrun"
 	"springfield/internal/features/execution"
 )
 
@@ -21,6 +22,7 @@ func NewRecoverCommand() *cobra.Command {
 		diagnose      bool
 		planID        string
 		markCompleted bool
+		acceptDrift   bool
 	)
 
 	cmd := &cobra.Command{
@@ -33,7 +35,11 @@ func NewRecoverCommand() *cobra.Command {
 			"Use --diagnose to inspect without modifying state.\n\n" +
 			"With --plan <id> --mark-completed: flip a non-completed plan to completed\n" +
 			"once every story in its prd.json passes, and queue the merge for the next\n" +
-			"\"springfield start\". Rejected if any story is unpassed.",
+			"\"springfield start\". Rejected if any story is unpassed.\n\n" +
+			"With --plan <id> --accept-drift: accept a deliberate input change (e.g. an\n" +
+			"updated AGENTS.md or prd.json edit) that the digest flagged as drift —\n" +
+			"record the current input digest and reset the plan to pending so the next\n" +
+			"\"springfield start\" no longer refuses with preflight-input-drift.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			loaded, err := config.LoadFrom(dir)
@@ -42,6 +48,19 @@ func NewRecoverCommand() *cobra.Command {
 			}
 			root := loaded.RootDir
 			w := cmd.OutOrStdout()
+
+			if acceptDrift {
+				if planID == "" {
+					return fmt.Errorf("--accept-drift requires --plan <id>")
+				}
+				if diagnose {
+					return fmt.Errorf("--accept-drift cannot be combined with --diagnose")
+				}
+				if markCompleted {
+					return fmt.Errorf("--accept-drift cannot be combined with --mark-completed")
+				}
+				return runPlanAcceptDrift(w, root, planID)
+			}
 
 			if markCompleted {
 				if planID == "" {
@@ -65,6 +84,7 @@ func NewRecoverCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&diagnose, "diagnose", false, "print what Springfield can see without modifying state")
 	cmd.Flags().StringVar(&planID, "plan", "", "plan ID to diagnose or recover (omit for orphan-batch recovery)")
 	cmd.Flags().BoolVar(&markCompleted, "mark-completed", false, "with --plan: mark a non-completed plan completed (requires all stories passing) and queue its merge")
+	cmd.Flags().BoolVar(&acceptDrift, "accept-drift", false, "with --plan: accept deliberate input changes by recording the current input digest and resetting the plan to pending")
 	return cmd
 }
 
@@ -76,6 +96,19 @@ func runPlanMarkCompleted(w io.Writer, root, planID string) error {
 
 	fmt.Fprintf(w, "Marked plan %q completed: %s\n", planID, rec.Reason)
 	fmt.Fprintln(w, "Run \"springfield start\" to perform the merge.")
+	return nil
+}
+
+func runPlanAcceptDrift(w io.Writer, root, planID string) error {
+	rec, err := execution.AcceptPlanDrift(root, planID, func(unit conductor.PlanUnit) (string, error) {
+		return planrun.InputDigest(root, unit)
+	})
+	if err != nil {
+		return fmt.Errorf("accept drift for plan %q: %w", planID, err)
+	}
+
+	fmt.Fprintf(w, "Accepted input drift for plan %q: %s\n", planID, rec.Reason)
+	fmt.Fprintln(w, "Run \"springfield start\" to continue.")
 	return nil
 }
 

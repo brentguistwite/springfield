@@ -112,6 +112,41 @@ func MarkPlanCompleted(rootDir, planID string) (*conductor.RecoveryAction, error
 	return rec, nil
 }
 
+// AcceptPlanDrift is the operator escape hatch (A10) for deliberate input
+// changes. It recomputes the plan's input digest from current inputs, records
+// it, and resets the plan to pending so the next springfield start no longer
+// refuses with preflight-input-drift.
+//
+// computeDigest is injected rather than called directly: the canonical
+// InputDigest lives in planrun, which imports execution, so execution cannot
+// import planrun without a cycle. The cmd layer (above both) supplies a closure
+// over planrun.InputDigest.
+func AcceptPlanDrift(rootDir, planID string, computeDigest func(conductor.PlanUnit) (string, error)) (*conductor.RecoveryAction, error) {
+	project, err := conductor.LoadProject(rootDir)
+	if err != nil {
+		return nil, err
+	}
+
+	unit, ok := project.PlanUnitByID(planID)
+	if !ok {
+		return nil, fmt.Errorf("plan %q is not registered in the execution config", planID)
+	}
+
+	digest, err := computeDigest(unit)
+	if err != nil {
+		return nil, fmt.Errorf("compute input digest for plan %q: %w", planID, err)
+	}
+
+	rec, err := project.AcceptInputDrift(planID, digest)
+	if err != nil {
+		return nil, err
+	}
+	if err := project.SaveState(); err != nil {
+		return nil, fmt.Errorf("persist accept-drift: %w", err)
+	}
+	return rec, nil
+}
+
 func inspectWorktree(rootDir, worktreePath, baseHead string) *conductor.WorktreeInspection {
 	wt := &conductor.WorktreeInspection{}
 

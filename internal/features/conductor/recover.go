@@ -139,6 +139,47 @@ func (p *Project) MarkPlanCompleted(planID string, stories []prd.UserStory) (*Re
 	return &rec, nil
 }
 
+// AcceptInputDrift is the operator escape hatch (A10) for a deliberate input
+// change that the digest correctly flagged as drift (e.g. an updated AGENTS.md
+// or an intentional prd.json edit). It records digest as the plan's new
+// InputDigest and resets the plan to pending — the same field reset as
+// RecoverRetry — so the next springfield start resumes (or re-runs) against the
+// changed inputs instead of refusing with preflight-input-drift. The caller
+// must persist via SaveState.
+//
+// The digest is passed in rather than computed here: the canonical InputDigest
+// lives in planrun, which imports execution, so neither conductor nor execution
+// can compute it without an import cycle. Taking it as an argument also keeps
+// this method free of file IO, mirroring MarkPlanCompleted.
+//
+// A completed plan is rejected: accept-drift resets a non-completed plan for
+// re-run, while a finished plan's merge is re-driven via RecoverRetryMerge or
+// RecoverRetryIntegration.
+func (p *Project) AcceptInputDrift(planID, digest string) (*RecoveryAction, error) {
+	ps, ok := p.State.Plans[planID]
+	if !ok {
+		return nil, fmt.Errorf("plan %q has no recorded state", planID)
+	}
+	if ps.Status == StatusCompleted {
+		return nil, fmt.Errorf("plan %q is already completed; accept-drift resets a non-completed plan for re-run with changed inputs", planID)
+	}
+
+	rec := RecoveryAction{
+		Action: "accept-drift",
+		Reason: fmt.Sprintf("recorded new input digest and reset from %s to pending", ps.Status),
+		At:     time.Now(),
+	}
+
+	ps.Status = StatusPending
+	ps.Error = ""
+	ps.ExitReason = ""
+	ps.Merge = nil
+	ps.Cleanup = nil
+	ps.InputDigest = digest
+	ps.RecoveryHistory = append(ps.RecoveryHistory, rec)
+	return &rec, nil
+}
+
 // RecoverRetryIntegration clears post-merge state (cleanup, source-sync) for a
 // completed plan whose merge succeeded but post-publish integration did not
 // complete. Preserves the merge record so planmerge.Integrate follows the
