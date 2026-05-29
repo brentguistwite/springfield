@@ -171,6 +171,44 @@ func TestRenderedSkillsCarryVersionCheckPreamble(t *testing.T) {
 	}
 }
 
+// TestPlanSkillRequiresExplicitDocTargets pins the C2 constraint: any
+// acceptance criterion that prescribes documentation must name an explicit
+// target file path. Vague targets ("in the review docs") triggered ~75 turns
+// of an agent hunting for a doc file that never existed in a dogfood batch.
+// The constraint must carry that rationale plus an allowed/forbidden example,
+// and it must reach both the skill and command renders.
+func TestPlanSkillRequiresExplicitDocTargets(t *testing.T) {
+	t.Parallel()
+
+	skill, err := Render("plan")
+	if err != nil {
+		t.Fatalf("Render(plan): %v", err)
+	}
+	command, err := RenderCommand("plan")
+	if err != nil {
+		t.Fatalf("RenderCommand(plan): %v", err)
+	}
+
+	for label, content := range map[string]string{"skill": skill.Content, "command": command.Content} {
+		// Clearly-flagged constraint requiring an explicit target file path.
+		if !strings.Contains(content, "must name an explicit target file") {
+			t.Errorf("plan %s missing docs-target constraint", label)
+		}
+		// Rationale grounded in dogfood evidence of thrash on vague targets.
+		if !strings.Contains(content, "dogfood") {
+			t.Errorf("plan %s docs-target constraint missing dogfood rationale", label)
+		}
+		// Allowed vs forbidden example wording.
+		if !strings.Contains(content, "Allowed:") || !strings.Contains(content, "Forbidden:") {
+			t.Errorf("plan %s docs-target constraint missing allowed/forbidden example", label)
+		}
+		// Forbidden vague phrasings are named explicitly so the agent can pattern-match.
+		if !strings.Contains(content, "in the review docs") {
+			t.Errorf("plan %s docs-target constraint missing forbidden 'in the review docs' phrasing", label)
+		}
+	}
+}
+
 func TestRenderCommand_Plan(t *testing.T) {
 	t.Parallel()
 
