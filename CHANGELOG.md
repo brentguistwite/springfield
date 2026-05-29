@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/brentguistwite/springfield/compare/v0.14.2...v0.15.0) (2026-05-29)
+
+
+### Features
+
+* pre-merge review checkpoints (opt-in reviewer agent + needs-human terminal state) ([#70](https://github.com/brentguistwite/springfield/issues/70)) ([6d3a146](https://github.com/brentguistwite/springfield/commit/6d3a146d2dead1e2084f0ed9b9a127665e1d4cd1))
+
 ## [0.14.2](https://github.com/brentguistwite/springfield/compare/v0.14.1...v0.14.2) (2026-05-28)
 
 
