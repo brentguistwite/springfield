@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/brentguistwite/springfield/compare/v0.15.0...v0.16.0) (2026-05-30)
+
+
+### Features
+
+* dogfood-batch fixes — classifier blindness + judge-by-completion + subagent prevention + operational ergonomics ([#72](https://github.com/brentguistwite/springfield/issues/72)) ([be5d7a4](https://github.com/brentguistwite/springfield/commit/be5d7a4be9e3f360ea8ed78e19dc161119fc8ca9))
+
 ## [0.15.0](https://github.com/brentguistwite/springfield/compare/v0.14.2...v0.15.0) (2026-05-29)
 
 
