@@ -99,3 +99,18 @@ func writePRDJSON(t *testing.T, root, planID string) {
 		t.Fatalf("write prd.json: %v", err)
 	}
 }
+
+// writePRDJSONAllPassed writes a prd.json with one already-passing story.
+// Used by tests that exercise recover --mark-completed, which validates that
+// every story in prd.json has passes=true before flipping plan state.
+func writePRDJSONAllPassed(t *testing.T, root, planID string) {
+	t.Helper()
+	dir := filepath.Join(root, ".springfield", "plans", planID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	body := `{"id":"` + planID + `","title":"` + planID + `","user_stories":[{"id":"US-001","title":"Story 1","description":"d","acceptance_criteria":["a"],"priority":1,"passes":true}]}`
+	if err := os.WriteFile(filepath.Join(dir, "prd.json"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write prd.json: %v", err)
+	}
+}

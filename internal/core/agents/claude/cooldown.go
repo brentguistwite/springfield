@@ -34,6 +34,19 @@ var (
 	// in isolation, so unrelated stderr like
 	// "API usage cap: connection reset at 3pm yesterday" cannot match.
 	reRateLimitPhrase = regexp.MustCompile(`(?i)(usage limit|rate[- ]?limit|hour limit|limit (?:will\s+)?reset|limit reached)`)
+	// reRateLimitEvent / reResetsAt parse claude-code's structured
+	// --output-format stream-json rate_limit_event:
+	// {"type":"rate_limit_event","rate_limit_info":{"resetsAt":<epoch>,...}}
+	// resetsAt is a Unix-second epoch (observed values in 2026 are 10 digits,
+	// e.g. 1748506800 — confirmed against live stream-json output during the
+	// 2026-05-28 dogfood batch). \d{9,11} bounds matches to plausible Unix-
+	// second ranges and deliberately rejects ms-precision values (13 digits)
+	// so a future schema change to ms would silently fall through to
+	// text-based parsing rather than installing a cooldown 1000× too long.
+	// Both regexes must match on the same line (one JSON event per
+	// stream-json line) for the structured branch to fire.
+	reRateLimitEvent = regexp.MustCompile(`"type"\s*:\s*"rate_limit_event"`)
+	reResetsAt       = regexp.MustCompile(`"resetsAt"\s*:\s*(\d{9,11})`)
 )
 
 // parseCooldown inspects events, exit code, and err for a claude rate-limit
@@ -49,6 +62,14 @@ var (
 func parseCooldown(events []coreexec.Event, exitCode int, err error, now time.Time) time.Time {
 	lines := collectLines(events, err)
 	joined := strings.Join(lines, "\n")
+
+	// Structured stream-json rate_limit_event carries an exact resetsAt
+	// epoch — the most precise signal, so scan for it first.
+	for _, line := range lines {
+		if reset, ok := matchRateLimitEvent(line); ok {
+			return capReset(reset, now)
+		}
+	}
 
 	if reset, ok := matchPipeEpoch(joined); ok {
 		return capReset(reset, now)
@@ -94,6 +115,25 @@ func collectLines(events []coreexec.Event, err error) []string {
 
 func hasLimitContext(line string) bool {
 	return reRateLimitPhrase.MatchString(line)
+}
+
+// matchRateLimitEvent extracts the resetsAt epoch from a structured
+// rate_limit_event JSON line. Requires both the event-type marker and a
+// resetsAt field on the same line; returns ok=false otherwise so the caller
+// falls through to the human-text formats.
+func matchRateLimitEvent(line string) (time.Time, bool) {
+	if !reRateLimitEvent.MatchString(line) {
+		return time.Time{}, false
+	}
+	m := reResetsAt.FindStringSubmatch(line)
+	if m == nil {
+		return time.Time{}, false
+	}
+	sec, convErr := strconv.ParseInt(m[1], 10, 64)
+	if convErr != nil {
+		return time.Time{}, false
+	}
+	return time.Unix(sec, 0), true
 }
 
 func matchPipeEpoch(s string) (time.Time, bool) {

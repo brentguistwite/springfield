@@ -752,6 +752,101 @@ func TestPlanReplaceRefusesWhenPlanIsRunning(t *testing.T) {
 	}
 }
 
+// TestPlanReplaceAllowsRunningPlanThatIsPreserved verifies the narrow shape
+// of the --replace running-plan guard: a running plan whose unit is PRESERVED
+// in the new envelope is NOT affected by --replace (its registration stays,
+// the runner's state record is untouched), so blocking it would be overly
+// conservative. The guard only blocks when the running plan would be REMOVED
+// — the case where the registry would actually drift out from under the live
+// runner.
+func TestPlanReplaceAllowsRunningPlanThatIsPreserved(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "claude")
+
+	// Initial batch: two plans, kept-plan + dropped-plan.
+	env := prd.BatchPRDEnvelope{
+		Title:  "initial-batch",
+		Source: "src",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"kept-plan", "dropped-plan"}}},
+		Plans: []prd.BatchPRDPlan{
+			minPRDPlan("kept-plan", "Kept Plan"),
+			minPRDPlan("dropped-plan", "Dropped Plan"),
+		},
+	}
+	if out, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, env)); err != nil {
+		t.Fatalf("initial plan: %v\n%s", err, out)
+	}
+
+	// kept-plan is currently running.
+	writeRunningPlanState(t, dir, "kept-plan")
+
+	// Replacement envelope drops "dropped-plan", keeps "kept-plan", adds "new-plan".
+	env2 := prd.BatchPRDEnvelope{
+		Title:  "replacement",
+		Source: "src",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"kept-plan", "new-plan"}}},
+		Plans: []prd.BatchPRDPlan{
+			minPRDPlan("kept-plan", "Kept Plan"),
+			minPRDPlan("new-plan", "New Plan"),
+		},
+	}
+	out, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, env2), "--replace")
+	if err != nil {
+		t.Fatalf("expected --replace to SUCCEED when running plan is preserved in the new envelope, got error:\n%s\n%v", out, err)
+	}
+}
+
+// TestPlanReplacePicksUpDriftedFieldsOnPreservedID pins the drift-detection
+// half of preserved-unit handling: when --replace keeps a plan ID but the new
+// envelope changes Path/Title/Order, the on-disk PlanUnit record must reflect
+// the new envelope, not the prior registration. A naive "skip add for known
+// IDs" implementation would silently keep stale fields — this test locks in
+// the drop-and-re-add path.
+func TestPlanReplacePicksUpDriftedFieldsOnPreservedID(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "claude")
+
+	env1 := prd.BatchPRDEnvelope{
+		Title:  "initial-batch",
+		Source: "src",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"shared-plan"}}},
+		Plans:  []prd.BatchPRDPlan{minPRDPlan("shared-plan", "Initial Title")},
+	}
+	if out, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, env1)); err != nil {
+		t.Fatalf("initial plan: %v\n%s", err, out)
+	}
+
+	env2 := prd.BatchPRDEnvelope{
+		Title:  "replacement",
+		Source: "src",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"shared-plan"}}},
+		Plans:  []prd.BatchPRDPlan{minPRDPlan("shared-plan", "Updated Title")},
+	}
+	if out, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, env2), "--replace"); err != nil {
+		t.Fatalf("replace with same ID + new title: %v\n%s", err, out)
+	}
+
+	project, err := conductor.LoadProjectRaw(dir)
+	if err != nil {
+		t.Fatalf("LoadProjectRaw: %v", err)
+	}
+	var got *conductor.PlanUnit
+	for i := range project.Config.PlanUnits {
+		if project.Config.PlanUnits[i].ID == "shared-plan" {
+			got = &project.Config.PlanUnits[i]
+			break
+		}
+	}
+	if got == nil {
+		t.Fatal("shared-plan unit missing after --replace")
+	}
+	if got.Title != "Updated Title" {
+		t.Fatalf("PlanUnit.Title = %q, want %q (drift on preserved ID must update the registration)", got.Title, "Updated Title")
+	}
+}
+
 // TestPlanReplaceWithMalformedEnvelopeLeavesPriorBatchUntouched verifies that
 // --replace fails without archiving the prior batch when the new envelope is
 // invalid. The compile step must run BEFORE any archive/clear operations.
@@ -813,6 +908,181 @@ func TestPlanReplaceWithMalformedEnvelopeLeavesPriorBatchUntouched(t *testing.T)
 	batchDir := filepath.Join(dir, ".springfield", "plans", batchID1)
 	if _, statErr := os.Stat(filepath.Join(batchDir, "batch.json")); statErr != nil {
 		t.Errorf("prior batch.json missing after failed replace: %v", statErr)
+	}
+}
+
+// planUnitReg is a minimal view of a registered plan unit for test assertions.
+type planUnitReg struct {
+	ID    string `json:"id"`
+	Order int    `json:"order"`
+}
+
+// readPlanUnits decodes the registered plan units from execution/config.json.
+func readPlanUnits(t *testing.T, dir string) []planUnitReg {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, ".springfield", "execution", "config.json"))
+	if err != nil {
+		t.Fatalf("read execution config.json: %v", err)
+	}
+	var cfg struct {
+		PlanUnits []planUnitReg `json:"plan_units"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("unmarshal execution config: %v", err)
+	}
+	return cfg.PlanUnits
+}
+
+// TestPlanReplaceClearsStalePlanUnit is the AC happy path: a prior-batch plan
+// unit P1 must be gone from the registry after --replace with new plan P2, and
+// P2 must occupy order 1.
+func TestPlanReplaceClearsStalePlanUnit(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "claude")
+
+	env1 := prd.BatchPRDEnvelope{
+		Title:  "first-batch",
+		Source: "src1",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"p1"}}},
+		Plans:  []prd.BatchPRDPlan{minPRDPlan("p1", "Plan One")},
+	}
+	if out, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, env1)); err != nil {
+		t.Fatalf("first plan: %v\n%s", err, out)
+	}
+
+	env2 := prd.BatchPRDEnvelope{
+		Title:  "second-batch",
+		Source: "src2",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"p2"}}},
+		Plans:  []prd.BatchPRDPlan{minPRDPlan("p2", "Plan Two")},
+	}
+	if out, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, env2), "--replace"); err != nil {
+		t.Fatalf("replace plan: %v\n%s", err, out)
+	}
+
+	units := readPlanUnits(t, dir)
+	if len(units) != 1 {
+		t.Fatalf("expected exactly 1 plan unit after replace, got %d: %+v", len(units), units)
+	}
+	if units[0].ID != "p2" {
+		t.Errorf("plan unit ID = %q after replace, want p2 (stale P1 not cleared)", units[0].ID)
+	}
+	if units[0].Order != 1 {
+		t.Errorf("p2 order = %d, want 1", units[0].Order)
+	}
+}
+
+// TestPlanReplaceClearsDriftedPlanUnit covers the real-world A6 bug: the conductor
+// registry has drifted from the active batch (a standalone "plans add" left an
+// orphan unit holding an order slot). --replace must clear that orphan too, or the
+// new envelope's unit collides with "order N already used".
+func TestPlanReplaceClearsDriftedPlanUnit(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "claude")
+
+	// Active batch with one plan at order 1.
+	env1 := prd.BatchPRDEnvelope{
+		Title:  "first-batch",
+		Source: "src1",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-one"}}},
+		Plans:  []prd.BatchPRDPlan{minPRDPlan("plan-one", "Plan One")},
+	}
+	if out, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, env1)); err != nil {
+		t.Fatalf("first plan: %v\n%s", err, out)
+	}
+
+	// Register a standalone plan unit NOT part of the active batch. AddPlanUnit
+	// stats the path, so the file must exist; it auto-assigns the next slot (2).
+	staleFile := filepath.Join(dir, ".springfield", "plans", "stale.md")
+	if err := os.WriteFile(staleFile, []byte("# stale plan\n"), 0o644); err != nil {
+		t.Fatalf("write stale plan file: %v", err)
+	}
+	if out, err := runBinaryIn(t, bin, dir, "plans", "add", "--id", "stale-unit", "--path", "stale.md"); err != nil {
+		t.Fatalf("plans add stale-unit: %v\n%s", err, out)
+	}
+
+	// Sanity: registry now holds both plan-one@1 and stale-unit@2.
+	if got := len(readPlanUnits(t, dir)); got != 2 {
+		t.Fatalf("expected 2 registered units before replace, got %d", got)
+	}
+
+	// Replace with two new plans. plan-c lands at order 2 — the slot the orphan
+	// stale-unit holds. With the A6 fix the orphan is cleared first, so this
+	// succeeds; without it, registration fails with "order 2 already used".
+	env2 := prd.BatchPRDEnvelope{
+		Title:  "second-batch",
+		Source: "src2",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-b", "plan-c"}}},
+		Plans: []prd.BatchPRDPlan{
+			minPRDPlan("plan-b", "Plan B"),
+			minPRDPlan("plan-c", "Plan C"),
+		},
+	}
+	if out, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, env2), "--replace"); err != nil {
+		t.Fatalf("replace plan (orphan should have been cleared): %v\n%s", err, out)
+	}
+
+	units := readPlanUnits(t, dir)
+	got := make(map[string]int, len(units))
+	for _, u := range units {
+		got[u.ID] = u.Order
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected exactly 2 units after replace, got %d: %+v", len(got), units)
+	}
+	for _, stale := range []string{"plan-one", "stale-unit"} {
+		if _, present := got[stale]; present {
+			t.Errorf("stale unit %q still registered after replace", stale)
+		}
+	}
+	if got["plan-b"] != 1 {
+		t.Errorf("plan-b order = %d, want 1", got["plan-b"])
+	}
+	if got["plan-c"] != 2 {
+		t.Errorf("plan-c order = %d, want 2", got["plan-c"])
+	}
+}
+
+// TestPlanReplacePreservesPlanUnitsOnInvalidEnvelope is the edge case: a --replace
+// that fails on an invalid new envelope must leave the prior plan units registered
+// (the failure-leaves-prior-batch-untouched contract).
+func TestPlanReplacePreservesPlanUnitsOnInvalidEnvelope(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "claude")
+
+	env1 := prd.BatchPRDEnvelope{
+		Title:  "original-batch",
+		Source: "src",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-one"}}},
+		Plans:  []prd.BatchPRDPlan{minPRDPlan("plan-one", "Plan One")},
+	}
+	if out, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, env1)); err != nil {
+		t.Fatalf("initial plan: %v\n%s", err, out)
+	}
+
+	// Malformed: story missing AcceptanceCriteria/Priority — fails validation.
+	malformedEnv := prd.BatchPRDEnvelope{
+		Title:  "bad-batch",
+		Source: "src",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-bad"}}},
+		Plans: []prd.BatchPRDPlan{
+			{PRD: prd.PRD{
+				ID:          "plan-bad",
+				Title:       "Bad Plan",
+				UserStories: []prd.UserStory{{ID: "US-001", Title: "Story"}},
+			}},
+		},
+	}
+	if out, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, malformedEnv), "--replace"); err == nil {
+		t.Fatalf("expected --replace with malformed envelope to fail, got success:\n%s", out)
+	}
+
+	units := readPlanUnits(t, dir)
+	if len(units) != 1 || units[0].ID != "plan-one" {
+		t.Fatalf("prior plan unit not preserved after failed replace: %+v", units)
 	}
 }
 

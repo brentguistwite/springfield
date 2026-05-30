@@ -147,6 +147,12 @@ Schema notes:
 - `user_stories`: each story has `id` (`US-NNN`), `title`, `description`, `acceptance_criteria`, `priority` (int, lower = runs first), `passes` (false initially), `deps` (story IDs within same plan).
 - See `docs/prd-format.md` for full field semantics, validation rules, and stop conditions.
 
+> **Constraint — documentation acceptance criteria must name an explicit target file.**
+> Any `acceptance_criteria` entry that prescribes writing or updating documentation MUST name the exact target as a `path/to/file.md` (add a `:line` anchor when pointing at an existing section). If no canonical file exists yet, the criterion must say to create it at a named path.
+> Rationale: in a dogfood batch an agent burned ~75 turns hunting for a "review docs" file that never existed because the criterion never named one — vague targets cause thrash.
+> - Allowed: `"Document the off-target marker rule in docs/prd-format.md under the 'Stop Conditions' section"`
+> - Forbidden: `"Document the off-target marker rule in the review docs"` and `"note this in the relevant section"` — no file path, so the agent has nothing concrete to target.
+
 Use `--replace` or `--append` if an active batch exists (per Step 2).
 
 Keep Springfield as the only user-facing surface.

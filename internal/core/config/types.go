@@ -72,7 +72,18 @@ type ProjectConfig struct {
 	// auto-cut branch name. Supported placeholder: {id} (batch ID).
 	// Empty → defaults to "springfield/batch-{id}".
 	AutoBranchPattern string `toml:"auto_branch_pattern,omitempty"`
+	// MaxTurnsPerIteration caps how many agent turns a single plan iteration
+	// may consume before Springfield synthesizes an
+	// 'iteration-turn-cap-exceeded' failure — the early circuit-breaker for the
+	// 84-turn thrash observed in dogfooding. Pointer so an omitted key
+	// (nil → DefaultMaxTurnsPerIteration) is distinguishable from an explicit
+	// 0 (cap disabled). Resolve the effective value via MaxTurnsPerIteration().
+	MaxTurnsPerIteration *int `toml:"max_turns_per_iteration,omitempty"`
 }
+
+// DefaultMaxTurnsPerIteration is the per-iteration agent-turn ceiling applied
+// when [project] max_turns_per_iteration is omitted from springfield.toml.
+const DefaultMaxTurnsPerIteration = 40
 
 // DefaultAutoBranchPattern is the branch-name template used when the project
 // does not configure auto_branch_pattern.
@@ -94,6 +105,28 @@ func (c Config) AutoBranchPatternOrDefault() string {
 		return DefaultAutoBranchPattern
 	}
 	return c.Project.AutoBranchPattern
+}
+
+// MaxTurnsPerIteration resolves the effective per-iteration agent-turn cap:
+//
+//   - omitted (nil)       → [DefaultMaxTurnsPerIteration] (40)
+//   - explicit 0          → 0 (cap disabled)
+//   - explicit negative   → 0 (cap disabled; negative is treated as "off")
+//   - explicit positive n → n
+//
+// A return value of 0 means "no cap" and callers skip enforcement entirely.
+// Note the deliberate asymmetry: an *omitted* key defaults to 40, but an
+// *explicit* 0 disables the cap — a pointer field is what lets us tell the two
+// apart.
+func (c Config) MaxTurnsPerIteration() int {
+	v := c.Project.MaxTurnsPerIteration
+	if v == nil {
+		return DefaultMaxTurnsPerIteration
+	}
+	if *v <= 0 {
+		return 0
+	}
+	return *v
 }
 
 // ExecutionSettingsForAgent resolves adapter-specific execution settings for

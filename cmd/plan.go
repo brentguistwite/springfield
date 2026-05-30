@@ -121,20 +121,6 @@ func NewPlanCommand() *cobra.Command {
 			}
 
 			if priorBatch != nil {
-				// Before mutating the active batch, refuse if any plan is currently running.
-				// A running plan means `springfield start` is active; mutations would corrupt
-				// control-plane state that the runner expects to be stable.
-				if replace || appendMode {
-					for planID, ps := range project.State.Plans {
-						if ps != nil && ps.Status == conductor.StatusRunning {
-							return fmt.Errorf(
-								"plan %q is currently running (status=running); wait for it to finish or run \"springfield recover\" first",
-								planID,
-							)
-						}
-					}
-				}
-
 				switch {
 				case replace:
 					// Compile and validate the new envelope FIRST so we catch all
@@ -146,6 +132,28 @@ func NewPlanCommand() *cobra.Command {
 					})
 					if err != nil {
 						return err
+					}
+
+					// Refuse only if a RUNNING plan is being REMOVED by this --replace.
+					// A running plan whose unit is preserved in the new envelope is not
+					// affected — its registration stays and the runner's state record is
+					// untouched. Blocking those would be needlessly conservative; batch
+					// abort uses the same narrow shape (only blocks on b.PlanIDs).
+					newIDsForGuard := make(map[string]struct{}, len(replaceOut.Units))
+					for _, unit := range replaceOut.Units {
+						newIDsForGuard[unit.ID] = struct{}{}
+					}
+					for planID, ps := range project.State.Plans {
+						if ps == nil || ps.Status != conductor.StatusRunning {
+							continue
+						}
+						if _, kept := newIDsForGuard[planID]; kept {
+							continue
+						}
+						return fmt.Errorf(
+							"plan %q is currently running (status=running) and would be REMOVED by --replace; wait for it to finish or run \"springfield recover\" first",
+							planID,
+						)
 					}
 
 					// Surface warnings to stderr before any mutation.
@@ -162,8 +170,23 @@ func NewPlanCommand() *cobra.Command {
 					if err := batch.ClearRun(rootDir); err != nil {
 						return fmt.Errorf("clear run after archive: %w", err)
 					}
-					// Remove prior batch's plan units from conductor config.
-					for _, id := range priorBatch.PlanIDs {
+					// --replace is a full reset: remove every registered plan unit whose
+					// ID is not in the new envelope, not just the prior batch's IDs. The
+					// registry can drift from the active batch (standalone "plans add", or
+					// a partially-failed earlier replace), and a stale unit holding an order
+					// slot would collide with the new units below ("order N already used").
+					// Snapshot stale IDs first — RemovePlanUnit mutates the slice we range.
+					newIDs := make(map[string]struct{}, len(replaceOut.Units))
+					for _, unit := range replaceOut.Units {
+						newIDs[unit.ID] = struct{}{}
+					}
+					var staleIDs []string
+					for _, u := range project.Config.PlanUnits {
+						if _, keep := newIDs[u.ID]; !keep {
+							staleIDs = append(staleIDs, u.ID)
+						}
+					}
+					for _, id := range staleIDs {
 						_ = project.RemovePlanUnit(id) // best-effort; may not be registered
 					}
 					priorBatch = nil
@@ -172,23 +195,59 @@ func NewPlanCommand() *cobra.Command {
 					// Any failure here is after archive — hint the operator.
 					replacePaths, err := batch.NewPaths(rootDir, replaceOut.Batch.ID)
 					if err != nil {
-						return fmt.Errorf("resolve batch paths (write failed after archive — run \"springfield recover\" to clean up): %w", err)
+						return fmt.Errorf("resolve batch paths (write failed after archive — re-run \"springfield plan --replace --prd ...\" to rebuild from the new envelope (springfield recover alone will NOT clean up — run.json is gone, so it will report no-op and leave stale plan units behind)): %w", err)
 					}
 					if err := batch.WriteBatch(replacePaths, replaceOut.Batch, replaceOut.Source, replaceOut.Plans); err != nil {
-						return fmt.Errorf("write batch (write failed after archive — run \"springfield recover\" to clean up): %w", err)
+						return fmt.Errorf("write batch (write failed after archive — re-run \"springfield plan --replace --prd ...\" to rebuild from the new envelope (springfield recover alone will NOT clean up — run.json is gone, so it will report no-op and leave stale plan units behind)): %w", err)
+					}
+					// Snapshot already-registered units by ID. AddPlanUnit rejects
+					// duplicates by design (the "plans add" UX needs that guarantee),
+					// so a preserved unit (same ID in both old and new envelopes)
+					// cannot be re-added — it would either error or, worse, succeed
+					// silently and leave the old Path/Order/Title in place if a future
+					// implementation bypassed the dedup. To keep --replace semantics
+					// honest, drop-and-re-add when ANY field drifted; skip when the
+					// existing record already matches the new envelope.
+					existing := make(map[string]conductor.PlanUnit, len(project.Config.PlanUnits))
+					for _, u := range project.Config.PlanUnits {
+						existing[u.ID] = u
+					}
+					sameUnit := func(a, b conductor.PlanUnit) bool {
+						return a.Title == b.Title && a.Path == b.Path && a.Order == b.Order
+					}
+					// Two-pass to avoid order-slot collisions between preserved units
+					// that swap Order values. If A: order 1→2 and B: order 2→1, a
+					// single-pass drop-and-add of A would re-add A at order 2 while B
+					// still occupies that slot, causing AddPlanUnit to fail with
+					// "order N already used" — after archive has already run, leaving
+					// the operator stranded. Pass 1: drop every drifted/new ID up
+					// front so no preserved unit blocks a slot the new envelope
+					// wants. Pass 2: add every unit unconditionally.
+					for _, unit := range replaceOut.Units {
+						if prior, already := existing[unit.ID]; already && sameUnit(prior, unit) {
+							continue
+						}
+						// Drift (or new ID not in existing). RemovePlanUnit on an
+						// unregistered ID is a safe no-op for this purpose; ignoring
+						// its error is intentional, the next AddPlanUnit would surface
+						// any real condition.
+						_ = project.RemovePlanUnit(unit.ID)
 					}
 					for _, unit := range replaceOut.Units {
+						if prior, already := existing[unit.ID]; already && sameUnit(prior, unit) {
+							continue
+						}
 						if _, err := project.AddPlanUnit(conductor.PlanUnitInput{
 							ID:    unit.ID,
 							Title: unit.Title,
 							Path:  unit.Path,
 							Order: unit.Order,
 						}); err != nil {
-							return fmt.Errorf("register plan unit %q (write failed after archive — run \"springfield recover\" to clean up): %w", unit.ID, err)
+							return fmt.Errorf("register plan unit %q (write failed after archive — re-run \"springfield plan --replace --prd ...\" to rebuild from the new envelope (springfield recover alone will NOT clean up — run.json is gone, so it will report no-op and leave stale plan units behind)): %w", unit.ID, err)
 						}
 					}
 					if err := project.SaveConfig(); err != nil {
-						return fmt.Errorf("save execution config (write failed after archive — run \"springfield recover\" to clean up): %w", err)
+						return fmt.Errorf("save execution config (write failed after archive — re-run \"springfield plan --replace --prd ...\" to rebuild from the new envelope (springfield recover alone will NOT clean up — run.json is gone, so it will report no-op and leave stale plan units behind)): %w", err)
 					}
 					newRun := batch.Run{
 						ActiveBatchID:  replaceOut.Batch.ID,
@@ -196,12 +255,25 @@ func NewPlanCommand() *cobra.Command {
 						LastCheckpoint: time.Now().UTC(),
 					}
 					if err := batch.WriteRun(rootDir, newRun); err != nil {
-						return fmt.Errorf("write run.json (write failed after archive — run \"springfield recover\" to clean up): %w", err)
+						return fmt.Errorf("write run.json (write failed after archive — re-run \"springfield plan --replace --prd ...\" to rebuild from the new envelope (springfield recover alone will NOT clean up — run.json is gone, so it will report no-op and leave stale plan units behind)): %w", err)
 					}
 					fmt.Fprintf(cmd.OutOrStdout(), "Compiled batch %q with %d plan(s).\n", replaceOut.Batch.ID, len(replaceOut.Plans))
 					return nil
 
 				case appendMode:
+					// Refuse if any plan is currently running. Append registers new
+					// units alongside the running batch's runner-owned state record;
+					// adding units while the runner is mid-flight is conservative but
+					// keeps the registry's order-slot accounting from racing with the
+					// runner's MarkPassed/MarkFailed writes.
+					for planID, ps := range project.State.Plans {
+						if ps != nil && ps.Status == conductor.StatusRunning {
+							return fmt.Errorf(
+								"plan %q is currently running (status=running); wait for it to finish or run \"springfield recover\" first",
+								planID,
+							)
+						}
+					}
 					return runAppend(cmd, rootDir, project, *priorBatch, run, env)
 
 				default:

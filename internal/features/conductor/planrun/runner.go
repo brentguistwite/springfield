@@ -93,6 +93,13 @@ type SinglePlanInput struct {
 	// review fix-loop honours Ctx so a SIGINT mid-review unwinds promptly.
 	// nil → context.Background, preserving prior behavior.
 	Ctx context.Context
+	// MaxTurnsPerIteration caps the agent turns a single PRD iteration may
+	// consume before the run is failed with [TurnCapExceededReason] — the B2
+	// thrash circuit-breaker. Callers pass config.Config.MaxTurnsPerIteration()
+	// (which defaults to 40 when the springfield.toml key is omitted). The zero
+	// value disables the check, so tests and legacy callers that leave it unset
+	// keep their prior behavior.
+	MaxTurnsPerIteration int
 }
 
 // SinglePlanResult summarizes the outcome.
@@ -441,17 +448,53 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		_ = AppendProgress(progressPath, fmt.Sprintf("%s iteration %d completed (passed=%d complete=%t)",
 			now().UTC().Format(time.RFC3339), iter, honoredPasses, complete))
 
+		// COMPLETE is "honored" only when the marker was emitted AND every story
+		// now passes — Springfield's own record of completion, distinct from a
+		// raw marker on stdout. Computed before the exit-code branch so a
+		// post-completion crash can be told apart from a genuine mid-work crash.
+		completeHonored := false
+		if complete {
+			if _, stillStatus := NextStory(currentPRD); stillStatus == PickAllPassed {
+				completeHonored = true
+			}
+		}
+
 		if iterRunErr != nil {
+			// The agent process exited non-zero. Judge by work, not exit code:
+			// if the plan's work was provably finished before the crash, treat
+			// the crash as post-success teardown noise rather than a failure.
+			worktreeHead, _ := in.Manager.Git.Head(ctx.WorktreeRoot)
+			if workCompletedBeforeCrash(completeHonored, currentPRD, ctx.BaseHead, worktreeHead) {
+				_ = AppendProgress(progressPath, fmt.Sprintf("%s post-completion crash ignored (work complete before exit): %v",
+					now().UTC().Format(time.RFC3339), iterRunErr))
+				finishWithReview()
+				break
+			}
 			finalRunErr = iterRunErr
 			exitReason = "agent-failed"
 			break
 		}
 
+		if completeHonored {
+			finishWithReview()
+			break
+		}
+
+		// B2 thrash circuit-breaker: a clean-exiting iteration that burned more
+		// than the configured turn cap without legitimately completing is
+		// treated as a failure rather than allowed to spin (dogfood: 84 turns
+		// → API 400). completeHonored is checked above so completed iterations
+		// never reach this; we pass it explicitly anyway so EnforceTurnCap can
+		// distinguish a HONORED COMPLETE from a PREMATURE COMPLETE (the latter
+		// must NOT defuse the cap — adversarial review round 2 caught this).
+		if turnErr := EnforceTurnCap(result.Events, in.MaxTurnsPerIteration, completeHonored); turnErr != nil {
+			_ = AppendProgress(progressPath, fmt.Sprintf("%s %s", now().UTC().Format(time.RFC3339), turnErr.Error()))
+			finalRunErr = turnErr
+			exitReason = TurnCapExceededReason
+			break
+		}
+
 		if complete {
-			if _, stillStatus := NextStory(currentPRD); stillStatus == PickAllPassed {
-				finishWithReview()
-				break
-			}
 			// Premature COMPLETE — log warning, continue.
 			_ = AppendProgress(progressPath, fmt.Sprintf("%s WARN: COMPLETE emitted but stories remain pending; ignoring marker",
 				now().UTC().Format(time.RFC3339)))
@@ -740,6 +783,48 @@ func truncateForError(s string, max int) string {
 	}
 	runes := []rune(s)
 	return string(runes[:max]) + "…"
+}
+
+// workCompletedBeforeCrash reports whether a plan's work is provably finished
+// even though the agent process exited non-zero — the honest "the crash was
+// post-success teardown" signal (dogfood note A7). All three conditions must
+// hold:
+//
+//   - completeHonored: COMPLETE was emitted AND every story passed this run
+//     (Springfield's own honoring record, not just a marker seen on stdout).
+//   - every UserStory in the PRD has Passes == true.
+//   - the worktree advanced beyond its base ref (baseHead != worktreeHead),
+//     proving commits actually landed rather than partial/no work.
+//
+// When true the runner maps the plan to StatusCompleted regardless of exit
+// code; when false the normal exit-code-based status logic applies unchanged.
+// Each condition is re-checked here so the helper is honest standalone: a
+// caller cannot smuggle a completion past a still-pending story or an
+// unchanged worktree.
+func workCompletedBeforeCrash(completeHonored bool, p prd.PRD, baseHead, worktreeHead string) bool {
+	if !completeHonored {
+		return false
+	}
+	if !allStoriesPassed(p) {
+		return false
+	}
+	// Empty heads can't prove the worktree moved; require both present and distinct.
+	return baseHead != "" && worktreeHead != "" && baseHead != worktreeHead
+}
+
+// allStoriesPassed reports whether the PRD has at least one story and every
+// story is marked Passes==true. A zero-story PRD returns false: an empty plan
+// has no work to have completed.
+func allStoriesPassed(p prd.PRD) bool {
+	if len(p.UserStories) == 0 {
+		return false
+	}
+	for _, s := range p.UserStories {
+		if !s.Passes {
+			return false
+		}
+	}
+	return true
 }
 
 // terminalExitReason returns the canonical exit reason for the failed state.

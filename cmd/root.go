@@ -71,6 +71,7 @@ func NewRootCommand() *cobra.Command {
 		NewInstallCommand(),
 		NewPlanCommand(),
 		NewPlansCommand(),
+		NewBatchCommand(),
 		NewStartCommand(),
 		NewStatusCommand(),
 		NewRecoverCommand(),

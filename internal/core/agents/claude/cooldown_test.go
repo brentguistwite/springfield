@@ -281,6 +281,72 @@ func TestParseCooldown_NoRateLimitMessage_ReturnsZero(t *testing.T) {
 	}
 }
 
+// Structured stream-json rate_limit_event carries resetsAt as a Unix epoch.
+// This is the most precise cooldown signal — no wall-clock/timezone inference
+// needed — so it must be honored directly via capReset.
+func TestParseCooldown_RateLimitEvent_StructuredJSON(t *testing.T) {
+	resetsAt := int64(1799999999)
+	now := time.Unix(resetsAt-3600, 0)
+	events := []coreexec.Event{
+		ev(coreexec.EventStdout, `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1799999999,"remaining":0}}`),
+	}
+
+	got := parseCooldown(events, 0, nil, now)
+
+	want := time.Unix(resetsAt, 0)
+	if !got.Equal(want) {
+		t.Fatalf("parseCooldown rate_limit_event: got %v want %v", got, want)
+	}
+}
+
+// Beyond the 24h cap, the structured resetsAt must clamp like every other
+// parsed reset.
+func TestParseCooldown_RateLimitEvent_BeyondCap_ClampsTo24h(t *testing.T) {
+	now := time.Unix(1799999999, 0).Add(-7 * 24 * time.Hour)
+	events := []coreexec.Event{
+		ev(coreexec.EventStdout, `{"type":"rate_limit_event","rate_limit_info":{"resetsAt":1799999999}}`),
+	}
+
+	got := parseCooldown(events, 0, nil, now)
+
+	want := now.Add(maxCooldown)
+	if !got.Equal(want) {
+		t.Fatalf("parseCooldown rate_limit_event cap: got %v want %v", got, want)
+	}
+}
+
+// A resetsAt already in the past must return zero (capReset's already-expired
+// guard) so the runner applies its default cooldown rather than an entry that
+// would be skipped immediately.
+func TestParseCooldown_RateLimitEvent_PastResetsAt_ReturnsZero(t *testing.T) {
+	now := time.Unix(1799999999, 0)
+	pastEpoch := now.Add(-1 * time.Hour).Unix()
+	events := []coreexec.Event{
+		ev(coreexec.EventStdout, `{"type":"rate_limit_event","rate_limit_info":{"resetsAt":`+strconv.FormatInt(pastEpoch, 10)+`}}`),
+	}
+
+	got := parseCooldown(events, 0, nil, now)
+
+	if !got.IsZero() {
+		t.Fatalf("past resetsAt should return zero, got %v", got)
+	}
+}
+
+// A rate_limit_event without a resetsAt field must not match the structured
+// branch — it falls through to text parsing (and here, returns zero).
+func TestParseCooldown_RateLimitEvent_NoResetsAt_ReturnsZero(t *testing.T) {
+	now := time.Date(2026, 5, 11, 10, 0, 0, 0, time.UTC)
+	events := []coreexec.Event{
+		ev(coreexec.EventStdout, `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed"}}`),
+	}
+
+	got := parseCooldown(events, 0, nil, now)
+
+	if !got.IsZero() {
+		t.Fatalf("rate_limit_event without resetsAt should return zero, got %v", got)
+	}
+}
+
 func TestAdapterImplementsCooldowner(t *testing.T) {
 	a := New(nil)
 	if _, ok := a.(agents.Cooldowner); !ok {

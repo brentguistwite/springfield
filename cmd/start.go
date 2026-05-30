@@ -355,6 +355,7 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 			EnforceProtectedBase: enforceProtected,
 			TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(root, ".springfield", "plans"), controlRoot: root},
 			Ctx:                  ctx,
+			MaxTurnsPerIteration: loaded.Config.MaxTurnsPerIteration(),
 		})
 		if res.Reason == "no-eligible-plan" {
 			// The target plan is not registered in the conductor schedule —
@@ -1171,6 +1172,7 @@ func runOnePlan(ctx context.Context, w io.Writer, project *conductor.Project, ro
 		EnforceProtectedBase: enforceProtected,
 		TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(root, ".springfield", "plans"), controlRoot: root},
 		Ctx:                  ctx,
+		MaxTurnsPerIteration: loaded.Config.MaxTurnsPerIteration(),
 	})
 
 	if res.PlanID == "" && res.Reason == "no-eligible-plan" {

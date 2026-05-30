@@ -2,7 +2,10 @@ package conductor
 
 import (
 	"fmt"
+	"strings"
 	"time"
+
+	"springfield/internal/features/prd"
 )
 
 // RecoverRetry resets a failed, interrupted, or needs-human plan to pending for
@@ -78,6 +81,129 @@ func (p *Project) RecoverRetryMerge(planID string) (*RecoveryAction, error) {
 
 	ps.Merge = nil
 	ps.Cleanup = nil
+	ps.RecoveryHistory = append(ps.RecoveryHistory, rec)
+	return &rec, nil
+}
+
+// MarkPlanCompleted is the operator escape hatch (A9) for a plan whose work
+// finished in the worktree but which Springfield recorded as failed,
+// interrupted, or needs-human. It validates that every story in stories has
+// Passes=true — rejecting with an error that names the unpassed stories
+// otherwise — then flips the plan to StatusCompleted and queues a pending
+// merge. The caller must persist via SaveState.
+//
+// Merge is set to MergePending, not MergeSucceeded: mark-completed never
+// publishes a merge itself. The next springfield start re-enters the normal
+// merge integration phase, which still runs the target-drift check and the
+// ff-only publish against the recorded base_head. An already-completed plan is
+// rejected; its merge is re-driven via RecoverRetryMerge/RecoverRetryIntegration.
+//
+// prd.json is the source of truth for per-story passes state; the caller reads
+// it and passes the stories in so this method stays free of file IO.
+func (p *Project) MarkPlanCompleted(planID string, stories []prd.UserStory) (*RecoveryAction, error) {
+	ps, ok := p.State.Plans[planID]
+	if !ok {
+		return nil, fmt.Errorf("plan %q has no recorded state", planID)
+	}
+	if ps.Status == StatusCompleted {
+		return nil, fmt.Errorf("plan %q is already completed; use retry-merge or retry-integration to re-drive its merge", planID)
+	}
+	// A running plan is mid-flight; the active runner will overwrite this
+	// status flip with its own MarkPassed/MarkFailed call when it finishes,
+	// silently discarding the operator's intent. Refuse and tell the operator
+	// to wait or recover the run first — same shape as plan --replace's guard.
+	if ps.Status == StatusRunning {
+		return nil, fmt.Errorf("plan %q is currently running (status=running); wait for it to finish or run \"springfield recover --plan %s\" to normalize state before marking completed", planID, planID)
+	}
+	if len(stories) == 0 {
+		return nil, fmt.Errorf("plan %q has no stories in prd.json; refusing to mark completed", planID)
+	}
+
+	var unpassed []string
+	for _, s := range stories {
+		if !s.Passes {
+			unpassed = append(unpassed, s.ID)
+		}
+	}
+	if len(unpassed) > 0 {
+		return nil, fmt.Errorf("cannot mark plan %q completed: %d of %d stories not passing: %s",
+			planID, len(unpassed), len(stories), strings.Join(unpassed, ", "))
+	}
+
+	now := time.Now()
+	rec := RecoveryAction{
+		Action: "mark-completed",
+		Reason: fmt.Sprintf("operator marked completed from %s; queued pending merge", ps.Status),
+		At:     now,
+	}
+
+	ps.Status = StatusCompleted
+	ps.Error = ""
+	ps.ExitReason = ""
+	ps.Merge = &MergeOutcome{Status: MergePending, AttemptedAt: now}
+	ps.Cleanup = nil
+	ps.RecoveryHistory = append(ps.RecoveryHistory, rec)
+	return &rec, nil
+}
+
+// AcceptInputDrift is the operator escape hatch (A10) for a deliberate input
+// change that the digest correctly flagged as drift (e.g. an updated AGENTS.md
+// or an intentional prd.json edit). It records digest as the plan's new
+// InputDigest and resets the plan to pending — the same field reset as
+// RecoverRetry — so the next springfield start resumes (or re-runs) against the
+// changed inputs instead of refusing with preflight-input-drift. The caller
+// must persist via SaveState.
+//
+// The digest is passed in rather than computed here: the canonical InputDigest
+// lives in planrun, which imports execution, so neither conductor nor execution
+// can compute it without an import cycle. Taking it as an argument also keeps
+// this method free of file IO, mirroring MarkPlanCompleted.
+//
+// A completed plan is rejected: accept-drift resets a non-completed plan for
+// re-run, while a finished plan's merge is re-driven via RecoverRetryMerge or
+// RecoverRetryIntegration.
+func (p *Project) AcceptInputDrift(planID, digest string) (*RecoveryAction, error) {
+	ps, ok := p.State.Plans[planID]
+	if !ok {
+		return nil, fmt.Errorf("plan %q has no recorded state", planID)
+	}
+	if ps.Status == StatusCompleted {
+		return nil, fmt.Errorf("plan %q is already completed; accept-drift resets a non-completed plan for re-run with changed inputs", planID)
+	}
+	// A running plan is mid-flight; the active runner committed to the
+	// preflight-time digest, and rewriting InputDigest now would leave it
+	// inconsistent with what the runner is actually executing against. Refuse.
+	if ps.Status == StatusRunning {
+		return nil, fmt.Errorf("plan %q is currently running (status=running); wait for it to finish or run \"springfield recover --plan %s\" to normalize state before accepting drift", planID, planID)
+	}
+	// Idempotence + misuse guard: if the recorded digest already matches the
+	// supplied digest, there is NO DRIFT — regardless of plan status. The
+	// pending case is a true no-op; the failed/interrupted/needs-human case
+	// with matching digest is operator misuse (they want RecoverRetry, not
+	// accept-drift, because the failure wasn't from changed inputs). Both
+	// should reject with a clear pointer to the right path, rather than
+	// silently rewriting the digest to the same value and appending a
+	// misleading "accepted drift" history entry. Adversarial review round 2
+	// (R3F3) caught the broader case; the original guard only covered pending.
+	if ps.InputDigest == digest {
+		if ps.Status == StatusPending {
+			return nil, fmt.Errorf("plan %q is already pending with the supplied digest; nothing to accept", planID)
+		}
+		return nil, fmt.Errorf("plan %q already has the supplied digest recorded; the failure was not caused by input drift — use \"springfield recover --plan %s\" to retry instead", planID, planID)
+	}
+
+	rec := RecoveryAction{
+		Action: "accept-drift",
+		Reason: fmt.Sprintf("recorded new input digest and reset from %s to pending", ps.Status),
+		At:     time.Now(),
+	}
+
+	ps.Status = StatusPending
+	ps.Error = ""
+	ps.ExitReason = ""
+	ps.Merge = nil
+	ps.Cleanup = nil
+	ps.InputDigest = digest
 	ps.RecoveryHistory = append(ps.RecoveryHistory, rec)
 	return &rec, nil
 }

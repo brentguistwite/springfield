@@ -149,9 +149,6 @@ func (a *adapter) SuggestedModels() []string {
 }
 
 func (a *adapter) ClassifyError(events []coreexec.Event, exitCode int, err error) agents.ErrorClass {
-	if exitCode == 0 {
-		return agents.ErrorClassFatal
-	}
 	if errors.Is(err, osexec.ErrNotFound) {
 		return agents.ErrorClassRetryable
 	}
@@ -162,6 +159,15 @@ func (a *adapter) ClassifyError(events []coreexec.Event, exitCode int, err error
 		if claudeRetryableEvent(event) {
 			return agents.ErrorClassRetryable
 		}
+	}
+	// Clean-exit fatal bail-out runs LAST, after the retryable scans.
+	// ValidateResult synthesizes an error on a clean (exitCode 0) run when
+	// the transcript lacks a paired tool_result — the truncation pattern that
+	// rate-limits and API errors produce. Scanning the events first lets that
+	// synthesized error classify retryable so the agent_priority fallback can
+	// fire, while a genuinely clean exit with no retryable signal stays fatal.
+	if exitCode == 0 {
+		return agents.ErrorClassFatal
 	}
 	return agents.ErrorClassFatal
 }
@@ -207,6 +213,9 @@ func (a *adapter) springfieldControlPlaneSettingsJSON() string {
 				}},
 			}},
 		},
+		"permissions": map[string]any{
+			"deny": subagentDeniedTools(),
+		},
 	}
 
 	pluginDisables := a.resolveSubagentPluginDisables()
@@ -221,6 +230,47 @@ func (a *adapter) springfieldControlPlaneSettingsJSON() string {
 		return `{"hooks":{"PreToolUse":[{"matcher":"Write|Edit|MultiEdit|NotebookEdit|Bash","hooks":[{"type":"command","command":"` + hookCommand + `"}]}]}}`
 	}
 	return string(data)
+}
+
+// subagentDeniedTools returns the built-in parent-harness primitives that a
+// Springfield-managed subagent must NOT inherit. They are emitted under
+// permissions.deny in the --settings payload.
+//
+// Why a deny list (not a positive allowlist): in Claude Code settings.json,
+// permissions.allow only PRE-APPROVES a tool (skips the prompt) — it does not
+// remove unlisted tools. permissions.deny is the only settings.json mechanism
+// that actually strips a tool from the subagent's surface (`--disallowedTools`
+// is the CLI-flag equivalent; there is no top-level disallowedTools key in
+// settings.json). A deny list also leaves project-configured MCP tools
+// (mcp__*) and the implementer tool surface (Bash, Edit, Glob, Grep,
+// MultiEdit, NotebookEdit, Read, Skill, ToolSearch, Write) untouched for free
+// — a positive allowlist would have to enumerate unknowable MCP tool names.
+//
+// These primitives are no-op footguns inside a managed subagent: the dogfood
+// plan-04 agent actually invoked ScheduleWakeup from within one, burning a
+// turn on a tool that can never fire in this context.
+func subagentDeniedTools() []string {
+	return []string{
+		// Subagent spawning / orchestration — prevents recursion.
+		"Task",
+		"TaskCreate", "TaskGet", "TaskList", "TaskOutput", "TaskStop", "TaskUpdate",
+		"Workflow",
+		// Scheduling / background wakeups — meaningless in a one-shot run.
+		"ScheduleWakeup",
+		"CronCreate", "CronDelete", "CronList",
+		"Monitor",
+		// Network reach beyond the agent CLIs' own calls.
+		"WebFetch", "WebSearch",
+		// Outbound notification / remote-trigger / messaging surfaces.
+		"PushNotification",
+		"RemoteTrigger",
+		"SendMessage",
+		// Team management.
+		"TeamCreate", "TeamDelete",
+		// Plan / worktree mode switches owned by the parent harness.
+		"EnterPlanMode", "ExitPlanMode",
+		"EnterWorktree", "ExitWorktree",
+	}
 }
 
 // resolveSubagentPluginDisables reads ~/.claude/settings.json at Command time
@@ -372,6 +422,15 @@ var claudeRetryableNeedles = []string{
 	"rate limit",
 	"rate-limit",
 	"rate_limit",
+	// "usage limit" is claude-code's canonical rate-limit diagnostic
+	// ("Claude AI usage limit reached|<epoch>"). It surfaces on stderr/err,
+	// and cooldown.go's reRateLimitPhrase already treats it as a rate-limit
+	// phrase — classification must agree so the parsed reset actually gets
+	// installed instead of bailing Fatal. Kept OUT of the narrow stdout list
+	// (claudeRetryableStdoutNeedles) on purpose: that list trips on tool_result
+	// content too, and "usage limit" is generic enough to false-positive there.
+	"usage limit",
+	"api_error_status",
 	"too many requests",
 	"429",
 	"quota exceeded",
@@ -401,12 +460,41 @@ func errorString(err error) string {
 	return err.Error()
 }
 
-func claudeRetryableText(s string) bool {
+// claudeRetryableStdoutNeedles is the NARROW list scanned against stdout.
+// stdout carries two unrelated kinds of text under --output-format stream-json:
+// claude-code's own structured API signals (rate_limit_event, api_error_status,
+// overloaded_error) AND the verbatim content of tool_result events — i.e. the
+// output of whatever tool the agent ran. Bare numeric/phrase needles like "500"
+// or "service unavailable" are meaningful on stderr (claude-code's diagnostics)
+// but would falsely match app-level errors echoed inside tool_result content
+// (e.g. an app that "returned HTTP 500"). Those are the agent's task failures,
+// not upstream Anthropic issues, and must stay Fatal — so stdout only trips on
+// the explicit structured-signal fields below.
+//
+// Entries here are STRUCTURED stream-json field names ONLY, never generic
+// English phrases. "rate_limit_event" is safe because it is a literal JSON key
+// the claude-code stream emits; "rate limit" / "rate-limit" / "usage limit"
+// would also match a tool_result whose body happens to mention rate limiting
+// (e.g. an app under test logging "rate-limit exceeded"). Those plain-text
+// phrases live in [claudeRetryableNeedles] (stderr) where the source is always
+// claude-code's own diagnostics.
+var claudeRetryableStdoutNeedles = []string{
+	"rate_limit_event",
+	// "rate_limit" (underscore) intentionally removed: it false-positives on
+	// app tool_result content like `{"error":"rate_limit_exceeded"}`. The
+	// "rate_limit_event" entry above already structurally covers Claude's
+	// actual rate-limit stream event (Contains-style match catches it
+	// regardless of surrounding JSON wrapping).
+	"api_error_status",
+	"overloaded_error",
+}
+
+func containsRetryableNeedle(s string, needles []string) bool {
 	s = strings.ToLower(strings.TrimSpace(s))
 	if s == "" {
 		return false
 	}
-	for _, needle := range claudeRetryableNeedles {
+	for _, needle := range needles {
 		if strings.Contains(s, needle) {
 			return true
 		}
@@ -414,9 +502,29 @@ func claudeRetryableText(s string) bool {
 	return false
 }
 
+func claudeRetryableText(s string) bool {
+	return containsRetryableNeedle(s, claudeRetryableNeedles)
+}
+
+// claudeRetryableEvent scans a single output event for retryable signals,
+// stream-aware: stdout is matched against the narrow structured-signal list
+// (claudeRetryableStdoutNeedles) so app-level tool_result errors don't false-
+// positive, while stderr — claude-code's own diagnostics — uses the full
+// needle list. Dropping the prior stderr-only filter lets the structured
+// rate_limit_event / api_error_status payloads that stream-json emits on
+// stdout become visible to the retryable scan.
+//
+// The dispatch is explicit per event type — any non-stdout / non-stderr event
+// (system / meta / future event kinds) does NOT get scanned, so a future
+// EventType added to coreexec cannot accidentally start matching the full
+// needle list and produce false-positive retries.
 func claudeRetryableEvent(event coreexec.Event) bool {
-	if event.Type != coreexec.EventStderr {
+	switch event.Type {
+	case coreexec.EventStdout:
+		return containsRetryableNeedle(event.Data, claudeRetryableStdoutNeedles)
+	case coreexec.EventStderr:
+		return claudeRetryableText(event.Data)
+	default:
 		return false
 	}
-	return claudeRetryableText(event.Data)
 }
