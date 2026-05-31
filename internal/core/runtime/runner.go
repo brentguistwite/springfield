@@ -154,31 +154,33 @@ func (r *Runner) Run(ctx context.Context, req Request) Result {
 			status = StatusFailed
 		}
 
+		// Turn-cap circuit breaker: runs on any clean exit (exit 0, no
+		// process error) BEFORE ValidateResult. Ordering is load-bearing —
+		// the dogfood thrash shape is exactly "agent burned 84 turns and
+		// emitted a malformed transcript with no successful tool_result".
+		// If ValidateResult fires first, it synthesizes
+		// "claude exited without a successful tool_result"; that error
+		// string carries no rate-limit signal and ClassifyError falls
+		// through to Fatal, so the fallback chain never gets a turn at all.
+		// Running the cap check first means the turn-cap error wins, gets
+		// classified retryable (via the iteration-turn-cap-exceeded needle),
+		// and codex/gemini get the iteration. WorkCompleteCheck is the
+		// caller's domain-specific defuse — when nil, every over-cap run is
+		// treated as thrash.
+		if status == StatusPassed && req.MaxTurnsPerIteration > 0 {
+			honored := req.WorkCompleteCheck != nil && req.WorkCompleteCheck(execResult.Events)
+			if capErr := EnforceTurnCap(execResult.Events, req.MaxTurnsPerIteration, honored); capErr != nil {
+				status = StatusFailed
+				execResult.Err = capErr
+			}
+		}
+
 		if status == StatusPassed {
 			if validator, ok := commander.(agents.ResultValidator); ok {
 				if err := validator.ValidateResult(execResult); err != nil {
 					status = StatusFailed
 					execResult.Err = err
 				}
-			}
-		}
-
-		// Turn-cap circuit breaker: a successful run that burned more turns
-		// than the per-iteration cap WITHOUT a legitimate completion signal
-		// is demoted to a retryable failure here, BEFORE the StatusPassed
-		// early-return below. The synthesized error then flows through the
-		// existing ClassifyError → Cooldown chain so the over-cap agent gets
-		// cooled down and the next agent in [Request.AgentIDs] is tried.
-		//
-		// WorkCompleteCheck is the caller's domain-specific defuse — when
-		// nil, every over-cap run is treated as thrash. The cap is only
-		// applied to runs that exec passed; failed runs already have their
-		// own (probably more diagnostic) error.
-		if status == StatusPassed && req.MaxTurnsPerIteration > 0 {
-			honored := req.WorkCompleteCheck != nil && req.WorkCompleteCheck(execResult.Events)
-			if capErr := EnforceTurnCap(execResult.Events, req.MaxTurnsPerIteration, honored); capErr != nil {
-				status = StatusFailed
-				execResult.Err = capErr
 			}
 		}
 

@@ -41,6 +41,15 @@ type Request struct {
 	// caller's domain knowledge (e.g. planrun: every user story passes AND
 	// COMPLETE was emitted) — runtime is intentionally ignorant of PRD or
 	// plan semantics.
+	//
+	// CONTRACT: implementations of the AgentRunner interface MUST invoke
+	// this callback synchronously, before Run returns. Callers commonly
+	// close over mutable state (e.g. planrun captures currentPRD by
+	// reference and mutates it after Run returns); an async invocation
+	// would race with those mutations. The production [Runner] honors
+	// this. Fake runners used in tests must do the same — see
+	// internal/features/conductor/planrun/runner_iteration_test.go for the
+	// pattern.
 	WorkCompleteCheck func(events []exec.Event) bool
 }
 

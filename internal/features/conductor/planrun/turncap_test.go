@@ -112,6 +112,71 @@ func TestEnforceTurnCapNoResultEventNoError(t *testing.T) {
 	}
 }
 
+// TestSinglePlanTurnCapDefusedByLegitimateCompletion exercises the
+// iterationWorkComplete closure end-to-end through SinglePlan. The agent
+// burns 200 turns (well over the 40-turn cap) but ALSO emits both the
+// target story's pass marker AND <promise>COMPLETE</promise>. The
+// runtime-layer cap check must invoke the closure planrun supplied, the
+// closure must hypothetically apply the matching pass marker, see that all
+// stories would then be passed, and return true — defusing the cap. The
+// plan must complete successfully, not fail.
+//
+// Closes the gap surfaced by adversarial review round 1: the runtime-level
+// defuse test (TestTurnCapDefusedByWorkCompleteCheck) uses a trivially-true
+// callback so the production iterationWorkComplete logic (hypothetical
+// pass application + target-story matching + all-stories-passed check) is
+// never exercised end-to-end through SinglePlan. A regression in the
+// closure logic would slip past the runtime test and only show up in real
+// runs.
+func TestSinglePlanTurnCapDefusedByLegitimateCompletion(t *testing.T) {
+	p := prd.PRD{
+		ID:    "feat",
+		Title: "Feature Plan",
+		UserStories: []prd.UserStory{
+			{ID: "US-001", Title: "Story 1", Priority: 1, Passes: false},
+		},
+	}
+	root, project := projectFixtureWithPRD(t, "feat", p)
+	g := newFakeGit()
+
+	// 200 turns is 5× over the 40-turn cap, but the agent legitimately
+	// passed US-001 AND emitted COMPLETE — the closure must hypothetically
+	// apply the US-001 pass, see every story would then be passed, and
+	// return true. resultEvents(200, true) packs COMPLETE into one stdout
+	// event and the num_turns terminal into another (separate events so
+	// scanNumTurns and ScanMarkers both parse cleanly).
+	defused := coreruntime.Result{
+		Agent:    agents.AgentClaude,
+		Status:   coreruntime.StatusPassed,
+		ExitCode: 0,
+		Events: append(
+			[]coreexec.Event{
+				{Type: coreexec.EventStdout, Data: "<story-pass>US-001</story-pass>", Time: time.Now()},
+			},
+			resultEvents(200, true)...,
+		),
+	}
+	runner := &iterScriptRunner{replies: []coreruntime.Result{defused}}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:              project,
+		ControlRoot:          root,
+		WorktreeBase:         ".worktrees",
+		AgentIDs:             []agents.ID{agents.AgentClaude},
+		Runner:               runner,
+		Manager:              &planrun.Manager{Git: g},
+		ProjectRoot:          root,
+		MaxTurnsPerIteration: 40,
+	})
+
+	if res.Status != conductor.StatusCompleted {
+		t.Fatalf("status = %s, want completed (WorkCompleteCheck closure should have defused the cap); err=%v", res.Status, res.Err)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("expected exactly 1 agent call (no fallback when cap is defused), got %d", runner.calls)
+	}
+}
+
 // TestSinglePlanTripsTurnCap pins the loop wiring: a clean-exiting iteration
 // that reports more turns than the cap without completing fails the plan with
 // the [planrun.TurnCapExceededReason] tag.
