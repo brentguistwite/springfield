@@ -131,6 +131,121 @@ func TestFallbackFiresForEveryClaudeFailureShape(t *testing.T) {
 	}
 }
 
+// TestFallbackFiresOnTurnCapTrip pins the runtime-side B2 circuit-breaker:
+// a real claude adapter that exits clean but burns more turns than the cap,
+// without the caller's WorkCompleteCheck saying "done", must demote to a
+// retryable failure (via the synthesized [runtime.TurnCapExceededReason]
+// error) so the agent_priority chain falls through to codex. Closes the
+// dogfood gap where planrun called EnforceTurnCap AFTER Runner.Run returned
+// StatusPassed — the synthesized failure never reached the classifier,
+// codex never fired, and a 200-turn thrash failed the iteration outright.
+func TestFallbackFiresOnTurnCapTrip(t *testing.T) {
+	now := time.Date(2026, 5, 31, 10, 0, 0, 0, time.UTC)
+	registry := agents.NewRegistry(
+		claude.NewWithOptions(func(string) (string, error) { return "/usr/bin/claude", nil }, claude.Options{WarnWriter: io.Discard}),
+		codex.New(func(string) (string, error) { return "/usr/bin/codex", nil }),
+	)
+
+	// Thrash transcript: a successful tool_result satisfies ValidateResult so
+	// claude's run looks "passed" from exec's perspective, then a terminal
+	// result event carries num_turns=84 — well over the 40-turn cap — without
+	// any completion signal. This is the exact shape the dogfood batch hit.
+	claudeThrash := exec.Result{
+		ExitCode: 0,
+		Events: []exec.Event{
+			{Type: exec.EventStdout, Data: `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_01"}]}}`},
+			{Type: exec.EventStdout, Data: `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_01","is_error":false}]}}`},
+			{Type: exec.EventStdout, Data: `{"type":"result","subtype":"success","is_error":false,"num_turns":84}`},
+		},
+	}
+
+	var calls []string
+	runFn := func(_ context.Context, cmd exec.Command, _ exec.EventHandler) exec.Result {
+		calls = append(calls, cmd.Name)
+		if cmd.Name == "claude" {
+			return claudeThrash
+		}
+		return exec.Result{
+			ExitCode: 0,
+			Events: []exec.Event{
+				{Type: exec.EventStdout, Data: `{"type":"item.completed","item":{"type":"command_execution","exit_code":0}}`},
+			},
+		}
+	}
+
+	runner := runtime.NewTestRunner(registry, runFn, func() time.Time { return now })
+	result := runner.Run(context.Background(), runtime.Request{
+		AgentIDs:             []agents.ID{agents.AgentClaude, agents.AgentCodex},
+		Prompt:               "test",
+		WorkDir:              "/tmp/project",
+		MaxTurnsPerIteration: 40,
+		// nil WorkCompleteCheck → treat every over-cap run as thrash.
+	})
+
+	if len(calls) != 2 || calls[0] != "claude" || calls[1] != "codex" {
+		t.Fatalf("expected fallback chain [claude codex], got %v", calls)
+	}
+	if result.Status != runtime.StatusPassed {
+		t.Fatalf("expected passed via codex fallback, got %q (err: %v)", result.Status, result.Err)
+	}
+	if result.Agent != agents.AgentCodex {
+		t.Fatalf("expected winning agent codex, got %q", result.Agent)
+	}
+	if runner.GetCooldown(agents.AgentClaude).IsZero() {
+		t.Fatalf("expected claude cooldown installed after turn-cap synthesis, got zero")
+	}
+}
+
+// TestTurnCapDefusedByWorkCompleteCheck pins the other half of the contract:
+// when the caller's WorkCompleteCheck returns true, a high turn count must
+// NOT be treated as thrash. A 200-turn iteration that genuinely completed
+// the work is success — penalising claude AND making codex redo finished
+// work would be doubly wrong.
+func TestTurnCapDefusedByWorkCompleteCheck(t *testing.T) {
+	now := time.Date(2026, 5, 31, 10, 0, 0, 0, time.UTC)
+	registry := agents.NewRegistry(
+		claude.NewWithOptions(func(string) (string, error) { return "/usr/bin/claude", nil }, claude.Options{WarnWriter: io.Discard}),
+		codex.New(func(string) (string, error) { return "/usr/bin/codex", nil }),
+	)
+
+	claudeOverCapButDone := exec.Result{
+		ExitCode: 0,
+		Events: []exec.Event{
+			{Type: exec.EventStdout, Data: `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_01"}]}}`},
+			{Type: exec.EventStdout, Data: `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_01","is_error":false}]}}`},
+			{Type: exec.EventStdout, Data: `{"type":"result","subtype":"success","is_error":false,"num_turns":200}`},
+		},
+	}
+
+	var calls []string
+	runFn := func(_ context.Context, cmd exec.Command, _ exec.EventHandler) exec.Result {
+		calls = append(calls, cmd.Name)
+		return claudeOverCapButDone
+	}
+
+	runner := runtime.NewTestRunner(registry, runFn, func() time.Time { return now })
+	result := runner.Run(context.Background(), runtime.Request{
+		AgentIDs:             []agents.ID{agents.AgentClaude, agents.AgentCodex},
+		Prompt:               "test",
+		WorkDir:              "/tmp/project",
+		MaxTurnsPerIteration: 40,
+		WorkCompleteCheck:    func([]exec.Event) bool { return true },
+	})
+
+	if len(calls) != 1 || calls[0] != "claude" {
+		t.Fatalf("expected only claude to run (no fallback when work completed), got %v", calls)
+	}
+	if result.Status != runtime.StatusPassed {
+		t.Fatalf("expected passed, got %q (err: %v)", result.Status, result.Err)
+	}
+	if result.Agent != agents.AgentClaude {
+		t.Fatalf("expected winning agent claude, got %q", result.Agent)
+	}
+	if !runner.GetCooldown(agents.AgentClaude).IsZero() {
+		t.Fatalf("expected no claude cooldown when WorkCompleteCheck defused the cap, got %v", runner.GetCooldown(agents.AgentClaude))
+	}
+}
+
 func TestFallbackWalksPriorityOnRetryable(t *testing.T) {
 	first := &classifyingCommander{id: agents.AgentClaude, class: agents.ErrorClassRetryable}
 	second := &classifyingCommander{id: agents.AgentCodex, class: agents.ErrorClassFatal}

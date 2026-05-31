@@ -20,6 +20,14 @@ import (
 
 // iterScriptRunner is a scripted AgentRunner for iteration tests.
 // Each call pops the next Reply from replies slice.
+//
+// Mirrors the real [coreruntime.Runner.Run]'s turn-cap circuit-breaker so the
+// planrun→runtime wiring (MaxTurnsPerIteration + WorkCompleteCheck plumbing
+// through Request) can be exercised end-to-end without standing up a real
+// Runner. When the scripted reply is StatusPassed but the request opted into
+// the cap and the events exceed it, the fake demotes to StatusFailed with a
+// [coreruntime.TurnCapExceededReason]-tagged error — exactly what production
+// runtime does, so planrun cannot tell the difference.
 type iterScriptRunner struct {
 	replies []coreruntime.Result
 	calls   int
@@ -35,7 +43,15 @@ func (r *iterScriptRunner) Run(_ context.Context, req coreruntime.Request) corer
 			ExitCode: 1,
 		}
 	}
-	return r.replies[r.calls-1]
+	res := r.replies[r.calls-1]
+	if res.Status == coreruntime.StatusPassed && req.MaxTurnsPerIteration > 0 {
+		honored := req.WorkCompleteCheck != nil && req.WorkCompleteCheck(res.Events)
+		if capErr := coreruntime.EnforceTurnCap(res.Events, req.MaxTurnsPerIteration, honored); capErr != nil {
+			res.Status = coreruntime.StatusFailed
+			res.Err = capErr
+		}
+	}
+	return res
 }
 
 func makePassResult(storyID string) coreruntime.Result {

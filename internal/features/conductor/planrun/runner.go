@@ -372,12 +372,23 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			}
 		}
 
+		// Capture the per-iteration scoping (currentPRD + target story) the
+		// runtime needs to ask "did this run legitimately complete the
+		// iteration?". The closure runs synchronously inside Runner.Run
+		// (between exec returning and ClassifyError), so the values it reads
+		// can never race with the post-Run MarkPassed loop below.
+		iterStory := story
+		workCompleteCheck := func(events []exec.Event) bool {
+			return iterationWorkComplete(events, currentPRD, iterStory.ID)
+		}
 		result := in.Runner.Run(context.Background(), coreruntime.Request{
-			AgentIDs:          in.AgentIDs,
-			Prompt:            prompt,
-			WorkDir:           ctx.WorktreeRoot,
-			OnEvent:           in.OnEvent,
-			ExecutionSettings: in.ExecutionSettings,
+			AgentIDs:             in.AgentIDs,
+			Prompt:               prompt,
+			WorkDir:              ctx.WorktreeRoot,
+			OnEvent:              in.OnEvent,
+			ExecutionSettings:    in.ExecutionSettings,
+			MaxTurnsPerIteration: in.MaxTurnsPerIteration,
+			WorkCompleteCheck:    workCompleteCheck,
 		})
 		lastAgent = result.Agent
 
@@ -471,26 +482,26 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 				break
 			}
 			finalRunErr = iterRunErr
-			exitReason = "agent-failed"
+			// Preserve the structured turn-cap tag when the failure bubbled
+			// up from the runtime layer's circuit-breaker. The runtime
+			// synthesizes a retryable error tagged [TurnCapExceededReason]
+			// when a clean-exiting agent burns more turns than the cap; if
+			// every agent in the chain hit the same wall, that's the honest
+			// reason — surfacing "agent-failed" instead would lose the
+			// operator-visible signal that thrash, not a real error, broke
+			// the iteration.
+			if strings.Contains(iterRunErr.Error(), TurnCapExceededReason) {
+				exitReason = TurnCapExceededReason
+				_ = AppendProgress(progressPath, fmt.Sprintf("%s %s",
+					now().UTC().Format(time.RFC3339), iterRunErr.Error()))
+			} else {
+				exitReason = "agent-failed"
+			}
 			break
 		}
 
 		if completeHonored {
 			finishWithReview()
-			break
-		}
-
-		// B2 thrash circuit-breaker: a clean-exiting iteration that burned more
-		// than the configured turn cap without legitimately completing is
-		// treated as a failure rather than allowed to spin (dogfood: 84 turns
-		// → API 400). completeHonored is checked above so completed iterations
-		// never reach this; we pass it explicitly anyway so EnforceTurnCap can
-		// distinguish a HONORED COMPLETE from a PREMATURE COMPLETE (the latter
-		// must NOT defuse the cap — adversarial review round 2 caught this).
-		if turnErr := EnforceTurnCap(result.Events, in.MaxTurnsPerIteration, completeHonored); turnErr != nil {
-			_ = AppendProgress(progressPath, fmt.Sprintf("%s %s", now().UTC().Format(time.RFC3339), turnErr.Error()))
-			finalRunErr = turnErr
-			exitReason = TurnCapExceededReason
 			break
 		}
 
@@ -783,6 +794,46 @@ func truncateForError(s string, max int) string {
 	}
 	runes := []rune(s)
 	return string(runes[:max]) + "…"
+}
+
+// iterationWorkComplete reports whether the events from a just-finished agent
+// run would, after applying the target story's pass marker, leave EVERY story
+// in the PRD passed AND the agent emitted <promise>COMPLETE</promise>. It is
+// the runtime-callable form of the [completeHonored] check planrun does
+// post-Run, hoisted to a closure so [coreruntime.Request.WorkCompleteCheck]
+// can ask the question BEFORE the runtime decides whether to trip the turn
+// cap circuit-breaker.
+//
+// The "hypothetical" pass application is load-bearing: when this runs,
+// MarkPassed has not yet committed the iteration's pass to prd.json, so the
+// in-memory PRD still shows the target story as not-yet-passed. Without
+// pretending the matching pass marker landed, a legitimate final iteration
+// (1 pending story, agent passes it, emits COMPLETE) would look "incomplete"
+// and the runtime would falsely trip the cap. Off-target pass markers (the
+// agent claims to have passed a different story than the iteration's target)
+// are ignored exactly like the post-Run MarkPassed loop ignores them.
+func iterationWorkComplete(events []exec.Event, p prd.PRD, targetStoryID string) bool {
+	passedIDs, complete := ScanMarkers(events)
+	if !complete {
+		return false
+	}
+	matched := false
+	for _, sid := range passedIDs {
+		if sid == targetStoryID {
+			matched = true
+			break
+		}
+	}
+	for _, s := range p.UserStories {
+		if s.Passes {
+			continue
+		}
+		if s.ID == targetStoryID && matched {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // workCompletedBeforeCrash reports whether a plan's work is provably finished
