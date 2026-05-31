@@ -36,11 +36,37 @@ aborting the load.
 Springfield enforces the cap by monitoring the `num_turns` field of the agent's
 terminal stream-json `result` event, and synthesizing the
 `iteration-turn-cap-exceeded` failure when `num_turns` exceeds the cap **and**
-the iteration did not emit `<promise>COMPLETE</promise>`.
+the work for the iteration is not confirmed complete. The synthesized failure
+classifies as retryable, so the over-cap agent is cooled down and the next
+agent in the priority chain (typically `codex`) gets a turn at the iteration.
 
-`COMPLETE` always wins: an iteration that finished its work is never capped,
-however many turns it took — the cap exists to catch *unproductive* spinning,
-not to punish a long-but-successful run.
+For PRD plans, "work complete" means BOTH `<promise>COMPLETE</promise>` was
+emitted AND every user story passes (hypothetically applying the iteration's
+target-story pass marker). A **premature** `COMPLETE` — emitted before all
+stories pass — does NOT defuse the cap; this is the adversarial-review-caught
+case where an agent thrashed for 200 turns and emitted `COMPLETE` anyway to
+shortcut out. The work-complete check is the authoritative defuse signal, not
+the marker alone.
+
+### Plan-format scope
+
+The cap is enforced on **PRD plans only** — plans whose unit path ends in
+`prd.json`. Legacy `.md` plans are exempt because the legacy single-shot
+dispatch path has no per-story pass oracle a completion check could consult;
+forwarding the cap there would demote legitimate long-running clean exits to
+"thrash" and fall through to the next agent on an already-mutated worktree.
+
+When `max_turns_per_iteration` is set non-zero and a legacy plan dispatches,
+Springfield emits a progress-line warning so operators see the asymmetry
+rather than silently losing the safety ceiling:
+
+```
+plan <id>: WARNING max_turns_per_iteration=40 configured but plan is legacy
+.md format; turn-cap circuit-breaker is PRD-only and will NOT apply to this
+plan
+```
+
+Migrate the plan to PRD format to get cap coverage.
 
 > **Why monitoring and not a CLI flag?** The Claude Code CLI we target exposes
 > no `--max-turns` option (verified via `claude --help`; it offers only
