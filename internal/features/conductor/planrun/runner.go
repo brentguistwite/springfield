@@ -660,20 +660,22 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 	}
 
 	progress(in.Progress, "plan %s: dispatching agent (workdir %s)\n", planID, ctx.WorktreeRoot)
-	// Legacy plans are single-shot dispatches with no per-story completion
-	// signal, so WorkCompleteCheck is left nil — every over-cap legacy run
-	// is treated as thrash and falls through to the next agent. This is
-	// slightly conservative (a legitimately long-but-completing legacy run
-	// would also trigger fallback), but operators set MaxTurnsPerIteration
-	// expecting uniform thrash protection across all plan formats; silently
-	// dropping it on legacy plans would surprise them.
+	// Turn-cap is deliberately NOT forwarded on the legacy path. Legacy
+	// plans are single-shot dispatches with no per-story pass markers, so
+	// there is no completion oracle a [WorkCompleteCheck] closure could
+	// consult — every clean exit would default to "thrash" and a 200-turn
+	// legitimately-completing legacy run would be demoted to a retryable
+	// failure, fall through to the next agent on an already-mutated
+	// worktree, and either re-do the work or fail outright. Adversarial
+	// review round 2 caught this regression. Until there is a reliable
+	// legacy completion oracle (e.g. "did the worktree advance past
+	// baseHead AND the agent claimed success?"), the cap stays PRD-only.
 	result := in.Runner.Run(context.Background(), coreruntime.Request{
-		AgentIDs:             in.AgentIDs,
-		Prompt:               prompt,
-		WorkDir:              ctx.WorktreeRoot,
-		OnEvent:              in.OnEvent,
-		ExecutionSettings:    in.ExecutionSettings,
-		MaxTurnsPerIteration: in.MaxTurnsPerIteration,
+		AgentIDs:          in.AgentIDs,
+		Prompt:            prompt,
+		WorkDir:           ctx.WorktreeRoot,
+		OnEvent:           in.OnEvent,
+		ExecutionSettings: in.ExecutionSettings,
 	})
 
 	// Detect and recover any control-plane tamper by the agent.
