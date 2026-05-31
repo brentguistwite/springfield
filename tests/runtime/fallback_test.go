@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -196,16 +197,77 @@ func TestFallbackFiresOnTurnCapTrip(t *testing.T) {
 	}
 }
 
-// TestTurnCapTripsBeforeValidateResult is the regression test for the
-// adversarial-review round-1 high-severity finding: the turn-cap check MUST
-// run before ValidateResult. The dogfood thrash shape produces a clean exit
-// (exit 0) with a transcript that ALSO fails ValidateResult — no successful
-// tool_result is paired with the tool_use. If ValidateResult fires first,
-// it synthesizes "claude exited without a successful tool_result"; that
-// string carries no rate-limit signal so ClassifyError falls through to
-// Fatal, the fallback chain never gets a turn, and the whole iteration
-// fails on the wrong diagnosis. Pin the ordering: an over-cap thrash with
-// a validator-failing transcript still falls through to codex.
+// TestTurnCapBeatsValidateResultOnSingleAgent directly pins the
+// ordering contract by inspecting which error reaches classification.
+// Using a single-agent chain (no codex fallback) means the final
+// result.Err is exactly what was demoted from StatusPassed — so we can
+// assert it carries [runtime.TurnCapExceededReason], not the validator's
+// "claude exited without a successful tool_result". This catches an
+// ordering regression that the multi-agent variant below CAN'T: a
+// fallback test only checks the final outcome, so if cap and validator
+// swapped order again the test would still pass as long as codex caught
+// the (now misclassified) failure.
+//
+// Adversarial review round 2 Codex finding: the multi-agent test alone
+// doesn't actually prove the ordering it claims to.
+func TestTurnCapBeatsValidateResultOnSingleAgent(t *testing.T) {
+	now := time.Date(2026, 5, 31, 10, 0, 0, 0, time.UTC)
+	registry := agents.NewRegistry(
+		claude.NewWithOptions(func(string) (string, error) { return "/usr/bin/claude", nil }, claude.Options{WarnWriter: io.Discard}),
+	)
+
+	// Adversarial shape: tool_use with NO paired tool_result (would fail
+	// ValidateResult) + num_turns=84 over the 40-turn cap (would trip
+	// EnforceTurnCap). With cap-before-validator ordering, the cap wins.
+	claudeThrashBrokenTranscript := exec.Result{
+		ExitCode: 0,
+		Events: []exec.Event{
+			{Type: exec.EventStdout, Data: `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_01"}]}}`},
+			{Type: exec.EventStdout, Data: `{"type":"result","subtype":"success","is_error":false,"num_turns":84}`},
+		},
+	}
+
+	runFn := func(_ context.Context, _ exec.Command, _ exec.EventHandler) exec.Result {
+		return claudeThrashBrokenTranscript
+	}
+
+	runner := runtime.NewTestRunner(registry, runFn, func() time.Time { return now })
+	result := runner.Run(context.Background(), runtime.Request{
+		AgentIDs:             []agents.ID{agents.AgentClaude},
+		Prompt:               "test",
+		WorkDir:              "/tmp/project",
+		MaxTurnsPerIteration: 40,
+	})
+
+	if result.Status != runtime.StatusFailed {
+		t.Fatalf("expected failed (no fallback agent), got %q", result.Status)
+	}
+	if result.Err == nil {
+		t.Fatal("expected non-nil err carrying the turn-cap tag")
+	}
+	if !strings.Contains(result.Err.Error(), runtime.TurnCapExceededReason) {
+		t.Fatalf("expected err to carry %q (proves cap ran before ValidateResult), got %q",
+			runtime.TurnCapExceededReason, result.Err.Error())
+	}
+	if strings.Contains(result.Err.Error(), "successful tool_result") {
+		t.Fatalf("err contains ValidateResult's diagnostic — ordering regressed; got %q", result.Err.Error())
+	}
+}
+
+// TestTurnCapTripsBeforeValidateResult covers the multi-agent fallback
+// outcome under the cap-before-validator ordering: an over-cap clean exit
+// with an ADVERSARIAL broken transcript (tool_use with no paired
+// tool_result) still falls through to codex. Pairs with the single-agent
+// ordering pin above — that test proves the synthesized error is the
+// turn-cap one; this test proves it then drives the full fallback chain.
+//
+// NOTE: this transcript shape is adversarial, NOT the observed dogfood
+// shape. The dogfood thrash had a successful tool_result paired with
+// num_turns over the cap (covered by TestFallbackFiresOnTurnCapTrip
+// above). The broken-transcript shape here is the case where ValidateResult
+// would ALSO fail — without the round-1 ordering fix, ValidateResult would
+// fire first and the synthesized "no successful tool_result" error would
+// hit Fatal in ClassifyError, defeating fallback entirely.
 func TestTurnCapTripsBeforeValidateResult(t *testing.T) {
 	now := time.Date(2026, 5, 31, 10, 0, 0, 0, time.UTC)
 	registry := agents.NewRegistry(

@@ -142,19 +142,19 @@ func TestSinglePlanTurnCapDefusedByLegitimateCompletion(t *testing.T) {
 	// 200 turns is 5× over the 40-turn cap, but the agent legitimately
 	// passed US-001 AND emitted COMPLETE — the closure must hypothetically
 	// apply the US-001 pass, see every story would then be passed, and
-	// return true. resultEvents(200, true) packs COMPLETE into one stdout
-	// event and the num_turns terminal into another (separate events so
-	// scanNumTurns and ScanMarkers both parse cleanly).
+	// return true. Each marker emitted as its OWN bare-text event so the
+	// test does not depend on ScanMarkers' raw-Data-scan behavior over
+	// JSON-wrapped events (a v1 implementation detail that could tighten
+	// in future). The num_turns terminal event comes from resultEvent(200).
 	defused := coreruntime.Result{
 		Agent:    agents.AgentClaude,
 		Status:   coreruntime.StatusPassed,
 		ExitCode: 0,
-		Events: append(
-			[]coreexec.Event{
-				{Type: coreexec.EventStdout, Data: "<story-pass>US-001</story-pass>", Time: time.Now()},
-			},
-			resultEvents(200, true)...,
-		),
+		Events: []coreexec.Event{
+			{Type: coreexec.EventStdout, Data: "<story-pass>US-001</story-pass>", Time: time.Now()},
+			{Type: coreexec.EventStdout, Data: "<promise>COMPLETE</promise>", Time: time.Now()},
+			resultEvent(200),
+		},
 	}
 	runner := &iterScriptRunner{replies: []coreruntime.Result{defused}}
 
