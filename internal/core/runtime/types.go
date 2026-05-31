@@ -15,6 +15,33 @@ type Request struct {
 	Timeout           time.Duration
 	OnEvent           exec.EventHandler
 	ExecutionSettings agents.ExecutionSettings
+
+	// MaxTurnsPerIteration caps the agent turns a single Run may consume
+	// before the runtime synthesizes a retryable [TurnCapExceededReason]
+	// failure. Zero (the default) disables the cap so callers that don't opt
+	// in keep their prior behavior. Callers that DO opt in pass
+	// config.Config.MaxTurnsPerIteration() — see internal/core/config.
+	//
+	// The cap exists because the installed claude CLI exposes no --max-turns
+	// flag; Springfield watches the stream-json result event's num_turns and
+	// trips its own circuit-breaker. Enforcing in the runtime layer (not the
+	// caller) lets the synthesized failure flow through the standard
+	// ClassifyError → cooldown chain so an over-cap iteration falls through
+	// to the next agent in [AgentIDs] instead of failing the whole run.
+	MaxTurnsPerIteration int
+
+	// WorkCompleteCheck, when non-nil and the cap is enabled, is called by
+	// the runtime after a successful agent run to ask "did the agent's work
+	// legitimately complete the iteration?". When it returns true, the turn
+	// cap is defused — a 200-turn run that genuinely finished the work is
+	// not a thrash. When it returns false (or this field is nil), an
+	// over-cap run is synthesized into a retryable failure.
+	//
+	// Lives as a callback because the "is work complete" predicate is the
+	// caller's domain knowledge (e.g. planrun: every user story passes AND
+	// COMPLETE was emitted) — runtime is intentionally ignorant of PRD or
+	// plan semantics.
+	WorkCompleteCheck func(events []exec.Event) bool
 }
 
 // Status is the outcome of a runtime execution.

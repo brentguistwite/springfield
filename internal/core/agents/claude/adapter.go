@@ -451,6 +451,15 @@ var claudeRetryableNeedles = []string{
 	"503",
 	"500",
 	"overloaded",
+	// Springfield-synthesized turn-cap trip from [coreruntime.EnforceTurnCap].
+	// When the runtime layer demotes a clean exit to retryable because the
+	// iteration burned more turns than the cap (the dogfood thrash signal),
+	// the error string carries this prefix. Treating it as retryable lets
+	// the agent_priority fallback walk to codex/gemini instead of bailing
+	// the whole iteration on the over-cap claude run. The match is hand-
+	// duplicated (rather than importing the constant) to keep the claude
+	// adapter free of an inverse dependency on the runtime package.
+	"iteration-turn-cap-exceeded",
 }
 
 func errorString(err error) string {

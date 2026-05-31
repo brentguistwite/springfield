@@ -163,6 +163,25 @@ func (r *Runner) Run(ctx context.Context, req Request) Result {
 			}
 		}
 
+		// Turn-cap circuit breaker: a successful run that burned more turns
+		// than the per-iteration cap WITHOUT a legitimate completion signal
+		// is demoted to a retryable failure here, BEFORE the StatusPassed
+		// early-return below. The synthesized error then flows through the
+		// existing ClassifyError → Cooldown chain so the over-cap agent gets
+		// cooled down and the next agent in [Request.AgentIDs] is tried.
+		//
+		// WorkCompleteCheck is the caller's domain-specific defuse — when
+		// nil, every over-cap run is treated as thrash. The cap is only
+		// applied to runs that exec passed; failed runs already have their
+		// own (probably more diagnostic) error.
+		if status == StatusPassed && req.MaxTurnsPerIteration > 0 {
+			honored := req.WorkCompleteCheck != nil && req.WorkCompleteCheck(execResult.Events)
+			if capErr := EnforceTurnCap(execResult.Events, req.MaxTurnsPerIteration, honored); capErr != nil {
+				status = StatusFailed
+				execResult.Err = capErr
+			}
+		}
+
 		last = Result{
 			Agent:     agentID,
 			Status:    status,
