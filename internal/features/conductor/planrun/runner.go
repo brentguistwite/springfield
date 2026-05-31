@@ -660,12 +660,20 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 	}
 
 	progress(in.Progress, "plan %s: dispatching agent (workdir %s)\n", planID, ctx.WorktreeRoot)
+	// Legacy plans are single-shot dispatches with no per-story completion
+	// signal, so WorkCompleteCheck is left nil — every over-cap legacy run
+	// is treated as thrash and falls through to the next agent. This is
+	// slightly conservative (a legitimately long-but-completing legacy run
+	// would also trigger fallback), but operators set MaxTurnsPerIteration
+	// expecting uniform thrash protection across all plan formats; silently
+	// dropping it on legacy plans would surprise them.
 	result := in.Runner.Run(context.Background(), coreruntime.Request{
-		AgentIDs:          in.AgentIDs,
-		Prompt:            prompt,
-		WorkDir:           ctx.WorktreeRoot,
-		OnEvent:           in.OnEvent,
-		ExecutionSettings: in.ExecutionSettings,
+		AgentIDs:             in.AgentIDs,
+		Prompt:               prompt,
+		WorkDir:              ctx.WorktreeRoot,
+		OnEvent:              in.OnEvent,
+		ExecutionSettings:    in.ExecutionSettings,
+		MaxTurnsPerIteration: in.MaxTurnsPerIteration,
 	})
 
 	// Detect and recover any control-plane tamper by the agent.

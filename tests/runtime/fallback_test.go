@@ -196,6 +196,73 @@ func TestFallbackFiresOnTurnCapTrip(t *testing.T) {
 	}
 }
 
+// TestTurnCapTripsBeforeValidateResult is the regression test for the
+// adversarial-review round-1 high-severity finding: the turn-cap check MUST
+// run before ValidateResult. The dogfood thrash shape produces a clean exit
+// (exit 0) with a transcript that ALSO fails ValidateResult — no successful
+// tool_result is paired with the tool_use. If ValidateResult fires first,
+// it synthesizes "claude exited without a successful tool_result"; that
+// string carries no rate-limit signal so ClassifyError falls through to
+// Fatal, the fallback chain never gets a turn, and the whole iteration
+// fails on the wrong diagnosis. Pin the ordering: an over-cap thrash with
+// a validator-failing transcript still falls through to codex.
+func TestTurnCapTripsBeforeValidateResult(t *testing.T) {
+	now := time.Date(2026, 5, 31, 10, 0, 0, 0, time.UTC)
+	registry := agents.NewRegistry(
+		claude.NewWithOptions(func(string) (string, error) { return "/usr/bin/claude", nil }, claude.Options{WarnWriter: io.Discard}),
+		codex.New(func(string) (string, error) { return "/usr/bin/codex", nil }),
+	)
+
+	// Thrash + broken transcript: a tool_use with NO paired tool_result
+	// (the truncation pattern Anthropic API errors produce), plus a
+	// terminal result event with num_turns=84 over the 40-turn cap.
+	// ValidateResult would synthesize "no successful tool_result"; the
+	// turn-cap check must take precedence so the synthesized
+	// iteration-turn-cap-exceeded error wins and the chain falls through.
+	claudeThrashBrokenTranscript := exec.Result{
+		ExitCode: 0,
+		Events: []exec.Event{
+			{Type: exec.EventStdout, Data: `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_01"}]}}`},
+			{Type: exec.EventStdout, Data: `{"type":"result","subtype":"success","is_error":false,"num_turns":84}`},
+		},
+	}
+
+	var calls []string
+	runFn := func(_ context.Context, cmd exec.Command, _ exec.EventHandler) exec.Result {
+		calls = append(calls, cmd.Name)
+		if cmd.Name == "claude" {
+			return claudeThrashBrokenTranscript
+		}
+		return exec.Result{
+			ExitCode: 0,
+			Events: []exec.Event{
+				{Type: exec.EventStdout, Data: `{"type":"item.completed","item":{"type":"command_execution","exit_code":0}}`},
+			},
+		}
+	}
+
+	runner := runtime.NewTestRunner(registry, runFn, func() time.Time { return now })
+	result := runner.Run(context.Background(), runtime.Request{
+		AgentIDs:             []agents.ID{agents.AgentClaude, agents.AgentCodex},
+		Prompt:               "test",
+		WorkDir:              "/tmp/project",
+		MaxTurnsPerIteration: 40,
+	})
+
+	if len(calls) != 2 || calls[0] != "claude" || calls[1] != "codex" {
+		t.Fatalf("expected fallback chain [claude codex] (turn-cap must trip BEFORE ValidateResult), got %v", calls)
+	}
+	if result.Status != runtime.StatusPassed {
+		t.Fatalf("expected passed via codex fallback, got %q (err: %v)", result.Status, result.Err)
+	}
+	if result.Agent != agents.AgentCodex {
+		t.Fatalf("expected winning agent codex, got %q", result.Agent)
+	}
+	if runner.GetCooldown(agents.AgentClaude).IsZero() {
+		t.Fatalf("expected claude cooldown installed after turn-cap synthesis (not ValidateResult miss), got zero")
+	}
+}
+
 // TestTurnCapDefusedByWorkCompleteCheck pins the other half of the contract:
 // when the caller's WorkCompleteCheck returns true, a high turn count must
 // NOT be treated as thrash. A 200-turn iteration that genuinely completed
