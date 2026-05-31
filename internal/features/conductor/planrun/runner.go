@@ -99,6 +99,13 @@ type SinglePlanInput struct {
 	// (which defaults to 40 when the springfield.toml key is omitted). The zero
 	// value disables the check, so tests and legacy callers that leave it unset
 	// keep their prior behavior.
+	//
+	// PRD plans only. Legacy `.md` plans silently ignore this field because
+	// the legacy single-shot path has no completion oracle a WorkCompleteCheck
+	// closure could consult — forwarding the cap there would demote
+	// legitimate long-running runs to thrash. See [singlePlanLegacy]. The
+	// silent-ignore behavior is surfaced to operators as a progress-line
+	// warning when the field is non-zero on a legacy dispatch.
 	MaxTurnsPerIteration int
 }
 
@@ -636,6 +643,15 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 	if in.ReviewConfig.Enabled {
 		progress(in.Progress, "plan %s: WARNING review.enabled=true but plan is legacy .md format; pre-merge review gate is PRD-only and will NOT run for this plan\n", planID)
 	}
+	// Same warning shape for the turn cap: cmd/start passes the configured
+	// MaxTurnsPerIteration to every plan, but singlePlanLegacy intentionally
+	// does NOT forward it (legacy has no completion oracle — see the Run
+	// call site below). Operators who configure max_turns_per_iteration
+	// expecting uniform thrash protection across plan formats need to see
+	// the asymmetry surfaced, not buried in a code comment.
+	if in.MaxTurnsPerIteration > 0 {
+		progress(in.Progress, "plan %s: WARNING max_turns_per_iteration=%d configured but plan is legacy .md format; turn-cap circuit-breaker is PRD-only and will NOT apply to this plan\n", planID, in.MaxTurnsPerIteration)
+	}
 
 	// Write running state before dispatch (same as PRD path).
 	in.Project.State.Plans[planID] = startState
@@ -667,9 +683,13 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 	// legitimately-completing legacy run would be demoted to a retryable
 	// failure, fall through to the next agent on an already-mutated
 	// worktree, and either re-do the work or fail outright. Adversarial
-	// review round 2 caught this regression. Until there is a reliable
-	// legacy completion oracle (e.g. "did the worktree advance past
-	// baseHead AND the agent claimed success?"), the cap stays PRD-only.
+	// review round 2 caught this regression. The cap stays PRD-only until
+	// a reliable legacy completion oracle exists. "Worktree advanced past
+	// baseHead" alone is NOT sufficient — an agent that committed once at
+	// turn 5 and then thrashed for 195 turns would satisfy it. A real
+	// oracle needs a semantic success signal (e.g. an explicit
+	// `<promise>COMPLETE</promise>` honored against project-defined exit
+	// criteria), which legacy `.md` plans do not carry.
 	result := in.Runner.Run(context.Background(), coreruntime.Request{
 		AgentIDs:          in.AgentIDs,
 		Prompt:            prompt,
