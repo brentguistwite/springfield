@@ -79,7 +79,7 @@ func TestPrintBatchStatusSpendLineMultiAdapter(t *testing.T) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
-		c := cost.Capture{Adapter: adapter, Model: "m", CostUSD: usd, CapturedAt: time.Now().UTC()}
+		c := cost.Capture{Adapter: adapter, Model: "m", CostUSD: usd, BatchID: "test-1", CapturedAt: time.Now().UTC()}
 		data, _ := json.MarshalIndent(c, "", "  ")
 		if err := os.WriteFile(filepath.Join(dir, "cost.json"), data, 0o644); err != nil {
 			t.Fatalf("write: %v", err)
@@ -120,6 +120,7 @@ func TestPrintBatchStatusSpendLineRenders(t *testing.T) {
 		Adapter:    "codex",
 		Model:      "gpt-5.4",
 		CostUSD:    0.42,
+		BatchID:    "test-1",
 		CapturedAt: time.Now().UTC(),
 	}
 	data, _ := json.MarshalIndent(c, "", "  ")

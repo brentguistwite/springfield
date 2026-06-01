@@ -36,6 +36,15 @@ type Capture struct {
 	OutputTokens int       `json:"output_tokens"`
 	CostUSD      float64   `json:"cost_usd"`
 	CapturedAt   time.Time `json:"captured_at"`
+	// BatchID stamps the capture with the batch it was produced under so a
+	// rollup can be scoped to one batch. Evidence dirs are keyed per plan,
+	// not per batch, and the conductor reuses plan IDs with iteration
+	// counters restarting at 1 — so a stale iter-N from an earlier batch can
+	// survive best-effort archive cleanup into a reused plan dir. Scoping the
+	// rollup by this field, rather than by plan-key path, is the only way to
+	// exclude that leakage. Empty for captures written outside a named batch
+	// (the single-plan-unit path); those are treated as unscoped.
+	BatchID string `json:"batch_id,omitempty"`
 }
 
 // pricingTable maps adapter ID → model ID → rate. Model IDs are matched

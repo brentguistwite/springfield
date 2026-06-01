@@ -433,6 +433,7 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 			Ctx:                  ctx,
 			MaxTurnsPerIteration: loaded.Config.MaxTurnsPerIteration(),
 			CostCapUSD:           costCap,
+			BatchID:              b.ID,
 		})
 		if res.Reason == "no-eligible-plan" {
 			// The target plan is not registered in the conductor schedule —

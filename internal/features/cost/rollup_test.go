@@ -45,6 +45,51 @@ func itoa(n int) string {
 	return string(buf[i:])
 }
 
+func TestComputeRollup_ScopesToBatchID(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now().UTC()
+	// Reused plan key "plan-a": a stale capture from batch-A that survived a
+	// failed evidence cleanup (iter-1), plus batch-B's fresh capture (iter-2)
+	// in the same plan dir. A batch-B rollup must NOT count batch-A's spend.
+	seedCapture(t, root, "plan-a", 1, cost.Capture{Adapter: "claude", CostUSD: 5.00, BatchID: "batch-A", CapturedAt: now})
+	seedCapture(t, root, "plan-a", 2, cost.Capture{Adapter: "codex", CostUSD: 0.25, BatchID: "batch-B", CapturedAt: now})
+
+	r, err := cost.ComputeRollup(root, "batch-B")
+	if err != nil {
+		t.Fatalf("ComputeRollup: %v", err)
+	}
+	if r.Iterations != 1 {
+		t.Errorf("iterations=%d want 1 (only batch-B's capture)", r.Iterations)
+	}
+	if math.Abs(r.TotalUSD-0.25) > 1e-9 {
+		t.Errorf("total=%v want 0.25 (batch-A's $5.00 leak must be excluded)", r.TotalUSD)
+	}
+	if math.Abs(r.PerAdapter["claude"]-0) > 1e-9 {
+		t.Errorf("claude=%v want 0 (batch-A only)", r.PerAdapter["claude"])
+	}
+}
+
+func TestComputeRollup_EmptyBatchIDCountsAll(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now().UTC()
+	// Captures from two different batches plus one unstamped. An empty
+	// batchID disables scoping (single-plan-unit path) and counts all three.
+	seedCapture(t, root, "plan-a", 1, cost.Capture{Adapter: "claude", CostUSD: 1.00, BatchID: "batch-A", CapturedAt: now})
+	seedCapture(t, root, "plan-a", 2, cost.Capture{Adapter: "codex", CostUSD: 2.00, BatchID: "batch-B", CapturedAt: now})
+	seedCapture(t, root, "plan-b", 1, cost.Capture{Adapter: "codex", CostUSD: 0.50, CapturedAt: now})
+
+	r, err := cost.ComputeRollup(root, "")
+	if err != nil {
+		t.Fatalf("ComputeRollup: %v", err)
+	}
+	if r.Iterations != 3 {
+		t.Errorf("iterations=%d want 3 (unscoped counts every capture)", r.Iterations)
+	}
+	if math.Abs(r.TotalUSD-3.50) > 1e-9 {
+		t.Errorf("total=%v want 3.50", r.TotalUSD)
+	}
+}
+
 func TestComputeRollup_MissingDir(t *testing.T) {
 	r, err := cost.ComputeRollup(t.TempDir(), "batch-1")
 	if err != nil {
@@ -58,9 +103,9 @@ func TestComputeRollup_MissingDir(t *testing.T) {
 func TestComputeRollup_SumsAcrossPlansAndIters(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now().UTC()
-	seedCapture(t, root, "plan-a", 1, cost.Capture{Adapter: "claude", Model: "claude-sonnet-4-6", CostUSD: 1.50, InputTokens: 500_000, OutputTokens: 0, CapturedAt: now})
-	seedCapture(t, root, "plan-a", 2, cost.Capture{Adapter: "claude", Model: "claude-sonnet-4-6", CostUSD: 0.75, InputTokens: 250_000, OutputTokens: 0, CapturedAt: now})
-	seedCapture(t, root, "plan-b", 1, cost.Capture{Adapter: "codex", Model: "gpt-5.4", CostUSD: 0.25, InputTokens: 200_000, OutputTokens: 0, CapturedAt: now})
+	seedCapture(t, root, "plan-a", 1, cost.Capture{Adapter: "claude", Model: "claude-sonnet-4-6", CostUSD: 1.50, InputTokens: 500_000, OutputTokens: 0, BatchID: "batch-1", CapturedAt: now})
+	seedCapture(t, root, "plan-a", 2, cost.Capture{Adapter: "claude", Model: "claude-sonnet-4-6", CostUSD: 0.75, InputTokens: 250_000, OutputTokens: 0, BatchID: "batch-1", CapturedAt: now})
+	seedCapture(t, root, "plan-b", 1, cost.Capture{Adapter: "codex", Model: "gpt-5.4", CostUSD: 0.25, InputTokens: 200_000, OutputTokens: 0, BatchID: "batch-1", CapturedAt: now})
 
 	r, err := cost.ComputeRollup(root, "batch-1")
 	if err != nil {
@@ -87,9 +132,9 @@ func TestComputeRollup_CountsUnpriced(t *testing.T) {
 	root := t.TempDir()
 	now := time.Now().UTC()
 	// CostUSD=0 with non-zero tokens → unpriced
-	seedCapture(t, root, "plan-c", 1, cost.Capture{Adapter: "gemini", Model: "gemini-2.5", CostUSD: 0, InputTokens: 1000, OutputTokens: 500, CapturedAt: now})
+	seedCapture(t, root, "plan-c", 1, cost.Capture{Adapter: "gemini", Model: "gemini-2.5", CostUSD: 0, InputTokens: 1000, OutputTokens: 500, BatchID: "batch-1", CapturedAt: now})
 	// CostUSD=0 with zero tokens → real $0, not unpriced
-	seedCapture(t, root, "plan-d", 1, cost.Capture{Adapter: "gemini", Model: "gemini-2.5", CostUSD: 0, InputTokens: 0, OutputTokens: 0, CapturedAt: now})
+	seedCapture(t, root, "plan-d", 1, cost.Capture{Adapter: "gemini", Model: "gemini-2.5", CostUSD: 0, InputTokens: 0, OutputTokens: 0, BatchID: "batch-1", CapturedAt: now})
 
 	r, _ := cost.ComputeRollup(root, "batch-1")
 	if r.Iterations != 2 {

@@ -61,7 +61,7 @@ func TestStartRejectsCostCappedResumeWithoutFlag(t *testing.T) {
 	if err := batch.WriteRun(dir, batch.Run{ActiveBatchID: "b1", CostCapped: true}); err != nil {
 		t.Fatalf("WriteRun: %v", err)
 	}
-	seedCostJSON(t, dir, "p", 1, cost.Capture{Adapter: "codex", Model: "gpt-5.4", CostUSD: 0.42, CapturedAt: time.Now().UTC()})
+	seedCostJSON(t, dir, "p", 1, cost.Capture{Adapter: "codex", Model: "gpt-5.4", CostUSD: 0.42, BatchID: "b1", CapturedAt: time.Now().UTC()})
 
 	output, err := runBinaryIn(t, bin, dir, "start")
 	if err == nil {
@@ -88,7 +88,7 @@ func TestStartRejectsCostCappedResumeWithLowerCap(t *testing.T) {
 	if err := batch.WriteRun(dir, batch.Run{ActiveBatchID: "b1", CostCapped: true}); err != nil {
 		t.Fatalf("WriteRun: %v", err)
 	}
-	seedCostJSON(t, dir, "p", 1, cost.Capture{Adapter: "codex", Model: "gpt-5.4", CostUSD: 1.00, CapturedAt: time.Now().UTC()})
+	seedCostJSON(t, dir, "p", 1, cost.Capture{Adapter: "codex", Model: "gpt-5.4", CostUSD: 1.00, BatchID: "b1", CapturedAt: time.Now().UTC()})
 
 	output, err := runBinaryIn(t, bin, dir, "start", "--cost-cap", "0.50")
 	if err == nil {

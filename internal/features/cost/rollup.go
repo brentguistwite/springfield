@@ -24,11 +24,15 @@ type Rollup struct {
 
 // ComputeRollup walks the live evidence directories under
 // <root>/.springfield/execution/plans/*/evidence/iter-*/cost.json and sums
-// the captures. The batchID parameter is currently informational — evidence
-// directories are scoped per plan key rather than per batch, but the
-// project has at most one live batch at a time, so a project-wide walk
-// is equivalent. The parameter is kept on the signature for forward
-// compatibility with a future per-batch evidence layout.
+// the captures whose Capture.BatchID matches batchID. Scoping by the stamped
+// batch id (not by plan-key path) is required because the conductor reuses
+// plan IDs across batches with iteration counters restarting at 1: a stale
+// iter-N cost.json from an earlier batch can survive best-effort archive
+// cleanup into a reused plan dir, and a path-based walk would silently fold
+// that leaked spend into the current batch's total. A non-empty batchID
+// therefore counts only captures stamped with it. An empty batchID disables
+// the filter and counts every capture (the unscoped single-plan-unit path,
+// which runs outside a named batch).
 //
 // Iterations whose pricing pair was unknown (CostUSD == 0 with non-zero
 // tokens) are counted under UnpricedRuns so callers can surface a "(N
@@ -39,7 +43,6 @@ type Rollup struct {
 // A missing evidence root returns an empty Rollup with no error so callers
 // (status command, warning helper) need not special-case fresh projects.
 func ComputeRollup(root, batchID string) (Rollup, error) {
-	_ = batchID
 	r := Rollup{PerAdapter: map[string]float64{}}
 
 	execRoot := filepath.Join(root, ".springfield", "execution", "plans")
@@ -75,6 +78,14 @@ func ComputeRollup(root, batchID string) (Rollup, error) {
 		var c Capture
 		if jsonErr := json.Unmarshal(data, &c); jsonErr != nil {
 			r.SkippedFiles++
+			return nil
+		}
+		// Scope to the requested batch. A non-empty batchID counts only
+		// captures stamped with it, excluding leaked iter-N files from an
+		// earlier batch that reused this plan dir. An empty batchID counts
+		// everything (unscoped single-plan-unit path). Not a SkippedFiles
+		// case: the file is readable, it just belongs to a different batch.
+		if batchID != "" && c.BatchID != batchID {
 			return nil
 		}
 		r.Iterations++

@@ -114,6 +114,14 @@ type SinglePlanInput struct {
 	// the loop breaks with Reason "cost-capped" so the caller (runBatch) can
 	// abort the batch without dispatching further plans. Zero disables.
 	CostCapUSD float64
+	// BatchID stamps every cost.json this run writes so cost.ComputeRollup
+	// can scope spend to the live batch and exclude leaked iter-N files from
+	// an earlier batch that reused this plan's evidence dir. The batch path
+	// passes the batch id; the single-plan-unit path leaves it empty, which
+	// makes both the stamp and the cost-cap rollup unscoped (its prior
+	// behavior). MUST match the batchID the cost-cap and resume-guard
+	// ComputeRollup callers pass, or the cap will never see this run's spend.
+	BatchID string
 }
 
 // SinglePlanResult summarizes the outcome.
@@ -450,6 +458,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			fmt.Fprintf(os.Stderr, "warning: write evidence iter %d for plan %s: %v\n", iter, planID, err)
 		}
 		capture := extractCost(result.Agent, result.Events, snap.Model, now())
+		capture.BatchID = in.BatchID
 		if err := execution.WriteCost(iterDir, capture); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: write cost iter %d for plan %s: %v\n", iter, planID, err)
 		}
@@ -494,7 +503,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		// iteration is what doesn't dispatch. Uses >= so total == cap fires
 		// (boundary spec).
 		if in.CostCapUSD > 0 {
-			r, rollupErr := cost.ComputeRollup(in.ControlRoot, "")
+			r, rollupErr := cost.ComputeRollup(in.ControlRoot, in.BatchID)
 			if rollupErr != nil {
 				// Rollup error is conservatively treated as cap-not-hit
 				// rather than failing the run; the warning lands in stderr
@@ -816,6 +825,7 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 		fmt.Fprintf(os.Stderr, "warning: write evidence for plan %s: %v\n", planID, err)
 	}
 	capture := extractCost(result.Agent, result.Events, snap.Model, now())
+	capture.BatchID = in.BatchID
 	if err := execution.WriteCost(evidenceDir, capture); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: write cost for plan %s: %v\n", planID, err)
 	}
@@ -828,7 +838,7 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 	legacyCostCapped := false
 	var legacyCostSpend float64
 	if in.CostCapUSD > 0 {
-		if r, rollupErr := cost.ComputeRollup(in.ControlRoot, ""); rollupErr == nil && r.TotalUSD >= in.CostCapUSD {
+		if r, rollupErr := cost.ComputeRollup(in.ControlRoot, in.BatchID); rollupErr == nil && r.TotalUSD >= in.CostCapUSD {
 			legacyCostCapped = true
 			legacyCostSpend = r.TotalUSD
 		} else if rollupErr != nil {

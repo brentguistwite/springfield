@@ -92,6 +92,67 @@ func TestSinglePlanCostCapAbortsIterationLoop(t *testing.T) {
 	}
 }
 
+// TestSinglePlanStampsBatchIDOnCostJSON locks the write-side half of the
+// batch-scoped rollup: a run given a BatchID must stamp every cost.json it
+// writes with that id, so cost.ComputeRollup(root, batchID) sees this run's
+// spend and excludes any other batch's leaked evidence. Without the stamp,
+// a scoped cost-cap check would read $0 and never fire.
+func TestSinglePlanStampsBatchIDOnCostJSON(t *testing.T) {
+	root := projectFixtureWithUnpassedStory(t, "alpha")
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+	g := newFakeGit()
+	runner := &fakeAgentRunner{}
+	runner.events = []coreexec.Event{
+		{Type: coreexec.EventStdout, Data: `{"type":"assistant","message":{"usage":{"input_tokens":1000000,"output_tokens":0}}}`},
+	}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		ProjectRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentClaude},
+		ExecutionSettings: agents.ExecutionSettings{
+			Claude: agents.ClaudeExecutionSettings{Model: "claude-sonnet-4-6"},
+		},
+		Runner:     runner,
+		Manager:    &planrun.Manager{Git: g},
+		CostCapUSD: 1.00,
+		BatchID:    "batch-X",
+	})
+	if !res.CostCapped {
+		t.Fatalf("expected cap to fire under its own batch's spend; got %+v", res)
+	}
+
+	// The written cost.json must carry batch_id=batch-X.
+	matches, _ := filepath.Glob(filepath.Join(root, ".springfield", "execution", "plans", "*", "evidence", "iter-*", "cost.json"))
+	if len(matches) == 0 {
+		t.Fatal("expected a cost.json on disk")
+	}
+	data, _ := os.ReadFile(matches[0])
+	var c cost.Capture
+	if err := json.Unmarshal(data, &c); err != nil {
+		t.Fatalf("decode cost.json: %v", err)
+	}
+	if c.BatchID != "batch-X" {
+		t.Errorf("cost.json batch_id=%q want %q", c.BatchID, "batch-X")
+	}
+
+	// A scoped rollup for batch-X sees the spend; a scoped rollup for a
+	// different batch sees nothing (the leakage-exclusion guarantee).
+	rX, _ := cost.ComputeRollup(root, "batch-X")
+	if rX.TotalUSD < 1.00 {
+		t.Errorf("scoped rollup for batch-X=$%.2f want >= cap $1.00", rX.TotalUSD)
+	}
+	rOther, _ := cost.ComputeRollup(root, "batch-OTHER")
+	if rOther.TotalUSD != 0 {
+		t.Errorf("scoped rollup for a different batch=$%.2f want $0 (no cross-contamination)", rOther.TotalUSD)
+	}
+}
+
 // TestSinglePlanCostCapBoundaryExact verifies the >= semantics: when the
 // rollup exactly equals the cap (to float precision), the abort fires.
 // This guards against an off-by-one between > and >= that would otherwise
