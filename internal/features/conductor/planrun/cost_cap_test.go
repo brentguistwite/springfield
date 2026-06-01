@@ -195,3 +195,57 @@ func TestSinglePlanCostCapBoundaryExact(t *testing.T) {
 		t.Errorf("equality with cap must fire (>=); got CostCapped=%v Reason=%q", res.CostCapped, res.Reason)
 	}
 }
+
+// TestSinglePlanCostCapBoundaryExactScoped is the boundary test for the
+// PRODUCTION path: the >= equality check must fire when the rollup is scoped
+// to a real batch id (the mode a batch dispatch actually uses), not only in
+// the unscoped single-plan mode. The pre-seed is stamped with the same batch
+// id the run carries; a stale capture from a DIFFERENT batch under the same
+// reused plan dir must be excluded so it cannot push an under-cap run over.
+func TestSinglePlanCostCapBoundaryExactScoped(t *testing.T) {
+	root := projectFixtureWithUnpassedStory(t, "alpha")
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+
+	g := newFakeGit()
+	planKey := planrun.PlanKey(conductor.PlanUnit{ID: "alpha"})
+	evDir := filepath.Join(root, ".springfield", "execution", "plans", planKey, "evidence")
+	seed := func(iter string, c cost.Capture) {
+		d := filepath.Join(evDir, iter)
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		data, _ := json.MarshalIndent(c, "", "  ")
+		if err := os.WriteFile(filepath.Join(d, "cost.json"), data, 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	// In-scope pre-spend brings batch-Z to exactly the cap.
+	seed("iter-pre", cost.Capture{Adapter: "claude", Model: "claude-sonnet-4-6", CostUSD: 1.00, BatchID: "batch-Z"})
+	// A leaked capture from an earlier batch under the SAME reused plan dir.
+	// It must NOT count toward batch-Z; if it did, scoping would be a no-op.
+	seed("iter-stale", cost.Capture{Adapter: "claude", Model: "claude-sonnet-4-6", CostUSD: 99.00, BatchID: "batch-OLD"})
+
+	runner := &fakeAgentRunner{}
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		ProjectRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentClaude},
+		Runner:       runner,
+		Manager:      &planrun.Manager{Git: g},
+		CostCapUSD:   1.00,
+		BatchID:      "batch-Z",
+	})
+	if !res.CostCapped {
+		t.Errorf("scoped equality with cap must fire (>=); got CostCapped=%v Reason=%q", res.CostCapped, res.Reason)
+	}
+	// The cap fired on batch-Z's own $1.00, not the leaked $99.00: the spend
+	// reported at cap time must be the scoped total, proving exclusion.
+	if res.SpendUSD >= 99.00 {
+		t.Errorf("spend=%v counted the leaked batch-OLD capture; scoping failed", res.SpendUSD)
+	}
+}
