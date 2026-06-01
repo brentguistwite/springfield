@@ -769,6 +769,34 @@ func TestValidateBlankCriterionIsError(t *testing.T) {
 			if !result.HasErrors() {
 				t.Fatalf("expected a hard error for blank criterion %q, got none (warnings: %v)", c, result.Warnings)
 			}
+			// A blank criterion is an error, not a warning — locks the `continue`
+			// so it never double-reports as both.
+			if len(result.Warnings) != 0 {
+				t.Errorf("blank criterion must not also warn, got: %v", result.Warnings)
+			}
+		})
+	}
+}
+
+// TestValidateDottedProseStillWarns guards the extension-whitelist boundary:
+// dotted prose that is not a real file ("role.admin", "feature.flag") must NOT
+// be mistaken for a file path and must still warn, while genuine file
+// references stay silent.
+func TestValidateDottedProseStillWarns(t *testing.T) {
+	vague := []string{"user has the role.admin permission", "the feature.flag is enabled", "debug.mode is off"}
+	for _, c := range vague {
+		t.Run("warn/"+c, func(t *testing.T) {
+			if result := prd.Validate(envWithCriteria(c)); len(result.Warnings) == 0 {
+				t.Errorf("expected warning for non-file dotted prose %q, got none", c)
+			}
+		})
+	}
+	files := []string{"write the guide to README.md", "update cmd/plan.go", "config lands in springfield.toml"}
+	for _, c := range files {
+		t.Run("silent/"+c, func(t *testing.T) {
+			if result := prd.Validate(envWithCriteria(c)); len(result.Warnings) != 0 {
+				t.Errorf("expected no warning for real file reference %q, got: %v", c, result.Warnings)
+			}
 		})
 	}
 }

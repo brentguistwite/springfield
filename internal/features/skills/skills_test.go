@@ -258,6 +258,16 @@ func TestPlanSkillHandHoldsDefinitionOfDone(t *testing.T) {
 		if !strings.Contains(content, "springfield.local.toml") {
 			t.Errorf("plan %s review offer missing global config reference", label)
 		}
+		// Load-bearing imperative: the answer must be serialized into the
+		// envelope, not just asked about (else review silently no-ops).
+		if !strings.Contains(content, "Serialize the answer") {
+			t.Errorf("plan %s missing the serialize-the-answer instruction", label)
+		}
+		// The example scaffold the model copies must show review explicitly,
+		// not omit it (an omitted field reads as "inherit default" = off).
+		if !strings.Contains(content, "\"review\": true") {
+			t.Errorf("plan %s example envelope must set review explicitly", label)
+		}
 	}
 }
 

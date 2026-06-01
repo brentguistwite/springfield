@@ -24,10 +24,14 @@ var (
 	// `logs` (not `logs?`) on purpose: bare `log` collides with prose like
 	// "user can log in", which is not a verifiable signal.
 	verifiableKeyword = regexp.MustCompile(`(?i)\b(?:test|tests|passes|passing|fails?|exits?|builds?|compiles?|lints?|returns?|responds?|status|asserts?|equals?|matches?|contains?|exists?|present|endpoint|command|coverage|output|logs)\b`)
-	// Extension arm requires 2+ letters after the dot so Latin abbreviations
-	// ("e.g.", "i.e.", "N.B.") don't read as file extensions and suppress the
-	// warning. Real extensions (.go, .md, .ts) are always 2+.
-	filePathOrExtRegex = regexp.MustCompile(`[\w-]+/[\w./-]+|\.[a-zA-Z]{2,6}\b`)
+	// First arm: a path-shaped token (word/word). Second arm: a real file
+	// extension from a curated set. The extension is whitelisted rather than
+	// "any .[a-z]{2,6}" so dotted prose ("role.admin", "feature.flag",
+	// "debug.mode") doesn't masquerade as a file and suppress the warning.
+	// (The path arm still accepts "yes/no"-style tokens; those are rare as a
+	// sole criterion and usually carry a keyword too, so we accept that edge
+	// rather than risk rejecting real single-segment paths like "src/auth".)
+	filePathOrExtRegex = regexp.MustCompile(`(?i)[\w-]+/[\w./-]+|\.(?:go|mod|sum|md|txt|json|ya?ml|toml|ini|env|sh|bash|zsh|py|rb|rs|java|kt|c|h|cpp|cc|cs|php|sql|proto|html?|css|scss|js|jsx|ts|tsx|vue|svelte|xml|csv|lock|cfg|conf)\b`)
 )
 
 // isVerifiable reports whether an acceptance criterion carries a concrete,
