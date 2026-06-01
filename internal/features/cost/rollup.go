@@ -90,4 +90,3 @@ func ComputeRollup(root, batchID string) (Rollup, error) {
 	}
 	return r, nil
 }
-

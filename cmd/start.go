@@ -31,10 +31,10 @@ import (
 	coreruntime "springfield/internal/core/runtime"
 	"springfield/internal/features/autobranch"
 	"springfield/internal/features/batch"
-	"springfield/internal/features/cost"
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/conductor/planmerge"
 	"springfield/internal/features/conductor/planrun"
+	"springfield/internal/features/cost"
 	"springfield/internal/features/wakelock"
 )
 

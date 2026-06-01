@@ -164,17 +164,17 @@ func TestInitNonTTYEmptyStdinErrors(t *testing.T) {
 //
 // Answer-script derivation (empirical, 2026-05-15):
 //
-//  Prompt                                            Input     Effect
-//  ───────────────────────────────────────────────── ──────    ───────────────────────────
-//  MultiSelect "Which agents..." (codex pre-checked) "0\n"     confirm selection as-is
-//  Select "Model for codex"                          "1\n"     pick "(use adapter default)"
-//  Confirm "Write springfield.toml..."               "y\n"     write
+//	Prompt                                            Input     Effect
+//	───────────────────────────────────────────────── ──────    ───────────────────────────
+//	MultiSelect "Which agents..." (codex pre-checked) "0\n"     confirm selection as-is
+//	Select "Model for codex"                          "1\n"     pick "(use adapter default)"
+//	Confirm "Write springfield.toml..."               "y\n"     write
 //
 // Drift warning: huh's accessible-mode output format (numbered separators,
 // prompt phrasing) is not API-stable. If this test fails on a `huh` bump:
-//   1. Run `printf '' | springfield init` interactively against a temp dir.
-//   2. Re-derive the answer script from observed prompts.
-//   3. Update this fixture in a chore(deps) commit alongside the bump.
+//  1. Run `printf ” | springfield init` interactively against a temp dir.
+//  2. Re-derive the answer script from observed prompts.
+//  3. Update this fixture in a chore(deps) commit alongside the bump.
 func TestInitNonTTYPipedAccessibleModeMatchesFlagOutput(t *testing.T) {
 	bin := buildBinary(t)
 

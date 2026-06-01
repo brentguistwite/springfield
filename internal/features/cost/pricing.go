@@ -43,19 +43,19 @@ type Capture struct {
 var pricingTable = map[string]map[string]Rate{
 	"claude": {
 		// Claude 4.x family (current).
-		"claude-opus-4-7":          {InputUSDPerMtok: 15.00, OutputUSDPerMtok: 75.00},
-		"claude-opus-4-1":          {InputUSDPerMtok: 15.00, OutputUSDPerMtok: 75.00},
-		"claude-sonnet-4-6":        {InputUSDPerMtok: 3.00, OutputUSDPerMtok: 15.00},
-		"claude-sonnet-4-5":        {InputUSDPerMtok: 3.00, OutputUSDPerMtok: 15.00},
+		"claude-opus-4-7":           {InputUSDPerMtok: 15.00, OutputUSDPerMtok: 75.00},
+		"claude-opus-4-1":           {InputUSDPerMtok: 15.00, OutputUSDPerMtok: 75.00},
+		"claude-sonnet-4-6":         {InputUSDPerMtok: 3.00, OutputUSDPerMtok: 15.00},
+		"claude-sonnet-4-5":         {InputUSDPerMtok: 3.00, OutputUSDPerMtok: 15.00},
 		"claude-haiku-4-5-20251001": {InputUSDPerMtok: 1.00, OutputUSDPerMtok: 5.00},
 	},
 	"codex": {
 		// OpenAI Codex / GPT-5.x family. Codex CLI reports the underlying
 		// model as gpt-5-codex or gpt-5.4 in its output; both share the
 		// same input/output rates per the public pricing page.
-		"gpt-5.4":      {InputUSDPerMtok: 1.25, OutputUSDPerMtok: 10.00},
-		"gpt-5-codex":  {InputUSDPerMtok: 1.25, OutputUSDPerMtok: 10.00},
-		"o3":           {InputUSDPerMtok: 2.00, OutputUSDPerMtok: 8.00},
+		"gpt-5.4":     {InputUSDPerMtok: 1.25, OutputUSDPerMtok: 10.00},
+		"gpt-5-codex": {InputUSDPerMtok: 1.25, OutputUSDPerMtok: 10.00},
+		"o3":          {InputUSDPerMtok: 2.00, OutputUSDPerMtok: 8.00},
 	},
 }
 

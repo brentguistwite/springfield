@@ -15,9 +15,9 @@ import (
 // top level (or nested under `item`). We decode permissively so missing
 // fields fall through as zero rather than aborting extraction.
 type codexUsageEvent struct {
-	Type  string            `json:"type"`
-	Usage *codexUsageBlock  `json:"usage"`
-	Item  *codexUsageItem   `json:"item"`
+	Type  string           `json:"type"`
+	Usage *codexUsageBlock `json:"usage"`
+	Item  *codexUsageItem  `json:"item"`
 }
 
 type codexUsageItem struct {

@@ -344,7 +344,7 @@ func TestRunBatchWithContextMalformedLocalTOMLFails(t *testing.T) {
 		Phases:  []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"plan-a"}}},
 	}
 
-	_, err := runBatchWithContext(context.Background(), root, run, b, io.Discard, "")
+	_, err := runBatchWithContext(context.Background(), root, run, b, io.Discard, "", 0)
 	if err == nil {
 		t.Fatal("expected error from malformed local toml, got nil")
 	}
