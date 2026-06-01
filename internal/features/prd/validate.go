@@ -20,9 +20,14 @@ var (
 	// signal: a command/outcome keyword, an HTTP verb, or a file-path/extension
 	// shape. The intent is a low-false-positive nudge, not a gate — when in
 	// doubt the criterion is left unwarned. See validate.go's isVerifiable.
-	httpVerbPattern    = regexp.MustCompile(`\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b`)
-	verifiableKeyword  = regexp.MustCompile(`(?i)\b(?:test|tests|passes|passing|fails?|exits?|builds?|compiles?|lints?|returns?|responds?|status|asserts?|equals?|matches?|contains?|exists?|present|endpoint|command|coverage|output|logs?)\b`)
-	filePathOrExtRegex = regexp.MustCompile(`[\w-]+/[\w./-]+|\.[a-zA-Z]{1,6}\b`)
+	httpVerbPattern = regexp.MustCompile(`\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b`)
+	// `logs` (not `logs?`) on purpose: bare `log` collides with prose like
+	// "user can log in", which is not a verifiable signal.
+	verifiableKeyword = regexp.MustCompile(`(?i)\b(?:test|tests|passes|passing|fails?|exits?|builds?|compiles?|lints?|returns?|responds?|status|asserts?|equals?|matches?|contains?|exists?|present|endpoint|command|coverage|output|logs)\b`)
+	// Extension arm requires 2+ letters after the dot so Latin abbreviations
+	// ("e.g.", "i.e.", "N.B.") don't read as file extensions and suppress the
+	// warning. Real extensions (.go, .md, .ts) are always 2+.
+	filePathOrExtRegex = regexp.MustCompile(`[\w-]+/[\w./-]+|\.[a-zA-Z]{2,6}\b`)
 )
 
 // isVerifiable reports whether an acceptance criterion carries a concrete,
@@ -163,6 +168,12 @@ func validateStory(story UserStory, planID string, planStoryIDs map[string]bool,
 	}
 
 	for i, criterion := range story.AcceptanceCriteria {
+		if strings.TrimSpace(criterion) == "" {
+			// A blank/whitespace-only criterion is no Definition of Done at all —
+			// hard error, not a warning. (An empty *slice* is caught above.)
+			res.Errors = append(res.Errors, fmt.Errorf("%s: acceptance criterion %d is empty", prefix, i+1))
+			continue
+		}
 		if !isVerifiable(criterion) {
 			res.Warnings = append(res.Warnings, fmt.Sprintf(
 				"%s: acceptance criterion %d looks hard to verify (%q) — consider a concrete check like a test command, file path, or HTTP response",

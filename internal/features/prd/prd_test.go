@@ -364,7 +364,7 @@ func TestValidateContextMDWarn(t *testing.T) {
 					ID:    "p1",
 					Title: "Plan 1",
 					UserStories: []prd.UserStory{
-						{ID: "US-001", Title: "S", AcceptanceCriteria: []string{"ok"}, Priority: 1},
+						{ID: "US-001", Title: "S", AcceptanceCriteria: []string{"go test ./... passes"}, Priority: 1},
 					},
 				},
 				ContextMD: bigContext,
@@ -375,8 +375,13 @@ func TestValidateContextMDWarn(t *testing.T) {
 	if result.HasErrors() {
 		t.Errorf("unexpected errors for 33KB context: %v", result.Errors)
 	}
-	if len(result.Warnings) == 0 {
-		t.Error("expected warning for 33KB context_md, got none")
+	// Criterion is verifiable, so the only warning must be the context_md one —
+	// this keeps the test an isolated probe of the size warning.
+	if len(result.Warnings) != 1 {
+		t.Fatalf("expected exactly 1 warning (context_md size), got %d: %v", len(result.Warnings), result.Warnings)
+	}
+	if !strings.Contains(result.Warnings[0], "context_md") {
+		t.Errorf("expected context_md size warning, got: %q", result.Warnings[0])
 	}
 }
 
@@ -393,7 +398,7 @@ func TestValidateContextMDReject(t *testing.T) {
 					ID:    "p1",
 					Title: "Plan 1",
 					UserStories: []prd.UserStory{
-						{ID: "US-001", Title: "S", AcceptanceCriteria: []string{"ok"}, Priority: 1},
+						{ID: "US-001", Title: "S", AcceptanceCriteria: []string{"go test ./... passes"}, Priority: 1},
 					},
 				},
 				ContextMD: hugeContext,
@@ -751,5 +756,19 @@ func TestValidateWarnsOnlyVagueAmongMany(t *testing.T) {
 	}
 	if !strings.Contains(result.Warnings[0], "it feels snappy") {
 		t.Errorf("warning should name the vague criterion, got: %q", result.Warnings[0])
+	}
+}
+
+// TestValidateBlankCriterionIsError ensures an empty-string or whitespace-only
+// criterion is a hard error, not merely the verifiability warning — an empty
+// slice and an empty element are both "no Definition of Done".
+func TestValidateBlankCriterionIsError(t *testing.T) {
+	for _, c := range []string{"", "   ", "\t\n"} {
+		t.Run(fmt.Sprintf("%q", c), func(t *testing.T) {
+			result := prd.Validate(envWithCriteria(c))
+			if !result.HasErrors() {
+				t.Fatalf("expected a hard error for blank criterion %q, got none (warnings: %v)", c, result.Warnings)
+			}
+		})
 	}
 }

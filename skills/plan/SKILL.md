@@ -108,6 +108,8 @@ Ask, as its own question: **"Enable independent pre-merge review for this batch?
 - The default lever is per-plan: set `plans[].review` in the envelope to `true` (force review on) or `false` (force it off). Leave it unset to inherit the project default.
 - The project-wide default lives in `springfield.local.toml` (`[review].enabled`, an operator-wide concern) — mention it only if the user wants every batch reviewed rather than choosing per-plan.
 
+**Serialize the answer.** If the user opts in or out, add `"review": true` (or `false`) to *every* plan object in the envelope below. The example template omits `review` — that means "inherit the default", so relying on it after the user said "yes" would silently ship an unreviewed batch.
+
 ## Step 6 — Confirm and persist
 
 Show the user the proposed plans (title + one-line intent per plan).
