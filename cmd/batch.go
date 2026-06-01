@@ -10,6 +10,7 @@ import (
 	"springfield/internal/features/batch"
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/conductor/planmerge"
+	"springfield/internal/features/cost"
 )
 
 // NewBatchCommand groups lifecycle operations on the active Springfield batch.
@@ -118,9 +119,16 @@ func runBatchAbort(w io.Writer, root string) error {
 		}
 	}
 
+	// Capture the rollup before archive removes the live evidence dirs;
+	// without this, the aborted batch loses its historical cost signal even
+	// though the spend already happened.
+	var abortRollup *cost.Rollup
+	if r, rollupErr := cost.ComputeRollup(root, b.ID); rollupErr == nil {
+		abortRollup = &r
+	}
 	// Archive the batch, then clear run.json immediately so there is no window
 	// where run.json points at the now-removed batch dir.
-	if err := batch.ArchiveBatchNormalized(root, b, "aborted"); err != nil {
+	if err := batch.ArchiveBatchNormalized(root, b, "aborted", abortRollup); err != nil {
 		return fmt.Errorf("archive active batch: %w", err)
 	}
 	if err := batch.ClearRun(root); err != nil {

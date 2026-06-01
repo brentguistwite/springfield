@@ -522,7 +522,7 @@ func TestArchiveBatchNormalized(t *testing.T) {
 		t.Fatalf("WriteBatch: %v", err)
 	}
 
-	if err := batch.ArchiveBatchNormalized(dir, b, "replaced"); err != nil {
+	if err := batch.ArchiveBatchNormalized(dir, b, "replaced", nil); err != nil {
 		t.Fatalf("ArchiveBatchNormalized: %v", err)
 	}
 
@@ -585,7 +585,7 @@ func TestArchiveBatchNormalizedConvertsNonTerminalPlansToAborted(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("WriteBatch: %v", err)
 	}
-	if err := batch.ArchiveBatchNormalized(dir, b, "completed"); err != nil {
+	if err := batch.ArchiveBatchNormalized(dir, b, "completed", nil); err != nil {
 		t.Fatalf("ArchiveBatchNormalized: %v", err)
 	}
 

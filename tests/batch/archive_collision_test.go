@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"springfield/internal/features/batch"
+	"springfield/internal/features/cost"
 )
 
 func makeBatchForArchive(id string) batch.Batch {
@@ -38,7 +39,7 @@ func TestArchiveBatchNormalizedWritesSiblingOnReasonCollision(t *testing.T) {
 		t.Fatalf("seed batch.json: %v", err)
 	}
 
-	if err := batch.ArchiveBatchNormalized(dir, b, "replaced"); err != nil {
+	if err := batch.ArchiveBatchNormalized(dir, b, "replaced", nil); err != nil {
 		t.Fatalf("archive 1: %v", err)
 	}
 	// Re-seed plan dir for the second archive (first call removed it).
@@ -48,7 +49,7 @@ func TestArchiveBatchNormalizedWritesSiblingOnReasonCollision(t *testing.T) {
 	if err := os.WriteFile(paths.BatchPath(), []byte("{}"), 0o644); err != nil {
 		t.Fatalf("reseed batch.json: %v", err)
 	}
-	if err := batch.ArchiveBatchNormalized(dir, b, "state-tampered"); err != nil {
+	if err := batch.ArchiveBatchNormalized(dir, b, "state-tampered", nil); err != nil {
 		t.Fatalf("archive 2: %v", err)
 	}
 
@@ -111,7 +112,7 @@ func TestArchiveBatchNormalizedIdempotentSameReason(t *testing.T) {
 		if err := os.WriteFile(paths.BatchPath(), []byte("{}"), 0o644); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
-		if err := batch.ArchiveBatchNormalized(dir, b, "completed"); err != nil {
+		if err := batch.ArchiveBatchNormalized(dir, b, "completed", nil); err != nil {
 			t.Fatalf("archive %d: %v", i, err)
 		}
 	}
@@ -131,4 +132,106 @@ func names(entries []os.DirEntry) []string {
 		out = append(out, e.Name())
 	}
 	return out
+}
+
+// TestArchiveBatchNormalizedMergesRollupOnIdempotentRecall verifies that when
+// an archive entry already exists with TotalUSD=0 (e.g. orphan recovery wrote
+// a stub first) and a second call lands with the same reason but a real
+// rollup, the cost data overwrites the existing entry rather than being
+// silently dropped. EstimatePerPlanUSD treats TotalUSD==0 as "no signal" so
+// dropping the rollup would erase the batch from historical estimates.
+func TestArchiveBatchNormalizedMergesRollupOnIdempotentRecall(t *testing.T) {
+	dir := t.TempDir()
+	b := makeBatchForArchive("merge-1")
+
+	paths, _ := batch.NewPaths(dir, b.ID)
+	if err := os.MkdirAll(paths.PlanDir(), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(paths.BatchPath(), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// First archive: no rollup (e.g. orphan-recovery-shaped call).
+	if err := batch.ArchiveBatchNormalized(dir, b, "completed", nil); err != nil {
+		t.Fatalf("archive 1: %v", err)
+	}
+	// Re-seed plan dir for the second call.
+	if err := os.MkdirAll(paths.PlanDir(), 0o755); err != nil {
+		t.Fatalf("recreate: %v", err)
+	}
+	if err := os.WriteFile(paths.BatchPath(), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("reseed: %v", err)
+	}
+	// Second archive: same reason, but now we have cost data.
+	rollup := &cost.Rollup{
+		TotalUSD:   2.50,
+		PerAdapter: map[string]float64{"codex": 2.50},
+	}
+	if err := batch.ArchiveBatchNormalized(dir, b, "completed", rollup); err != nil {
+		t.Fatalf("archive 2: %v", err)
+	}
+
+	// Verify the stable file now carries the rollup data.
+	data, err := os.ReadFile(batch.StableArchivePath(dir, b.ID))
+	if err != nil {
+		t.Fatalf("read stable: %v", err)
+	}
+	var entry batch.ArchiveEntry
+	if err := json.Unmarshal(data, &entry); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if entry.TotalUSD != 2.50 {
+		t.Errorf("expected merged TotalUSD=2.50, got %v", entry.TotalUSD)
+	}
+	if entry.CostBreakdown["codex"] != 2.50 {
+		t.Errorf("expected merged codex breakdown, got %v", entry.CostBreakdown)
+	}
+	// Should still be a single entry (no sibling for same-reason call).
+	entries, _ := os.ReadDir(batch.ArchiveDir(dir))
+	if len(entries) != 1 {
+		t.Errorf("expected single archive entry after idempotent merge, got %d: %v", len(entries), names(entries))
+	}
+}
+
+// TestArchiveBatchNormalizedCleansExecutionEvidence locks in the round-1 fix
+// for cross-batch contamination: when batch A archives, its
+// .springfield/execution/plans/<planKey>/ subtree must be removed so a
+// subsequent batch B (same plan ID, new run) does not inherit A's per-iter
+// cost.json files and inflate B's cost.ComputeRollup.
+func TestArchiveBatchNormalizedCleansExecutionEvidence(t *testing.T) {
+	dir := t.TempDir()
+	b := makeBatchForArchive("cleanup-1")
+
+	// Seed plan dir so the existing archive path succeeds.
+	paths, _ := batch.NewPaths(dir, b.ID)
+	if err := os.MkdirAll(paths.PlanDir(), 0o755); err != nil {
+		t.Fatalf("mkdir plan dir: %v", err)
+	}
+	if err := os.WriteFile(paths.BatchPath(), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("seed batch.json: %v", err)
+	}
+
+	// Seed execution evidence under the plan key (SanitizeID("00") == "00").
+	evidenceDir := filepath.Join(dir, ".springfield", "execution", "plans", "00", "evidence", "iter-1")
+	if err := os.MkdirAll(evidenceDir, 0o755); err != nil {
+		t.Fatalf("mkdir evidence: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(evidenceDir, "cost.json"), []byte(`{"adapter":"codex","cost_usd":2.50}`), 0o644); err != nil {
+		t.Fatalf("seed cost.json: %v", err)
+	}
+
+	if err := batch.ArchiveBatchNormalized(dir, b, "completed", nil); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+
+	// Plan dir gone — established behavior.
+	if _, err := os.Stat(paths.PlanDir()); !os.IsNotExist(err) {
+		t.Errorf("plan dir should be removed by archive, stat err=%v", err)
+	}
+	// Execution evidence dir gone — the round-1 fix.
+	execPlanRoot := filepath.Join(dir, ".springfield", "execution", "plans", "00")
+	if _, err := os.Stat(execPlanRoot); !os.IsNotExist(err) {
+		t.Errorf("execution evidence dir should be removed by archive (cross-batch contamination fix), stat err=%v", err)
+	}
 }

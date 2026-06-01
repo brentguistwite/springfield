@@ -34,6 +34,7 @@ import (
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/conductor/planmerge"
 	"springfield/internal/features/conductor/planrun"
+	"springfield/internal/features/cost"
 	"springfield/internal/features/wakelock"
 )
 
@@ -49,6 +50,7 @@ func (r runtimeAgentRunner) Run(ctx context.Context, req coreruntime.Request) co
 func NewStartCommand() *cobra.Command {
 	var dir string
 	var noKeepAwake bool
+	var costCap float64
 
 	cmd := &cobra.Command{
 		Use:   "start",
@@ -56,6 +58,9 @@ func NewStartCommand() *cobra.Command {
 		Long:  "Execute the active Springfield batch for the current project from its saved progress.\n\nRun \"springfield plan\" first to compile a batch.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if costCap < 0 {
+				return fmt.Errorf("--cost-cap must be >= 0 (got %v); use 0 to disable", costCap)
+			}
 			loaded, err := config.LoadFrom(dir)
 			if err != nil {
 				return err
@@ -80,8 +85,43 @@ func NewStartCommand() *cobra.Command {
 				return err
 			}
 
+			// Emit the vendor-billing warning before any dispatch, regardless
+			// of which path follows (batch-resume, single-plan-unit, or "no
+			// plan" error). Operators see the warning consistently.
+			emitClaudeBillingWarning(cmd.ErrOrStderr(), root, loaded.Config.Project.AgentPriority)
+
+			// Resume semantics for a previously cost-capped batch: the user
+			// must pass --cost-cap with a value strictly greater than the
+			// current spend, otherwise we reject before any dispatch. This
+			// keeps the new cap a deliberate choice rather than an accidental
+			// silent restart at the same threshold.
+			if hasRun && run.CostCapped {
+				currentSpend := 0.0
+				rollup, rollupErr := cost.ComputeRollup(root, run.ActiveBatchID)
+				if rollupErr != nil {
+					// Fail closed: a rollup we can't compute must not silently
+					// look like $0 spend, which would allow ANY positive cap
+					// to pass the strictly-greater check.
+					return fmt.Errorf("cannot read prior spend for cost-capped resume: %w; investigate %s/.springfield/execution/plans/ or `springfield recover`", rollupErr, root)
+				}
+				if rollup.SkippedFiles > 0 {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: %d cost.json file(s) unreadable; prior spend may under-count current actual spend\n", rollup.SkippedFiles)
+				}
+				currentSpend = rollup.TotalUSD
+				if costCap <= 0 {
+					return fmt.Errorf("cost-capped batch requires --cost-cap to resume; current spend $%.2f; pass --cost-cap $Y where Y > current spend", currentSpend)
+				}
+				if costCap <= currentSpend {
+					return fmt.Errorf("requested cap $%.2f not greater than current spend $%.2f; pass a higher --cost-cap to resume", costCap, currentSpend)
+				}
+				run.CostCapped = false
+				if writeErr := batch.WriteRun(root, run); writeErr != nil {
+					return fmt.Errorf("clear cost-cap state for resume: %w", writeErr)
+				}
+			}
+
 			if !hasRun || run.ActiveBatchID == "" {
-				ran, runErr := tryRunSinglePlanUnit(cmd, root, loaded, noKeepAwake)
+				ran, runErr := tryRunSinglePlanUnit(cmd, root, loaded, noKeepAwake, costCap)
 				if runErr != nil {
 					return runErr
 				}
@@ -181,7 +221,7 @@ func NewStartCommand() *cobra.Command {
 				}
 			}
 
-			result, execErr := runBatch(root, run, b, w, logPath)
+			result, execErr := runBatch(root, run, b, w, logPath, costCap)
 
 			// Interrupted by signal: leave batch state intact so the user can
 			// rerun "springfield start" to resume. Do NOT archive as completed.
@@ -190,6 +230,22 @@ func NewStartCommand() *cobra.Command {
 				fmt.Fprintf(w, "Status: interrupted\n")
 				fmt.Fprintf(w, "Info: rerun \"springfield start\" to resume\n")
 				return fmt.Errorf("batch %s interrupted; rerun \"springfield start\" to resume", b.ID)
+			}
+
+			// Cost-capped: persist the CostCapped state, surface the spend +
+			// resume hint, and exit non-zero so CI / scripts can detect.
+			// Do NOT archive — the batch is paused, not done.
+			if result.CostCapped {
+				run.CostCapped = true
+				run.LastCheckpoint = time.Now().UTC()
+				if writeErr := batch.WriteRun(root, run); writeErr != nil {
+					return fmt.Errorf("persist cost-cap state: %w", writeErr)
+				}
+				autoBranchOutcome = autobranch.OutcomeInterrupted
+				fmt.Fprintf(w, "Status: cost-capped\n")
+				fmt.Fprintf(w, "Spend: $%.2f (cap: $%.2f)\n", result.SpendUSD, costCap)
+				fmt.Fprintf(w, "Info: rerun with --cost-cap $Y to continue (Y > current spend) or remove claude from agent_priority to reduce spend\n")
+				return fmt.Errorf("batch %s halted by --cost-cap at $%.2f", b.ID, result.SpendUSD)
 			}
 
 			run.LastCheckpoint = time.Now().UTC()
@@ -220,7 +276,16 @@ func NewStartCommand() *cobra.Command {
 			// archive first. If the process dies between archive-rename and
 			// ClearRun, the next start sees run.json pointing at an already-
 			// archived id and RecoverOrphan handles it idempotently.
-			if archiveErr := batch.ArchiveBatchNormalized(root, b, "completed"); archiveErr != nil {
+			//
+			// Compute the cost rollup before archiving so historical estimates
+			// survive past the point where per-iter cost.json files are reaped
+			// along with the live plan dir. Walking evidence dirs is best-effort
+			// — a read error here must not block archive write.
+			var archiveRollup *cost.Rollup
+			if r, rollupErr := cost.ComputeRollup(root, b.ID); rollupErr == nil {
+				archiveRollup = &r
+			}
+			if archiveErr := batch.ArchiveBatchNormalized(root, b, "completed", archiveRollup); archiveErr != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: archive completed batch %q: %v\n", b.ID, archiveErr)
 			}
 			if clearErr := batch.ClearRun(root); clearErr != nil {
@@ -229,12 +294,16 @@ func NewStartCommand() *cobra.Command {
 
 			autoBranchOutcome = autobranch.OutcomeSuccess
 			fmt.Fprintf(w, "Status: completed\n")
+			if archiveRollup != nil && archiveRollup.Iterations > 0 {
+				fmt.Fprintln(w, formatTotalSpendLine(*archiveRollup))
+			}
 			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&dir, "dir", ".", "project root or nested path inside the Springfield project")
 	cmd.Flags().BoolVar(&noKeepAwake, "no-keep-awake", false, "disable sleep prevention for this run")
+	cmd.Flags().Float64Var(&costCap, "cost-cap", 0, "Abort the batch when total spend reaches this many USD (0 = no cap). Cap-aborted batches are resumable: rerun with a higher --cost-cap to continue.")
 	return cmd
 }
 
@@ -246,19 +315,26 @@ type BatchRunResult struct {
 	// run cursor on an unrecoverable path (e.g. tamper detection). The caller
 	// must not re-write run.json, or the cleared cursor gets stranded again.
 	RunStateCleared bool
+	// CostCapped is true when the batch hit the --cost-cap threshold and was
+	// paused. The caller persists run.CostCapped and surfaces the cap status
+	// to the operator instead of archiving the batch.
+	CostCapped bool
+	// SpendUSD reports the rollup total at the moment the cap fired. Zero
+	// when CostCapped is false.
+	SpendUSD float64
 }
 
-func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string) (BatchRunResult, error) {
+func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string, costCap float64) (BatchRunResult, error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return runBatchWithContext(ctx, root, run, b, progress, logPath)
+	return runBatchWithContext(ctx, root, run, b, progress, logPath, costCap)
 }
 
 // runBatchWithContext is the testable core of runBatch. ctx controls interrupt
 // detection: when ctx is cancelled mid-loop (or on entry) the function returns
 // context.Canceled so the caller can distinguish a user interrupt (preserve
 // batch state) from normal completion (archive + clear run.json).
-func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string) (BatchRunResult, error) {
+func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string, costCap float64) (BatchRunResult, error) {
 	// Check for pre-cancellation before any setup so tests and real signal
 	// handlers both get the same early-exit path.
 	if ctx.Err() != nil {
@@ -356,11 +432,20 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 			TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(root, ".springfield", "plans"), controlRoot: root},
 			Ctx:                  ctx,
 			MaxTurnsPerIteration: loaded.Config.MaxTurnsPerIteration(),
+			CostCapUSD:           costCap,
+			BatchID:              b.ID,
 		})
 		if res.Reason == "no-eligible-plan" {
 			// The target plan is not registered in the conductor schedule —
 			// either not yet registered or already terminal. Stop the batch.
 			break
+		}
+		// Cost-cap fired inside the plan's iteration loop. Surface the pause
+		// to the caller WITHOUT marking the batch as failed.
+		if res.CostCapped {
+			fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
+			fmt.Fprintf(progress, "Status: cost-capped (%s)\n", res.Reason)
+			return BatchRunResult{CostCapped: true, SpendUSD: res.SpendUSD}, nil
 		}
 		if res.Err != nil {
 			fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
@@ -988,7 +1073,7 @@ func openAgentTrace(root, batchID string) (coreexec.EventHandler, func()) {
 // failure with state persisted); (false, nil) when no plan-unit registry is
 // configured so the caller can fall through to its legacy "no batch" error;
 // (false, err) when something prevented even attempting plan execution.
-func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded, noKeepAwake bool) (bool, error) {
+func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded, noKeepAwake bool, costCap float64) (bool, error) {
 	project, err := conductor.LoadProject(root)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -1100,7 +1185,7 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 		project.State.Queue.Heartbeat = time.Now()
 		saveQueueState()
 
-		planErr := runOnePlan(ctx, w, project, root, worktreeBase, agentIDs, loaded, local, registry)
+		planErr := runOnePlan(ctx, w, project, root, worktreeBase, agentIDs, loaded, local, registry, costCap)
 		if planErr != nil {
 			project.State.Queue.Status = conductor.QueueHalted
 			project.State.Queue.StopReason = planErr.Error()
@@ -1126,7 +1211,7 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 // in from the caller so the springfield.local.toml load is stable for the
 // whole single-plan batch (loading per-call would let mid-batch edits
 // silently change review behavior).
-func runOnePlan(ctx context.Context, w io.Writer, project *conductor.Project, root, worktreeBase string, agentIDs []agents.ID, loaded config.Loaded, local config.LocalConfig, registry agents.Registry) error {
+func runOnePlan(ctx context.Context, w io.Writer, project *conductor.Project, root, worktreeBase string, agentIDs []agents.ID, loaded config.Loaded, local config.LocalConfig, registry agents.Registry, costCap float64) error {
 	enforceProtected := !loaded.Config.Project.AllowProtectedBase
 
 	if planID, ok := nextNonIntegratedCompletedPlan(project); ok {
@@ -1173,10 +1258,31 @@ func runOnePlan(ctx context.Context, w io.Writer, project *conductor.Project, ro
 		TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(root, ".springfield", "plans"), controlRoot: root},
 		Ctx:                  ctx,
 		MaxTurnsPerIteration: loaded.Config.MaxTurnsPerIteration(),
+		CostCapUSD:           costCap,
 	})
 
 	if res.PlanID == "" && res.Reason == "no-eligible-plan" {
 		return nil
+	}
+	if res.CostCapped {
+		fmt.Fprintf(w, "Plan: %s\n", res.PlanID)
+		fmt.Fprintf(w, "Status: cost-capped\n")
+		fmt.Fprintf(w, "Spend: $%.2f (cap: $%.2f)\n", res.SpendUSD, costCap)
+		fmt.Fprintf(w, "Info: rerun with --cost-cap $Y to continue (Y > current spend)\n")
+		// Persist run.CostCapped so the next \`springfield start\` triggers
+		// the resume guard. Without this, the operator could rerun without
+		// --cost-cap (or with a lower cap) and the guard would silently
+		// not fire — defeating the "strictly greater than spend" contract
+		// the batch path enforces. ActiveBatchID is empty because the
+		// single-plan-unit path has no batch; the resume guard only
+		// checks hasRun && run.CostCapped, not ActiveBatchID.
+		existing, _, _ := batch.ReadRun(root)
+		existing.CostCapped = true
+		existing.LastCheckpoint = time.Now().UTC()
+		if writeErr := batch.WriteRun(root, existing); writeErr != nil {
+			fmt.Fprintf(w, "warning: persist cost-capped state: %v\n", writeErr)
+		}
+		return fmt.Errorf("plan %s halted by --cost-cap at $%.2f", res.PlanID, res.SpendUSD)
 	}
 	if res.Err != nil {
 		fmt.Fprintf(w, "Plan: %s\n", res.PlanID)

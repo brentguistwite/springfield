@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -10,6 +11,7 @@ import (
 	"springfield/internal/core/config"
 	"springfield/internal/features/batch"
 	"springfield/internal/features/conductor"
+	"springfield/internal/features/cost"
 	"springfield/internal/features/execution"
 )
 
@@ -57,7 +59,7 @@ func NewStatusCommand() *cobra.Command {
 			} else {
 				state = project.State
 			}
-			return printBatchStatus(cmd.OutOrStdout(), b, run, state)
+			return printBatchStatus(cmd.OutOrStdout(), root, b, run, state)
 		},
 	}
 
@@ -65,14 +67,18 @@ func NewStatusCommand() *cobra.Command {
 	return cmd
 }
 
-func printBatchStatus(w io.Writer, b batch.Batch, run batch.Run, state *conductor.State) error {
+func printBatchStatus(w io.Writer, root string, b batch.Batch, run batch.Run, state *conductor.State) error {
 	fmt.Fprintf(w, "Batch: %s\n", b.ID)
 	fmt.Fprintf(w, "Title: %s\n", b.Title)
 
 	if state != nil {
 		printProgressBlock(w, b, state)
+		printSpendLine(w, root, b.ID)
 	}
 
+	if run.CostCapped {
+		fmt.Fprintln(w, "Status: cost-capped")
+	}
 	// The batch-level fatal error is a post-mortem of the plan that halted the
 	// run. Once that plan has been recovered (no plan in the batch is failed
 	// anymore), the error is stale — suppress it so it does not sit beside a
@@ -142,6 +148,92 @@ func batchHasFailedPlan(b batch.Batch, state *conductor.State) bool {
 	return false
 }
 
+// printSpendLine emits a "Spend:" line summarizing per-adapter cost rolled
+// up from the live evidence directories. When ComputeRollup returns no
+// iterations (fresh batch, no cost.json files yet), the line is omitted
+// — there is nothing to display, not "Spend: $0.00".
+func printSpendLine(w io.Writer, root, batchID string) {
+	r, err := cost.ComputeRollup(root, batchID)
+	if err != nil || r.Iterations == 0 {
+		return
+	}
+	fmt.Fprintln(w, formatSpendLine(r))
+}
+
+// formatTotalSpendLine renders the end-of-batch "Total spend:" line shown
+// after Status: completed. Same structure as formatSpendLine but with the
+// "Total spend:" label and an unpriced hint that names gemini as the most
+// likely culprit (the only adapter without cost capture in v1).
+func formatTotalSpendLine(r cost.Rollup) string {
+	adapters := make([]string, 0, len(r.PerAdapter))
+	for name, amount := range r.PerAdapter {
+		if amount <= 0 {
+			continue
+		}
+		adapters = append(adapters, name)
+	}
+	sort.Strings(adapters)
+
+	var parts []string
+	for _, name := range adapters {
+		parts = append(parts, fmt.Sprintf("%s $%.2f", name, r.PerAdapter[name]))
+	}
+
+	out := fmt.Sprintf("Total spend: $%.2f", r.TotalUSD)
+	if len(parts) > 0 {
+		out += " (" + strings.Join(parts, ", ") + ")"
+	}
+	if r.UnpricedRuns > 0 {
+		out += fmt.Sprintf(" (%d unpriced — likely gemini)", r.UnpricedRuns)
+	}
+	if r.SkippedFiles > 0 {
+		noun := "files"
+		if r.SkippedFiles == 1 {
+			noun = "file"
+		}
+		out += fmt.Sprintf(" (%d %s skipped — totals may under-count)", r.SkippedFiles, noun)
+	}
+	return out
+}
+
+// formatSpendLine renders the Spend: line. Per-adapter breakdown is sorted
+// by adapter name for deterministic output. Adapters with zero cost are
+// omitted from the parenthetical. When the rollup includes unpriced runs,
+// "(N unpriced)" is appended. When the rollup encountered unreadable
+// cost.json files, "(M files skipped — totals may under-count)" is
+// appended so operators know the spend figure is best-effort.
+func formatSpendLine(r cost.Rollup) string {
+	adapters := make([]string, 0, len(r.PerAdapter))
+	for name, amount := range r.PerAdapter {
+		if amount <= 0 {
+			continue
+		}
+		adapters = append(adapters, name)
+	}
+	sort.Strings(adapters)
+
+	var parts []string
+	for _, name := range adapters {
+		parts = append(parts, fmt.Sprintf("%s $%.2f", name, r.PerAdapter[name]))
+	}
+
+	out := fmt.Sprintf("Spend: $%.2f", r.TotalUSD)
+	if len(parts) > 0 {
+		out += " (" + strings.Join(parts, ", ") + ")"
+	}
+	if r.UnpricedRuns > 0 {
+		out += fmt.Sprintf(" (%d unpriced)", r.UnpricedRuns)
+	}
+	if r.SkippedFiles > 0 {
+		noun := "files"
+		if r.SkippedFiles == 1 {
+			noun = "file"
+		}
+		out += fmt.Sprintf(" (%d %s skipped — totals may under-count)", r.SkippedFiles, noun)
+	}
+	return out
+}
+
 func printPlanRegistry(w io.Writer, root string) error {
 	rendered, err := execution.RenderRegistryStatus(root)
 	if err != nil {
@@ -153,6 +245,12 @@ func printPlanRegistry(w io.Writer, root string) error {
 
 func printOrphanStatus(w io.Writer, run batch.Run) {
 	fmt.Fprintf(w, "Batch: %s (orphaned — batch.json missing)\n", run.ActiveBatchID)
+	if run.CostCapped {
+		// Spend figure intentionally omitted: batch.json is gone so
+		// ComputeRollup cannot resolve the evidence path. Operator must
+		// run recover before resuming.
+		fmt.Fprintln(w, "Status: cost-capped")
+	}
 	if run.FatalError != "" {
 		fmt.Fprintf(w, "Fatal error: %s\n", run.FatalError)
 	}

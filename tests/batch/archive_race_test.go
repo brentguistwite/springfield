@@ -62,7 +62,7 @@ func TestArchiveBatchNormalizedRetriesEmptyStableFile(t *testing.T) {
 		t.Fatalf("seed batch.json: %v", err)
 	}
 
-	if err := batch.ArchiveBatchNormalized(dir, b, "state-tampered"); err != nil {
+	if err := batch.ArchiveBatchNormalized(dir, b, "state-tampered", nil); err != nil {
 		t.Fatalf("archive: %v", err)
 	}
 	<-done
@@ -127,7 +127,7 @@ func TestArchiveBatchNormalizedWritesCollisionSiblingOnPersistentStaleRead(t *te
 		t.Fatalf("seed batch.json: %v", err)
 	}
 
-	if err := batch.ArchiveBatchNormalized(dir, b, "state-tampered"); err != nil {
+	if err := batch.ArchiveBatchNormalized(dir, b, "state-tampered", nil); err != nil {
 		t.Fatalf("archive: %v", err)
 	}
 
