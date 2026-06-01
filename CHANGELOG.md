@@ -3,10 +3,6 @@
 ## [0.18.0](https://github.com/brentguistwite/springfield/compare/v0.17.0...v0.18.0) (2026-06-01)
 
 
-### ⚠ BREAKING CHANGES
-
-* springfield init now defaults agent_priority to ["codex"] instead of ["claude"]. Existing springfield.toml files are unaffected.
-
 ### Features
 
 * vendor-economics pivot — codex-default + cost capture + --cost-cap ([#63](https://github.com/brentguistwite/springfield/issues/63)) ([82e2f91](https://github.com/brentguistwite/springfield/commit/82e2f918cee761881b493bc171475ae0853e5043))
