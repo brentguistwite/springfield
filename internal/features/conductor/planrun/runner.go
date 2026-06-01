@@ -583,7 +583,8 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		exitReason = "iteration cap reached without completion marker"
 	}
 
-	// Write summary.json once at loop exit.
+	// Write summary.json once at loop exit. Mirrors the finalStatus
+	// construction below so the evidence file agrees with PlanState.Status.
 	terminalStatus := "completed"
 	switch { // needsHuman MUST be evaluated before finalRunErr != nil — the
 	// review-halt path sets BOTH (a non-nil err halts the batch loop) and is
@@ -592,6 +593,12 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		terminalStatus = "needs-human"
 	case finalRunErr != nil:
 		terminalStatus = "failed"
+	}
+	if costCapped {
+		// Cost-cap is a resumable pause, not success — keep summary.json
+		// consistent with the StatusInterrupted set on PlanState below so a
+		// consumer reading terminal_status isn't told the plan completed.
+		terminalStatus = "interrupted"
 	}
 	summary := iterationSummary{
 		IterationCount: iterCount,
