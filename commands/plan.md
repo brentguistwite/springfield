@@ -85,7 +85,29 @@ Markdown cues to consider (in priority order):
 
 If the plan is genuinely one step, emit one slice. Don't pad.
 
-## Step 4 — Confirm and persist
+## Step 4 — Definition of Done (per slice)
+
+For each slice, settle how we will know it is done — its `acceptance_criteria`.
+
+- **Criteria already present** (the source plan already lists them): show them back read-only and ask the user "edit any?". Do not silently re-draft what they wrote.
+- **Thin or missing**: before drafting anything, ask one focused question per slice — "how do we know this is done — what command or observable proves it?" Then draft concrete checks and show them in one compact block for confirmation.
+
+Aim each criterion at something checkable: a test command (e.g. `go test ./auth passes`), a file path, or an HTTP response (e.g. `GET /health returns 200`). Springfield emits a non-fatal warning at ingest on any criterion with no such signal — vague criteria still compile, they just get a nudge.
+
+How criteria are actually used — be honest with the user, don't oversell:
+
+- They sharpen the agent and reviewer prompts. They are NOT a deterministic done-gate.
+- The runner re-runs a plan until the agent self-emits `<story-pass>US-NNN</story-pass>` or it hits the iteration cap (default 50). That marker — the agent's own judgment — is what gates completion, not the criteria themselves.
+- The optional pre-merge review (next step) is the only independent check that the work actually meets the criteria.
+
+## Step 5 — Offer pre-merge review
+
+Ask, as its own question: **"Enable independent pre-merge review for this batch?"**
+
+- The default lever is per-plan: set `plans[].review` in the envelope to `true` (force review on) or `false` (force it off). Leave it unset to inherit the project default.
+- The project-wide default lives in `springfield.local.toml` (`[review].enabled`, an operator-wide concern) — mention it only if the user wants every batch reviewed rather than choosing per-plan.
+
+## Step 6 — Confirm and persist
 
 Show the user the proposed plans (title + one-line intent per plan).
 Ask for confirmation before writing.
@@ -142,7 +164,7 @@ JSON
 
 Schema notes:
 - `phases`: execution ordering. Each phase has `mode` (`"serial"` or `"parallel"`) and `plans` (list of plan IDs in that phase).
-- `plans`: each plan has `id`, `title`, `description`, optional `context_md`, and `user_stories`.
+- `plans`: each plan has `id`, `title`, `description`, optional `context_md`, optional `review` (the per-plan pre-merge review toggle from Step 5 — omit to inherit the project default), and `user_stories`.
 - `context_md`: plan-specific context only. Project-wide guidance (build commands, repo conventions) lives in root `AGENTS.md` and is auto-loaded by the runner — do not duplicate it into `context_md` or you double the prompt-token cost of that material every iteration.
 - `user_stories`: each story has `id` (`US-NNN`), `title`, `description`, `acceptance_criteria`, `priority` (int, lower = runs first), `passes` (false initially), `deps` (story IDs within same plan).
 - See `docs/prd-format.md` for full field semantics, validation rules, and stop conditions.

@@ -14,7 +14,42 @@ const (
 var (
 	planIDPattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 	storyIDPattern = regexp.MustCompile(`^US-\d{3,}$`)
+
+	// Verifiability heuristics for acceptance criteria. A criterion is treated
+	// as "verifiable" (no warning) if it carries any concrete, checkable
+	// signal: a command/outcome keyword, an HTTP verb, or a file-path/extension
+	// shape. The intent is a low-false-positive nudge, not a gate — when in
+	// doubt the criterion is left unwarned. See validate.go's isVerifiable.
+	httpVerbPattern    = regexp.MustCompile(`\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b`)
+	verifiableKeyword  = regexp.MustCompile(`(?i)\b(?:test|tests|passes|passing|fails?|exits?|builds?|compiles?|lints?|returns?|responds?|status|asserts?|equals?|matches?|contains?|exists?|present|endpoint|command|coverage|output|logs?)\b`)
+	filePathOrExtRegex = regexp.MustCompile(`[\w-]+/[\w./-]+|\.[a-zA-Z]{1,6}\b`)
 )
+
+// isVerifiable reports whether an acceptance criterion carries a concrete,
+// checkable signal. It is intentionally permissive: any of a command/outcome
+// keyword, an HTTP verb, a file-path or extension shape, a digit (status/exit
+// codes, counts), or a code-ish token (backtick, parens, =) marks the criterion
+// verifiable. Only criteria with none of these are warned as vague.
+func isVerifiable(criterion string) bool {
+	c := strings.TrimSpace(criterion)
+	if c == "" {
+		return false // empty handled separately as a hard error
+	}
+	switch {
+	case verifiableKeyword.MatchString(c):
+		return true
+	case httpVerbPattern.MatchString(c):
+		return true
+	case filePathOrExtRegex.MatchString(c):
+		return true
+	case strings.ContainsAny(c, "0123456789"):
+		return true // status codes, exit codes, counts, thresholds
+	case strings.ContainsAny(c, "`(){}="):
+		return true // code-ish tokens
+	default:
+		return false
+	}
+}
 
 // Validate checks a BatchPRDEnvelope for structural correctness and returns
 // all errors and warnings found. It never bails early — callers receive the
@@ -125,6 +160,14 @@ func validateStory(story UserStory, planID string, planStoryIDs map[string]bool,
 	}
 	if len(story.AcceptanceCriteria) == 0 {
 		res.Errors = append(res.Errors, fmt.Errorf("%s: at least one acceptance criterion is required", prefix))
+	}
+
+	for i, criterion := range story.AcceptanceCriteria {
+		if !isVerifiable(criterion) {
+			res.Warnings = append(res.Warnings, fmt.Sprintf(
+				"%s: acceptance criterion %d looks hard to verify (%q) — consider a concrete check like a test command, file path, or HTTP response",
+				prefix, i+1, criterion))
+		}
 	}
 
 	for _, dep := range story.Deps {

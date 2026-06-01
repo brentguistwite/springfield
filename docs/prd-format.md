@@ -67,7 +67,7 @@ Field reference:
 | `user_stories[].id` | string | yes | Story identifier matching `^US-\d{3,}$` (hard error otherwise — runtime marker scanner only matches this shape). |
 | `user_stories[].title` | string | yes | One-line story title. |
 | `user_stories[].description` | string | no | Narrative description of the story. |
-| `user_stories[].acceptance_criteria` | []string | yes | List of verifiable conditions. At least one required (hard error if empty). |
+| `user_stories[].acceptance_criteria` | []string | yes | List of verifiable conditions. At least one required (hard error if empty); each is also checked for a verifiable signal (warning only). Prompt input, not a done-gate — see [Acceptance criteria semantics](#acceptance-criteria-semantics). |
 | `user_stories[].priority` | int | no | Execution hint; lower = higher priority. |
 | `user_stories[].passes` | bool | no | Set to `false` in the envelope. Springfield updates this field as markers arrive. |
 | `user_stories[].deps` | []string | no | Story IDs (within the same plan) that must pass before this story is considered. Cross-plan deps are an error. |
@@ -132,6 +132,16 @@ Each agent prompt is assembled as: header + per-plan `context.md` (verbatim, if 
 
 Use `context_md` for plan-specific guidance only — the package being built, test patterns local to that subsystem, files the agent should read first. Project-wide conventions (build/lint commands, top-level architecture, repo-wide testing rules) belong in root `AGENTS.md` and are auto-loaded; duplicating them into `context_md` doubles the prompt-token cost of that material on every iteration.
 
+### Acceptance criteria semantics
+
+Acceptance criteria are **prompt input, not a deterministic done-gate.** Be clear about this when authoring plans:
+
+- Criteria are injected into the executor prompt and (when enabled) the reviewer prompt. They sharpen what the agent builds and what the reviewer checks.
+- What actually gates completion is the agent self-emitting `<story-pass>US-NNN</story-pass>` (see [Marker Contract](#marker-contract)). The runner trusts that marker and re-runs the plan until every story emits it or the iteration cap (default 50) is hit. Nothing mechanically verifies the criteria held.
+- The only **independent** check that the work meets its criteria is the optional pre-merge review (`plans[].review` / `[review].enabled`), which feeds the criteria to a separate reviewer agent. It runs as a post-step, not as a per-story gate.
+
+Practical consequence: vague criteria don't fail a build — they just produce weaker prompts and a softer review. The ingest warning above nudges toward checkable phrasing, but enforcement is the marker plus (optionally) review, not the criteria text itself.
+
 ## Validation Rules
 
 Springfield validates the envelope at ingest (`springfield plan --prd`). Hard errors abort immediately; warnings are logged but do not abort.
@@ -154,6 +164,7 @@ Springfield validates the envelope at ingest (`springfield plan --prd`). Hard er
 ### Warnings
 
 - `context_md` exceeds 32 KB — will be injected but may crowd the agent context window.
+- An `acceptance_criteria` entry has no verifiable signal — no command/outcome keyword (`test`, `passes`, `returns`, `exists`, …), HTTP verb, file path or extension, number, or code token. The criterion still compiles; the warning is a nudge to phrase it as something checkable (e.g. `go test ./auth passes`, `GET /health returns 200`, `src/auth/package.json present`). See [Acceptance criteria semantics](#acceptance-criteria-semantics) for why this is advisory, not a gate.
 
 ## Marker Contract
 

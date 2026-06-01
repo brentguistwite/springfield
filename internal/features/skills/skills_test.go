@@ -209,6 +209,58 @@ func TestPlanSkillRequiresExplicitDocTargets(t *testing.T) {
 	}
 }
 
+// TestPlanSkillHandHoldsDefinitionOfDone pins the Definition-of-Done step and
+// the review offer into the generated plan skill + command. The prose lives in
+// the TaskBody Go literal (internal/features/skills/types.go) and is regenerated
+// onto disk by cmd/regen; this guard fails if a future regen silently drops it,
+// or before the literal carries it (its red-first role during implementation).
+func TestPlanSkillHandHoldsDefinitionOfDone(t *testing.T) {
+	t.Parallel()
+
+	skill, err := Render("plan")
+	if err != nil {
+		t.Fatalf("Render(plan): %v", err)
+	}
+	command, err := RenderCommand("plan")
+	if err != nil {
+		t.Fatalf("RenderCommand(plan): %v", err)
+	}
+
+	for label, content := range map[string]string{"skill": skill.Content, "command": command.Content} {
+		// The DoD step exists and is named.
+		if !strings.Contains(content, "Definition of Done") {
+			t.Errorf("plan %s missing Definition of Done step", label)
+		}
+		// It asks the user how a slice is verified.
+		if !strings.Contains(content, "how do we know this is done") {
+			t.Errorf("plan %s missing the 'how do we know this is done' prompt", label)
+		}
+		// Honest framing: criteria are prompt input, not a deterministic gate.
+		if !strings.Contains(content, "sharpen the agent and reviewer prompts") {
+			t.Errorf("plan %s missing criteria-as-prompt-input framing", label)
+		}
+		// The marker — not the criteria — is the completion gate.
+		if !strings.Contains(content, "<story-pass>") {
+			t.Errorf("plan %s missing <story-pass> marker explanation", label)
+		}
+		// Review gate is the only independent check.
+		if !strings.Contains(content, "the only independent check") {
+			t.Errorf("plan %s missing review-gate honesty line", label)
+		}
+		// Separate review-offer prompt, leading with the per-plan toggle.
+		if !strings.Contains(content, "Enable independent pre-merge review") {
+			t.Errorf("plan %s missing review offer", label)
+		}
+		if !strings.Contains(content, "plans[].review") {
+			t.Errorf("plan %s review offer missing per-plan toggle", label)
+		}
+		// Global operator-wide lever named as secondary.
+		if !strings.Contains(content, "springfield.local.toml") {
+			t.Errorf("plan %s review offer missing global config reference", label)
+		}
+	}
+}
+
 func TestRenderCommand_Plan(t *testing.T) {
 	t.Parallel()
 

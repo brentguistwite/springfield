@@ -31,6 +31,7 @@ Thumbs.db
 # Local project config for running Springfield against this repo
 springfield.toml
 springfield.toml.bak-*
+springfield.local.toml
 
 # Claude Code runtime state
 .claude/
