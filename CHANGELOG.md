@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/brentguistwite/springfield/compare/v0.16.0...v0.17.0) (2026-06-01)
+
+
+### Features
+
+* **runtime:** wire turn-cap synthesized error through ClassifyError so codex fallback fires ([19a44ae](https://github.com/brentguistwite/springfield/commit/19a44ae848df7a766842b660ae7efe535b6060b0))
+
 ## [0.16.0](https://github.com/brentguistwite/springfield/compare/v0.15.0...v0.16.0) (2026-05-30)
 
 
