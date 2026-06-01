@@ -170,7 +170,7 @@ Ask, as its own question: **"Enable independent pre-merge review for this batch?
 - The default lever is per-plan: set ` + "`plans[].review`" + ` in the envelope to ` + "`true`" + ` (force review on) or ` + "`false`" + ` (force it off). Leave it unset to inherit the project default.
 - The project-wide default lives in ` + "`springfield.local.toml`" + ` (` + "`[review].enabled`" + `, an operator-wide concern) — mention it only if the user wants every batch reviewed rather than choosing per-plan.
 
-**Serialize the answer.** Whatever the user chooses, write ` + "`\"review\": true`" + ` (or ` + "`false`" + `) onto *every* plan object — the example envelope below shows the field set explicitly on each plan for exactly this reason. Omitting ` + "`review`" + ` means "inherit the project default", so dropping it after the user opted in would silently ship an unreviewed batch.
+**Serialize the answer.** Write the **same** ` + "`review`" + ` value onto *every* plan object — all ` + "`true`" + ` if the user enabled review, all ` + "`false`" + ` if they declined (the example below shows ` + "`true`" + ` on each plan). Only use different values per plan if the user explicitly asks for per-plan control. Omitting ` + "`review`" + ` means "inherit the project default", so dropping it after the user opted in would silently ship an unreviewed batch.
 
 ## Step 6 — Confirm and persist
 
@@ -211,7 +211,7 @@ springfield plan --prd - <<'JSON'
       "title": "<plan 2 title>",
       "description": "<plan 2 description>",
       "context_md": "Project uses TypeScript + Bun. Follow existing test patterns.",
-      "review": false,
+      "review": true,
       "user_stories": [
         {
           "id": "US-001",

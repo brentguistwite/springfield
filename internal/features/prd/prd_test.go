@@ -783,15 +783,19 @@ func TestValidateBlankCriterionIsError(t *testing.T) {
 // be mistaken for a file path and must still warn, while genuine file
 // references stay silent.
 func TestValidateDottedProseStillWarns(t *testing.T) {
-	vague := []string{"user has the role.admin permission", "the feature.flag is enabled", "debug.mode is off"}
+	vague := []string{"user has the role.admin permission", "the feature.flag is enabled", "debug.mode is off",
+		// Slash abbreviations / placeholders must not read as file paths.
+		"N/A", "completes w/o errors", "I/O finished"}
 	for _, c := range vague {
 		t.Run("warn/"+c, func(t *testing.T) {
 			if result := prd.Validate(envWithCriteria(c)); len(result.Warnings) == 0 {
-				t.Errorf("expected warning for non-file dotted prose %q, got none", c)
+				t.Errorf("expected warning for non-file prose %q, got none", c)
 			}
 		})
 	}
-	files := []string{"write the guide to README.md", "update cmd/plan.go", "config lands in springfield.toml"}
+	files := []string{"write the guide to README.md", "update cmd/plan.go", "config lands in springfield.toml",
+		// Non-Go-stack extensions are recognized too.
+		"update main.tf", "add AppDelegate.swift", "scaffold src/auth"}
 	for _, c := range files {
 		t.Run("silent/"+c, func(t *testing.T) {
 			if result := prd.Validate(envWithCriteria(c)); len(result.Warnings) != 0 {

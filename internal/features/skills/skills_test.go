@@ -268,6 +268,12 @@ func TestPlanSkillHandHoldsDefinitionOfDone(t *testing.T) {
 		if !strings.Contains(content, "\"review\": true") {
 			t.Errorf("plan %s example envelope must set review explicitly", label)
 		}
+		// The example must be homogeneous: a mixed true/false scaffold teaches
+		// the model to split review across plans, contradicting "same value on
+		// every plan" and silently leaving some plans unreviewed.
+		if strings.Contains(content, "\"review\": false") {
+			t.Errorf("plan %s example must not mix review values (found \"review\": false)", label)
+		}
 	}
 }
 

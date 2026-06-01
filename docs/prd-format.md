@@ -23,12 +23,13 @@ Full example with field-by-field commentary:
       "title": "Auth scaffold",
       "description": "Bootstrap the auth package and wire one login endpoint.",
       "context_md": "Project uses TypeScript + Bun. Follow existing test patterns in src/auth/__tests__.",
+      "review": true,
       "user_stories": [
         {
           "id": "US-001",
           "title": "Scaffold auth package",
           "description": "Create src/auth/ with package.json + initial types",
-          "acceptance_criteria": ["src/auth/package.json present", "bun install succeeds"],
+          "acceptance_criteria": ["src/auth/package.json present", "bun install exits 0"],
           "priority": 1,
           "passes": false,
           "deps": []
@@ -37,7 +38,7 @@ Full example with field-by-field commentary:
           "id": "US-002",
           "title": "Wire login endpoint",
           "description": "Add POST /login that issues a JWT",
-          "acceptance_criteria": ["POST /login returns 200 with valid creds", "JWT verifies with shared secret"],
+          "acceptance_criteria": ["POST /login returns 200 with valid creds", "GET /verify returns 200 for the issued JWT"],
           "priority": 2,
           "passes": false,
           "deps": ["US-001"]
@@ -92,7 +93,7 @@ This file is the runner's working copy of story state. Springfield is the sole w
       "id": "US-001",
       "title": "Scaffold auth package",
       "description": "Create src/auth/ with package.json + initial types",
-      "acceptance_criteria": ["src/auth/package.json present", "bun install succeeds"],
+      "acceptance_criteria": ["src/auth/package.json present", "bun install exits 0"],
       "priority": 1,
       "passes": true,
       "deps": []
@@ -101,7 +102,7 @@ This file is the runner's working copy of story state. Springfield is the sole w
       "id": "US-002",
       "title": "Wire login endpoint",
       "description": "Add POST /login that issues a JWT",
-      "acceptance_criteria": ["POST /login returns 200 with valid creds", "JWT verifies with shared secret"],
+      "acceptance_criteria": ["POST /login returns 200 with valid creds", "GET /verify returns 200 for the issued JWT"],
       "priority": 2,
       "passes": false,
       "deps": ["US-001"]
