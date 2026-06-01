@@ -158,6 +158,7 @@ Springfield validates the envelope at ingest (`springfield plan --prd`). Hard er
 - Plan ID does not match `^[a-z0-9][a-z0-9-]*$`.
 - A plan has an empty or missing `user_stories` list.
 - A user story has an empty or missing `acceptance_criteria` list.
+- An `acceptance_criteria` element is blank or whitespace-only (e.g. `[""]` or `["   "]`) — an element with no content is equivalent to having no criterion. (Distinct from the warning below, which fires on a non-empty but hard-to-verify criterion.)
 - A user story ID does not match `^US-\d{3,}$` (runtime marker scanner only matches this shape).
 - A story `deps` entry references a story ID in another plan (cross-plan story deps are not supported).
 - `context_md` exceeds 256 KB.
@@ -165,7 +166,7 @@ Springfield validates the envelope at ingest (`springfield plan --prd`). Hard er
 ### Warnings
 
 - `context_md` exceeds 32 KB — will be injected but may crowd the agent context window.
-- An `acceptance_criteria` entry has no verifiable signal — no command/outcome keyword (`test`, `passes`, `returns`, `exists`, …), HTTP verb, file path or extension, number, or code token. The criterion still compiles; the warning is a nudge to phrase it as something checkable (e.g. `go test ./auth passes`, `GET /health returns 200`, `src/auth/package.json present`). See [Acceptance criteria semantics](#acceptance-criteria-semantics) for why this is advisory, not a gate.
+- A non-empty `acceptance_criteria` entry has no verifiable signal — no command/outcome keyword (`test`, `passes`, `returns`, `exists`, …), HTTP verb, file path or extension, number, or code token. The criterion still compiles; the warning is a nudge to phrase it as something checkable (e.g. `go test ./auth passes`, `GET /health returns 200`, `src/auth/package.json present`). See [Acceptance criteria semantics](#acceptance-criteria-semantics) for why this is advisory, not a gate.
 
 ## Marker Contract
 
