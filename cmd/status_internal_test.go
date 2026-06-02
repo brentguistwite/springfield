@@ -25,6 +25,12 @@ func TestStatusNoConfigPointsAtRegistrationFlow(t *testing.T) {
 	if strings.Contains(out, "springfield plan\"") {
 		t.Fatalf("stale \"springfield plan\" hint leaked:\n%s", out)
 	}
+	// The no-config path points at init, NOT the plan skill — the skill hint is
+	// reserved for the loadable-but-empty-registry path. Pin the distinction so
+	// the two messages can't be collapsed into one.
+	if strings.Contains(out, "/springfield:plan") {
+		t.Fatalf("no-config hint should point at init, not the plan skill:\n%s", out)
+	}
 }
 
 func TestStatusEmptyPlanRegistryPointsAtPlanSkill(t *testing.T) {

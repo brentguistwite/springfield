@@ -132,7 +132,7 @@ func Diagnose(project *Project) *Diagnosis {
 	nextStep := "Run: springfield start"
 	switch {
 	case total == 0:
-		nextStep = "No plans configured. Run \"springfield plans add\" to register one."
+		nextStep = nextStepNoPlans
 	case done:
 		nextStep = "All plans completed successfully."
 	default:

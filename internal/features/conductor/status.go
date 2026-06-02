@@ -75,6 +75,13 @@ func (rs *RegistryStatus) MergeStoryRollups(rollups map[string]StoryRollup) {
 // executed one plan at a time via `springfield start`.
 const nextStepRunStart = "Run \"springfield start\" to execute the next registered plan in its own git worktree."
 
+// nextStepNoPlans is the guidance shown for a loadable project with an empty
+// plan registry. Shared by BuildRegistryStatus and Diagnose so the two
+// surfaces cannot drift into contradictory copy for the same state; it mirrors
+// init's post-setup Next: signpost (point at the plan skill, not the bare
+// `springfield plan` verb).
+const nextStepNoPlans = "No plans yet. Draft one with the springfield:plan skill (Claude Code: /springfield:plan), then run \"springfield start\"."
+
 // BuildRegistryStatus pairs each ordered plan unit with its mutable state and
 // computes overall counts plus the suggested next action.
 func BuildRegistryStatus(project *Project) *RegistryStatus {
@@ -85,7 +92,7 @@ func BuildRegistryStatus(project *Project) *RegistryStatus {
 	rs := &RegistryStatus{HasConfig: true}
 
 	if len(project.Config.PlanUnits) == 0 {
-		rs.NextStep = "No plans yet. Draft one with the springfield:plan skill (Claude Code: /springfield:plan), then run \"springfield start\"."
+		rs.NextStep = nextStepNoPlans
 		return rs
 	}
 
