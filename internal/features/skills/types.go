@@ -299,15 +299,16 @@ Run `+"`springfield status`"+` to check whether an active batch already exists.
 Grain:
 
 - The epic (or the set of standalone tickets) → the **batch**.
-- Each child / standalone ticket → one **plan**. Slug the plan `+"`id`"+` from the ticket key, lowercased (`+"`PROJ-123`"+` → `+"`proj-123`"+`) — this keeps the envelope, `+"`.springfield/plans/<id>/`"+`, and the Jira ticket aligned by key.
+- Each child / standalone ticket → one **plan**. Slug the plan `+"`id`"+` from the ticket key: lowercase it and replace any character outside `+"`[a-z0-9-]`"+` with a hyphen, collapsing runs (`+"`PROJ-123`"+` → `+"`proj-123`"+`; `+"`MY_PROJECT-45`"+` → `+"`my-project-45`"+`). The envelope requires `+"`^[a-z0-9][a-z0-9-]*$`"+`. This keeps the envelope, `+"`.springfield/plans/<id>/`"+`, and the Jira ticket aligned by key.
 - A ticket's **subtasks → user stories** in that plan. A ticket with no subtasks → one synthetic user story covering the ticket itself.
+- **Don't lose the parent ticket's own Definition of Done.** Only `+"`user_stories[].acceptance_criteria`"+` is consumed by the executor and the review gate — `+"`context_md`"+` is context, never a done-gate. So when a ticket has subtasks AND its own acceptance criteria, the subtasks become the implementation stories AND you append one final synthetic **parent-acceptance** story whose `+"`acceptance_criteria`"+` are the parent ticket's, with `+"`deps`"+` on every subtask story. Never strip the parent's criteria into `+"`context_md`"+` oblivion when subtasks exist — they must ride in a story the runner actually checks.
 - Story IDs are `+"`US-001`"+`, `+"`US-002`"+`, … per plan (the envelope requires `+"`^US-\\d{3,}$`"+`; the ticket key lives in context, not the story id).
 
 Ordering and dependencies (honor the structure Jira already holds):
 
 - **Plan order** within the single serial phase: topologically sort tickets by `+"`blocks`"+` / `+"`is blocked by`"+` links; where there is no link, fall back to Jira backlog rank, then priority, then the order the user listed them.
-- **Story deps** (`+"`user_stories[].deps`"+`): subtask `+"`blocks`"+` links → deps within the same plan (the envelope forbids cross-plan deps).
-- A dependency cycle (`+"`A blocks B blocks A`"+`) → keep linear input/rank order and note it; do not fail.
+- **Story deps** (`+"`user_stories[].deps`"+`): a `+"`blocks`"+` link between two subtasks of the **same** parent ticket → a dep within that plan. **Skip** any `+"`blocks`"+` link whose target subtask belongs to a different parent ticket — the envelope forbids cross-plan deps, so a cross-ticket link is a plan-order edge at most, never a story dep (emitting it produces a `+"`dep not found in same plan`"+` hard error).
+- A dependency cycle → degrade, never fail. At the **plan** level (`+"`A blocks B blocks A`"+`) drop the cyclic ordering edge and keep rank order. At the **story** level (two subtasks blocking each other) drop **both** `+"`deps`"+` links and emit the stories in rank order — a cyclic `+"`deps`"+` passes envelope validation but leaves no eligible story, so the runner hard-fails the plan with `+"`dependency graph blocked`"+`. Note the degradation either way.
 
 Text sinks:
 

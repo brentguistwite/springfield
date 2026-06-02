@@ -470,7 +470,7 @@ func TestInstallWritesSelectedHostArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read installed codex artifact: %v", err)
 	}
-	for _, marker := range []string{"Springfield", "plan", "status", "recover"} {
+	for _, marker := range []string{"Springfield", "plan", "jira", "status", "recover"} {
 		if !strings.Contains(string(data), marker) {
 			t.Fatalf("expected installed codex artifact to contain %q, got:\n%s", marker, string(data))
 		}
