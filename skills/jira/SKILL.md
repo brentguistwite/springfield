@@ -102,7 +102,7 @@ Ordering and dependencies (honor the structure Jira already holds):
 
 Text sinks:
 
-- `plans[].context_md`: the ticket description prose with the acceptance-criteria section removed (those become `acceptance_criteria`), prefixed with a one-line `Source: PROJ-123 — <title>` plus the ticket URL. Do NOT include comments. Do NOT duplicate project-wide guidance (root AGENTS.md is auto-loaded by the runner).
+- `plans[].context_md`: the ticket description prose with the acceptance-criteria section removed (those become `acceptance_criteria`), prefixed with a one-line `Source: PROJ-123 — <title>` plus the ticket URL. Do NOT include comments. Do NOT duplicate project-wide guidance (root AGENTS.md is auto-loaded by the runner). Keep it bounded: `context_md` warns past ~32 KB and hard-errors past 256 KB, so for a long ticket — pasted logs, stack traces, incident dumps — summarize or clip the description to the decision-relevant prose and leave the full raw text to `source` (below).
 - `source` (batch-level, stored as `source.md` for audit): the concatenated raw fetched tickets (key, title, description, acceptance criteria).
 
 ## Step 6 — Definition of Done (per story)
@@ -118,9 +118,9 @@ Then, per story:
 - **Criteria found** → show them back read-only and ask "edit any?". Do not silently re-draft what the team wrote in Jira.
 - **None found** → ask one focused question: "how do we know this story is done — what command or observable proves it?" Then draft concrete, checkable criteria and show them for confirmation.
 
-Aim each criterion at something checkable: a test command (e.g. `go test ./auth passes`), a file path, or an HTTP response (e.g. `GET /health returns 200`). Springfield emits a non-fatal warning at ingest on any criterion with no such signal.
+Aim each criterion at something checkable: a test command (e.g. `go test ./auth passes`), a file path, or an HTTP response (e.g. `GET /health returns 200`). Springfield emits a non-fatal warning at ingest on any criterion with no such signal — vague criteria still compile, they just get a nudge.
 
-**Bulk escape hatch:** if the user asks to ingest without per-story questions (e.g. "ingest the whole epic, don't ask me about criteria"), skip the interactive prompts entirely: take whatever extraction yields and rely on the ingest `[warn]` for thin criteria. Do not invent criteria the team did not write.
+**Bulk escape hatch:** if the user asks to ingest without per-story questions (e.g. "ingest the whole epic, don't ask me about criteria"), skip the interactive prompts: where extraction yields at least one criterion, take it as-is and let the ingest `[warn]` flag weak phrasing. But an **empty** `acceptance_criteria` list is a HARD validation error that aborts ingest, not a warning — so for a story where extraction found nothing, still emit one minimal checkable criterion drawn from the ticket itself (its title/description) rather than an empty list. Do not invent elaborate criteria the team did not write.
 
 How criteria are actually used — be honest, don't oversell:
 

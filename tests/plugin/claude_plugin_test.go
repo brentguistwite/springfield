@@ -86,6 +86,7 @@ func assertRequiredSkillsExist(t *testing.T, root string) {
 
 	for _, rel := range []string{
 		"skills/plan/SKILL.md",
+		"skills/jira/SKILL.md",
 		"skills/status/SKILL.md",
 		"skills/recover/SKILL.md",
 	} {
@@ -120,6 +121,7 @@ func assertRequiredCommandsExist(t *testing.T, root string) {
 
 	for _, rel := range []string{
 		"commands/plan.md",
+		"commands/jira.md",
 		"commands/status.md",
 		"commands/recover.md",
 	} {
@@ -235,7 +237,7 @@ func TestRegenLoopOmitsStart(t *testing.T) {
 	}
 	body := string(src)
 
-	for _, want := range []string{`"plan"`, `"status"`, `"recover"`} {
+	for _, want := range []string{`"plan"`, `"jira"`, `"status"`, `"recover"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("cmd/regen/main.go must include %s in loop slice", want)
 		}

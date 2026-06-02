@@ -33,6 +33,10 @@ func main() {
 			os.Exit(1)
 		}
 		cmdPath := "commands/" + name + ".md"
+		if err := os.MkdirAll("commands", 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "mkdir commands: %v\n", err)
+			os.Exit(1)
+		}
 		if err := os.WriteFile(cmdPath, []byte(rc.Content), 0o644); err != nil {
 			fmt.Fprintf(os.Stderr, "write %s: %v\n", cmdPath, err)
 			os.Exit(1)
