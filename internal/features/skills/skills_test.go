@@ -169,7 +169,7 @@ func compareSemver(t *testing.T, a, b string) int {
 func TestRenderedSkillsCarryVersionCheckPreamble(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"plan", "status", "recover"} {
+	for _, name := range []string{"plan", "jira", "status", "recover"} {
 		skill, err := Render(name)
 		if err != nil {
 			t.Fatalf("Render(%s): %v", name, err)
@@ -386,7 +386,7 @@ func TestCanonicalCheckedInSkillsMatchRenderedContent(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
-	for _, name := range []string{"plan", "status", "recover"} {
+	for _, name := range []string{"plan", "jira", "status", "recover"} {
 		rendered, err := Render(name)
 		if err != nil {
 			t.Fatalf("render %s: %v", name, err)
@@ -406,7 +406,7 @@ func TestCanonicalCheckedInCommandsMatchRenderedContent(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
-	for _, name := range []string{"plan", "status", "recover"} {
+	for _, name := range []string{"plan", "jira", "status", "recover"} {
 		rendered, err := RenderCommand(name)
 		if err != nil {
 			t.Fatalf("render command %s: %v", name, err)
@@ -425,7 +425,7 @@ func TestCanonicalCheckedInCommandsMatchRenderedContent(t *testing.T) {
 func TestRenderedSkillsIncludeFrontmatter(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"plan", "status", "recover"} {
+	for _, name := range []string{"plan", "jira", "status", "recover"} {
 		rendered, err := Render(name)
 		if err != nil {
 			t.Fatalf("render %s: %v", name, err)
