@@ -23,12 +23,13 @@ Full example with field-by-field commentary:
       "title": "Auth scaffold",
       "description": "Bootstrap the auth package and wire one login endpoint.",
       "context_md": "Project uses TypeScript + Bun. Follow existing test patterns in src/auth/__tests__.",
+      "review": true,
       "user_stories": [
         {
           "id": "US-001",
           "title": "Scaffold auth package",
           "description": "Create src/auth/ with package.json + initial types",
-          "acceptance_criteria": ["src/auth/package.json present", "bun install succeeds"],
+          "acceptance_criteria": ["src/auth/package.json present", "bun install exits 0"],
           "priority": 1,
           "passes": false,
           "deps": []
@@ -37,7 +38,7 @@ Full example with field-by-field commentary:
           "id": "US-002",
           "title": "Wire login endpoint",
           "description": "Add POST /login that issues a JWT",
-          "acceptance_criteria": ["POST /login returns 200 with valid creds", "JWT verifies with shared secret"],
+          "acceptance_criteria": ["POST /login returns 200 with valid creds", "GET /verify returns 200 for the issued JWT"],
           "priority": 2,
           "passes": false,
           "deps": ["US-001"]
@@ -67,7 +68,7 @@ Field reference:
 | `user_stories[].id` | string | yes | Story identifier matching `^US-\d{3,}$` (hard error otherwise — runtime marker scanner only matches this shape). |
 | `user_stories[].title` | string | yes | One-line story title. |
 | `user_stories[].description` | string | no | Narrative description of the story. |
-| `user_stories[].acceptance_criteria` | []string | yes | List of verifiable conditions. At least one required (hard error if empty). |
+| `user_stories[].acceptance_criteria` | []string | yes | List of verifiable conditions. At least one required (hard error if empty); each is also checked for a verifiable signal (warning only). Prompt input, not a done-gate — see [Acceptance criteria semantics](#acceptance-criteria-semantics). |
 | `user_stories[].priority` | int | no | Execution hint; lower = higher priority. |
 | `user_stories[].passes` | bool | no | Set to `false` in the envelope. Springfield updates this field as markers arrive. |
 | `user_stories[].deps` | []string | no | Story IDs (within the same plan) that must pass before this story is considered. Cross-plan deps are an error. |
@@ -92,7 +93,7 @@ This file is the runner's working copy of story state. Springfield is the sole w
       "id": "US-001",
       "title": "Scaffold auth package",
       "description": "Create src/auth/ with package.json + initial types",
-      "acceptance_criteria": ["src/auth/package.json present", "bun install succeeds"],
+      "acceptance_criteria": ["src/auth/package.json present", "bun install exits 0"],
       "priority": 1,
       "passes": true,
       "deps": []
@@ -101,7 +102,7 @@ This file is the runner's working copy of story state. Springfield is the sole w
       "id": "US-002",
       "title": "Wire login endpoint",
       "description": "Add POST /login that issues a JWT",
-      "acceptance_criteria": ["POST /login returns 200 with valid creds", "JWT verifies with shared secret"],
+      "acceptance_criteria": ["POST /login returns 200 with valid creds", "GET /verify returns 200 for the issued JWT"],
       "priority": 2,
       "passes": false,
       "deps": ["US-001"]
@@ -132,6 +133,16 @@ Each agent prompt is assembled as: header + per-plan `context.md` (verbatim, if 
 
 Use `context_md` for plan-specific guidance only — the package being built, test patterns local to that subsystem, files the agent should read first. Project-wide conventions (build/lint commands, top-level architecture, repo-wide testing rules) belong in root `AGENTS.md` and are auto-loaded; duplicating them into `context_md` doubles the prompt-token cost of that material on every iteration.
 
+### Acceptance criteria semantics
+
+Acceptance criteria are **prompt input, not a deterministic done-gate.** Be clear about this when authoring plans:
+
+- Criteria are injected into the executor prompt and (when enabled) the reviewer prompt. They sharpen what the agent builds and what the reviewer checks.
+- What actually gates completion is the agent self-emitting `<story-pass>US-NNN</story-pass>` (see [Marker Contract](#marker-contract)). The runner trusts that marker and re-runs the plan until every story emits it or the iteration cap (default 50) is hit. Nothing mechanically verifies the criteria held.
+- The only **independent** check that the work meets its criteria is the optional pre-merge review (`plans[].review` / `[review].enabled`), which feeds the criteria to a separate reviewer agent. It runs as a post-step, not as a per-story gate.
+
+Practical consequence: vague criteria don't fail a build — they just produce weaker prompts and a softer review. The ingest warning above nudges toward checkable phrasing, but enforcement is the marker plus (optionally) review, not the criteria text itself.
+
 ## Validation Rules
 
 Springfield validates the envelope at ingest (`springfield plan --prd`). Hard errors abort immediately; warnings are logged but do not abort.
@@ -147,6 +158,7 @@ Springfield validates the envelope at ingest (`springfield plan --prd`). Hard er
 - Plan ID does not match `^[a-z0-9][a-z0-9-]*$`.
 - A plan has an empty or missing `user_stories` list.
 - A user story has an empty or missing `acceptance_criteria` list.
+- An `acceptance_criteria` element is blank or whitespace-only (e.g. `[""]` or `["   "]`) — an element with no content is equivalent to having no criterion. (Distinct from the warning below, which fires on a non-empty but hard-to-verify criterion.)
 - A user story ID does not match `^US-\d{3,}$` (runtime marker scanner only matches this shape).
 - A story `deps` entry references a story ID in another plan (cross-plan story deps are not supported).
 - `context_md` exceeds 256 KB.
@@ -154,6 +166,7 @@ Springfield validates the envelope at ingest (`springfield plan --prd`). Hard er
 ### Warnings
 
 - `context_md` exceeds 32 KB — will be injected but may crowd the agent context window.
+- A non-empty `acceptance_criteria` entry has no verifiable signal — no command/outcome keyword (`test`, `passes`, `returns`, `exists`, …), HTTP verb, file path or extension, number, or code token. The criterion still compiles; the warning is a nudge to phrase it as something checkable (e.g. `go test ./auth passes`, `GET /health returns 200`, `src/auth/package.json present`). See [Acceptance criteria semantics](#acceptance-criteria-semantics) for why this is advisory, not a gate.
 
 ## Marker Contract
 

@@ -547,6 +547,45 @@ func TestPlanSurfacesWarnings(t *testing.T) {
 	}
 }
 
+// TestPlanWarnsOnVagueCriterion verifies the acceptance-criterion verifiability
+// warning reaches the user end-to-end: a non-verifiable criterion produces a
+// [warn] on stderr, the command still succeeds, and the plan is written.
+func TestPlanWarnsOnVagueCriterion(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "claude")
+
+	env := prd.BatchPRDEnvelope{
+		Title:  "vague-batch",
+		Source: "src",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-vague"}}},
+		Plans: []prd.BatchPRDPlan{
+			{
+				PRD: prd.PRD{
+					ID:    "plan-vague",
+					Title: "Vague Plan",
+					UserStories: []prd.UserStory{
+						{ID: "US-001", Title: "S", Priority: 1, AcceptanceCriteria: []string{"it just works"}},
+					},
+				},
+			},
+		},
+	}
+	envJSON := buildEnvelopeJSON(t, env)
+
+	_, stderr, err := runPlanSplit(t, bin, dir, envJSON)
+	if err != nil {
+		t.Fatalf("expected success with warning, got error: %v\nstderr: %s", err, stderr)
+	}
+	if !strings.Contains(stderr, "[warn]") || !strings.Contains(stderr, "hard to verify") {
+		t.Fatalf("expected a 'hard to verify' [warn] on stderr, got:\n%s", stderr)
+	}
+	prdPath := filepath.Join(dir, ".springfield", "plans", "plan-vague", "prd.json")
+	if _, err := os.Stat(prdPath); err != nil {
+		t.Fatalf("prd.json missing after warning: %v", err)
+	}
+}
+
 // TestPlanRejectsInvalidEnvelope verifies hard errors from prd.Validate surface.
 func TestPlanRejectsInvalidEnvelope(t *testing.T) {
 	bin := buildBinary(t)

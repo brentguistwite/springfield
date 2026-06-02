@@ -97,7 +97,7 @@ func TestParseMissingTitle(t *testing.T) {
 				"title": "Scaffold",
 				"description": "desc",
 				"user_stories": [
-					{"id": "US-001", "title": "Story", "description": "d", "acceptance_criteria": ["ok"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
+					{"id": "US-001", "title": "Story", "description": "d", "acceptance_criteria": ["go test ./... passes"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
 				]
 			}
 		]
@@ -153,7 +153,7 @@ func TestValidateBadPriority(t *testing.T) {
 				"title": "Plan 1",
 				"description": "d",
 				"user_stories": [
-					{"id": "US-001", "title": "Story", "description": "d", "acceptance_criteria": ["ok"], "priority": 0, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
+					{"id": "US-001", "title": "Story", "description": "d", "acceptance_criteria": ["go test ./... passes"], "priority": 0, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
 				]
 			}
 		]
@@ -207,7 +207,7 @@ func TestValidateDanglingDep(t *testing.T) {
 				"title": "Plan 1",
 				"description": "d",
 				"user_stories": [
-					{"id": "US-001", "title": "Story", "description": "d", "acceptance_criteria": ["ok"], "priority": 1, "passes": false, "deps": ["US-999"], "notes": "", "evidence_path": ""}
+					{"id": "US-001", "title": "Story", "description": "d", "acceptance_criteria": ["go test ./... passes"], "priority": 1, "passes": false, "deps": ["US-999"], "notes": "", "evidence_path": ""}
 				]
 			}
 		]
@@ -234,7 +234,7 @@ func TestValidateDuplicatePlanID(t *testing.T) {
 				"title": "Plan 1",
 				"description": "d",
 				"user_stories": [
-					{"id": "US-001", "title": "Story", "description": "d", "acceptance_criteria": ["ok"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
+					{"id": "US-001", "title": "Story", "description": "d", "acceptance_criteria": ["go test ./... passes"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
 				]
 			},
 			{
@@ -242,7 +242,7 @@ func TestValidateDuplicatePlanID(t *testing.T) {
 				"title": "Plan 1 duplicate",
 				"description": "d",
 				"user_stories": [
-					{"id": "US-002", "title": "Story 2", "description": "d", "acceptance_criteria": ["ok"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
+					{"id": "US-002", "title": "Story 2", "description": "d", "acceptance_criteria": ["go test ./... passes"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
 				]
 			}
 		]
@@ -269,8 +269,8 @@ func TestValidateDuplicateStoryID(t *testing.T) {
 				"title": "Plan 1",
 				"description": "d",
 				"user_stories": [
-					{"id": "US-001", "title": "Story", "description": "d", "acceptance_criteria": ["ok"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""},
-					{"id": "US-001", "title": "Story dup", "description": "d", "acceptance_criteria": ["ok"], "priority": 2, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
+					{"id": "US-001", "title": "Story", "description": "d", "acceptance_criteria": ["go test ./... passes"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""},
+					{"id": "US-001", "title": "Story dup", "description": "d", "acceptance_criteria": ["go test ./... passes"], "priority": 2, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
 				]
 			}
 		]
@@ -297,7 +297,7 @@ func TestValidateCrossPlanDep(t *testing.T) {
 				"title": "Plan 1",
 				"description": "d",
 				"user_stories": [
-					{"id": "US-001", "title": "Story", "description": "d", "acceptance_criteria": ["ok"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
+					{"id": "US-001", "title": "Story", "description": "d", "acceptance_criteria": ["go test ./... passes"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
 				]
 			},
 			{
@@ -305,7 +305,7 @@ func TestValidateCrossPlanDep(t *testing.T) {
 				"title": "Plan 2",
 				"description": "d",
 				"user_stories": [
-					{"id": "US-002", "title": "Story 2", "description": "d", "acceptance_criteria": ["ok"], "priority": 1, "passes": false, "deps": ["US-001"], "notes": "", "evidence_path": ""}
+					{"id": "US-002", "title": "Story 2", "description": "d", "acceptance_criteria": ["go test ./... passes"], "priority": 1, "passes": false, "deps": ["US-001"], "notes": "", "evidence_path": ""}
 				]
 			}
 		]
@@ -333,7 +333,7 @@ func TestValidateMissingContextMD(t *testing.T) {
 				"title": "Plan 1",
 				"description": "d",
 				"user_stories": [
-					{"id": "US-001", "title": "Story", "description": "d", "acceptance_criteria": ["ok"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
+					{"id": "US-001", "title": "Story", "description": "d", "acceptance_criteria": ["go test ./... passes"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
 				]
 			}
 		]
@@ -364,7 +364,7 @@ func TestValidateContextMDWarn(t *testing.T) {
 					ID:    "p1",
 					Title: "Plan 1",
 					UserStories: []prd.UserStory{
-						{ID: "US-001", Title: "S", AcceptanceCriteria: []string{"ok"}, Priority: 1},
+						{ID: "US-001", Title: "S", AcceptanceCriteria: []string{"go test ./... passes"}, Priority: 1},
 					},
 				},
 				ContextMD: bigContext,
@@ -375,8 +375,13 @@ func TestValidateContextMDWarn(t *testing.T) {
 	if result.HasErrors() {
 		t.Errorf("unexpected errors for 33KB context: %v", result.Errors)
 	}
-	if len(result.Warnings) == 0 {
-		t.Error("expected warning for 33KB context_md, got none")
+	// Criterion is verifiable, so the only warning must be the context_md one —
+	// this keeps the test an isolated probe of the size warning.
+	if len(result.Warnings) != 1 {
+		t.Fatalf("expected exactly 1 warning (context_md size), got %d: %v", len(result.Warnings), result.Warnings)
+	}
+	if !strings.Contains(result.Warnings[0], "context_md") {
+		t.Errorf("expected context_md size warning, got: %q", result.Warnings[0])
 	}
 }
 
@@ -393,7 +398,7 @@ func TestValidateContextMDReject(t *testing.T) {
 					ID:    "p1",
 					Title: "Plan 1",
 					UserStories: []prd.UserStory{
-						{ID: "US-001", Title: "S", AcceptanceCriteria: []string{"ok"}, Priority: 1},
+						{ID: "US-001", Title: "S", AcceptanceCriteria: []string{"go test ./... passes"}, Priority: 1},
 					},
 				},
 				ContextMD: hugeContext,
@@ -418,7 +423,7 @@ func TestValidatePhaseReferencesUnknownPlan(t *testing.T) {
 				"title": "Plan 1",
 				"description": "d",
 				"user_stories": [
-					{"id": "US-001", "title": "Story", "description": "d", "acceptance_criteria": ["ok"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
+					{"id": "US-001", "title": "Story", "description": "d", "acceptance_criteria": ["go test ./... passes"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
 				]
 			}
 		]
@@ -484,7 +489,7 @@ func TestValidateNonConformingStoryIDIsError(t *testing.T) {
 				"title": "Plan 1",
 				"description": "d",
 				"user_stories": [
-					{"id": "STORY-1", "title": "Story", "description": "d", "acceptance_criteria": ["ok"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
+					{"id": "STORY-1", "title": "Story", "description": "d", "acceptance_criteria": ["go test ./... passes"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
 				]
 			}
 		]
@@ -511,7 +516,7 @@ func TestValidateBadPlanID(t *testing.T) {
 				"title": "Plan 1",
 				"description": "d",
 				"user_stories": [
-					{"id": "US-001", "title": "Story", "description": "d", "acceptance_criteria": ["ok"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
+					{"id": "US-001", "title": "Story", "description": "d", "acceptance_criteria": ["go test ./... passes"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
 				]
 			}
 		]
@@ -583,7 +588,7 @@ func TestValidateOrphanPlan(t *testing.T) {
 				"title": "Plan 1",
 				"description": "d",
 				"user_stories": [
-					{"id": "US-001", "title": "Story", "description": "d", "acceptance_criteria": ["ok"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
+					{"id": "US-001", "title": "Story", "description": "d", "acceptance_criteria": ["go test ./... passes"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
 				]
 			},
 			{
@@ -591,7 +596,7 @@ func TestValidateOrphanPlan(t *testing.T) {
 				"title": "Plan 3 (orphan)",
 				"description": "d",
 				"user_stories": [
-					{"id": "US-002", "title": "Story 2", "description": "d", "acceptance_criteria": ["ok"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
+					{"id": "US-002", "title": "Story 2", "description": "d", "acceptance_criteria": ["go test ./... passes"], "priority": 1, "passes": false, "deps": [], "notes": "", "evidence_path": ""}
 				]
 			}
 		]
@@ -681,4 +686,121 @@ func containsJSONKey(b []byte, key string) bool {
 	}
 	_, ok := m[key]
 	return ok
+}
+
+// envWithCriteria builds a minimal otherwise-valid envelope whose single story
+// carries the given acceptance criteria. Used to exercise the per-criterion
+// verifiability warning in isolation.
+func envWithCriteria(criteria ...string) prd.BatchPRDEnvelope {
+	return prd.BatchPRDEnvelope{
+		Title:  "t",
+		Source: "s",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"p1"}}},
+		Plans: []prd.BatchPRDPlan{{
+			PRD: prd.PRD{
+				ID:    "p1",
+				Title: "Plan 1",
+				UserStories: []prd.UserStory{
+					{ID: "US-001", Title: "S", AcceptanceCriteria: criteria, Priority: 1},
+				},
+			},
+		}},
+	}
+}
+
+// TestValidateVagueCriterionWarns is the tracer: a criterion with no
+// verifiable signal (no command, file path, HTTP verb, number, or code token)
+// must produce a non-fatal warning, never an error.
+func TestValidateVagueCriterionWarns(t *testing.T) {
+	result := prd.Validate(envWithCriteria("it just works"))
+	if result.HasErrors() {
+		t.Fatalf("vague criterion must not error: %v", result.Errors)
+	}
+	if len(result.Warnings) == 0 {
+		t.Fatal("expected a warning for a vague acceptance criterion, got none")
+	}
+}
+
+// TestValidateVerifiableCriteriaStaySilent pins the low-false-positive boundary:
+// criteria carrying a command/outcome keyword, HTTP verb, file path/extension,
+// number, or code token must NOT warn.
+func TestValidateVerifiableCriteriaStaySilent(t *testing.T) {
+	verifiable := []string{
+		"go test ./auth passes",
+		"GET /users returns 200",
+		"package.json present at repo root",
+		"the retry count equals 3",
+		"`springfield plan --prd -` exits 0",
+		"docs/prd-format.md documents the warning",
+		"the /health endpoint responds 200",
+	}
+	for _, c := range verifiable {
+		t.Run(c, func(t *testing.T) {
+			result := prd.Validate(envWithCriteria(c))
+			if len(result.Warnings) != 0 {
+				t.Errorf("expected no warning for verifiable criterion %q, got: %v", c, result.Warnings)
+			}
+		})
+	}
+}
+
+// TestValidateWarnsOnlyVagueAmongMany ensures the loop warns per non-verifiable
+// criterion and leaves verifiable ones alone — one warning, naming the vague one.
+func TestValidateWarnsOnlyVagueAmongMany(t *testing.T) {
+	result := prd.Validate(envWithCriteria("go test ./... passes", "it feels snappy"))
+	if result.HasErrors() {
+		t.Fatalf("unexpected errors: %v", result.Errors)
+	}
+	if len(result.Warnings) != 1 {
+		t.Fatalf("expected exactly 1 warning (the vague one), got %d: %v", len(result.Warnings), result.Warnings)
+	}
+	if !strings.Contains(result.Warnings[0], "it feels snappy") {
+		t.Errorf("warning should name the vague criterion, got: %q", result.Warnings[0])
+	}
+}
+
+// TestValidateBlankCriterionIsError ensures an empty-string or whitespace-only
+// criterion is a hard error, not merely the verifiability warning — an empty
+// slice and an empty element are both "no Definition of Done".
+func TestValidateBlankCriterionIsError(t *testing.T) {
+	for _, c := range []string{"", "   ", "\t\n"} {
+		t.Run(fmt.Sprintf("%q", c), func(t *testing.T) {
+			result := prd.Validate(envWithCriteria(c))
+			if !result.HasErrors() {
+				t.Fatalf("expected a hard error for blank criterion %q, got none (warnings: %v)", c, result.Warnings)
+			}
+			// A blank criterion is an error, not a warning — locks the `continue`
+			// so it never double-reports as both.
+			if len(result.Warnings) != 0 {
+				t.Errorf("blank criterion must not also warn, got: %v", result.Warnings)
+			}
+		})
+	}
+}
+
+// TestValidateDottedProseStillWarns guards the extension-whitelist boundary:
+// dotted prose that is not a real file ("role.admin", "feature.flag") must NOT
+// be mistaken for a file path and must still warn, while genuine file
+// references stay silent.
+func TestValidateDottedProseStillWarns(t *testing.T) {
+	vague := []string{"user has the role.admin permission", "the feature.flag is enabled", "debug.mode is off",
+		// Slash abbreviations / placeholders must not read as file paths.
+		"N/A", "completes w/o errors", "I/O finished"}
+	for _, c := range vague {
+		t.Run("warn/"+c, func(t *testing.T) {
+			if result := prd.Validate(envWithCriteria(c)); len(result.Warnings) == 0 {
+				t.Errorf("expected warning for non-file prose %q, got none", c)
+			}
+		})
+	}
+	files := []string{"write the guide to README.md", "update cmd/plan.go", "config lands in springfield.toml",
+		// Non-Go-stack extensions are recognized too.
+		"update main.tf", "add AppDelegate.swift", "scaffold src/auth"}
+	for _, c := range files {
+		t.Run("silent/"+c, func(t *testing.T) {
+			if result := prd.Validate(envWithCriteria(c)); len(result.Warnings) != 0 {
+				t.Errorf("expected no warning for real file reference %q, got: %v", c, result.Warnings)
+			}
+		})
+	}
 }
