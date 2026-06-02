@@ -294,6 +294,8 @@ Run `+"`springfield status`"+` to check whether an active batch already exists.
 - If an active batch exists and any plan is `+"`running`"+`, tell the user to wait before replacing.
 - If an active batch exists but nothing is running, ask the user: replace it, append to it, or keep it.
 
+**Append is order- and audit-limited — prefer replace when either matters.** `+"`--append`"+` only adds the new plans as phases *after* the existing ones; it does NOT re-run the topological sort across the combined graph, so an appended ticket that `+"`blocks`"+` a plan already queued will still run *after* it. `+"`--append`"+` also keeps the original batch's `+"`source.md`"+` and drops the appended tickets' raw `+"`source`"+`, so they vanish from the audit trail. Therefore: if any incoming ticket has a `+"`blocks`"+` / `+"`is blocked by`"+` relationship with a plan in the active batch, or the user wants a complete `+"`source`"+` audit, recompile the **combined** set with `+"`--replace`"+` (so the topo sort and source cover old + new) rather than appending. Reserve `+"`--append`"+` for independent tickets with no cross-batch dependency.
+
 ## Step 5 — Map tickets to the envelope
 
 Grain:
@@ -301,14 +303,14 @@ Grain:
 - The epic (or the set of standalone tickets) → the **batch**.
 - Each child / standalone ticket → one **plan**. Slug the plan `+"`id`"+` from the ticket key: lowercase it and replace any character outside `+"`[a-z0-9-]`"+` with a hyphen, collapsing runs (`+"`PROJ-123`"+` → `+"`proj-123`"+`; `+"`MY_PROJECT-45`"+` → `+"`my-project-45`"+`). The envelope requires `+"`^[a-z0-9][a-z0-9-]*$`"+`. This keeps the envelope, `+"`.springfield/plans/<id>/`"+`, and the Jira ticket aligned by key.
 - A ticket's **subtasks → user stories** in that plan. A ticket with no subtasks → one synthetic user story covering the ticket itself.
-- **Don't lose the parent ticket's own Definition of Done.** Only `+"`user_stories[].acceptance_criteria`"+` is consumed by the executor and the review gate — `+"`context_md`"+` is context, never a done-gate. So when a ticket has subtasks AND its own acceptance criteria, the subtasks become the implementation stories AND you append one final synthetic **parent-acceptance** story whose `+"`acceptance_criteria`"+` are the parent ticket's, with `+"`deps`"+` on every subtask story. Never strip the parent's criteria into `+"`context_md`"+` oblivion when subtasks exist — they must ride in a story the runner actually checks.
+- **Don't lose the parent ticket's own Definition of Done.** Only `+"`user_stories[].acceptance_criteria`"+` is consumed by the executor and the review gate — `+"`context_md`"+` is context, never a done-gate. So when a ticket has subtasks AND its own acceptance criteria, the subtasks become the implementation stories AND you append one final synthetic **parent-acceptance** story whose `+"`acceptance_criteria`"+` are the parent ticket's, with `+"`deps`"+` on every subtask story and a `+"`priority`"+` higher than all of them (so it runs last; `+"`priority`"+` must be `+"`>= 1`"+`, never the `+"`0`"+` zero-value). Never strip the parent's criteria into `+"`context_md`"+` oblivion when subtasks exist — they must ride in a story the runner actually checks.
 - Story IDs are `+"`US-001`"+`, `+"`US-002`"+`, … per plan (the envelope requires `+"`^US-\\d{3,}$`"+`; the ticket key lives in context, not the story id).
 
 Ordering and dependencies (honor the structure Jira already holds):
 
 - **Plan order** within the single serial phase: topologically sort tickets by `+"`blocks`"+` / `+"`is blocked by`"+` links; where there is no link, fall back to Jira backlog rank, then priority, then the order the user listed them.
 - **Story deps** (`+"`user_stories[].deps`"+`): a `+"`blocks`"+` link between two subtasks of the **same** parent ticket → a dep within that plan. **Skip** any `+"`blocks`"+` link whose target subtask belongs to a different parent ticket — the envelope forbids cross-plan deps, so a cross-ticket link is a plan-order edge at most, never a story dep (emitting it produces a `+"`dep not found in same plan`"+` hard error).
-- A dependency cycle → degrade, never fail. At the **plan** level (`+"`A blocks B blocks A`"+`) drop the cyclic ordering edge and keep rank order. At the **story** level (two subtasks blocking each other) drop **both** `+"`deps`"+` links and emit the stories in rank order — a cyclic `+"`deps`"+` passes envelope validation but leaves no eligible story, so the runner hard-fails the plan with `+"`dependency graph blocked`"+`. Note the degradation either way.
+- A dependency cycle → degrade, never fail. At the **plan** level (`+"`A blocks B blocks A`"+`) drop the cyclic ordering edge and keep rank order. At the **story** level (two subtasks blocking each other) drop **both** `+"`deps`"+` links and emit the stories in rank order — a cyclic `+"`deps`"+` passes envelope validation but leaves no eligible story, so the runner hard-fails the plan with `+"`story dependency graph blocked: no eligible story`"+`. Note the degradation either way.
 
 Text sinks:
 
@@ -426,7 +428,7 @@ Schema notes:
 > - Allowed: `+"`\"Document the off-target marker rule in docs/prd-format.md under the 'Stop Conditions' section\"`"+`
 > - Forbidden: `+"`\"Document the off-target marker rule in the review docs\"`"+` and `+"`\"note this in the relevant section\"`"+` — no file path, so the agent has nothing concrete to target.
 
-Use `+"`--replace`"+` or `+"`--append`"+` if an active batch exists (per Step 4).
+Use `+"`--replace`"+` or `+"`--append`"+` if an active batch exists (per Step 4) — prefer `+"`--replace`"+` on the combined set whenever cross-batch `+"`blocks`"+` links or a complete `+"`source`"+` audit matter, since `+"`--append`"+` neither reorders across the existing batch nor preserves appended source.
 
 ## Out of scope
 

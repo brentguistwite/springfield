@@ -723,6 +723,12 @@ func TestJiraSkillIngestsTickets(t *testing.T) {
 			"plans[].review",
 			// Read-only boundary.
 			"does NOT write back to Jira",
+			// Contract clauses hardened during adversarial review — load-bearing,
+			// pinned so a future prose rewrite can't silently drop them.
+			"parent-acceptance",                                 // parent ticket's DoD survives subtask expansion
+			"different parent ticket",                           // cross-ticket subtask blocks links are skipped
+			"story dependency graph blocked: no eligible story", // story-dep cycle degrades, not hard-fails
+			"Append is order- and audit-limited",                // --append caveats vs --replace
 		} {
 			if !strings.Contains(content, want) {
 				t.Errorf("jira %s missing token %q", label, want)
