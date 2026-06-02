@@ -728,10 +728,9 @@ func TestJiraSkillIngestsTickets(t *testing.T) {
 			"parent-acceptance",                                 // parent ticket's DoD survives subtask expansion
 			"different parent ticket",                           // cross-ticket subtask blocks links are skipped
 			"story dependency graph blocked: no eligible story", // story-dep cycle degrades, not hard-fails
-			"never started",                                     // dirty-batch guard: "nothing running" != "never started"
-			"pristine",                                          // only a never-dispatched batch may be rebuilt
-			"dispatched any work",                               // started batches (failed/interrupted/needs-human) are refused
-			"try to reverse the queued plan ids",                // don't reconstruct Jira keys from lossy slugs — ask the user
+			"never started",                                     // status can't prove pristineness — "nothing running" != "never started"
+			"Has this batch ever been started",                  // the human is the gate: status output is not trustworthy for this
+			"try to reverse the queued plan ids",                // don't reconstruct Jira keys from lossy slugs — user supplies keys
 			"--replace --prd -",                                 // active-batch persist uses --replace (plain --prd - hard-errors)
 		} {
 			if !strings.Contains(content, want) {

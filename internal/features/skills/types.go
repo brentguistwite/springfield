@@ -292,8 +292,10 @@ For an epic key, query its children with the detected tool. Field names vary by 
 Run `+"`springfield status`"+` to check whether an active batch already exists.
 
 - **No active batch** → proceed with a fresh compile (the normal path; persist with plain `+"`springfield plan --prd -`"+`).
-- **An active batch that has already dispatched any work** → do NOT touch it. `+"`--replace`"+` would archive started work and its evidence. "Nothing running" is **not** the same as "never started": a batch with `+"`failed`"+`, `+"`interrupted`"+`, `+"`needs-human`"+`, or `+"`completed`"+` plans has started even though nothing is running right now. Read `+"`springfield status`"+` — if it shows any integrated plan (`+"`Plans: N/M`"+` with N > 0), a `+"`Current:`"+` in-flight plan, a `+"`Fatal error`"+`, recent retries, or cost-capped, the batch is dirty. Tell the user to let it finish or run `+"`springfield recover`"+`, then re-run jira.
-- **A pristine active batch** — `+"`springfield status`"+` shows `+"`0/N`"+` integrated, nothing in-flight, no `+"`Fatal error`"+`, no retries, not cost-capped (it reads as queued, with `+"`Next:`"+` pointing at the first plan and nothing done) → you may fold the new tickets in by **rebuilding**. Because nothing has dispatched, replacing it loses nothing. Ask the user for the COMPLETE set of ticket keys for the rebuilt batch — the already-queued ones plus the new ones. Do **not** try to reverse the queued plan ids back into Jira keys: that slug is lossy (`+"`MY_PROJECT-45`"+` and `+"`MY-PROJECT-45`"+` both slug to `+"`my-project-45`"+`) and the batch may not even be Jira-derived; `+"`springfield status`"+` lists the queued plan ids only as a reminder of what is there. Re-fetch the full user-confirmed set, build ONE envelope, and write it with `+"`--replace`"+` — the topological sort then covers old + new together, so a new ticket that blocks an already-queued one still orders correctly.
+- **An active batch exists** → you cannot decide on your own whether it is safe to replace. `+"`springfield status`"+` **cannot prove a batch never started** — several already-started states (a signal-interrupted plan, or a plan that ran but stalled at merge or cleanup) render the same `+"`0/N`"+` queued shape as a never-run batch, and `+"`springfield plan --replace`"+` archives a started batch's work and evidence without complaint (its only guard is a *currently-running* plan). So make the **user** the gate — they know whether they ran it:
+  - Show the existing batch's queued plan ids from `+"`springfield status`"+` and ask plainly: **"Has this batch ever been started — did you run `+"`springfield start`"+` on it, even briefly?"**
+  - **User is certain it never started** → safe to discard. Ask the user for the COMPLETE ticket-key set for the rebuilt batch (the already-queued tickets plus the new ones). Do **not** try to reverse the queued plan ids back into Jira keys — that slug is lossy (`+"`MY_PROJECT-45`"+` and `+"`MY-PROJECT-45`"+` both slug to `+"`my-project-45`"+`) and the batch may not even be Jira-derived; the user supplies the keys, and `+"`springfield status`"+` ids are only a reminder of what is there. Build ONE envelope from that full set and write it with `+"`springfield plan --replace --prd -`"+` — the topological sort then covers old + new together, so a new ticket that blocks an already-queued one still orders correctly.
+  - **It has started, or the user is unsure** → do NOT replace. Route them to `+"`springfield recover`"+` to archive/resolve the existing batch safely, then re-run jira to compile fresh.
 
 Never use `+"`--append`"+` for jira ingest: it adds phases *after* the existing batch (so it cannot reorder across the boundary — an appended blocker would run after its dependent) and drops the appended tickets' `+"`source`"+` audit.
 
@@ -355,7 +357,7 @@ Ask, as its own question: **"Enable independent pre-merge review for this batch?
 Show the user the proposed plans (one line per plan: `+"`proj-123 — <title>`"+`).
 Ask for confirmation before writing.
 
-Once confirmed, compile a **PRD envelope** and pipe it to the plan CLI. The flag depends on the Step 4 branch: with **no active batch** use plain `+"`springfield plan --prd -`"+` (as shown below); when **rebuilding a pristine batch** use `+"`springfield plan --replace --prd -`"+` (plain `+"`--prd -`"+` hard-errors when an active batch exists). Never `+"`--append`"+`.
+Once confirmed, compile a **PRD envelope** and pipe it to the plan CLI. The flag depends on the Step 4 branch: with **no active batch** use plain `+"`springfield plan --prd -`"+` (as shown below); when **rebuilding a batch the user confirmed never started** use `+"`springfield plan --replace --prd -`"+` (plain `+"`--prd -`"+` hard-errors when an active batch exists). Never `+"`--append`"+`.
 
 `+"```"+`bash
 springfield plan --prd - <<'JSON'
@@ -429,7 +431,7 @@ Schema notes:
 > - Allowed: `+"`\"Document the off-target marker rule in docs/prd-format.md under the 'Stop Conditions' section\"`"+`
 > - Forbidden: `+"`\"Document the off-target marker rule in the review docs\"`"+` and `+"`\"note this in the relevant section\"`"+` — no file path, so the agent has nothing concrete to target.
 
-If a **pristine** active batch exists (per Step 4), write the user-confirmed **combined** set (existing + new tickets) with `+"`springfield plan --replace --prd -`"+`. If the batch has dispatched any work (running, or has `+"`failed`"+`/`+"`interrupted`"+`/`+"`needs-human`"+`/`+"`completed`"+` plans), stop — adding to it is not supported; route the user to `+"`springfield recover`"+`. Never use `+"`--append`"+` for jira ingest.
+If an active batch exists (per Step 4), only rebuild it after the **user confirms it never started**: write the user-confirmed **combined** set (existing + new tickets) with `+"`springfield plan --replace --prd -`"+`. If it has started, or the user is unsure, stop — route them to `+"`springfield recover`"+` first, since `+"`springfield status`"+` cannot prove a batch is safe to discard. Never use `+"`--append`"+` for jira ingest.
 
 ## Out of scope
 
