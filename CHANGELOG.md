@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/brentguistwite/springfield/compare/v0.18.0...v0.19.0) (2026-06-02)
+
+
+### Features
+
+* **plan:** Definition-of-Done step + acceptance-criteria verifiability warning ([#78](https://github.com/brentguistwite/springfield/issues/78)) ([c82268b](https://github.com/brentguistwite/springfield/commit/c82268b4e811cd7b881d84ba2f8453701f48b483))
+
 ## [0.18.0](https://github.com/brentguistwite/springfield/compare/v0.17.0...v0.18.0) (2026-06-01)
 
 
