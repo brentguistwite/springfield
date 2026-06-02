@@ -81,10 +81,11 @@ For an epic key, query its children with the detected tool. Field names vary by 
 
 Run `springfield status` to check whether an active batch already exists.
 
-- If an active batch exists and any plan is `running`, tell the user to wait before replacing.
-- If an active batch exists but nothing is running, ask the user: replace it, append to it, or keep it.
+- **No active batch** → proceed with a fresh compile (the normal path).
+- **A batch is currently running** (any plan `running`) → adding Jira tickets to a live run is not supported. Tell the user to let it finish (or stop it with `springfield recover`) and re-run jira afterward. Do not modify a running batch.
+- **A batch exists but has not started** (nothing running) → you may fold the new tickets in, but **rebuild the combined set**, do not append. `springfield status` lists the plans already queued (their ids are the slugged ticket keys, e.g. `proj-123`); show them to the user and ask for the additional ticket keys. Re-fetch that full set — the already-queued tickets plus the new ones — into ONE envelope and write it with `--replace`. Because nothing has run, replace loses nothing, and the topological sort covers old + new together, so a new ticket that blocks an already-queued one still orders correctly.
 
-**Append is order- and audit-limited — prefer replace when either matters.** `--append` only adds the new plans as phases *after* the existing ones; it does NOT re-run the topological sort across the combined graph, so an appended ticket that `blocks` a plan already queued will still run *after* it. `--append` also keeps the original batch's `source.md` and drops the appended tickets' raw `source`, so they vanish from the audit trail. Therefore: if any incoming ticket has a `blocks` / `is blocked by` relationship with a plan in the active batch, or the user wants a complete `source` audit, recompile the **combined** set with `--replace` (so the topo sort and source cover old + new) rather than appending. Reserve `--append` for independent tickets with no cross-batch dependency.
+Do **not** use `--append` for jira ingest: it adds phases *after* the existing batch (so it cannot reorder across the boundary — an appended blocker would run after its dependent) and drops the appended tickets' `source` audit. Rebuilding the combined set with `--replace` is always correct here precisely because the batch has not started.
 
 ## Step 5 — Map tickets to the envelope
 
@@ -218,7 +219,7 @@ Schema notes:
 > - Allowed: `"Document the off-target marker rule in docs/prd-format.md under the 'Stop Conditions' section"`
 > - Forbidden: `"Document the off-target marker rule in the review docs"` and `"note this in the relevant section"` — no file path, so the agent has nothing concrete to target.
 
-Use `--replace` or `--append` if an active batch exists (per Step 4) — prefer `--replace` on the combined set whenever cross-batch `blocks` links or a complete `source` audit matter, since `--append` neither reorders across the existing batch nor preserves appended source.
+If an unstarted batch already exists, write the **combined** set (existing + new tickets) with `--replace` (per Step 4). Do not use `--append` for jira ingest. If a batch is running, stop — adding to a live run is not supported.
 
 ## Out of scope
 
