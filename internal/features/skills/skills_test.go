@@ -15,19 +15,13 @@ func TestCatalogShapeLockedToSpringfieldSkills(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 3 {
-		t.Fatalf("catalog len = %d, want 3", len(catalog))
+	want := []string{"plan", "jira", "status", "recover"}
+	if len(catalog) != len(want) {
+		t.Fatalf("catalog len = %d, want %d", len(catalog), len(want))
 	}
-
-	got := []string{
-		string(catalog[0].Name),
-		string(catalog[1].Name),
-		string(catalog[2].Name),
-	}
-	want := []string{"plan", "status", "recover"}
 	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("catalog[%d] = %q, want %q", i, got[i], want[i])
+		if string(catalog[i].Name) != want[i] {
+			t.Fatalf("catalog[%d] = %q, want %q", i, catalog[i].Name, want[i])
 		}
 	}
 }
@@ -58,6 +52,35 @@ func TestLookup_Plan(t *testing.T) {
 	}
 	if string(s.Name) != "plan" {
 		t.Errorf("Name = %q, want plan", s.Name)
+	}
+}
+
+func TestCatalog_IncludesJira(t *testing.T) {
+	t.Parallel()
+
+	for _, s := range Catalog() {
+		if string(s.Name) == "jira" {
+			if s.Purpose != playbooks.PurposePlan {
+				t.Errorf("jira skill Purpose = %q, want %q", s.Purpose, playbooks.PurposePlan)
+			}
+			if s.RelativePath != "skills/jira/SKILL.md" {
+				t.Errorf("jira skill RelativePath = %q, want skills/jira/SKILL.md", s.RelativePath)
+			}
+			return
+		}
+	}
+	t.Fatalf("jira skill missing from catalog")
+}
+
+func TestLookup_Jira(t *testing.T) {
+	t.Parallel()
+
+	s, err := Lookup("jira")
+	if err != nil {
+		t.Fatalf("Lookup(jira): %v", err)
+	}
+	if string(s.Name) != "jira" {
+		t.Errorf("Name = %q, want jira", s.Name)
 	}
 }
 
@@ -462,7 +485,7 @@ func TestInstallWritesSelectedHostArtifacts(t *testing.T) {
 		t.Fatalf("installed codex helper missing '## Springfield Skills' section:\n%s", body)
 	}
 	section := body[sectionIdx:]
-	wantOrder := []string{"- plan", "- status", "- recover"}
+	wantOrder := []string{"- plan", "- jira", "- status", "- recover"}
 	last := -1
 	for _, marker := range wantOrder {
 		idx := strings.Index(section, marker)
