@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.20.0](https://github.com/brentguistwite/springfield/compare/v0.19.0...v0.20.0) (2026-06-02)
+
+
+### Features
+
+* **skills:** add jira-ingest skill ([#80](https://github.com/brentguistwite/springfield/issues/80)) ([825b2cc](https://github.com/brentguistwite/springfield/commit/825b2ccff1c5e3647ac43b70dd74b600e5cce2fb))
+
+
+### Bug Fixes
+
+* **hook-guard:** scope re-entry guard to subagents + anchor matching ([#82](https://github.com/brentguistwite/springfield/issues/82)) ([e9c86bb](https://github.com/brentguistwite/springfield/commit/e9c86bb37cb34bbcfcf453d97a4aee44dd874352))
+
 ## [0.19.0](https://github.com/brentguistwite/springfield/compare/v0.18.0...v0.19.0) (2026-06-02)
 
 
