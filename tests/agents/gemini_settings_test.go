@@ -87,6 +87,11 @@ func TestGeminiSystemSettingsRegistersBeforeToolHook(t *testing.T) {
 	if !strings.Contains(before[0].Hooks[0].Command, "hook-guard") {
 		t.Fatalf("command missing hook-guard: %s", before[0].Hooks[0].Command)
 	}
+	// Subagent context: the injected hook must carry --block-reentry (the hard
+	// re-entry backstop). Machine-check it so an accidental drop is caught.
+	if !strings.Contains(before[0].Hooks[0].Command, "--block-reentry") {
+		t.Fatalf("subagent hook command missing --block-reentry: %s", before[0].Hooks[0].Command)
+	}
 	if before[0].Hooks[0].Type != "command" {
 		t.Fatalf("type: want command, got %q", before[0].Hooks[0].Type)
 	}
@@ -159,6 +164,9 @@ func TestGeminiSystemSettingsEmbedsAbsoluteSpringfieldBinary(t *testing.T) {
 	// portion is shell-quoted.
 	if !strings.Contains(text, "hook-guard") {
 		t.Fatalf("expected hook-guard command, got:\n%s", text)
+	}
+	if !strings.Contains(text, "--block-reentry") {
+		t.Fatalf("expected subagent hook to carry --block-reentry, got:\n%s", text)
 	}
 	// Shell-quoted path starts with a single quote.
 	if !strings.Contains(text, "' hook-guard") {

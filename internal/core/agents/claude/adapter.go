@@ -187,7 +187,9 @@ func (a *adapter) SpringfieldControlPlaneHookCommand() string {
 	// Quote the binary path so paths with spaces survive shell parsing.
 	// The hook-guard subcommand never touches the shell itself; the quoting
 	// matters for Claude's shell-based hook runner.
-	return shellQuote(a.hookBin) + " hook-guard"
+	// --block-reentry: this hook guards a Springfield-spawned subagent, which
+	// must not re-enter any springfield start/plan/recover (see hook-guard).
+	return shellQuote(a.hookBin) + " hook-guard --block-reentry"
 }
 
 // shellQuote wraps s in single quotes, escaping any embedded single quotes.
@@ -225,9 +227,13 @@ func (a *adapter) springfieldControlPlaneSettingsJSON() string {
 
 	data, err := json.Marshal(payload)
 	if err != nil {
-		// payload is static — marshal errors are impossible in practice,
-		// but fall back to a hand-built string rather than panic.
-		return `{"hooks":{"PreToolUse":[{"matcher":"Write|Edit|MultiEdit|NotebookEdit|Bash","hooks":[{"type":"command","command":"` + hookCommand + `"}]}]}}`
+		// payload contains only strings, []string, and a string-keyed map —
+		// json.Marshal cannot fail on these types. Fail LOUD if that invariant
+		// is ever broken: a hand-built fallback risks invalid JSON (hookCommand
+		// is shell-quoted, not JSON-escaped) or silently dropping the deny list
+		// / plugin-disables, downgrading the subagent to a full-surface,
+		// plugin-enabled state — worse than crashing.
+		panic(fmt.Sprintf("springfield: control-plane settings marshal failed (unexpected): %v", err))
 	}
 	return string(data)
 }

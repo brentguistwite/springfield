@@ -59,6 +59,13 @@ func TestHooksJSONBlocksControlPlane(t *testing.T) {
 	if !strings.Contains(h.Command, "hook-guard") {
 		t.Errorf("hook command = %q, want it to invoke `springfield hook-guard`", h.Command)
 	}
+	// The plugin hook runs in the operator's interactive session, NOT a
+	// subagent. It must NOT carry --block-reentry, or it would block the
+	// `plan`/`recover` skills' own terminal command. This invariant is the
+	// whole basis of interactive-mode correctness, so it is machine-checked.
+	if strings.Contains(h.Command, "--block-reentry") {
+		t.Errorf("plugin hook command = %q must NOT contain --block-reentry (interactive session)", h.Command)
+	}
 }
 
 // TestHooksDirHasNoSessionStartArtifacts guards the tear-down: the binary-fetch
