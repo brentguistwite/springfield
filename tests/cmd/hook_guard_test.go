@@ -385,6 +385,14 @@ func TestHookGuardRecursionGuard(t *testing.T) {
 			stdin:    `{"tool_input":{"command":"sudo springfield plan"}}`,
 			wantExit: 0,
 		},
+		{
+			// env assignment whose VALUE is a path ending in springfield, then
+			// a different command — not a springfield invocation, must NOT block.
+			name:     "subagent allows env-value path ending in springfield",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"MY_BIN=/opt/springfield start"}}`,
+			wantExit: 0,
+		},
 	}
 
 	for _, tc := range cases {

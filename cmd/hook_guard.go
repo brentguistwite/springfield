@@ -78,9 +78,14 @@ func hookGuardRecursionRegex(verbs string) *regexp.Regexp {
 //     quotes and/or carrying a binary-path prefix — so `"/opt/bin/springfield"`
 //     and `'springfield'` are recognized, not just bare `springfield`.
 const (
-	hookGuardSep            = "(^|[;&|(){}" + "`" + `\n])[ \t]*`
-	hookGuardEnv            = `(\w+=\S*[ \t]+)*`
-	hookGuardBinSpringfield = `["']?([^ \t'"|;&(){}` + "`" + `]*/)?springfield["']?`
+	hookGuardSep = "(^|[;&|(){}" + "`" + `\n])[ \t]*`
+	// Env names follow shell grammar ([A-Za-z_]\w*) so a non-assignment word
+	// like `123=val` isn't mistaken for an env prefix.
+	hookGuardEnv = `([A-Za-z_]\w*=\S*[ \t]+)*`
+	// The path char-class excludes `=` so a `KEY=/path/springfield` env
+	// assignment (followed by a different command) is not consumed as a
+	// binary-path prefix to `springfield` — that would be a false positive.
+	hookGuardBinSpringfield = `["']?([^ \t'"|;&(){}=` + "`" + `]*/)?springfield["']?`
 )
 
 var (
