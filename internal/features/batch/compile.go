@@ -32,8 +32,9 @@ type WrittenPlan struct {
 // CompileOutput is the result of compiling a batch from a PRD envelope.
 // Plans carries per-plan serialized content (one entry per envelope plan).
 // Units is the PlanUnit registrations (one per plan) ordered by first-appearance.
-// Warnings carries non-fatal validation warnings (e.g. large context_md). Phase 3
-// surfaces these to the caller; for now they are available but not printed.
+// Warnings carries non-fatal validation warnings (e.g. large context_md or a
+// hard-to-verify acceptance criterion). cmd/plan.go prints these to stderr as
+// [warn] lines.
 type CompileOutput struct {
 	Batch    Batch
 	Source   string
