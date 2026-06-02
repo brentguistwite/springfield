@@ -184,8 +184,8 @@ func TestPlansRemoveRepairsMissingPlanFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status after repair: %v", err)
 	}
-	if !strings.Contains(statusOut, "springfield plans add") {
-		t.Fatalf("expected empty-registry hint after repair:\n%s", statusOut)
+	if !strings.Contains(statusOut, "/springfield:plan") {
+		t.Fatalf("expected empty-registry plan-skill hint after repair:\n%s", statusOut)
 	}
 }
 

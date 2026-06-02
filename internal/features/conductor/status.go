@@ -79,13 +79,13 @@ const nextStepRunStart = "Run \"springfield start\" to execute the next register
 // computes overall counts plus the suggested next action.
 func BuildRegistryStatus(project *Project) *RegistryStatus {
 	if project == nil || project.Config == nil {
-		return &RegistryStatus{NextStep: "No Springfield execution config. Run \"springfield init\", then \"springfield plans add\" to register a plan."}
+		return &RegistryStatus{NextStep: "No Springfield execution config. Run \"springfield init\" to set up this project."}
 	}
 
 	rs := &RegistryStatus{HasConfig: true}
 
 	if len(project.Config.PlanUnits) == 0 {
-		rs.NextStep = "No plans configured. Run \"springfield plans add\" to register one."
+		rs.NextStep = "No plans yet. Draft one with the springfield:plan skill (Claude Code: /springfield:plan), then run \"springfield start\"."
 		return rs
 	}
 

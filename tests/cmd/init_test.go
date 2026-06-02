@@ -1,12 +1,97 @@
 package cmd_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 )
+
+// TestInitBootstrapsExecutionConfig pins the first-run contract that `init`
+// must leave the project in a loadable state: .springfield/execution/config.json
+// exists and is seeded from springfield.toml's primary agent. Before this was
+// fixed, init created only springfield.toml + an empty .springfield/, so every
+// read path (plan --dry-run, status, plans list) failed on a missing config.json
+// until a mutating command lazily bootstrapped it.
+func TestInitBootstrapsExecutionConfig(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	if out, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude,codex"); err != nil {
+		t.Fatalf("init failed: %v\n%s", err, out)
+	}
+
+	cfgPath := filepath.Join(dir, ".springfield", "execution", "config.json")
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("init did not bootstrap execution config: %v", err)
+	}
+
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("execution config is not valid JSON: %v\n%s", err, data)
+	}
+	if cfg["tool"] != "claude" {
+		t.Errorf("execution config tool = %v, want claude (first agent in priority)", cfg["tool"])
+	}
+	if cfg["plans_dir"] == nil || cfg["plans_dir"] == "" {
+		t.Errorf("execution config missing plans_dir:\n%s", data)
+	}
+}
+
+// TestInitThenPlanDryRunSucceeds is the regression test for the reported bug:
+// `plan --prd - --dry-run` immediately after a real `init` must succeed instead
+// of crashing on a missing execution/config.json.
+func TestInitThenPlanDryRunSucceeds(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	if out, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude"); err != nil {
+		t.Fatalf("init failed: %v\n%s", err, out)
+	}
+
+	pre := fingerprintSpringfieldDir(t, dir)
+
+	env := buildEnvelopeJSON(t, minEnvelope("preview-01", "Preview 01"))
+	out, err := planWithPRD(t, bin, dir, env, "--dry-run")
+	if err != nil {
+		t.Fatalf("plan --dry-run after init should succeed, got: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Dry run: would compile batch") {
+		t.Fatalf("expected dry-run summary:\n%s", out)
+	}
+
+	post := fingerprintSpringfieldDir(t, dir)
+	if diff, eq := mapEqual(pre, post); !eq {
+		t.Fatalf(".springfield/ mutated by --dry-run: %s", diff)
+	}
+}
+
+// TestInitThenStatusReportsEmptyRegistry verifies that status after a real init
+// reports an empty-but-valid registry and signposts the plan skill — matching
+// init's own Next: copy — rather than the stale "No Springfield execution
+// config" / bare "plans add" guidance that contradicted it.
+func TestInitThenStatusReportsEmptyRegistry(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	if out, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude"); err != nil {
+		t.Fatalf("init failed: %v\n%s", err, out)
+	}
+
+	out, err := runBinaryIn(t, bin, dir, "status")
+	if err != nil {
+		t.Fatalf("status after init failed: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "No Springfield execution config") {
+		t.Errorf("status should not claim missing execution config after init:\n%s", out)
+	}
+	if !strings.Contains(out, "/springfield:plan") {
+		t.Errorf("status empty-registry next-step should point at the plan skill:\n%s", out)
+	}
+}
 
 // TestInitAgentsFlagSetsAgentPriority verifies --agents flag controls agent_priority.
 func TestInitAgentsFlagSetsAgentPriority(t *testing.T) {

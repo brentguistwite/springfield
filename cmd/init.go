@@ -19,6 +19,7 @@ import (
 	"springfield/internal/core/agents"
 	"springfield/internal/core/agents/catalog"
 	"springfield/internal/core/config"
+	"springfield/internal/features/execution"
 )
 
 // isTTY reports whether fd is an interactive terminal.
@@ -80,6 +81,17 @@ func NewInitCommand() *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), "Created .springfield/")
 			} else {
 				fmt.Fprintln(cmd.OutOrStdout(), ".springfield/ already exists, skipping")
+			}
+
+			// Bootstrap the execution config so the project is immediately
+			// loadable by every read path (status, plan --dry-run, plans list).
+			// Without this, those commands fail on a missing
+			// execution/config.json until a mutating command (plan/plans add)
+			// lazily creates it — the first-run gap this repairs. Idempotent:
+			// an existing config is reused unchanged, so re-running init also
+			// heals a project left half-initialized by an older build.
+			if err := execution.EnsureExecutionConfig(dir); err != nil {
+				return fmt.Errorf("bootstrap execution config: %w", err)
 			}
 
 			if added, err := ensureSpringfieldGitignore(dir); err != nil {
