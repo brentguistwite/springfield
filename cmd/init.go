@@ -93,6 +93,14 @@ func NewInitCommand() *cobra.Command {
 			if err := execution.EnsureExecutionConfig(dir); err != nil {
 				return fmt.Errorf("bootstrap execution config: %w", err)
 			}
+			// Reconcile config.json's primary tool with the chosen agent
+			// priority. EnsureExecutionConfig reuses an existing config
+			// unchanged, so a re-init that reorders agents (merge mode or
+			// --reset) would otherwise leave a stale tool behind. Lossless:
+			// preserves plan_units and other runtime settings.
+			if err := execution.SyncExecutionTool(dir); err != nil {
+				return fmt.Errorf("sync execution config tool: %w", err)
+			}
 
 			if added, err := ensureSpringfieldGitignore(dir); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to update .gitignore: %v\n", err)

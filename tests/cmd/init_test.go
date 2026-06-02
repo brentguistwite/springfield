@@ -41,6 +41,64 @@ func TestInitBootstrapsExecutionConfig(t *testing.T) {
 	}
 }
 
+// TestInitReInitSyncsExecutionToolPreservingPlans verifies that re-initializing
+// with a different primary agent updates config.json's tool to match, while
+// leaving the registered plan registry intact. EnsureExecutionConfig reuses the
+// existing config unchanged, so without the explicit tool sync the tool field
+// would stay stale after an agent-priority change.
+func TestInitReInitSyncsExecutionToolPreservingPlans(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	if out, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude,codex"); err != nil {
+		t.Fatalf("first init failed: %v\n%s", err, out)
+	}
+
+	// Register a plan so we can prove the sync does not wipe the registry.
+	planFile := filepath.Join(dir, ".springfield", "plans", "feature.md")
+	if err := os.MkdirAll(filepath.Dir(planFile), 0o755); err != nil {
+		t.Fatalf("mkdir plans dir: %v", err)
+	}
+	if err := os.WriteFile(planFile, []byte("# Feature\n"), 0o644); err != nil {
+		t.Fatalf("write plan file: %v", err)
+	}
+	if out, err := runBinaryIn(t, bin, dir, "plans", "add", "--id", "feat-a", "--path", "feature.md"); err != nil {
+		t.Fatalf("plans add failed: %v\n%s", err, out)
+	}
+
+	cfgPath := filepath.Join(dir, ".springfield", "execution", "config.json")
+	readTool := func() (string, map[string]any) {
+		data, err := os.ReadFile(cfgPath)
+		if err != nil {
+			t.Fatalf("read config: %v", err)
+		}
+		var cfg map[string]any
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			t.Fatalf("decode config: %v\n%s", err, data)
+		}
+		tool, _ := cfg["tool"].(string)
+		return tool, cfg
+	}
+
+	if tool, _ := readTool(); tool != "claude" {
+		t.Fatalf("after first init, tool = %q, want claude", tool)
+	}
+
+	// Re-init with codex first.
+	if out, err := runBinaryIn(t, bin, dir, "init", "--agents", "codex,claude"); err != nil {
+		t.Fatalf("re-init failed: %v\n%s", err, out)
+	}
+
+	tool, cfg := readTool()
+	if tool != "codex" {
+		t.Errorf("after re-init, tool = %q, want codex (synced to new primary)", tool)
+	}
+	units, ok := cfg["plan_units"].([]any)
+	if !ok || len(units) != 1 {
+		t.Fatalf("re-init must preserve registered plan_units, got: %v", cfg["plan_units"])
+	}
+}
+
 // TestInitThenPlanDryRunSucceeds is the regression test for the reported bug:
 // `plan --prd - --dry-run` immediately after a real `init` must succeed instead
 // of crashing on a missing execution/config.json.

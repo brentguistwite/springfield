@@ -81,6 +81,41 @@ func EnsureExecutionConfig(rootDir string) error {
 	return nil
 }
 
+// SyncExecutionTool reconciles the persisted execution config's primary tool
+// with the project's current agent priority in springfield.toml. init calls
+// this after EnsureExecutionConfig so that re-initializing with a different
+// agent order (merge mode or --reset) leaves config.json's tool consistent
+// with the chosen primary instead of retaining the value from a prior init.
+//
+// Deliberately narrow: only the tool field is touched. Other runtime settings
+// (plans_dir, worktree_base, retry limits) and the registered plan_units are
+// preserved — init must not silently discard a user's plan registry, and
+// --reset only backs up springfield.toml, so wholesale regeneration of
+// config.json here would lose un-backed-up state. No-op when already in sync.
+func SyncExecutionTool(rootDir string) error {
+	loaded, err := config.LoadFrom(rootDir)
+	if err != nil {
+		return err
+	}
+	primary := ""
+	for _, id := range loaded.Config.Project.AgentPriority {
+		if id != "" {
+			primary = id
+			break
+		}
+	}
+
+	project, err := conductor.LoadProjectRaw(rootDir)
+	if err != nil {
+		return err
+	}
+	if project.Config.Tool == primary {
+		return nil
+	}
+	project.Config.Tool = primary
+	return project.SaveConfigUnchecked()
+}
+
 // RemovePlan removes a plan unit by ID and clears any associated state.
 //
 // RemovePlan is repair-friendly: it loads config without validating
