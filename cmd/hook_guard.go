@@ -35,6 +35,13 @@ const hookGuardStartMessage = "`springfield start` is operator-launched. If the 
 // etc. are all equivalent; there is no partial-value ambiguity). It is a
 // deliberate-action opt-in (like the jira-gate `NOTRACK=`), not an
 // adversarial sandbox: a PreToolUse hook cannot read conversation intent.
+//
+// It is honored ONLY when it appears as a real leading env-assignment of the
+// command-position `springfield start` invocation (see
+// hookGuardAuthorizedStartRegex) — NOT as a bare substring anywhere in the
+// command. A substring check would let `echo SPRINGFIELD_ALLOW_START=1 &&
+// springfield start` (sentinel in an unrelated command) or
+// `NOT_SPRINGFIELD_ALLOW_START=1 ...` (wrong token) forge authorization.
 const hookGuardStartSentinel = "SPRINGFIELD_ALLOW_START="
 
 // hookGuardRecursionRegex builds the anchored recursion matcher for the given
@@ -47,14 +54,26 @@ const hookGuardStartSentinel = "SPRINGFIELD_ALLOW_START="
 // `FOO=1 springfield plan` cannot evade it.
 //
 // Residuals that would require a shell parser are intentionally NOT caught:
-// `bash -c "springfield plan"` and env values containing whitespace
-// (`FOO="a b" springfield plan`). The guard stays a simple, dependency-free,
-// fail-open regex.
+// any wrapper that puts `springfield` in argument position rather than command
+// position — `bash -c "springfield plan"`, `sh -c ...`, `env springfield
+// plan`, `command springfield plan`, `sudo springfield plan`, `xargs`, etc. —
+// and env values containing whitespace (`FOO="a b" springfield plan`). The
+// wrapper list is open-ended, so a complete fix needs a shell parser; that is
+// deliberately out of scope. The guard stays a simple, dependency-free,
+// fail-open regex, and subagents are covered by two further layers
+// (permissions.deny strips Task/Workflow; the springfield plugin is disabled;
+// the executionPrompt carries an anti-recursion contract).
 func hookGuardRecursionRegex(verbs string) *regexp.Regexp {
 	// Built as an interpreted string: the pattern contains a backtick, so it
 	// cannot be a Go raw-string literal.
-	return regexp.MustCompile("(^|[;&|(){}" + "`" + `\n])[ \t]*(\w+=\S+[ \t]+)*([^ \t'"|;&(){}` + "`" + `]*/)?springfield[ \t]+(` + verbs + `)\b`)
+	return regexp.MustCompile(hookGuardAnchorPrefix + `springfield[ \t]+(` + verbs + `)\b`)
 }
+
+// hookGuardAnchorPrefix matches up to (not including) `springfield` at a shell
+// command position: start-of-string or after a separator (`;&|(){}`, backtick,
+// newline), then optional env-assignment prefixes and an optional binary-path
+// prefix.
+const hookGuardAnchorPrefix = "(^|[;&|(){}" + "`" + `\n])[ \t]*(\w+=\S+[ \t]+)*([^ \t'"|;&(){}` + "`" + `]*/)?`
 
 var (
 	// hookGuardReentryRegex blocks all three mutating verbs — used in
@@ -63,6 +82,15 @@ var (
 	// hookGuardStartRegex blocks only `start` — used in interactive mode,
 	// where `plan`/`recover` are legitimate skill-driven invocations.
 	hookGuardStartRegex = hookGuardRecursionRegex("start")
+	// hookGuardAuthorizedStartRegex matches a command-position `springfield
+	// start` whose leading env-assignment prefix includes the operator
+	// sentinel. Honoring the sentinel only when it sits in this position (not
+	// anywhere in the command) defeats smuggling/forging it via an unrelated
+	// token. The sentinel key must be a whole token, so `NOT_SPRINGFIELD_..`
+	// or `X=SPRINGFIELD_ALLOW_START=..` (value, not key) do not authorize.
+	hookGuardAuthorizedStartRegex = regexp.MustCompile(
+		"(^|[;&|(){}" + "`" + `\n])[ \t]*(\w+=\S+[ \t]+)*` +
+			regexp.QuoteMeta(hookGuardStartSentinel) + `\S+[ \t]+(\w+=\S+[ \t]+)*([^ \t'"|;&(){}` + "`" + `]*/)?springfield[ \t]+start\b`)
 )
 
 // NewHookGuardCommand returns the hidden `springfield hook-guard` subcommand
@@ -133,9 +161,10 @@ func runHookGuard(stdin io.Reader, stderr io.Writer, blockReentry bool) error {
 		}
 		return nil
 	}
-	// Interactive mode: gate only `start`, exempt it when the operator
-	// sentinel is present.
-	if !strings.Contains(cmd, hookGuardStartSentinel) && hookGuardStartRegex.MatchString(cmd) {
+	// Interactive mode: gate only `start`, exempt it only when the operator
+	// sentinel sits in the env-prefix of the actual `springfield start`
+	// invocation (not merely somewhere in the command string).
+	if hookGuardStartRegex.MatchString(cmd) && !hookGuardAuthorizedStartRegex.MatchString(cmd) {
 		fmt.Fprintln(stderr, hookGuardStartMessage)
 		os.Exit(2)
 	}

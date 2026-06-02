@@ -81,6 +81,12 @@ func TestClaudeAdapterInjectsControlPlaneHookSettings(t *testing.T) {
 	if !strings.Contains(cmdStr, "hook-guard") {
 		t.Fatalf("hook command should invoke hook-guard subcommand, got %q", cmdStr)
 	}
+	// Subagent context: the injected hook must carry --block-reentry (the hard
+	// re-entry backstop). Pinned explicitly — not just transitively via the
+	// equality check above — to match the Gemini/e2e assertions.
+	if !strings.Contains(cmdStr, "--block-reentry") {
+		t.Fatalf("subagent hook command should carry --block-reentry, got %q", cmdStr)
+	}
 	if strings.Contains(cmdStr, "grep") {
 		t.Fatalf("hook command should no longer shell out to grep, got %q", cmdStr)
 	}

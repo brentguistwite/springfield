@@ -227,9 +227,13 @@ func (a *adapter) springfieldControlPlaneSettingsJSON() string {
 
 	data, err := json.Marshal(payload)
 	if err != nil {
-		// payload is static — marshal errors are impossible in practice,
-		// but fall back to a hand-built string rather than panic.
-		return `{"hooks":{"PreToolUse":[{"matcher":"Write|Edit|MultiEdit|NotebookEdit|Bash","hooks":[{"type":"command","command":"` + hookCommand + `"}]}]}}`
+		// payload is static — marshal errors are impossible in practice, but
+		// fall back to a hand-built string rather than panic. Fail CLOSED:
+		// keep BOTH the hook AND permissions.deny (the layers that stop a
+		// subagent from spawning/​re-entering), never silently drop them to a
+		// full-surface, plugin-enabled state.
+		deny, _ := json.Marshal(subagentDeniedTools())
+		return `{"hooks":{"PreToolUse":[{"matcher":"Write|Edit|MultiEdit|NotebookEdit|Bash","hooks":[{"type":"command","command":"` + hookCommand + `"}]}]},"permissions":{"deny":` + string(deny) + `}}`
 	}
 	return string(data)
 }

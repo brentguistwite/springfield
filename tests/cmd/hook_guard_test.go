@@ -198,6 +198,32 @@ func TestHookGuardRecursionGuard(t *testing.T) {
 			wantExit: 0,
 		},
 		{
+			name:     "interactive allows start with sentinel among multiple env",
+			stdin:    `{"tool_input":{"command":"FOO=1 SPRINGFIELD_ALLOW_START=1 springfield start"}}`,
+			wantExit: 0,
+		},
+		{
+			// Sentinel smuggled in an unrelated prior command must NOT authorize.
+			name:     "interactive blocks start with sentinel smuggled before &&",
+			stdin:    `{"tool_input":{"command":"echo SPRINGFIELD_ALLOW_START=1 && springfield start"}}`,
+			wantExit: 2,
+			wantErr:  "operator-launched",
+		},
+		{
+			// Wrong token (left-boundary): NOT_SPRINGFIELD_ALLOW_START is not the sentinel.
+			name:     "interactive blocks start with look-alike env key",
+			stdin:    `{"tool_input":{"command":"NOT_SPRINGFIELD_ALLOW_START=1 springfield start"}}`,
+			wantExit: 2,
+			wantErr:  "operator-launched",
+		},
+		{
+			// Sentinel as a value, not a key, must NOT authorize.
+			name:     "interactive blocks start with sentinel in env value",
+			stdin:    `{"tool_input":{"command":"X=SPRINGFIELD_ALLOW_START=1 springfield start"}}`,
+			wantExit: 2,
+			wantErr:  "operator-launched",
+		},
+		{
 			name:     "interactive allows plan",
 			stdin:    `{"tool_input":{"command":"springfield plan --prd -"}}`,
 			wantExit: 0,
@@ -317,6 +343,15 @@ func TestHookGuardRecursionGuard(t *testing.T) {
 			name:     "subagent allows bash -c residual",
 			flags:    []string{"--block-reentry"},
 			stdin:    `{"tool_input":{"command":"bash -c \"springfield plan\""}}`,
+			wantExit: 0,
+		},
+		{
+			// ACCEPTED RESIDUAL: command wrappers that put springfield in arg
+			// position (sudo/env/command/...) need a shell parser. Pinned to
+			// document the boundary — open-ended wrapper list, out of scope.
+			name:     "subagent allows sudo wrapper residual",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"sudo springfield plan"}}`,
 			wantExit: 0,
 		},
 	}
