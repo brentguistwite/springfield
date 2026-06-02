@@ -657,3 +657,53 @@ func repoRoot(t *testing.T) string {
 	}
 	return filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", ".."))
 }
+
+// TestJiraSkillIngestsTickets pins the jira-ingest contract into the generated
+// skill + command. The prose lives in the TaskBody literal (types.go) and is
+// regenerated onto disk by cmd/regen; this guard fails if a future regen drops
+// it, or (its red-first role) before the literal carries it.
+func TestJiraSkillIngestsTickets(t *testing.T) {
+	t.Parallel()
+
+	skill, err := Render("jira")
+	if err != nil {
+		t.Fatalf("Render(jira): %v", err)
+	}
+	command, err := RenderCommand("jira")
+	if err != nil {
+		t.Fatalf("RenderCommand(jira): %v", err)
+	}
+
+	for label, content := range map[string]string{"skill": skill.Content, "command": command.Content} {
+		for _, want := range []string{
+			// BYO-Jira precondition, not setup.
+			"Springfield does NOT manage Jira access",
+			"No Jira tool detected",
+			// Input + epic expansion guardrail.
+			"give me an epic key",
+			"These N tickets",
+			// Mapping grain: ticket->plan (id from key), subtask->story.
+			"Slug the plan",
+			"subtasks",
+			"user stories",
+			// Ordering from Jira links.
+			"topologically sort",
+			// DoD reuse + bulk escape hatch.
+			"how do we know this story is done",
+			"don't ask me about criteria",
+			// Honest criteria framing (lifted from plan skill).
+			"<story-pass>",
+			"the only independent check",
+			// Review offer, serialized.
+			"Enable independent pre-merge review",
+			"Serialize the answer",
+			"plans[].review",
+			// Read-only boundary.
+			"does NOT write back to Jira",
+		} {
+			if !strings.Contains(content, want) {
+				t.Errorf("jira %s missing token %q", label, want)
+			}
+		}
+	}
+}
