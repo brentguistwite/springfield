@@ -15,7 +15,7 @@ func TestCatalogShapeLockedToSpringfieldSkills(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	want := []string{"plan", "jira", "status", "recover"}
+	want := []string{"plan", "plan-from-jira", "status", "recover"}
 	if len(catalog) != len(want) {
 		t.Fatalf("catalog len = %d, want %d", len(catalog), len(want))
 	}
@@ -55,32 +55,32 @@ func TestLookup_Plan(t *testing.T) {
 	}
 }
 
-func TestCatalog_IncludesJira(t *testing.T) {
+func TestCatalog_IncludesPlanFromJira(t *testing.T) {
 	t.Parallel()
 
 	for _, s := range Catalog() {
-		if string(s.Name) == "jira" {
+		if string(s.Name) == "plan-from-jira" {
 			if s.Purpose != playbooks.PurposePlan {
-				t.Errorf("jira skill Purpose = %q, want %q", s.Purpose, playbooks.PurposePlan)
+				t.Errorf("plan-from-jira skill Purpose = %q, want %q", s.Purpose, playbooks.PurposePlan)
 			}
-			if s.RelativePath != "skills/jira/SKILL.md" {
-				t.Errorf("jira skill RelativePath = %q, want skills/jira/SKILL.md", s.RelativePath)
+			if s.RelativePath != "skills/plan-from-jira/SKILL.md" {
+				t.Errorf("plan-from-jira skill RelativePath = %q, want skills/plan-from-jira/SKILL.md", s.RelativePath)
 			}
 			return
 		}
 	}
-	t.Fatalf("jira skill missing from catalog")
+	t.Fatalf("plan-from-jira skill missing from catalog")
 }
 
-func TestLookup_Jira(t *testing.T) {
+func TestLookup_PlanFromJira(t *testing.T) {
 	t.Parallel()
 
-	s, err := Lookup("jira")
+	s, err := Lookup("plan-from-jira")
 	if err != nil {
-		t.Fatalf("Lookup(jira): %v", err)
+		t.Fatalf("Lookup(plan-from-jira): %v", err)
 	}
-	if string(s.Name) != "jira" {
-		t.Errorf("Name = %q, want jira", s.Name)
+	if string(s.Name) != "plan-from-jira" {
+		t.Errorf("Name = %q, want plan-from-jira", s.Name)
 	}
 }
 
@@ -169,7 +169,7 @@ func compareSemver(t *testing.T, a, b string) int {
 func TestRenderedSkillsCarryVersionCheckPreamble(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"plan", "jira", "status", "recover"} {
+	for _, name := range []string{"plan", "plan-from-jira", "status", "recover"} {
 		skill, err := Render(name)
 		if err != nil {
 			t.Fatalf("Render(%s): %v", name, err)
@@ -386,7 +386,7 @@ func TestCanonicalCheckedInSkillsMatchRenderedContent(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
-	for _, name := range []string{"plan", "jira", "status", "recover"} {
+	for _, name := range []string{"plan", "plan-from-jira", "status", "recover"} {
 		rendered, err := Render(name)
 		if err != nil {
 			t.Fatalf("render %s: %v", name, err)
@@ -406,7 +406,7 @@ func TestCanonicalCheckedInCommandsMatchRenderedContent(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
-	for _, name := range []string{"plan", "jira", "status", "recover"} {
+	for _, name := range []string{"plan", "plan-from-jira", "status", "recover"} {
 		rendered, err := RenderCommand(name)
 		if err != nil {
 			t.Fatalf("render command %s: %v", name, err)
@@ -425,7 +425,7 @@ func TestCanonicalCheckedInCommandsMatchRenderedContent(t *testing.T) {
 func TestRenderedSkillsIncludeFrontmatter(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"plan", "jira", "status", "recover"} {
+	for _, name := range []string{"plan", "plan-from-jira", "status", "recover"} {
 		rendered, err := Render(name)
 		if err != nil {
 			t.Fatalf("render %s: %v", name, err)
@@ -470,7 +470,7 @@ func TestInstallWritesSelectedHostArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read installed codex artifact: %v", err)
 	}
-	for _, marker := range []string{"Springfield", "plan", "jira", "status", "recover"} {
+	for _, marker := range []string{"Springfield", "plan", "plan-from-jira", "status", "recover"} {
 		if !strings.Contains(string(data), marker) {
 			t.Fatalf("expected installed codex artifact to contain %q, got:\n%s", marker, string(data))
 		}
@@ -485,7 +485,7 @@ func TestInstallWritesSelectedHostArtifacts(t *testing.T) {
 		t.Fatalf("installed codex helper missing '## Springfield Skills' section:\n%s", body)
 	}
 	section := body[sectionIdx:]
-	wantOrder := []string{"- plan", "- jira", "- status", "- recover"}
+	wantOrder := []string{"- plan", "- plan-from-jira", "- status", "- recover"}
 	last := -1
 	for _, marker := range wantOrder {
 		idx := strings.Index(section, marker)
@@ -681,20 +681,20 @@ func repoRoot(t *testing.T) string {
 	return filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", ".."))
 }
 
-// TestJiraSkillIngestsTickets pins the jira-ingest contract into the generated
-// skill + command. The prose lives in the TaskBody literal (types.go) and is
-// regenerated onto disk by cmd/regen; this guard fails if a future regen drops
-// it, or (its red-first role) before the literal carries it.
-func TestJiraSkillIngestsTickets(t *testing.T) {
+// TestPlanFromJiraSkillIngestsTickets pins the plan-from-jira ingest contract
+// into the generated skill + command. The prose lives in the TaskBody literal
+// (types.go) and is regenerated onto disk by cmd/regen; this guard fails if a
+// future regen drops it, or (its red-first role) before the literal carries it.
+func TestPlanFromJiraSkillIngestsTickets(t *testing.T) {
 	t.Parallel()
 
-	skill, err := Render("jira")
+	skill, err := Render("plan-from-jira")
 	if err != nil {
-		t.Fatalf("Render(jira): %v", err)
+		t.Fatalf("Render(plan-from-jira): %v", err)
 	}
-	command, err := RenderCommand("jira")
+	command, err := RenderCommand("plan-from-jira")
 	if err != nil {
-		t.Fatalf("RenderCommand(jira): %v", err)
+		t.Fatalf("RenderCommand(plan-from-jira): %v", err)
 	}
 
 	for label, content := range map[string]string{"skill": skill.Content, "command": command.Content} {
@@ -736,7 +736,7 @@ func TestJiraSkillIngestsTickets(t *testing.T) {
 			"--replace --prd -",                                 // active-batch persist uses --replace (plain --prd - hard-errors)
 		} {
 			if !strings.Contains(content, want) {
-				t.Errorf("jira %s missing token %q", label, want)
+				t.Errorf("plan-from-jira %s missing token %q", label, want)
 			}
 		}
 	}

@@ -74,7 +74,7 @@ Claude Code:
 /plugin install springfield@brentguistwite
 ```
 
-Slash commands available after install: `/springfield:plan`, `/springfield:jira`, `/springfield:status`, `/springfield:recover`. To execute a batch, run `springfield start` in a terminal. (For the Codex plugin, see [Codex Plugin Directory](#codex-plugin-directory).)
+Slash commands available after install: `/springfield:plan`, `/springfield:plan-from-jira`, `/springfield:status`, `/springfield:recover`. To execute a batch, run `springfield start` in a terminal. (For the Codex plugin, see [Codex Plugin Directory](#codex-plugin-directory).)
 
 The plugin is a thin, stable shim over the CLI verbs (`plan`, `start`, `status`, `recover`), so it changes rarely. **Plugin updates are manual on both platforms** — run them only if a skill tells you to:
 

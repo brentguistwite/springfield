@@ -1,11 +1,10 @@
 ---
-name: jira
-description: Use Springfield jira to compile one or more Jira tickets, or an epic and its children, into a runnable batch.
+description: Use Springfield plan-from-jira to compile one or more Jira tickets, or an epic and its children, into a runnable batch.
 ---
 
-# Springfield Jira
+# Springfield Plan from Jira
 
-Use Springfield jira to compile one or more Jira tickets, or an epic and its children, into a runnable batch.
+Use Springfield plan-from-jira to compile one or more Jira tickets, or an epic and its children, into a runnable batch.
 
 # Springfield Playbook
 Source: builtin/springfield.md
@@ -86,9 +85,9 @@ Run `springfield status` to check whether an active batch already exists.
 - **An active batch exists** → you cannot decide on your own whether it is safe to replace. `springfield status` **cannot prove a batch never started** — several already-started states (a signal-interrupted plan, or a plan that ran but stalled at merge or cleanup) render the same `0/N` queued shape as a never-run batch, and `springfield plan --replace` archives a started batch's work and evidence without complaint (its only guard is a *currently-running* plan). No programmatic signal can prove it, so the **user** is the only gate — and the question is the batch's whole history on this checkout (any session or operator), never just whether the current user personally ran it:
   - Show the existing batch's queued plan ids from `springfield status` and ask about the batch's **whole history, not the user's own actions** (`.springfield` state is durable across sessions, so a prior agent run or another operator on this checkout could have started it): **"Was this batch created in this session and never started by ANY session — you, another operator, or a prior agent run?"**
   - **User positively confirms it was created this session and never started by anyone** → safe to discard. Ask the user for the COMPLETE ticket-key set for the rebuilt batch (the already-queued tickets plus the new ones). Do **not** try to reverse the queued plan ids back into Jira keys — that slug is lossy (`MY_PROJECT-45` and `MY-PROJECT-45` both slug to `my-project-45`) and the batch may not even be Jira-derived; the user supplies the keys, and `springfield status` ids are only a reminder of what is there. Build ONE envelope from that full set and write it with `springfield plan --replace --prd -` — the topological sort then covers old + new together, so a new ticket that blocks an already-queued one still orders correctly.
-  - **Anything else — started, unsure, or unknown provenance** → do NOT replace (default here on any doubt). Batch recovery is the `springfield:recover` skill's job, not this one — point the user there. Do not just tell them to run bare `springfield recover`: that only archives an *orphaned* batch (missing `batch.json`); a failed plan is reset with `springfield recover --plan <id>`, and a running batch must finish or be stopped. Have them run `springfield status`, resolve the batch via `springfield:recover`, then re-run jira to compile fresh.
+  - **Anything else — started, unsure, or unknown provenance** → do NOT replace (default here on any doubt). Batch recovery is the `springfield:recover` skill's job, not this one — point the user there. Do not just tell them to run bare `springfield recover`: that only archives an *orphaned* batch (missing `batch.json`); a failed plan is reset with `springfield recover --plan <id>`, and a running batch must finish or be stopped. Have them run `springfield status`, resolve the batch via `springfield:recover`, then re-run plan-from-jira to compile fresh.
 
-Never use `--append` for jira ingest: it adds phases *after* the existing batch (so it cannot reorder across the boundary — an appended blocker would run after its dependent) and drops the appended tickets' `source` audit.
+Never use `--append` for plan-from-jira ingest: it adds phases *after* the existing batch (so it cannot reorder across the boundary — an appended blocker would run after its dependent) and drops the appended tickets' `source` audit.
 
 ## Step 5 — Map tickets to the envelope
 
@@ -222,10 +221,18 @@ Schema notes:
 > - Allowed: `"Document the off-target marker rule in docs/prd-format.md under the 'Stop Conditions' section"`
 > - Forbidden: `"Document the off-target marker rule in the review docs"` and `"note this in the relevant section"` — no file path, so the agent has nothing concrete to target.
 
-If an active batch exists (per Step 4), only rebuild it after the user **positively confirms it was created this session and never started by any session**: write the user-confirmed **combined** set (existing + new tickets) with `springfield plan --replace --prd -`. On any doubt — started, unsure, or unknown provenance — stop and send the user through the `springfield:recover` skill first (`springfield status` cannot prove a batch is safe to discard). Never use `--append` for jira ingest.
+If an active batch exists (per Step 4), only rebuild it after the user **positively confirms it was created this session and never started by any session**: write the user-confirmed **combined** set (existing + new tickets) with `springfield plan --replace --prd -`. On any doubt — started, unsure, or unknown provenance — stop and send the user through the `springfield:recover` skill first (`springfield status` cannot prove a batch is safe to discard). Never use `--append` for plan-from-jira ingest.
 
 ## Out of scope
 
 This skill reads Jira and emits a batch. It does NOT write back to Jira — no status transitions, no "batch started" comments. Closing that loop is the operator's job.
 
 Keep Springfield as the only user-facing surface.
+
+## Invocation Input
+
+User input from the slash command invocation:
+
+$ARGUMENTS
+
+If `$ARGUMENTS` is empty, continue with the default Springfield behavior for this command.
