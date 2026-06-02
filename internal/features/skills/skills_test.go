@@ -728,8 +728,10 @@ func TestJiraSkillIngestsTickets(t *testing.T) {
 			"parent-acceptance",                                 // parent ticket's DoD survives subtask expansion
 			"different parent ticket",                           // cross-ticket subtask blocks links are skipped
 			"story dependency graph blocked: no eligible story", // story-dep cycle degrades, not hard-fails
-			"never started",                                     // status can't prove pristineness — "nothing running" != "never started"
-			"Has this batch ever been started",                  // the human is the gate: status output is not trustworthy for this
+			"never started by ANY session",                      // gate is batch history, not the current user's action (durable .springfield state)
+			"unknown provenance",                                // any doubt defaults to the non-replace path
+			"springfield:recover",                               // batch recovery is delegated to the recover skill, not hardcoded here
+			"recover --plan",                                    // bare recover only archives orphans; a failed plan needs --plan <id>
 			"try to reverse the queued plan ids",                // don't reconstruct Jira keys from lossy slugs — user supplies keys
 			"--replace --prd -",                                 // active-batch persist uses --replace (plain --prd - hard-errors)
 		} {
