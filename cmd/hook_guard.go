@@ -64,16 +64,24 @@ const hookGuardStartSentinel = "SPRINGFIELD_ALLOW_START="
 // (permissions.deny strips Task/Workflow; the springfield plugin is disabled;
 // the executionPrompt carries an anti-recursion contract).
 func hookGuardRecursionRegex(verbs string) *regexp.Regexp {
-	// Built as an interpreted string: the pattern contains a backtick, so it
-	// cannot be a Go raw-string literal.
-	return regexp.MustCompile(hookGuardAnchorPrefix + `springfield[ \t]+(` + verbs + `)\b`)
+	return regexp.MustCompile(hookGuardSep + hookGuardEnv + hookGuardBinSpringfield + `[ \t]+(` + verbs + `)\b`)
 }
 
-// hookGuardAnchorPrefix matches up to (not including) `springfield` at a shell
-// command position: start-of-string or after a separator (`;&|(){}`, backtick,
-// newline), then optional env-assignment prefixes and an optional binary-path
-// prefix.
-const hookGuardAnchorPrefix = "(^|[;&|(){}" + "`" + `\n])[ \t]*(\w+=\S+[ \t]+)*([^ \t'"|;&(){}` + "`" + `]*/)?`
+// Regex building blocks (interpreted strings — the patterns embed a backtick,
+// so they cannot be Go raw-string literals):
+//
+//   - hookGuardSep:           start-of-string or a shell command separator
+//     (`;&|(){}`, backtick, newline) plus following whitespace.
+//   - hookGuardEnv:           zero or more leading env-assignments
+//     (`FOO=bar `, also empty-value `FOO= `).
+//   - hookGuardBinSpringfield: the `springfield` token, optionally wrapped in
+//     quotes and/or carrying a binary-path prefix — so `"/opt/bin/springfield"`
+//     and `'springfield'` are recognized, not just bare `springfield`.
+const (
+	hookGuardSep            = "(^|[;&|(){}" + "`" + `\n])[ \t]*`
+	hookGuardEnv            = `(\w+=\S*[ \t]+)*`
+	hookGuardBinSpringfield = `["']?([^ \t'"|;&(){}` + "`" + `]*/)?springfield["']?`
+)
 
 var (
 	// hookGuardReentryRegex blocks all three mutating verbs — used in
@@ -89,8 +97,8 @@ var (
 	// token. The sentinel key must be a whole token, so `NOT_SPRINGFIELD_..`
 	// or `X=SPRINGFIELD_ALLOW_START=..` (value, not key) do not authorize.
 	hookGuardAuthorizedStartRegex = regexp.MustCompile(
-		"(^|[;&|(){}" + "`" + `\n])[ \t]*(\w+=\S+[ \t]+)*` +
-			regexp.QuoteMeta(hookGuardStartSentinel) + `\S+[ \t]+(\w+=\S+[ \t]+)*([^ \t'"|;&(){}` + "`" + `]*/)?springfield[ \t]+start\b`)
+		hookGuardSep + hookGuardEnv + regexp.QuoteMeta(hookGuardStartSentinel) + `\S*[ \t]+` +
+			hookGuardEnv + hookGuardBinSpringfield + `[ \t]+start\b`)
 )
 
 // NewHookGuardCommand returns the hidden `springfield hook-guard` subcommand

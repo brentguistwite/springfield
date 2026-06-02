@@ -227,13 +227,13 @@ func (a *adapter) springfieldControlPlaneSettingsJSON() string {
 
 	data, err := json.Marshal(payload)
 	if err != nil {
-		// payload is static — marshal errors are impossible in practice, but
-		// fall back to a hand-built string rather than panic. Fail CLOSED:
-		// keep BOTH the hook AND permissions.deny (the layers that stop a
-		// subagent from spawning/​re-entering), never silently drop them to a
-		// full-surface, plugin-enabled state.
-		deny, _ := json.Marshal(subagentDeniedTools())
-		return `{"hooks":{"PreToolUse":[{"matcher":"Write|Edit|MultiEdit|NotebookEdit|Bash","hooks":[{"type":"command","command":"` + hookCommand + `"}]}]},"permissions":{"deny":` + string(deny) + `}}`
+		// payload contains only strings, []string, and a string-keyed map —
+		// json.Marshal cannot fail on these types. Fail LOUD if that invariant
+		// is ever broken: a hand-built fallback risks invalid JSON (hookCommand
+		// is shell-quoted, not JSON-escaped) or silently dropping the deny list
+		// / plugin-disables, downgrading the subagent to a full-surface,
+		// plugin-enabled state — worse than crashing.
+		panic(fmt.Sprintf("springfield: control-plane settings marshal failed (unexpected): %v", err))
 	}
 	return string(data)
 }
