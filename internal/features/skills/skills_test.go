@@ -15,19 +15,13 @@ func TestCatalogShapeLockedToSpringfieldSkills(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	if len(catalog) != 3 {
-		t.Fatalf("catalog len = %d, want 3", len(catalog))
+	want := []string{"plan", "plan-from-jira", "status", "recover"}
+	if len(catalog) != len(want) {
+		t.Fatalf("catalog len = %d, want %d", len(catalog), len(want))
 	}
-
-	got := []string{
-		string(catalog[0].Name),
-		string(catalog[1].Name),
-		string(catalog[2].Name),
-	}
-	want := []string{"plan", "status", "recover"}
 	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("catalog[%d] = %q, want %q", i, got[i], want[i])
+		if string(catalog[i].Name) != want[i] {
+			t.Fatalf("catalog[%d] = %q, want %q", i, catalog[i].Name, want[i])
 		}
 	}
 }
@@ -58,6 +52,35 @@ func TestLookup_Plan(t *testing.T) {
 	}
 	if string(s.Name) != "plan" {
 		t.Errorf("Name = %q, want plan", s.Name)
+	}
+}
+
+func TestCatalog_IncludesPlanFromJira(t *testing.T) {
+	t.Parallel()
+
+	for _, s := range Catalog() {
+		if string(s.Name) == "plan-from-jira" {
+			if s.Purpose != playbooks.PurposePlan {
+				t.Errorf("plan-from-jira skill Purpose = %q, want %q", s.Purpose, playbooks.PurposePlan)
+			}
+			if s.RelativePath != "skills/plan-from-jira/SKILL.md" {
+				t.Errorf("plan-from-jira skill RelativePath = %q, want skills/plan-from-jira/SKILL.md", s.RelativePath)
+			}
+			return
+		}
+	}
+	t.Fatalf("plan-from-jira skill missing from catalog")
+}
+
+func TestLookup_PlanFromJira(t *testing.T) {
+	t.Parallel()
+
+	s, err := Lookup("plan-from-jira")
+	if err != nil {
+		t.Fatalf("Lookup(plan-from-jira): %v", err)
+	}
+	if string(s.Name) != "plan-from-jira" {
+		t.Errorf("Name = %q, want plan-from-jira", s.Name)
 	}
 }
 
@@ -146,7 +169,7 @@ func compareSemver(t *testing.T, a, b string) int {
 func TestRenderedSkillsCarryVersionCheckPreamble(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"plan", "status", "recover"} {
+	for _, name := range []string{"plan", "plan-from-jira", "status", "recover"} {
 		skill, err := Render(name)
 		if err != nil {
 			t.Fatalf("Render(%s): %v", name, err)
@@ -363,7 +386,7 @@ func TestCanonicalCheckedInSkillsMatchRenderedContent(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
-	for _, name := range []string{"plan", "status", "recover"} {
+	for _, name := range []string{"plan", "plan-from-jira", "status", "recover"} {
 		rendered, err := Render(name)
 		if err != nil {
 			t.Fatalf("render %s: %v", name, err)
@@ -383,7 +406,7 @@ func TestCanonicalCheckedInCommandsMatchRenderedContent(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
-	for _, name := range []string{"plan", "status", "recover"} {
+	for _, name := range []string{"plan", "plan-from-jira", "status", "recover"} {
 		rendered, err := RenderCommand(name)
 		if err != nil {
 			t.Fatalf("render command %s: %v", name, err)
@@ -402,7 +425,7 @@ func TestCanonicalCheckedInCommandsMatchRenderedContent(t *testing.T) {
 func TestRenderedSkillsIncludeFrontmatter(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"plan", "status", "recover"} {
+	for _, name := range []string{"plan", "plan-from-jira", "status", "recover"} {
 		rendered, err := Render(name)
 		if err != nil {
 			t.Fatalf("render %s: %v", name, err)
@@ -447,7 +470,7 @@ func TestInstallWritesSelectedHostArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read installed codex artifact: %v", err)
 	}
-	for _, marker := range []string{"Springfield", "plan", "status", "recover"} {
+	for _, marker := range []string{"Springfield", "plan", "plan-from-jira", "status", "recover"} {
 		if !strings.Contains(string(data), marker) {
 			t.Fatalf("expected installed codex artifact to contain %q, got:\n%s", marker, string(data))
 		}
@@ -462,7 +485,7 @@ func TestInstallWritesSelectedHostArtifacts(t *testing.T) {
 		t.Fatalf("installed codex helper missing '## Springfield Skills' section:\n%s", body)
 	}
 	section := body[sectionIdx:]
-	wantOrder := []string{"- plan", "- status", "- recover"}
+	wantOrder := []string{"- plan", "- plan-from-jira", "- status", "- recover"}
 	last := -1
 	for _, marker := range wantOrder {
 		idx := strings.Index(section, marker)
@@ -656,4 +679,65 @@ func repoRoot(t *testing.T) string {
 		t.Fatal("resolve current file")
 	}
 	return filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", ".."))
+}
+
+// TestPlanFromJiraSkillIngestsTickets pins the plan-from-jira ingest contract
+// into the generated skill + command. The prose lives in the TaskBody literal
+// (types.go) and is regenerated onto disk by cmd/regen; this guard fails if a
+// future regen drops it, or (its red-first role) before the literal carries it.
+func TestPlanFromJiraSkillIngestsTickets(t *testing.T) {
+	t.Parallel()
+
+	skill, err := Render("plan-from-jira")
+	if err != nil {
+		t.Fatalf("Render(plan-from-jira): %v", err)
+	}
+	command, err := RenderCommand("plan-from-jira")
+	if err != nil {
+		t.Fatalf("RenderCommand(plan-from-jira): %v", err)
+	}
+
+	for label, content := range map[string]string{"skill": skill.Content, "command": command.Content} {
+		for _, want := range []string{
+			// BYO-Jira precondition, not setup.
+			"Springfield does NOT manage Jira access",
+			"No Jira tool detected",
+			// Input + epic expansion guardrail.
+			"give me an epic key",
+			"These N tickets",
+			// Mapping grain: ticket->plan (id from key), subtask->story.
+			"Slug the plan",
+			"subtasks",
+			"user stories",
+			// Ordering from Jira links.
+			"topologically sort",
+			// DoD reuse + bulk escape hatch.
+			"how do we know this story is done",
+			"don't ask me about criteria",
+			// Honest criteria framing (lifted from plan skill).
+			"<story-pass>",
+			"the only independent check",
+			// Review offer, serialized.
+			"Enable independent pre-merge review",
+			"Serialize the answer",
+			"plans[].review",
+			// Read-only boundary.
+			"does NOT write back to Jira",
+			// Contract clauses hardened during adversarial review — load-bearing,
+			// pinned so a future prose rewrite can't silently drop them.
+			"parent-acceptance",                                 // parent ticket's DoD survives subtask expansion
+			"different parent ticket",                           // cross-ticket subtask blocks links are skipped
+			"story dependency graph blocked: no eligible story", // story-dep cycle degrades, not hard-fails
+			"never started by ANY session",                      // gate is batch history, not the current user's action (durable .springfield state)
+			"unknown provenance",                                // any doubt defaults to the non-replace path
+			"springfield:recover",                               // batch recovery is delegated to the recover skill, not hardcoded here
+			"recover --plan",                                    // bare recover only archives orphans; a failed plan needs --plan <id>
+			"try to reverse the queued plan ids",                // don't reconstruct Jira keys from lossy slugs — user supplies keys
+			"--replace --prd -",                                 // active-batch persist uses --replace (plain --prd - hard-errors)
+		} {
+			if !strings.Contains(content, want) {
+				t.Errorf("plan-from-jira %s missing token %q", label, want)
+			}
+		}
+	}
 }

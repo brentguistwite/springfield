@@ -59,10 +59,11 @@ func writeSystemSettings(root, hookBin string) (string, error) {
 			// skills. Matches the agents.overrides schema documented in
 			// docs/core/subagents.md.
 			"overrides": map[string]any{
-				"springfield:start":   map[string]any{"enabled": false},
-				"springfield:plan":    map[string]any{"enabled": false},
-				"springfield:status":  map[string]any{"enabled": false},
-				"springfield:recover": map[string]any{"enabled": false},
+				"springfield:start":          map[string]any{"enabled": false},
+				"springfield:plan":           map[string]any{"enabled": false},
+				"springfield:plan-from-jira": map[string]any{"enabled": false},
+				"springfield:status":         map[string]any{"enabled": false},
+				"springfield:recover":        map[string]any{"enabled": false},
 			},
 		},
 	}

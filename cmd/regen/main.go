@@ -10,13 +10,17 @@ import (
 )
 
 func main() {
-	for _, name := range []string{"plan", "status", "recover"} {
+	for _, name := range []string{"plan", "plan-from-jira", "status", "recover"} {
 		r, err := skills.Render(name)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "render %s: %v\n", name, err)
 			os.Exit(1)
 		}
 		path := "skills/" + name + "/SKILL.md"
+		if err := os.MkdirAll("skills/"+name, 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "mkdir skills/%s: %v\n", name, err)
+			os.Exit(1)
+		}
 		if err := os.WriteFile(path, []byte(r.Content), 0o644); err != nil {
 			fmt.Fprintf(os.Stderr, "write %s: %v\n", path, err)
 			os.Exit(1)
@@ -29,6 +33,10 @@ func main() {
 			os.Exit(1)
 		}
 		cmdPath := "commands/" + name + ".md"
+		if err := os.MkdirAll("commands", 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "mkdir commands: %v\n", err)
+			os.Exit(1)
+		}
 		if err := os.WriteFile(cmdPath, []byte(rc.Content), 0o644); err != nil {
 			fmt.Fprintf(os.Stderr, "write %s: %v\n", cmdPath, err)
 			os.Exit(1)
