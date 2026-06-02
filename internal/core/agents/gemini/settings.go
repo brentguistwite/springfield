@@ -49,7 +49,9 @@ func writeSystemSettings(root, hookBin string) (string, error) {
 				Hooks: []hookSpec{{
 					Type:    "command",
 					Name:    "springfield-control-plane-guard",
-					Command: shellQuote(hookBin) + " hook-guard",
+					// --block-reentry: subagent context — block all
+					// springfield start/plan/recover (see cmd/hook_guard.go).
+					Command: shellQuote(hookBin) + " hook-guard --block-reentry",
 					Timeout: 5000,
 				}},
 			}},

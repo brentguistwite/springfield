@@ -17,6 +17,7 @@ func TestHookGuardAcceptsGeminiToolInputShapes(t *testing.T) {
 
 	cases := []struct {
 		name     string
+		flags    []string
 		stdin    string
 		wantExit int
 		wantErr  string
@@ -35,6 +36,7 @@ func TestHookGuardAcceptsGeminiToolInputShapes(t *testing.T) {
 		},
 		{
 			name:     "gemini run_shell_command springfield recursion",
+			flags:    []string{"--block-reentry"}, // Gemini adapter injects the subagent flag
 			stdin:    `{"tool_name":"run_shell_command","tool_input":{"command":"springfield start"}}`,
 			wantExit: 2,
 			wantErr:  "Nested springfield CLI invocation blocked",
@@ -55,7 +57,7 @@ func TestHookGuardAcceptsGeminiToolInputShapes(t *testing.T) {
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			cmd := exec.Command(bin, "hook-guard")
+			cmd := exec.Command(bin, append([]string{"hook-guard"}, tc.flags...)...)
 			cmd.Stdin = strings.NewReader(tc.stdin)
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout = &stdout

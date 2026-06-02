@@ -187,7 +187,9 @@ func (a *adapter) SpringfieldControlPlaneHookCommand() string {
 	// Quote the binary path so paths with spaces survive shell parsing.
 	// The hook-guard subcommand never touches the shell itself; the quoting
 	// matters for Claude's shell-based hook runner.
-	return shellQuote(a.hookBin) + " hook-guard"
+	// --block-reentry: this hook guards a Springfield-spawned subagent, which
+	// must not re-enter any springfield start/plan/recover (see hook-guard).
+	return shellQuote(a.hookBin) + " hook-guard --block-reentry"
 }
 
 // shellQuote wraps s in single quotes, escaping any embedded single quotes.
