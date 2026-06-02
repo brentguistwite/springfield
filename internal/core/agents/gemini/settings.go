@@ -61,6 +61,7 @@ func writeSystemSettings(root, hookBin string) (string, error) {
 			"overrides": map[string]any{
 				"springfield:start":   map[string]any{"enabled": false},
 				"springfield:plan":    map[string]any{"enabled": false},
+				"springfield:jira":    map[string]any{"enabled": false},
 				"springfield:status":  map[string]any{"enabled": false},
 				"springfield:recover": map[string]any{"enabled": false},
 			},
