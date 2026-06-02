@@ -725,11 +725,14 @@ func TestJiraSkillIngestsTickets(t *testing.T) {
 			"does NOT write back to Jira",
 			// Contract clauses hardened during adversarial review — load-bearing,
 			// pinned so a future prose rewrite can't silently drop them.
-			"parent-acceptance",                                  // parent ticket's DoD survives subtask expansion
-			"different parent ticket",                            // cross-ticket subtask blocks links are skipped
-			"story dependency graph blocked: no eligible story",  // story-dep cycle degrades, not hard-fails
-			"adding Jira tickets to a live run is not supported", // running batch: refuse, don't append
-			"rebuild the combined set",                           // unstarted batch: combine + --replace, never append
+			"parent-acceptance",                                 // parent ticket's DoD survives subtask expansion
+			"different parent ticket",                           // cross-ticket subtask blocks links are skipped
+			"story dependency graph blocked: no eligible story", // story-dep cycle degrades, not hard-fails
+			"never started",                                     // dirty-batch guard: "nothing running" != "never started"
+			"pristine",                                          // only a never-dispatched batch may be rebuilt
+			"dispatched any work",                               // started batches (failed/interrupted/needs-human) are refused
+			"try to reverse the queued plan ids",                // don't reconstruct Jira keys from lossy slugs — ask the user
+			"--replace --prd -",                                 // active-batch persist uses --replace (plain --prd - hard-errors)
 		} {
 			if !strings.Contains(content, want) {
 				t.Errorf("jira %s missing token %q", label, want)
