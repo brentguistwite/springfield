@@ -107,10 +107,13 @@ var (
 
 	// hookGuardRedirectRegex matches a shell redirection whose target is a
 	// .springfield path: `> .springfield/x`, `>>.springfield/x`, `2> .springfield`,
-	// `&> .springfield`. This is the redirect half of command-field mutation
-	// detection (see hookGuardCommandMutatesControlPlane).
+	// `&> .springfield`, `>| .springfield` (noclobber override), `>& .springfield`
+	// (redirect both streams to a file). This is the redirect half of command-
+	// field mutation detection (see hookGuardCommandMutatesControlPlane). The
+	// path char-class excludes `()` so bash process-substitution `>(...)` is not
+	// mistaken for a file target.
 	hookGuardRedirectRegex = regexp.MustCompile(
-		`(\d*>>?|&>>?)[ \t]*["']?[^ \t"'|;&<>` + "`" + `]*\.springfield`)
+		`(\d*>>?|&>>?|>\||>&)[ \t]*["']?[^ \t"'|;&<>()` + "`" + `]*\.springfield`)
 
 	// hookGuardMutationCmdRegex matches a state-mutating command at shell
 	// command-position (start-of-string or after a separator, env-prefix and
@@ -120,15 +123,36 @@ var (
 	// letting reads (`cat`, `ls`, `grep`) and prose mentions pass.
 	hookGuardMutationCmdRegex = regexp.MustCompile(
 		hookGuardSep + hookGuardEnv + `["']?([^ \t'"|;&(){}=` + "`" + `]*/)?(` + hookGuardMutationVerbs + `)\b`)
+
+	// hookGuardFindCmdRegex matches a `find` invocation at command-position.
+	// `find` is read-only on its own, so it is gated on a destructive action
+	// flag (-delete) before blocking — see hookGuardCommandMutatesControlPlane.
+	hookGuardFindCmdRegex = regexp.MustCompile(
+		hookGuardSep + hookGuardEnv + `["']?([^ \t'"|;&(){}=` + "`" + `]*/)?find\b`)
 )
 
 // hookGuardMutationVerbs is the alternation of shell commands that write or
-// delete filesystem state. Read-only tools (cat/ls/grep/rg/head/tail/find,
-// and sed/awk without in-place flags) are deliberately excluded so they do not
-// trip the guard when merely inspecting a .springfield path. Residuals that
-// need a shell parser are accepted, consistent with the recursion guard:
-// in-place edits via `sed -i`/`perl -i`, and binary wrappers
-// (`bash -c`, `env`, `sudo`, `xargs`) are NOT caught.
+// delete filesystem state. Read-only tools (cat/ls/grep/rg/head/tail, and
+// sed/awk without in-place flags) are deliberately excluded so they do not trip
+// the guard when merely inspecting a .springfield path. `find` is handled
+// separately (hookGuardFindCmdRegex) because it is read-only unless given
+// -delete.
+//
+// This is a best-effort regex, not a sandbox: it catches the common accidental
+// mutation shapes, but anything that needs a shell/semantic parser is an
+// ACCEPTED RESIDUAL and passes through — consistent with the recursion guard.
+// Known residuals (real control-plane mutations this guard does NOT block):
+//   - in-place edits: `sed -i ... .springfield/x`, `perl -i ...`
+//   - interpreter scriptlets: `python -c "open('.springfield/x','w')..."`,
+//     `node -e ...`, `ruby -e ...` (an interpreter can write any path)
+//   - VCS restores: `git restore .springfield/x`, `git checkout -- .springfield/x`
+//   - sync/wrappers: `rsync`, `bash -c "..."`, `env`, `sudo`, `xargs`
+//   - exotic redirects: `<>` read-write open
+// These regressed from the prior naive substring check; the trade is deliberate
+// — that check false-positived on every commit body, grep, and read mentioning
+// the path. The real backstop is defense-in-depth (permissions.deny strips
+// Task/Workflow, the plugin is disabled in subagents, the executionPrompt
+// carries an anti-recursion contract), not this single regex.
 const hookGuardMutationVerbs = `rm|rmdir|mv|cp|tee|truncate|dd|install|ln|mkdir|touch|chmod|chown|shred|unlink`
 
 // NewHookGuardCommand returns the hidden `springfield hook-guard` subcommand
@@ -214,8 +238,12 @@ func runHookGuard(stdin io.Reader, stderr io.Writer, blockReentry bool) error {
 // inherently writes, so a `.springfield` substring there blocks unconditionally.
 // The Bash `command` field is different: it is blocked only when it MUTATES a
 // .springfield path (redirect target or a mutation command), not when it merely
-// mentions one — so commit bodies, greps, and reads that reference the path are
-// no longer false-positived (see hookGuardCommandMutatesControlPlane).
+// mentions one — so ordinary commit bodies, greps, and reads that reference the
+// path are no longer false-positived (see hookGuardCommandMutatesControlPlane).
+// No shell parser is involved, so a mutation verb sitting at a separator/line
+// position inside quoted prose (e.g. a heredoc commit body with `rm ...` at a
+// line start) can still trip it — the same residual class the recursion guard
+// documents.
 func hookGuardShouldBlock(toolInput map[string]any) bool {
 	if toolInput == nil {
 		return false
@@ -254,5 +282,13 @@ func hookGuardCommandMutatesControlPlane(cmd string) bool {
 	if !strings.Contains(cmd, hookGuardToken) {
 		return false
 	}
-	return hookGuardRedirectRegex.MatchString(cmd) || hookGuardMutationCmdRegex.MatchString(cmd)
+	if hookGuardRedirectRegex.MatchString(cmd) || hookGuardMutationCmdRegex.MatchString(cmd) {
+		return true
+	}
+	// `find ... -delete` deletes its matches; gate the read-only `find` on the
+	// destructive flag so `find .springfield -name x` (a read) still passes.
+	if hookGuardFindCmdRegex.MatchString(cmd) && strings.Contains(cmd, "-delete") {
+		return true
+	}
+	return false
 }

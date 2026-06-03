@@ -81,8 +81,45 @@ func TestHookGuardPathAwareness(t *testing.T) {
 		// A Bash command that merely MENTIONS .springfield (commit body, grep,
 		// read) must pass; only one that MUTATES a .springfield path blocks.
 		{
-			name:     "commit message body mentions .springfield",
+			name:     "commit message body (read-only prose) mentions .springfield",
 			stdin:    `{"tool_input":{"command":"git commit -F - <<'EOF'\nfix: never write .springfield/execution/config.json\nEOF"}}`,
+			wantExit: 0,
+		},
+		{
+			// Documents the accepted residual: with no shell parser, a mutation
+			// verb at a line-start inside a heredoc body still trips the guard.
+			// Route such bodies through a file (-F path) rather than inline.
+			name:     "heredoc body with mutation verb at line start still blocks (residual)",
+			stdin:    `{"tool_input":{"command":"git commit -F - <<'EOF'\nrm the stale .springfield/run.json handling\nEOF"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "redirect noclobber-override into control plane blocked",
+			stdin:    `{"tool_input":{"command":"echo '{}' >| .springfield/execution/config.json"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "redirect both-streams into control plane blocked",
+			stdin:    `{"tool_input":{"command":"run >& .springfield/log"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "find -delete on control plane blocked",
+			stdin:    `{"tool_input":{"command":"find .springfield -name '*.json' -delete"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "read-only find on control plane allowed",
+			stdin:    `{"tool_input":{"command":"find .springfield -name '*.json'"}}`,
+			wantExit: 0,
+		},
+		{
+			name:     "fd dup redirect not mistaken for control-plane write",
+			stdin:    `{"tool_input":{"command":"echo .springfield 2>&1 | cat"}}`,
 			wantExit: 0,
 		},
 		{
