@@ -38,6 +38,17 @@ func minPRDPlan(id, title string) prd.BatchPRDPlan {
 	}
 }
 
+// minEnvelope returns a single-plan serial envelope for tests that only need a
+// valid, compilable batch.
+func minEnvelope(planID, title string) prd.BatchPRDEnvelope {
+	return prd.BatchPRDEnvelope{
+		Title:  title,
+		Source: "test-source",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{planID}}},
+		Plans:  []prd.BatchPRDPlan{minPRDPlan(planID, title)},
+	}
+}
+
 // buildEnvelopeJSON marshals a BatchPRDEnvelope to JSON or fatals.
 func buildEnvelopeJSON(t *testing.T, env prd.BatchPRDEnvelope) string {
 	t.Helper()

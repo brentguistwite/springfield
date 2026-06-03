@@ -19,15 +19,21 @@ func TestStatusNoConfigPointsAtRegistrationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if !strings.Contains(out, "springfield init") || !strings.Contains(out, "springfield plans add") {
-		t.Fatalf("expected init+plans add hint, got:\n%s", out)
+	if !strings.Contains(out, "springfield init") {
+		t.Fatalf("expected init hint, got:\n%s", out)
 	}
 	if strings.Contains(out, "springfield plan\"") {
 		t.Fatalf("stale \"springfield plan\" hint leaked:\n%s", out)
 	}
+	// The no-config path points at init, NOT the plan skill — the skill hint is
+	// reserved for the loadable-but-empty-registry path. Pin the distinction so
+	// the two messages can't be collapsed into one.
+	if strings.Contains(out, "/springfield:plan") {
+		t.Fatalf("no-config hint should point at init, not the plan skill:\n%s", out)
+	}
 }
 
-func TestStatusEmptyPlanRegistryPointsAtPlansAdd(t *testing.T) {
+func TestStatusEmptyPlanRegistryPointsAtPlanSkill(t *testing.T) {
 	root := newStatusRoot(t)
 	writeStatusConfig(t, root, []map[string]any{})
 
@@ -35,8 +41,13 @@ func TestStatusEmptyPlanRegistryPointsAtPlansAdd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if !strings.Contains(out, "springfield plans add") {
-		t.Fatalf("expected plans add hint, got:\n%s", out)
+	// Empty-but-valid registry signposts the plan skill + start, matching
+	// init's own Next: copy rather than the lower-level "plans add" verb.
+	if !strings.Contains(out, "/springfield:plan") {
+		t.Fatalf("expected plan skill hint, got:\n%s", out)
+	}
+	if !strings.Contains(out, "springfield start") {
+		t.Fatalf("expected springfield start hint, got:\n%s", out)
 	}
 }
 

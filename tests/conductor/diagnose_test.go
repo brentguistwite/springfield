@@ -190,7 +190,7 @@ func TestDiagnoseNoPlansUsesSpringfieldExecutionConfigWording(t *testing.T) {
 	}
 
 	diagnosis := conductor.Diagnose(project)
-	if got, want := diagnosis.NextStep, "No plans configured. Run \"springfield plans add\" to register one."; got != want {
+	if got, want := diagnosis.NextStep, "No plans yet. Draft one with the springfield:plan skill (Claude Code: /springfield:plan), then run \"springfield start\"."; got != want {
 		t.Fatalf("next step = %q, want %q", got, want)
 	}
 }

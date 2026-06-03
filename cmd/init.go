@@ -19,6 +19,7 @@ import (
 	"springfield/internal/core/agents"
 	"springfield/internal/core/agents/catalog"
 	"springfield/internal/core/config"
+	"springfield/internal/features/execution"
 )
 
 // isTTY reports whether fd is an interactive terminal.
@@ -82,6 +83,25 @@ func NewInitCommand() *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), ".springfield/ already exists, skipping")
 			}
 
+			// Bootstrap the execution config so the project is immediately
+			// loadable by every read path (status, plan --dry-run, plans list).
+			// Without this, those commands fail on a missing
+			// execution/config.json until a mutating command (plan/plans add)
+			// lazily creates it — the first-run gap this repairs. Idempotent:
+			// an existing config is reused unchanged, so re-running init also
+			// heals a project left half-initialized by an older build.
+			if err := execution.EnsureExecutionConfig(dir); err != nil {
+				return fmt.Errorf("bootstrap execution config: %w", err)
+			}
+			// Reconcile config.json's primary tool with the chosen agent
+			// priority. EnsureExecutionConfig reuses an existing config
+			// unchanged, so a re-init that reorders agents (merge mode or
+			// --reset) would otherwise leave a stale tool behind. Lossless:
+			// preserves plan_units and other runtime settings.
+			if err := execution.SyncExecutionTool(dir); err != nil {
+				return fmt.Errorf("sync execution config tool: %w", err)
+			}
+
 			if added, err := ensureSpringfieldGitignore(dir); err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to update .gitignore: %v\n", err)
 			} else if added {
@@ -97,7 +117,7 @@ func NewInitCommand() *cobra.Command {
 
 	cmd.Flags().StringVar(&agentsFlag, "agents", "", "Comma-separated agent priority list (e.g. codex,claude)")
 	cmd.Flags().StringVar(&modelsFlag, "model", "", "Comma-separated per-agent model overrides (e.g. codex=gpt-5-codex,claude=claude-sonnet-4-6)")
-	cmd.Flags().BoolVar(&resetFlag, "reset", false, "Back up existing config and rewrite from scratch (destructive)")
+	cmd.Flags().BoolVar(&resetFlag, "reset", false, "Regenerate springfield.toml from the current --agents/--model selection, backing up the previous file. Discards manual edits and stale agent blocks; the execution config's primary tool is updated to match, and registered plans are preserved.")
 
 	return cmd
 }

@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -360,9 +361,19 @@ func NewPlanCommand() *cobra.Command {
 // state under .springfield/. Composes with --replace and --append (previews
 // the operation, including collision detection for append).
 func runDryRun(cmd *cobra.Command, rootDir string, env prd.BatchPRDEnvelope, replace, appendMode bool) error {
+	// A fresh init now bootstraps execution/config.json, but a project from an
+	// older build (or one where init never ran) may lack it. Dry-run must not
+	// create it — its contract is zero writes under .springfield/ — so treat a
+	// missing config as an empty plan registry and proceed with the preview.
+	var registered map[string]struct{}
 	project, err := conductor.LoadProjectRaw(rootDir)
 	if err != nil {
-		return fmt.Errorf("load conductor project: %w", err)
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("load conductor project: %w", err)
+		}
+		registered = map[string]struct{}{}
+	} else {
+		registered = registeredPlanIDs(project)
 	}
 
 	run, hasRun, err := batch.ReadRun(rootDir)
@@ -400,7 +411,7 @@ func runDryRun(cmd *cobra.Command, rootDir string, env prd.BatchPRDEnvelope, rep
 	out, err := batch.Compile(batch.CompileInput{
 		Envelope:          env,
 		ExistingIDs:       existingIDs,
-		RegisteredPlanIDs: registeredPlanIDs(project),
+		RegisteredPlanIDs: registered,
 	})
 	if err != nil {
 		return err

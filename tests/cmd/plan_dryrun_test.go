@@ -96,6 +96,33 @@ func TestPlanDryRunFreshProjectWritesNothing(t *testing.T) {
 	}
 }
 
+// TestPlanDryRunToleratesMissingExecutionConfig pins the dry-run no-write
+// contract against a project that has springfield.toml but no
+// execution/config.json (the state a pre-bootstrap init left behind). Dry-run
+// must not crash on the missing config, must not create it (zero writes under
+// .springfield/), and must still produce a compile preview.
+func TestPlanDryRunToleratesMissingExecutionConfig(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	// Only the TOML — deliberately no execution/config.json.
+	writeSpringfieldConfig(t, dir, "claude")
+
+	pre := fingerprintSpringfieldDir(t, dir)
+
+	out, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, minEnvelope("preview-01", "Preview 01")), "--dry-run")
+	if err != nil {
+		t.Fatalf("dry-run with missing execution config should succeed: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Dry run: would compile batch") {
+		t.Fatalf("expected dry-run summary:\n%s", out)
+	}
+
+	post := fingerprintSpringfieldDir(t, dir)
+	if diff, eq := mapEqual(pre, post); !eq {
+		t.Fatalf(".springfield/ mutated by --dry-run with missing config: %s", diff)
+	}
+}
+
 // TestPlanDryRunPlainModeWithActiveBatchWarns confirms the operator-visible
 // warning when --dry-run is invoked against a project with an active batch
 // but no --replace/--append flag.

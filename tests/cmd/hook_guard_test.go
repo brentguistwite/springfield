@@ -77,6 +77,95 @@ func TestHookGuardPathAwareness(t *testing.T) {
 			stdin:    `{"tool_input":{"command":"grep foo src/"}}`,
 			wantExit: 0,
 		},
+		// --- command-field mutation awareness ---
+		// A Bash command that merely MENTIONS .springfield (commit body, grep,
+		// read) must pass; only one that MUTATES a .springfield path blocks.
+		{
+			name:     "commit message body (read-only prose) mentions .springfield",
+			stdin:    `{"tool_input":{"command":"git commit -F - <<'EOF'\nfix: never write .springfield/execution/config.json\nEOF"}}`,
+			wantExit: 0,
+		},
+		{
+			// Documents the accepted residual: with no shell parser, a mutation
+			// verb at a line-start inside a heredoc body still trips the guard.
+			// Route such bodies through a file (-F path) rather than inline.
+			name:     "heredoc body with mutation verb at line start still blocks (residual)",
+			stdin:    `{"tool_input":{"command":"git commit -F - <<'EOF'\nrm the stale .springfield/run.json handling\nEOF"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "redirect noclobber-override into control plane blocked",
+			stdin:    `{"tool_input":{"command":"echo '{}' >| .springfield/execution/config.json"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "redirect both-streams into control plane blocked",
+			stdin:    `{"tool_input":{"command":"run >& .springfield/log"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "find -delete on control plane blocked",
+			stdin:    `{"tool_input":{"command":"find .springfield -name '*.json' -delete"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "read-only find on control plane allowed",
+			stdin:    `{"tool_input":{"command":"find .springfield -name '*.json'"}}`,
+			wantExit: 0,
+		},
+		{
+			name:     "fd dup redirect not mistaken for control-plane write",
+			stdin:    `{"tool_input":{"command":"echo .springfield 2>&1 | cat"}}`,
+			wantExit: 0,
+		},
+		{
+			name:     "grep of .springfield in source allowed",
+			stdin:    `{"tool_input":{"command":"rg '.springfield' cmd/hook_guard.go"}}`,
+			wantExit: 0,
+		},
+		{
+			name:     "reading a control-plane file allowed",
+			stdin:    `{"tool_input":{"command":"cat .springfield/execution/config.json"}}`,
+			wantExit: 0,
+		},
+		{
+			name:     "ls of control plane allowed",
+			stdin:    `{"tool_input":{"command":"ls -la .springfield/"}}`,
+			wantExit: 0,
+		},
+		{
+			name:     "echo of .springfield text to unrelated file allowed",
+			stdin:    `{"tool_input":{"command":"echo '.springfield is internal' > /tmp/notes.txt"}}`,
+			wantExit: 0,
+		},
+		{
+			name:     "rm targeting control plane blocked",
+			stdin:    `{"tool_input":{"command":"rm -rf .springfield/run.json"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "append redirect into control plane blocked",
+			stdin:    `{"tool_input":{"command":"echo x >> .springfield/state.json"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "tee into control plane blocked",
+			stdin:    `{"tool_input":{"command":"printf '{}' | tee .springfield/run.json"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "mv touching control plane blocked",
+			stdin:    `{"tool_input":{"command":"mv .springfield/run.json /tmp/run.json"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
 		{
 			name:     "malformed json fails open",
 			stdin:    `not json`,
