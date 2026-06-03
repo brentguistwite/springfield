@@ -117,7 +117,7 @@ func NewInitCommand() *cobra.Command {
 
 	cmd.Flags().StringVar(&agentsFlag, "agents", "", "Comma-separated agent priority list (e.g. codex,claude)")
 	cmd.Flags().StringVar(&modelsFlag, "model", "", "Comma-separated per-agent model overrides (e.g. codex=gpt-5-codex,claude=claude-sonnet-4-6)")
-	cmd.Flags().BoolVar(&resetFlag, "reset", false, "Back up existing config and rewrite from scratch (destructive)")
+	cmd.Flags().BoolVar(&resetFlag, "reset", false, "Regenerate springfield.toml from the current --agents/--model selection, backing up the previous file. Discards manual edits and stale agent blocks; leaves the execution config and registered plans intact.")
 
 	return cmd
 }

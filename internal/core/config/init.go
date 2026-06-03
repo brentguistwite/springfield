@@ -13,9 +13,11 @@ import (
 
 // InitOptions controls Init behavior.
 type InitOptions struct {
-	// Reset backs up the existing config and writes a fresh scaffold, replicating
-	// the old unconditional behavior. Without Reset, Init merges into the existing
-	// config (preserve-by-default).
+	// Reset backs up the existing springfield.toml and writes a fresh scaffold,
+	// replicating the old unconditional behavior. Without Reset, Init merges into
+	// the existing springfield.toml (preserve-by-default). Reset's scope is
+	// springfield.toml only — it does not touch the execution config
+	// (.springfield/execution/config.json) or the registered plan registry.
 	Reset bool
 	// Models applies per-agent model selections gathered during init. Nil means
 	// "leave existing models alone in merge mode"; non-nil means apply explicit
