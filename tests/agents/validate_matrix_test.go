@@ -1,8 +1,6 @@
 package agents_test
 
 import (
-	"bufio"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -13,6 +11,7 @@ import (
 	"springfield/internal/core/agents/codex"
 	"springfield/internal/core/agents/gemini"
 	coreexec "springfield/internal/core/exec"
+	"springfield/internal/testsupport/fixtures"
 )
 
 // Cross-adapter matrix exercising the positive-signal contract for
@@ -132,26 +131,11 @@ func mustValidator(t *testing.T, a agents.Adapter) agents.ResultValidator {
 	return v
 }
 
+// loadFixtureEvents delegates to the shared, cross-package loader. The real
+// implementation lives in internal/testsupport/fixtures so realcapture-backed
+// tests in other packages (planreview, runtime) load identical producer-shaped
+// events; this in-package alias keeps the existing call sites unchanged.
 func loadFixtureEvents(t *testing.T, path string) []coreexec.Event {
 	t.Helper()
-	f, err := os.Open(path)
-	if err != nil {
-		t.Fatalf("open fixture %s: %v", path, err)
-	}
-	defer f.Close()
-
-	var events []coreexec.Event
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		events = append(events, coreexec.Event{Type: coreexec.EventStdout, Data: line})
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("scan fixture %s: %v", path, err)
-	}
-	return events
+	return fixtures.LoadEvents(t, path)
 }
