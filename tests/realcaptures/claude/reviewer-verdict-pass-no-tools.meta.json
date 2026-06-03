@@ -1,0 +1,16 @@
+{
+  "tool": "claude",
+  "tool_version": "2.1.161 (Claude Code)",
+  "scenario": "reviewer-verdict-pass-no-tools",
+  "command_args": [
+    "-p",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--model",
+    "claude-haiku-4-5-20251001"
+  ],
+  "captured_at": "2026-06-03T21:13:07Z",
+  "sha256": "e102e49ce8d4150afcffbd8f14b952afb347222273ee04241c7f1d1e9ad66b89",
+  "notes": "tool-free reviewer; verdict as sole final line"
+}
