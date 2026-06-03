@@ -104,7 +104,32 @@ var (
 	hookGuardAuthorizedStartRegex = regexp.MustCompile(
 		hookGuardSep + hookGuardEnv + regexp.QuoteMeta(hookGuardStartSentinel) + `\S*[ \t]+` +
 			hookGuardEnv + hookGuardBinSpringfield + `[ \t]+start\b`)
+
+	// hookGuardRedirectRegex matches a shell redirection whose target is a
+	// .springfield path: `> .springfield/x`, `>>.springfield/x`, `2> .springfield`,
+	// `&> .springfield`. This is the redirect half of command-field mutation
+	// detection (see hookGuardCommandMutatesControlPlane).
+	hookGuardRedirectRegex = regexp.MustCompile(
+		`(\d*>>?|&>>?)[ \t]*["']?[^ \t"'|;&<>` + "`" + `]*\.springfield`)
+
+	// hookGuardMutationCmdRegex matches a state-mutating command at shell
+	// command-position (start-of-string or after a separator, env-prefix and
+	// binary-path aware, same anchoring as the recursion guard). Paired with a
+	// `.springfield` substring test, this catches `rm -rf .springfield/x`,
+	// `mv .springfield/x y`, `cd .springfield && rm run.json`, etc. while
+	// letting reads (`cat`, `ls`, `grep`) and prose mentions pass.
+	hookGuardMutationCmdRegex = regexp.MustCompile(
+		hookGuardSep + hookGuardEnv + `["']?([^ \t'"|;&(){}=` + "`" + `]*/)?(` + hookGuardMutationVerbs + `)\b`)
 )
+
+// hookGuardMutationVerbs is the alternation of shell commands that write or
+// delete filesystem state. Read-only tools (cat/ls/grep/rg/head/tail/find,
+// and sed/awk without in-place flags) are deliberately excluded so they do not
+// trip the guard when merely inspecting a .springfield path. Residuals that
+// need a shell parser are accepted, consistent with the recursion guard:
+// in-place edits via `sed -i`/`perl -i`, and binary wrappers
+// (`bash -c`, `env`, `sudo`, `xargs`) are NOT caught.
+const hookGuardMutationVerbs = `rm|rmdir|mv|cp|tee|truncate|dd|install|ln|mkdir|touch|chmod|chown|shred|unlink`
 
 // NewHookGuardCommand returns the hidden `springfield hook-guard` subcommand
 // used by the agent PreToolUse hooks. It reads a tool-input JSON payload from
@@ -184,17 +209,26 @@ func runHookGuard(stdin io.Reader, stderr io.Writer, blockReentry bool) error {
 	return nil
 }
 
-// hookGuardShouldBlock returns true when any path-bearing field in the
-// tool_input map contains the `.springfield` substring.
+// hookGuardShouldBlock returns true when a tool call would mutate the
+// .springfield control plane. File-path fields (Write/Edit/MultiEdit) are
+// inherently writes, so a `.springfield` substring there blocks unconditionally.
+// The Bash `command` field is different: it is blocked only when it MUTATES a
+// .springfield path (redirect target or a mutation command), not when it merely
+// mentions one — so commit bodies, greps, and reads that reference the path are
+// no longer false-positived (see hookGuardCommandMutatesControlPlane).
 func hookGuardShouldBlock(toolInput map[string]any) bool {
 	if toolInput == nil {
 		return false
 	}
-	// Direct path-bearing fields.
-	for _, key := range []string{"file_path", "notebook_path", "command"} {
+	// Write/Edit path fields: any .springfield path is a mutation.
+	for _, key := range []string{"file_path", "notebook_path"} {
 		if s, ok := toolInput[key].(string); ok && strings.Contains(s, hookGuardToken) {
 			return true
 		}
+	}
+	// Bash command: block only mutations, not mentions/reads.
+	if s, ok := toolInput["command"].(string); ok && hookGuardCommandMutatesControlPlane(s) {
+		return true
 	}
 	// MultiEdit: edits is an array of {file_path, ...} entries.
 	if raw, ok := toolInput["edits"].([]any); ok {
@@ -209,4 +243,16 @@ func hookGuardShouldBlock(toolInput map[string]any) bool {
 		}
 	}
 	return false
+}
+
+// hookGuardCommandMutatesControlPlane reports whether a Bash command string
+// writes to or deletes a .springfield path, as opposed to merely mentioning one
+// (in a commit/PR body, a grep pattern, or a read). It requires a `.springfield`
+// substring AND either a redirection into such a path or a mutation command at
+// shell command-position. Reads (cat/ls/grep) and prose mentions return false.
+func hookGuardCommandMutatesControlPlane(cmd string) bool {
+	if !strings.Contains(cmd, hookGuardToken) {
+		return false
+	}
+	return hookGuardRedirectRegex.MatchString(cmd) || hookGuardMutationCmdRegex.MatchString(cmd)
 }

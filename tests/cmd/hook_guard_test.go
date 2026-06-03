@@ -77,6 +77,58 @@ func TestHookGuardPathAwareness(t *testing.T) {
 			stdin:    `{"tool_input":{"command":"grep foo src/"}}`,
 			wantExit: 0,
 		},
+		// --- command-field mutation awareness ---
+		// A Bash command that merely MENTIONS .springfield (commit body, grep,
+		// read) must pass; only one that MUTATES a .springfield path blocks.
+		{
+			name:     "commit message body mentions .springfield",
+			stdin:    `{"tool_input":{"command":"git commit -F - <<'EOF'\nfix: never write .springfield/execution/config.json\nEOF"}}`,
+			wantExit: 0,
+		},
+		{
+			name:     "grep of .springfield in source allowed",
+			stdin:    `{"tool_input":{"command":"rg '.springfield' cmd/hook_guard.go"}}`,
+			wantExit: 0,
+		},
+		{
+			name:     "reading a control-plane file allowed",
+			stdin:    `{"tool_input":{"command":"cat .springfield/execution/config.json"}}`,
+			wantExit: 0,
+		},
+		{
+			name:     "ls of control plane allowed",
+			stdin:    `{"tool_input":{"command":"ls -la .springfield/"}}`,
+			wantExit: 0,
+		},
+		{
+			name:     "echo of .springfield text to unrelated file allowed",
+			stdin:    `{"tool_input":{"command":"echo '.springfield is internal' > /tmp/notes.txt"}}`,
+			wantExit: 0,
+		},
+		{
+			name:     "rm targeting control plane blocked",
+			stdin:    `{"tool_input":{"command":"rm -rf .springfield/run.json"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "append redirect into control plane blocked",
+			stdin:    `{"tool_input":{"command":"echo x >> .springfield/state.json"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "tee into control plane blocked",
+			stdin:    `{"tool_input":{"command":"printf '{}' | tee .springfield/run.json"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "mv touching control plane blocked",
+			stdin:    `{"tool_input":{"command":"mv .springfield/run.json /tmp/run.json"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
 		{
 			name:     "malformed json fails open",
 			stdin:    `not json`,
