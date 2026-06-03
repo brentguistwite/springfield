@@ -69,8 +69,18 @@ func (a adapter) Command(input agents.CommandInput) (coreexec.Command, error) {
 	if sandboxMode := strings.TrimSpace(input.ExecutionSettings.Codex.SandboxMode); sandboxMode != "" {
 		args = append(args, "-s", sandboxMode)
 	}
+	// codex-cli >= 0.136.0 removed the `-a <policy>` flag from `exec`.
+	// The autonomous default (approval_policy=never) maps to the bypass flag,
+	// which also skips codex's trusted-directory check — load-bearing because a
+	// fresh Springfield worktree is an untrusted dir and `-c approval_policy=
+	// never` alone would block on a trust prompt with no way to answer it.
+	// Any other policy is forwarded faithfully via the `-c` config override.
 	if approvalPolicy := strings.TrimSpace(input.ExecutionSettings.Codex.ApprovalPolicy); approvalPolicy != "" {
-		args = append(args, "-a", approvalPolicy)
+		if approvalPolicy == "never" {
+			args = append(args, "--dangerously-bypass-approvals-and-sandbox")
+		} else {
+			args = append(args, "-c", "approval_policy="+approvalPolicy)
+		}
 	}
 	args = append(args, input.Prompt)
 

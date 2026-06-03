@@ -229,7 +229,37 @@ func TestCodexAdapterUsesExecJsonByDefault(t *testing.T) {
 	assertLastArgEquals(t, cmd.Args, "fix the auth bug")
 }
 
-func TestCodexAdapterAppendsSandboxAndApprovalWhenConfigured(t *testing.T) {
+// The autonomous default (approval_policy=never) must map to
+// --dangerously-bypass-approvals-and-sandbox, NOT the removed `-a` flag
+// (rejected by codex-cli >= 0.136.0) and NOT `-c approval_policy=never`
+// (which keeps codex's trusted-directory check and can hang waiting on a
+// trust prompt in a fresh worktree with no way to answer it).
+func TestCodexAdapterMapsNeverApprovalToBypassFlag(t *testing.T) {
+	adapter := codex.New(exec.LookPath)
+	commander := adapter.(agents.Commander)
+
+	cmd, err := commander.Command(agents.CommandInput{
+		Prompt:  "fix the auth bug",
+		WorkDir: "/tmp/project",
+		ExecutionSettings: agents.ExecutionSettings{
+			Codex: agents.CodexExecutionSettings{
+				SandboxMode:    "danger-full-access",
+				ApprovalPolicy: "never",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
+
+	assertArgsContain(t, cmd.Args, "--dangerously-bypass-approvals-and-sandbox", "")
+	assertArgsContain(t, cmd.Args, "-s", "danger-full-access")
+	assertArgsDoNotContain(t, cmd.Args, "-a")
+}
+
+// Any non-never approval policy is forwarded verbatim via -c approval_policy=
+// (codex 0.136.0 has no `-a` on `exec`; -c is the config-override path).
+func TestCodexAdapterForwardsNonNeverApprovalViaConfigOverride(t *testing.T) {
 	adapter := codex.New(exec.LookPath)
 	commander := adapter.(agents.Commander)
 
@@ -248,7 +278,9 @@ func TestCodexAdapterAppendsSandboxAndApprovalWhenConfigured(t *testing.T) {
 	}
 
 	assertArgsContain(t, cmd.Args, "-s", "workspace-write")
-	assertArgsContain(t, cmd.Args, "-a", "on-request")
+	assertArgsContain(t, cmd.Args, "-c", "approval_policy=on-request")
+	assertArgsDoNotContain(t, cmd.Args, "-a")
+	assertArgsDoNotContain(t, cmd.Args, "--dangerously-bypass-approvals-and-sandbox")
 }
 
 func TestCodexAdapterAppendsModelWhenConfigured(t *testing.T) {
