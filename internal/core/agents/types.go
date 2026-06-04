@@ -142,6 +142,16 @@ type ResultValidator interface {
 	ValidateResult(result exec.Result, requireToolAction bool) error
 }
 
+// TranscriptDecoder optionally extracts the agent's plain assistant/final text
+// out of its (tool-specific) stream-json transport. The review gate uses it to
+// scan for the verdict marker against decoded text with real newlines, rather
+// than the raw escaped JSON line where an anchored regex never matches. Each
+// adapter owns its own transport shape — keeping that knowledge behind the
+// adapter boundary instead of branching per-agent in the review feature.
+type TranscriptDecoder interface {
+	AssistantText(events []exec.Event) string
+}
+
 // ErrorClass classifies whether a runtime failure is worth falling back to the
 // next agent in priority. Adapters parse provider-specific stderr/exit codes
 // and normalize into this enum; runtime sees only the enum.

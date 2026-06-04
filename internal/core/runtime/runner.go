@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -243,6 +244,29 @@ func (r *Runner) emitSkipEvent(handler exec.EventHandler, id agents.ID, until ti
 		Data: fmt.Sprintf("springfield: %s in cooldown until %s; skipping", id, until.Format(time.RFC3339)),
 		Time: r.now(),
 	})
+}
+
+// AssistantText decodes the given agent's transcript into plain assistant
+// text via that adapter's TranscriptDecoder, so the review gate can scan a
+// verdict marker against real newlines instead of escaped stream-json. The
+// registry is the runner's, so the agent boundary stays encapsulated here
+// rather than threaded through the conductor. Falls back to the raw stdout
+// concatenation when the agent is unknown or implements no decoder (e.g. a
+// plain-text CLI), which keeps the anchored scan working for non-JSON output.
+func (r *Runner) AssistantText(agent agents.ID, events []exec.Event) string {
+	resolved, err := r.registry.Resolve(agents.ResolveInput{ProjectDefault: agent})
+	if err == nil {
+		if dec, ok := resolved.Adapter.(agents.TranscriptDecoder); ok {
+			return dec.AssistantText(events)
+		}
+	}
+	var stdout []string
+	for _, e := range events {
+		if e.Type == exec.EventStdout {
+			stdout = append(stdout, e.Data)
+		}
+	}
+	return strings.Join(stdout, "\n")
 }
 
 func normalizeAgentIDs(ids []agents.ID) []agents.ID {

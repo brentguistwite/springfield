@@ -263,6 +263,27 @@ func (a *adapter) ValidateResult(result coreexec.Result, requireToolAction bool)
 	return errors.New("gemini exited without completing tool work")
 }
 
+// AssistantText decodes the reviewer's plain text out of gemini's stream-json
+// message events so the review gate scans real newlines, not the JSON
+// transport (BUG-1). NOTE: shape not yet confirmed against a real captured
+// gemini reviewer transcript (CLI unavailable locally) — capture-pending.
+func (a *adapter) AssistantText(events []coreexec.Event) string {
+	var parts []string
+	for _, e := range events {
+		if e.Type != coreexec.EventStdout {
+			continue
+		}
+		var ev geminiStreamEvent
+		if err := json.Unmarshal([]byte(e.Data), &ev); err != nil {
+			continue
+		}
+		if ev.Type == "message" && ev.Text != "" {
+			parts = append(parts, ev.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
 type geminiStreamEvent struct {
 	Type      string `json:"type"`
 	ID        string `json:"id"`

@@ -170,6 +170,30 @@ func truncate(s string, max int) string {
 	return s[:max] + "..."
 }
 
+// AssistantText decodes the reviewer's plain text out of codex's stream-json
+// (the verdict lives escaped inside an item.completed agent_message), so the
+// review gate scans real newlines, not the JSON transport (BUG-1).
+func (a adapter) AssistantText(events []coreexec.Event) string {
+	var parts []string
+	for _, e := range events {
+		if e.Type != coreexec.EventStdout {
+			continue
+		}
+		var ev codexStreamEvent
+		if err := json.Unmarshal([]byte(e.Data), &ev); err != nil || ev.Type != "item.completed" || len(ev.Item) == 0 {
+			continue
+		}
+		var item codexStreamItem
+		if err := json.Unmarshal(ev.Item, &item); err != nil {
+			continue
+		}
+		if item.Type == "agent_message" && item.Text != "" {
+			parts = append(parts, item.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
 type codexStreamEvent struct {
 	Type string          `json:"type"`
 	Item json.RawMessage `json:"item"`

@@ -3,13 +3,20 @@ package planreview_test
 import (
 	"context"
 	"errors"
+	osexec "os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"springfield/internal/core/agents"
+	"springfield/internal/core/agents/claude"
+	"springfield/internal/core/agents/codex"
+	"springfield/internal/core/agents/gemini"
 	coreexec "springfield/internal/core/exec"
 	coreruntime "springfield/internal/core/runtime"
 	"springfield/internal/features/conductor/planreview"
+	"springfield/internal/testsupport/fixtures"
 )
 
 // fakeRunner captures the request and returns a canned result.
@@ -49,6 +56,46 @@ func TestReviewBuildsPromptAndParsesVerdict(t *testing.T) {
 	}
 	if out.Agent != agents.AgentCodex {
 		t.Fatalf("agent = %q, want codex", out.Agent)
+	}
+}
+
+// Integration: a REAL coreruntime.Runner replays a REAL captured reviewer
+// transcript (escaped stream-json). This exercises both gate fixes together:
+// BUG-4 (the runner's relaxed ValidateResult accepts the tool-free reviewer)
+// and BUG-1 (Review decodes the transcript via the runner's TranscriptDecoder
+// before scanning, so the verdict the council's design would have missed in raw
+// JSON is found). Parameterized over the two agents whose shapes were captured.
+func TestReviewFindsVerdictInRealTranscript(t *testing.T) {
+	registry := agents.NewRegistry(claude.New(osexec.LookPath), codex.New(osexec.LookPath), gemini.New(osexec.LookPath))
+	cases := []struct {
+		agent agents.ID
+		dir   string
+	}{
+		{agents.AgentClaude, "claude"},
+		{agents.AgentCodex, "codex"},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.agent), func(t *testing.T) {
+			events := fixtures.LoadEvents(t, filepath.Join("..", "..", "..", "..", "tests", "realcaptures", tc.dir, "reviewer-verdict-pass-no-tools.jsonl"))
+			runFn := func(_ context.Context, _ coreexec.Command, _ coreexec.EventHandler) coreexec.Result {
+				return coreexec.Result{ExitCode: 0, Events: events}
+			}
+			runner := coreruntime.NewTestRunner(registry, runFn, func() time.Time { return time.Unix(0, 0) })
+
+			out := planreview.Review(context.Background(), planreview.ReviewInput{
+				Runner:   runner,
+				AgentIDs: []agents.ID{tc.agent},
+				WorkDir:  "/tmp/wt",
+				Diff:     "DIFF-BODY",
+				Criteria: []string{"AC one"},
+			})
+			if out.Err != nil {
+				t.Fatalf("review errored (BUG-4 would reject the tool-free reviewer): %v", out.Err)
+			}
+			if !out.Found || out.Verdict.Class != planreview.VerdictPass {
+				t.Fatalf("verdict not found in real transcript (BUG-1): found=%v class=%q", out.Found, out.Verdict.Class)
+			}
+		})
 	}
 }
 

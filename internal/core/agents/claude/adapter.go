@@ -418,6 +418,8 @@ type claudeStreamEvent struct {
 	Type    string `json:"type"`
 	Subtype string `json:"subtype"`
 	IsError bool   `json:"is_error"`
+	// Result is the final aggregate assistant text on a type=="result" event.
+	Result  string `json:"result"`
 	Message struct {
 		Content []claudeMessageContent `json:"content"`
 	} `json:"message"`
@@ -428,7 +430,37 @@ type claudeMessageContent struct {
 	ID        string `json:"id"`
 	ToolUseID string `json:"tool_use_id"`
 	IsError   bool   `json:"is_error"`
+	Text      string `json:"text"`
 	Content   any    `json:"content"`
+}
+
+// AssistantText decodes the reviewer's plain assistant text out of the
+// stream-json transport so the review gate can scan for the verdict marker
+// against REAL newlines, not the escaped JSON line (that mismatch was BUG-1).
+// The terminal result event carries the full aggregate text, so it is
+// authoritative when present; otherwise the assistant text blocks are joined.
+func (a *adapter) AssistantText(events []coreexec.Event) string {
+	var assistant []string
+	for _, e := range events {
+		if e.Type != coreexec.EventStdout {
+			continue
+		}
+		var ev claudeStreamEvent
+		if err := json.Unmarshal([]byte(e.Data), &ev); err != nil {
+			continue
+		}
+		if ev.Type == "result" && ev.Result != "" {
+			return ev.Result
+		}
+		if ev.Type == "assistant" {
+			for _, c := range ev.Message.Content {
+				if c.Type == "text" && c.Text != "" {
+					assistant = append(assistant, c.Text)
+				}
+			}
+		}
+	}
+	return strings.Join(assistant, "\n")
 }
 
 var claudeRetryableNeedles = []string{
