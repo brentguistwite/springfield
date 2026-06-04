@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.1](https://github.com/brentguistwite/springfield/compare/v0.20.0...v0.20.1) (2026-06-03)
+
+
+### Bug Fixes
+
+* init bootstraps execution config + mutation-aware hook-guard ([#83](https://github.com/brentguistwite/springfield/issues/83)) ([30cf3ae](https://github.com/brentguistwite/springfield/commit/30cf3ae2aeaf83a6f42590e8dbcecda8d7850c1d))
+
 ## [0.20.0](https://github.com/brentguistwite/springfield/compare/v0.19.0...v0.20.0) (2026-06-02)
 
 
