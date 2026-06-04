@@ -412,7 +412,18 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		// can never race with the post-Run MarkPassed loop below.
 		iterStory := story
 		workCompleteCheck := func(events []exec.Event) bool {
-			return iterationWorkComplete(events, currentPRD, iterStory.ID)
+			if iterationWorkComplete(events, currentPRD, iterStory.ID) {
+				return true
+			}
+			// Mid-plan defuse: this iteration may have finished only its target
+			// story (no whole-plan COMPLETE). A live HEAD read proves whether the
+			// agent committed — the closure runs synchronously after the agent
+			// process exits, so the worktree HEAD already reflects its commits.
+			worktreeHead, err := in.Manager.Git.Head(ctx.WorktreeRoot)
+			if err != nil {
+				return false
+			}
+			return iterationStoryComplete(events, iterStory.ID, ctx.BaseHead, worktreeHead)
 		}
 		result := in.Runner.Run(context.Background(), coreruntime.Request{
 			AgentIDs:             in.AgentIDs,
@@ -991,6 +1002,38 @@ func iterationWorkComplete(events []exec.Event, p prd.PRD, targetStoryID string)
 		return false
 	}
 	return true
+}
+
+// iterationStoryComplete reports whether THIS iteration legitimately finished
+// its assigned story even though the whole plan is not done — the per-iteration
+// analogue of [iterationWorkComplete]. It exists to defuse the turn cap for a
+// mid-plan iteration that genuinely completed its TARGET story and committed:
+// the cap protects against non-completing thrash, and a committed story-pass is
+// not thrash even when it burned more turns than the budget. Without this, an
+// over-cap iteration that passed its (non-final) story would be failed and its
+// green, committed work discarded (dogfood flo360 #3).
+//
+// Both conditions are required:
+//   - the agent emitted <story-pass> for the iteration's TARGET story.
+//     Off-target markers are ignored, exactly like the post-Run MarkPassed
+//     loop. The marker alone is NOT sufficient: ScanMarkers is an unanchored
+//     substring scan over raw event data, so a thrashing agent could plant or
+//     quote the marker without doing the work.
+//   - the worktree advanced beyond its base ref (baseHead != worktreeHead),
+//     proving commits actually landed — the same anti-thrash proof
+//     [workCompletedBeforeCrash] uses. Emitting/quoting the marker without
+//     committing cannot defuse the cap.
+func iterationStoryComplete(events []exec.Event, targetStoryID, baseHead, worktreeHead string) bool {
+	if baseHead == "" || worktreeHead == "" || baseHead == worktreeHead {
+		return false
+	}
+	passedIDs, _ := ScanMarkers(events)
+	for _, sid := range passedIDs {
+		if sid == targetStoryID {
+			return true
+		}
+	}
+	return false
 }
 
 // workCompletedBeforeCrash reports whether a plan's work is provably finished
