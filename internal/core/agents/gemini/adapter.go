@@ -210,8 +210,9 @@ func (a *adapter) maybeEmitAuthWarning() {
 // errored, and text-only runs all fail validation. OS exit code special
 // cases (53 turn-limit, 42 rejected-input) short-circuit at the top before
 // stream inspection. Process-level failures (any non-zero exit) also fail.
-func (a *adapter) ValidateResult(result coreexec.Result) error {
-	// OS exit code special cases — Gemini-specific, take precedence.
+func (a *adapter) ValidateResult(result coreexec.Result, requireToolAction bool) error {
+	// OS exit code special cases — Gemini-specific, take precedence over BOTH
+	// modes (a turn-limit/rejected-input failure is real even for a reviewer).
 	switch result.ExitCode {
 	case 53:
 		return errors.New("gemini exceeded turn limit without completing task")
@@ -220,6 +221,14 @@ func (a *adapter) ValidateResult(result coreexec.Result) error {
 	}
 	if result.ExitCode != 0 {
 		return fmt.Errorf("gemini exited with non-zero code %d", result.ExitCode)
+	}
+
+	// Tool-free reviewer: past the 53/42/non-zero guards, a clean exit is a
+	// valid completion even with no tool work; the verdict scanner judges
+	// substance. NOTE: not yet validated against a real captured gemini
+	// reviewer transcript (gemini CLI unavailable locally) — capture-pending.
+	if !requireToolAction {
+		return nil
 	}
 
 	seenToolUseIDs := map[string]bool{}

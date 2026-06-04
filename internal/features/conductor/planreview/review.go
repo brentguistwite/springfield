@@ -54,6 +54,10 @@ func Review(ctx context.Context, in ReviewInput) ReviewResult {
 		WorkDir:           in.WorkDir,
 		OnEvent:           in.OnEvent,
 		ExecutionSettings: in.ExecutionSettings,
+		// Reviewer is tool-free by design (reasons over the inline diff); relax
+		// ValidateResult's tool-action contract so a clean verdict-only run is
+		// not rejected before the verdict scanner sees it.
+		ReviewerRole: true,
 	})
 	if res.Err != nil {
 		return ReviewResult{Agent: res.Agent, Events: res.Events, Prompt: prompt, Err: res.Err}

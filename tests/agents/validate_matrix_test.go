@@ -104,7 +104,7 @@ func TestValidateMatrix(t *testing.T) {
 						events = append(events, coreexec.Event{Type: coreexec.EventStderr, Data: line})
 					}
 					result := coreexec.Result{ExitCode: r.exitCode, Events: events}
-					err := c.validator.ValidateResult(result)
+					err := c.validator.ValidateResult(result, true)
 					if r.expectNil && err != nil {
 						t.Fatalf("%s/%s: expected nil, got %v", c.name, r.name, err)
 					}

@@ -51,6 +51,15 @@ type Request struct {
 	// internal/features/conductor/planrun/runner_iteration_test.go for the
 	// pattern.
 	WorkCompleteCheck func(events []exec.Event) bool
+
+	// ReviewerRole marks this as an independent-reviewer run, which is
+	// legitimately tool-free (it reasons over an inline diff with tools
+	// forbidden). The runner passes requireToolAction = !ReviewerRole to
+	// ValidateResult, so a reviewer's clean tool-free transcript is accepted
+	// and the verdict scanner — not the tool-action contract — judges it.
+	// Zero value (false) keeps the strict implementer contract; only
+	// planreview.Review sets it true.
+	ReviewerRole bool
 }
 
 // Status is the outcome of a runtime execution.

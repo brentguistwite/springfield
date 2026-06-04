@@ -319,7 +319,7 @@ func TestClaudeValidatorRejectsRejectedToolCalls(t *testing.T) {
 		},
 	}
 
-	err := validator.ValidateResult(result)
+	err := validator.ValidateResult(result, true)
 	if err == nil {
 		t.Fatal("expected validator to reject result with is_error tool calls")
 	}
@@ -342,7 +342,7 @@ func TestClaudeValidatorAcceptsCleanRun(t *testing.T) {
 		},
 	}
 
-	if err := validator.ValidateResult(result); err != nil {
+	if err := validator.ValidateResult(result, true); err != nil {
 		t.Fatalf("expected clean run to pass validation, got: %v", err)
 	}
 }
@@ -366,7 +366,7 @@ func TestClaudeValidatorAcceptsRecoverableToolFailure(t *testing.T) {
 		},
 	}
 
-	if err := validator.ValidateResult(result); err != nil {
+	if err := validator.ValidateResult(result, true); err != nil {
 		t.Fatalf("expected recoverable tool failure to pass validation, got: %v", err)
 	}
 }
@@ -386,7 +386,7 @@ func TestCodexValidatorRejectsFatalStderr(t *testing.T) {
 		},
 	}
 
-	err := validator.ValidateResult(result)
+	err := validator.ValidateResult(result, true)
 	if err == nil {
 		t.Fatal("expected validator to reject result with fatal stderr")
 	}
@@ -407,7 +407,7 @@ func TestCodexValidatorAcceptsCleanRun(t *testing.T) {
 		},
 	}
 
-	if err := validator.ValidateResult(result); err != nil {
+	if err := validator.ValidateResult(result, true); err != nil {
 		t.Fatalf("expected clean run to pass validation, got: %v", err)
 	}
 }
@@ -429,7 +429,7 @@ func TestCodexValidatorAcceptsOptionalMCPAuthFailureWhenWorkCompleted(t *testing
 		},
 	}
 
-	if err := validator.ValidateResult(result); err != nil {
+	if err := validator.ValidateResult(result, true); err != nil {
 		t.Fatalf("expected optional MCP auth failure to be ignored after completed work, got: %v", err)
 	}
 }
@@ -448,7 +448,7 @@ func TestCodexValidatorRejectsClarifyingQuestionWithoutWork(t *testing.T) {
 		},
 	}
 
-	err := validator.ValidateResult(result)
+	err := validator.ValidateResult(result, true)
 	if err == nil {
 		t.Fatal("expected validator to reject clarifying question without work")
 	}
@@ -467,7 +467,7 @@ func TestCodexValidatorAcceptsQuestionAfterDoingWork(t *testing.T) {
 		},
 	}
 
-	if err := validator.ValidateResult(result); err != nil {
+	if err := validator.ValidateResult(result, true); err != nil {
 		t.Fatalf("expected completed work to pass validation, got: %v", err)
 	}
 }

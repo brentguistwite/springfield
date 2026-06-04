@@ -355,7 +355,7 @@ func (a *adapter) emitSettingsWarning(errMsg string) {
 // false. Absence of failure markers is not enough; refusal-with-no-tools and
 // all-tools-errored runs both fail validation. Process-level failures
 // (non-zero exit, hard error) also fail before stream inspection.
-func (a *adapter) ValidateResult(result coreexec.Result) error {
+func (a *adapter) ValidateResult(result coreexec.Result, requireToolAction bool) error {
 	if result.ExitCode != 0 {
 		return fmt.Errorf("claude exited with non-zero code %d", result.ExitCode)
 	}
@@ -396,9 +396,16 @@ func (a *adapter) ValidateResult(result coreexec.Result) error {
 	if sawSuccessfulToolResult {
 		return nil
 	}
+	if !requireToolAction && sawSuccessResult {
+		// Tool-free reviewer: a terminal result event with subtype "success"
+		// and is_error == false is a valid completion even with zero tool
+		// calls. The verdict scanner judges substance; this only confirms the
+		// process completed cleanly.
+		return nil
+	}
 	if sawSuccessResult && len(seenToolUseIDs) == 0 {
 		// No tool work attempted; a success-typed result alone is not
-		// a positive completion signal under the tightened contract.
+		// a positive completion signal under the implementer contract.
 		return errors.New("claude exited without taking action")
 	}
 	if len(seenToolUseIDs) == 0 {

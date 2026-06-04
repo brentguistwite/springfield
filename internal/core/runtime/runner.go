@@ -177,7 +177,10 @@ func (r *Runner) Run(ctx context.Context, req Request) Result {
 
 		if status == StatusPassed {
 			if validator, ok := commander.(agents.ResultValidator); ok {
-				if err := validator.ValidateResult(execResult); err != nil {
+				// Zero-value-is-strict: a non-reviewer request leaves
+				// ReviewerRole false, so requireToolAction is true (the
+				// implementer contract). Only an explicit reviewer run relaxes.
+				if err := validator.ValidateResult(execResult, !req.ReviewerRole); err != nil {
 					status = StatusFailed
 					execResult.Err = err
 				}

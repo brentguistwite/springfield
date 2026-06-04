@@ -118,7 +118,7 @@ func (a adapter) ClassifyError(events []coreexec.Event, exitCode int, err error)
 // real tool/function-call (i.e. neither agent_message nor reasoning) and no
 // FATAL stderr appeared during the run. Text-only sessions are failures
 // under Policy A — Codex must take action to count as success.
-func (a adapter) ValidateResult(result coreexec.Result) error {
+func (a adapter) ValidateResult(result coreexec.Result, requireToolAction bool) error {
 	if result.ExitCode != 0 {
 		return fmt.Errorf("codex exited with non-zero code %d", result.ExitCode)
 	}
@@ -140,6 +140,12 @@ func (a adapter) ValidateResult(result coreexec.Result) error {
 	}
 
 	if !hasWork {
+		if !requireToolAction {
+			// Tool-free reviewer: a clean exit (0) with no FATAL stderr is a
+			// valid completion even with no tool/function-call work. The
+			// verdict scanner judges substance.
+			return nil
+		}
 		return errors.New("codex exited without taking action")
 	}
 
