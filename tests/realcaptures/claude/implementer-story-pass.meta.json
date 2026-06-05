@@ -1,0 +1,16 @@
+{
+  "tool": "claude",
+  "tool_version": "2.1.165 (Claude Code)",
+  "scenario": "implementer-story-pass",
+  "command_args": [
+    "-p",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--model",
+    "claude-haiku-4-5-20251001"
+  ],
+  "captured_at": "2026-06-05T13:57:11Z",
+  "sha256": "94101dc1411a1c2e5f3f0a7ff4b6df4177cd2bdeb05d08e9dd7b7302309b0462",
+  "notes": "tool-free; emits a story-pass + COMPLETE marker for ScanMarkers coverage"
+}
