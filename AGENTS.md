@@ -25,6 +25,9 @@ Keep file and package names idiomatic for Go. Prefer clear package boundaries, e
 ### 4. Graybox Boundaries and Testing
 Strict boundaries between modules. Tests should target the exported package interface and observable behavior, not unexported internals. This locks down expected behavior at the boundary so internals can be safely refactored or delegated.
 
+### 5. Required-by-Default Capabilities
+A capability that production correctness depends on belongs in a **required** interface method, not an **optional** one discovered by `x.(SomeInterface)`. A type assertion that misses falls back silently — the compiler can't see it, and a graybox test that hands the boundary a capable collaborator will pass while the production object graph (often a thin wrapper or adapter) quietly takes the fallback. Make a capability optional only when some implementations *legitimately* don't provide it — never merely to spare test doubles from implementing it (give the doubles a trivial impl instead). When optionality is genuinely warranted: (a) **embed** the concrete type in delegating wrappers rather than hand-forwarding a subset of methods, so new capabilities propagate automatically; and (b) pin each production type that must satisfy the optional interface with a compile-time assertion (`var _ Iface = (*T)(nil)`), so an omission fails the build, not a shipped run. The boundary test alone is insufficient here — also assert at the point where the production object is assembled.
+
 ## Working Rules
 
 - Treat the CLI as a product surface, not a debug wrapper.
