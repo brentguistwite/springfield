@@ -5,12 +5,71 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
+	"springfield/internal/core/lock"
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/prd"
 )
+
+// BatchLiveness reports whether a live springfield process owns the
+// control-plane lock, plus the stale `running` plan markers a recover would
+// (or did) reset. It distinguishes a genuinely-running batch from one whose
+// owning process died without recording a terminal result (dogfood #10), which
+// the batch.json-presence check alone cannot tell apart.
+type BatchLiveness struct {
+	// Holder is non-nil when a live springfield process currently holds the
+	// lock. When set, the batch is genuinely running and nothing is cleared.
+	Holder *lock.ErrLockHeld
+	// StaleRunning lists plans persisted as running, surfaced read-only for the
+	// diagnose path. Populated only when no live Holder exists.
+	StaleRunning []string
+	// Cleared lists plans this call normalized from running to interrupted.
+	// Non-empty only when clear is true and no live Holder exists.
+	Cleared []string
+}
+
+// ResolveActiveBatchLiveness probes process liveness of the active batch's
+// owner via the control-plane flock. When a live process holds the lock it
+// returns the Holder and touches nothing. When no live process holds it
+// (process-dead orphan), it lists the stale running plans; if clear is true it
+// also normalizes them to interrupted and persists, returning them in Cleared.
+// clear=false is the read-only diagnose path.
+func ResolveActiveBatchLiveness(rootDir string, clear bool) (BatchLiveness, error) {
+	if held := lock.Inspect(rootDir); held != nil {
+		return BatchLiveness{Holder: held}, nil
+	}
+
+	project, err := conductor.LoadProject(rootDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return BatchLiveness{}, nil
+		}
+		return BatchLiveness{}, err
+	}
+
+	var stale []string
+	for id, plan := range project.State.Plans {
+		if plan != nil && plan.Status == conductor.StatusRunning {
+			stale = append(stale, id)
+		}
+	}
+	sort.Strings(stale)
+
+	if !clear {
+		return BatchLiveness{StaleRunning: stale}, nil
+	}
+
+	cleared := project.NormalizeStaleRunning(time.Now())
+	if len(cleared) > 0 {
+		if err := project.SaveState(); err != nil {
+			return BatchLiveness{}, fmt.Errorf("persist stale-running normalization: %w", err)
+		}
+	}
+	return BatchLiveness{StaleRunning: stale, Cleared: cleared}, nil
+}
 
 // DiagnosePlan loads project state, normalizes stale-running plans, inspects
 // the plan's worktree if one is recorded, and returns a full diagnosis.

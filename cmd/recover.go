@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -155,14 +156,16 @@ func runOrphanRecover(w io.Writer, root string, diagnoseOnly bool) error {
 		return fmt.Errorf("resolve batch paths: %w", err)
 	}
 
-	// If batch.json is still present, the run is not orphaned.
-	// Only ENOENT is treated as orphan; any other filesystem error
-	// (permission, transient I/O) must fail closed so we never
-	// destroy live state based on a degraded read.
+	// batch.json present does NOT prove the batch is alive: a crash (e.g. the
+	// disk-full kill in dogfood #10) leaves batch.json behind with plans still
+	// marked running and no owning process. Probe process liveness via the
+	// control-plane flock to tell a genuinely-running batch from a process-dead
+	// orphan, instead of keying off batch.json presence alone.
+	// Only ENOENT routes to the archive path below; any other filesystem error
+	// (permission, transient I/O) must fail closed so we never destroy live
+	// state based on a degraded read.
 	if _, statErr := os.Stat(paths.BatchPath()); statErr == nil {
-		fmt.Fprintf(w, "Batch %q still has a live batch.json — nothing to recover.\n", run.ActiveBatchID)
-		fmt.Fprintln(w, "Run \"springfield start\" to resume or \"springfield status\" to inspect.")
-		return nil
+		return reportActiveBatchLiveness(w, root, run.ActiveBatchID, diagnoseOnly)
 	} else if !os.IsNotExist(statErr) {
 		return fmt.Errorf("stat batch.json (refusing to recover on non-ENOENT error): %w", statErr)
 	}
@@ -182,6 +185,49 @@ func runOrphanRecover(w io.Writer, root string, diagnoseOnly bool) error {
 	} else {
 		fmt.Fprintln(w, "Source markdown is also gone. Invoke the springfield:plan skill to create a new batch.")
 	}
+	return nil
+}
+
+// reportActiveBatchLiveness handles the batch.json-present case of orphan
+// recovery. It probes whether a live springfield process owns the batch and
+// either reports it as running, or (for a process-dead orphan) resets the
+// stale running plan markers to interrupted so the next start can resume.
+func reportActiveBatchLiveness(w io.Writer, root, batchID string, diagnoseOnly bool) error {
+	live, err := execution.ResolveActiveBatchLiveness(root, !diagnoseOnly)
+	if err != nil {
+		return fmt.Errorf("inspect batch liveness: %w", err)
+	}
+
+	if live.Holder != nil {
+		if live.Holder.PID != 0 {
+			fmt.Fprintf(w, "Batch %q is running (pid %d since %s) — nothing to recover.\n", batchID, live.Holder.PID, live.Holder.Since.Format(time.RFC3339))
+		} else {
+			fmt.Fprintf(w, "Batch %q is running — nothing to recover.\n", batchID)
+		}
+		fmt.Fprintln(w, "Wait for it to finish, or run \"springfield status\" to inspect.")
+		return nil
+	}
+
+	if len(live.StaleRunning) == 0 && len(live.Cleared) == 0 {
+		fmt.Fprintf(w, "Batch %q has no live springfield process and no plans stuck running — nothing to recover.\n", batchID)
+		fmt.Fprintln(w, "Run \"springfield start\" to resume or \"springfield status\" to inspect.")
+		return nil
+	}
+
+	if diagnoseOnly {
+		fmt.Fprintf(w, "Batch %q has no live springfield process, but %d plan(s) are still marked running (orphaned by a crash):\n", batchID, len(live.StaleRunning))
+		for _, id := range live.StaleRunning {
+			fmt.Fprintf(w, "  - %s\n", id)
+		}
+		fmt.Fprintln(w, "\nRun \"springfield recover\" to reset them to interrupted, then \"springfield start\" to resume.")
+		return nil
+	}
+
+	fmt.Fprintf(w, "Batch %q had no live springfield process (crashed or killed). Reset %d orphaned running plan(s) to interrupted:\n", batchID, len(live.Cleared))
+	for _, id := range live.Cleared {
+		fmt.Fprintf(w, "  - %s\n", id)
+	}
+	fmt.Fprintln(w, "\nRun \"springfield start\" to resume.")
 	return nil
 }
 
