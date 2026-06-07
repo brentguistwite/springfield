@@ -11,6 +11,7 @@
 
 # Go build artifacts
 springfield
+capture-fixture
 *.exe
 
 # OS
