@@ -206,6 +206,64 @@ func AcceptPlanDrift(rootDir, planID string, computeDigest func(conductor.PlanUn
 	return rec, nil
 }
 
+// ResetPlan discards a prior attempt: it removes the recorded worktree and
+// deletes the plan branch, then resets the plan to a clean first-run via
+// Project.ResetPlanFresh. This is the full-cleanup path for dogfood #6 —
+// removing only the worktree (as the preflight-input-drift message used to
+// suggest) left the springfield/<plan> branch and a dangling worktree
+// registration behind, colliding with the next worktree add. Branch deletion
+// is the load-bearing step and surfaces real errors; worktree removal is
+// best-effort + prune so a manually-deleted worktree dir still gets cleaned.
+func ResetPlan(rootDir, planID string) (*conductor.RecoveryAction, error) {
+	project, err := conductor.LoadProject(rootDir)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := project.PlanUnitByID(planID); !ok {
+		return nil, fmt.Errorf("plan %q is not registered in the execution config", planID)
+	}
+
+	var worktreePath, branch string
+	if ps, ok := project.State.Plans[planID]; ok && ps != nil {
+		worktreePath, branch = ps.WorktreePath, ps.Branch
+	}
+
+	if err := cleanupPlanArtifacts(rootDir, worktreePath, branch); err != nil {
+		return nil, err
+	}
+
+	rec, err := project.ResetPlanFresh(planID)
+	if err != nil {
+		return nil, err
+	}
+	if err := project.SaveState(); err != nil {
+		return nil, fmt.Errorf("persist reset: %w", err)
+	}
+	return rec, nil
+}
+
+// cleanupPlanArtifacts removes the on-disk worktree and the plan branch so a
+// reset plan can be re-created from base without colliding with stale git
+// state. Worktree removal is best-effort (a manually-deleted dir is healed by
+// prune); branch deletion propagates errors since a surviving branch is the
+// exact collision dogfood #6 reported.
+func cleanupPlanArtifacts(rootDir, worktreePath, branch string) error {
+	if worktreePath != "" {
+		_, _ = exec.Command("git", "-C", rootDir, "worktree", "remove", "--force", worktreePath).CombinedOutput()
+	}
+	_, _ = exec.Command("git", "-C", rootDir, "worktree", "prune").CombinedOutput()
+	if branch != "" && localBranchExists(rootDir, branch) {
+		if out, err := exec.Command("git", "-C", rootDir, "branch", "-D", branch).CombinedOutput(); err != nil {
+			return fmt.Errorf("delete plan branch %q: %w: %s", branch, err, strings.TrimSpace(string(out)))
+		}
+	}
+	return nil
+}
+
+func localBranchExists(rootDir, branch string) bool {
+	return exec.Command("git", "-C", rootDir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch).Run() == nil
+}
+
 func inspectWorktree(rootDir, worktreePath, baseHead string) *conductor.WorktreeInspection {
 	wt := &conductor.WorktreeInspection{}
 

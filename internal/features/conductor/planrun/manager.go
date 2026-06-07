@@ -197,7 +197,7 @@ func (m *Manager) Prepare(in PrepareInput) (PrepareDecision, error) {
 		case statErr == nil && info.IsDir():
 			if in.PriorState.InputDigest != "" && in.PriorState.InputDigest != digest {
 				return PrepareDecision{}, reject("preflight-input-drift",
-					fmt.Sprintf("plan %q inputs changed since last attempt; reuse refused. Remove %s or reset the plan to re-run with new inputs.", in.Unit.ID, recordedPath))
+					fmt.Sprintf("plan %q inputs changed since last attempt; reuse refused. To keep the existing worktree %s and resume with the new inputs: springfield recover --plan %s --accept-drift. To discard it and start over (removes the worktree AND the springfield/<plan> branch): springfield recover --plan %s --reset.", in.Unit.ID, recordedPath, in.Unit.ID, in.Unit.ID))
 			}
 			registered, lerr := m.Git.WorktreeListPaths(in.ControlRoot)
 			if lerr != nil {

@@ -82,6 +82,69 @@ func TestRecoverAcceptDriftRecordsCurrentDigest(t *testing.T) {
 	}
 }
 
+// TestRecoverResetDiscardsWorktreeAndBranch pins the dogfood #6 full-cleanup
+// path: --reset removes the worktree AND deletes the springfield/<plan> branch
+// (not just the worktree), so the next start re-creates from base without the
+// "branch already exists" / dangling-registration collision.
+func TestRecoverResetDiscardsWorktreeAndBranch(t *testing.T) {
+	bin := buildBinary(t)
+	dir := initRealGitRepo(t)
+	writeSpringfieldConfig(t, dir, "claude")
+	writeRegisteredPlansBinary(t, dir, []registeredPlan{
+		{ID: "alpha", Title: "Implement alpha", Order: 1},
+	})
+	gitMust(t, dir, "add", ".")
+	gitMust(t, dir, "commit", "-m", "scaffold")
+
+	wt := filepath.Join(dir, ".worktrees", "alpha")
+	gitMust(t, dir, "worktree", "add", "-b", "springfield/alpha", wt, "main")
+	baseHead := strings.TrimSpace(gitOut(t, dir, "rev-parse", "main"))
+
+	writeConductorStateBinary(t, dir, &conductor.State{
+		Plans: map[string]*conductor.PlanState{
+			"alpha": {
+				Status:       conductor.StatusFailed,
+				Attempts:     1,
+				WorktreePath: wt,
+				Branch:       "springfield/alpha",
+				BaseRef:      "main",
+				BaseHead:     baseHead,
+				ExitReason:   "preflight-input-drift",
+				InputDigest:  "sha256:stale",
+			},
+		},
+	})
+
+	out, err := runBinaryIn(t, bin, dir, "recover", "--plan", "alpha", "--reset")
+	if err != nil {
+		t.Fatalf("recover --reset: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "Reset plan") {
+		t.Errorf("expected reset confirmation:\n%s", out)
+	}
+
+	// Worktree registration is gone.
+	if wl := gitOut(t, dir, "worktree", "list", "--porcelain"); strings.Contains(wl, wt) {
+		t.Errorf("worktree still registered after reset:\n%s", wl)
+	}
+	// Branch is gone.
+	if bl := strings.TrimSpace(gitOut(t, dir, "branch", "--list", "springfield/alpha")); bl != "" {
+		t.Errorf("branch still exists after reset: %q", bl)
+	}
+
+	project, err := conductor.LoadProject(dir)
+	if err != nil {
+		t.Fatalf("load project: %v", err)
+	}
+	ps := project.State.Plans["alpha"]
+	if ps.Status != conductor.StatusPending {
+		t.Errorf("status = %q, want pending", ps.Status)
+	}
+	if ps.WorktreePath != "" || ps.Branch != "" {
+		t.Errorf("worktree refs not cleared: path=%q branch=%q", ps.WorktreePath, ps.Branch)
+	}
+}
+
 // TestRecoverAcceptDriftLetsStartReachDispatch is the full A10 integration: an
 // interrupted plan with a live worktree drifts because an operator deliberately
 // added a guidance file (AGENTS.md), --accept-drift records the new digest, and

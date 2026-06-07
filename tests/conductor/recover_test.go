@@ -86,6 +86,68 @@ func TestRecoverRetryInterruptedPlan(t *testing.T) {
 	}
 }
 
+// TestResetPlanFreshClearsWorktreeRefs pins #6: a full reset (discard the
+// prior attempt) must clear the recorded worktree path, branch, and digest so
+// the next start is a clean first-run — not a resume of stale artifacts.
+func TestResetPlanFreshClearsWorktreeRefs(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root)
+	writeRegisteredPlanUnitConfig(t, root, []string{"alpha"})
+
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("load project: %v", err)
+	}
+	project.State.Plans["alpha"] = &conductor.PlanState{
+		Status:       conductor.StatusFailed,
+		Error:        "boom",
+		ExitReason:   "preflight-input-drift",
+		Attempts:     2,
+		WorktreePath: root + "/.worktrees/alpha",
+		Branch:       "springfield/alpha",
+		BaseHead:     "deadbeef",
+		InputDigest:  "sha256:stale",
+	}
+
+	rec, err := project.ResetPlanFresh("alpha")
+	if err != nil {
+		t.Fatalf("ResetPlanFresh: %v", err)
+	}
+	if rec.Action != "reset" {
+		t.Fatalf("action = %q, want reset", rec.Action)
+	}
+
+	ps := project.State.Plans["alpha"]
+	if ps.Status != conductor.StatusPending {
+		t.Fatalf("status = %q, want pending", ps.Status)
+	}
+	if ps.WorktreePath != "" || ps.Branch != "" {
+		t.Fatalf("worktree refs must be cleared, got path=%q branch=%q", ps.WorktreePath, ps.Branch)
+	}
+	if ps.InputDigest != "" {
+		t.Fatalf("digest must be cleared for a fresh first-run, got %q", ps.InputDigest)
+	}
+	if ps.Error != "" || ps.ExitReason != "" {
+		t.Fatalf("failure state must be cleared, got Error=%q ExitReason=%q", ps.Error, ps.ExitReason)
+	}
+}
+
+func TestResetPlanFreshRejectsRunningPlan(t *testing.T) {
+	root := t.TempDir()
+	writeProjectConfig(t, root)
+	writeRegisteredPlanUnitConfig(t, root, []string{"alpha"})
+
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("load project: %v", err)
+	}
+	project.MarkRunning("alpha")
+
+	if _, err := project.ResetPlanFresh("alpha"); err == nil {
+		t.Fatal("expected reset to refuse a mid-flight running plan")
+	}
+}
+
 func TestRecoverRetryRejectsCompletedPlan(t *testing.T) {
 	root := t.TempDir()
 	writeProjectConfig(t, root)

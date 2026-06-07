@@ -24,6 +24,7 @@ func NewRecoverCommand() *cobra.Command {
 		planID        string
 		markCompleted bool
 		acceptDrift   bool
+		reset         bool
 	)
 
 	cmd := &cobra.Command{
@@ -40,7 +41,11 @@ func NewRecoverCommand() *cobra.Command {
 			"With --plan <id> --accept-drift: accept a deliberate input change (e.g. an\n" +
 			"updated AGENTS.md or prd.json edit) that the digest flagged as drift —\n" +
 			"record the current input digest and reset the plan to pending so the next\n" +
-			"\"springfield start\" no longer refuses with preflight-input-drift.",
+			"\"springfield start\" no longer refuses with preflight-input-drift.\n\n" +
+			"With --plan <id> --reset: discard a prior attempt entirely — remove its\n" +
+			"worktree, delete its springfield/<plan> branch, and reset the plan to a\n" +
+			"clean first-run. Use this (not --accept-drift) when you want to start over\n" +
+			"rather than resume the existing worktree.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			loaded, err := config.LoadFrom(dir)
@@ -49,6 +54,16 @@ func NewRecoverCommand() *cobra.Command {
 			}
 			root := loaded.RootDir
 			w := cmd.OutOrStdout()
+
+			if reset {
+				if planID == "" {
+					return fmt.Errorf("--reset requires --plan <id>")
+				}
+				if diagnose || markCompleted || acceptDrift {
+					return fmt.Errorf("--reset cannot be combined with --diagnose, --mark-completed, or --accept-drift")
+				}
+				return runPlanReset(w, root, planID)
+			}
 
 			if acceptDrift {
 				if planID == "" {
@@ -86,6 +101,7 @@ func NewRecoverCommand() *cobra.Command {
 	cmd.Flags().StringVar(&planID, "plan", "", "plan ID to diagnose or recover (omit for orphan-batch recovery)")
 	cmd.Flags().BoolVar(&markCompleted, "mark-completed", false, "with --plan: mark a non-completed plan completed (requires all stories passing) and queue its merge")
 	cmd.Flags().BoolVar(&acceptDrift, "accept-drift", false, "with --plan: accept deliberate input changes by recording the current input digest and resetting the plan to pending")
+	cmd.Flags().BoolVar(&reset, "reset", false, "with --plan: discard the prior attempt — remove its worktree, delete its branch, and reset to a clean first-run")
 	return cmd
 }
 
@@ -110,6 +126,17 @@ func runPlanAcceptDrift(w io.Writer, root, planID string) error {
 
 	fmt.Fprintf(w, "Accepted input drift for plan %q: %s\n", planID, rec.Reason)
 	fmt.Fprintln(w, "Run \"springfield start\" to continue.")
+	return nil
+}
+
+func runPlanReset(w io.Writer, root, planID string) error {
+	rec, err := execution.ResetPlan(root, planID)
+	if err != nil {
+		return fmt.Errorf("reset plan %q: %w", planID, err)
+	}
+
+	fmt.Fprintf(w, "Reset plan %q: %s\n", planID, rec.Reason)
+	fmt.Fprintln(w, "Removed its worktree and branch. Run \"springfield start\" to re-run from a clean base.")
 	return nil
 }
 
