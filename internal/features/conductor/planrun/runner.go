@@ -473,6 +473,29 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		if err := execution.WriteEvidence(iterDir, snap); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: write evidence iter %d for plan %s: %v\n", iter, planID, err)
 		}
+		// When the iteration fell through multiple agents (e.g. claude →
+		// codex), preserve each dispatch's evidence under iter-N/<agent>/ so an
+		// earlier agent's failed attempt is not lost to the winning agent's
+		// flat iter-N/ write (dogfood #8). Single-attempt iterations skip this:
+		// the flat dir already is that agent's record.
+		if len(result.Attempts) > 1 {
+			for _, att := range result.Attempts {
+				attDir := filepath.Join(iterDir, string(att.Agent))
+				attSnap := execution.EvidenceSnapshot{
+					AgentID:   string(att.Agent),
+					Model:     modelForAgent(att.Agent, in.ExecutionSettings),
+					ExitCode:  att.ExitCode,
+					Prompt:    prompt,
+					Events:    att.Events,
+					StartedAt: att.StartedAt,
+					EndedAt:   att.EndedAt,
+					Err:       att.Err,
+				}
+				if err := execution.WriteEvidence(attDir, attSnap); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: write per-agent evidence iter %d agent %s for plan %s: %v\n", iter, att.Agent, planID, err)
+				}
+			}
+		}
 		capture := extractCost(result.Agent, result.Events, snap.Model, now())
 		capture.BatchID = in.BatchID
 		if err := execution.WriteCost(iterDir, capture); err != nil {

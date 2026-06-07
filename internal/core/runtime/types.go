@@ -70,13 +70,35 @@ const (
 	StatusFailed Status = "failed"
 )
 
-// Result is the outcome of a runtime execution.
+// Result is the outcome of a runtime execution. Agent/Events/ExitCode/Err
+// describe the winning (or final) dispatch; Attempts preserves every dispatch
+// in order so a fallthrough's earlier agents are not lost.
 type Result struct {
 	Agent     agents.ID
 	Status    Status
 	ExitCode  int
 	Events    []exec.Event
 	Err       error
+	StartedAt time.Time
+	EndedAt   time.Time
+	// Attempts records each dispatched (non-skipped) agent in chain order.
+	// On a claude→codex fallthrough it holds both, so the caller can persist
+	// per-agent evidence (dogfood #8) instead of the last agent overwriting
+	// the first. A single-agent run leaves exactly one entry.
+	Attempts []Attempt
+}
+
+// Attempt is one agent dispatch within a Run, capturing enough to persist
+// per-agent evidence and explain a fallthrough.
+type Attempt struct {
+	Agent     agents.ID
+	ExitCode  int
+	Events    []exec.Event
+	Err       error
+	// Class is the error classification of a failed attempt (retryable/fatal),
+	// the reason the chain did or did not fall through. Empty on a passing
+	// attempt.
+	Class     agents.ErrorClass
 	StartedAt time.Time
 	EndedAt   time.Time
 }
