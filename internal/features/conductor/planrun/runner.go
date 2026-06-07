@@ -69,6 +69,10 @@ type SinglePlanInput struct {
 	// protected branch (see [ProtectedBases]). Threaded through to
 	// PrepareInput; cmd/start enables this by default.
 	EnforceProtectedBase bool
+	// MinFreeDiskBytes is the disk-space floor threaded to PrepareInput for the
+	// fresh-checkout preflight. Zero selects the manager's built-in default.
+	// cmd/start passes config.Config.MinFreeDiskBytes().
+	MinFreeDiskBytes uint64
 	// ProjectRoot is the project's config root used to resolve operator-override
 	// prompt templates. Caller passes the same path used for config.LoadFrom.
 	// MUST NOT fall back to os.Getwd inside BuildPromptForPlan.
@@ -215,6 +219,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		PriorState:           prior,
 		AllStates:            in.Project.State.Plans,
 		EnforceProtectedBase: in.EnforceProtectedBase,
+		MinFreeDiskBytes:     in.MinFreeDiskBytes,
 	})
 	if err != nil {
 		tag := "preflight-error"

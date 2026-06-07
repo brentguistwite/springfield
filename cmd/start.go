@@ -432,6 +432,7 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 			TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(root, ".springfield", "plans"), controlRoot: root},
 			Ctx:                  ctx,
 			MaxTurnsPerIteration: loaded.Config.MaxTurnsPerIteration(),
+			MinFreeDiskBytes:     loaded.Config.MinFreeDiskBytes(),
 			CostCapUSD:           costCap,
 			BatchID:              b.ID,
 		})

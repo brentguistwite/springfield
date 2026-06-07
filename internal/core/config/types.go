@@ -3,6 +3,8 @@ package config
 import (
 	"strings"
 
+	"github.com/dustin/go-humanize"
+
 	"springfield/internal/core/agents"
 )
 
@@ -79,6 +81,12 @@ type ProjectConfig struct {
 	// (nil → DefaultMaxTurnsPerIteration) is distinguishable from an explicit
 	// 0 (cap disabled). Resolve the effective value via MaxTurnsPerIteration().
 	MaxTurnsPerIteration *int `toml:"max_turns_per_iteration,omitempty"`
+	// MinFreeDisk is the free-space floor the disk preflight enforces before a
+	// fresh worktree checkout, as a human-readable size (e.g. "3GiB", "500MB").
+	// Empty selects the caller's built-in default. Raise it on large monorepos
+	// whose per-worktree install (node_modules) dwarfs the default floor.
+	// Resolve the byte value via MinFreeDiskBytes().
+	MinFreeDisk string `toml:"min_free_disk,omitempty"`
 }
 
 // DefaultMaxTurnsPerIteration is the per-iteration agent-turn ceiling applied
@@ -105,6 +113,22 @@ func (c Config) AutoBranchPatternOrDefault() string {
 		return DefaultAutoBranchPattern
 	}
 	return c.Project.AutoBranchPattern
+}
+
+// MinFreeDiskBytes resolves the configured disk-space floor in bytes. An
+// omitted or unparseable [project] min_free_disk yields 0, which callers read
+// as "apply your built-in default" rather than "no floor". Accepts both SI
+// ("500MB") and binary ("3GiB") unit suffixes via humanize.ParseBytes.
+func (c Config) MinFreeDiskBytes() uint64 {
+	s := strings.TrimSpace(c.Project.MinFreeDisk)
+	if s == "" {
+		return 0
+	}
+	n, err := humanize.ParseBytes(s)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // MaxTurnsPerIteration resolves the effective per-iteration agent-turn cap:

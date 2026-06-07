@@ -50,6 +50,27 @@ func TestAutoBranchPatternCustom(t *testing.T) {
 	}
 }
 
+func TestMinFreeDiskBytesOmittedIsZero(t *testing.T) {
+	var c Config
+	if got := c.MinFreeDiskBytes(); got != 0 {
+		t.Fatalf("omitted min_free_disk got %d, want 0 (caller applies its floor)", got)
+	}
+}
+
+func TestMinFreeDiskBytesParsesBinaryUnits(t *testing.T) {
+	c := Config{Project: ProjectConfig{MinFreeDisk: "3GiB"}}
+	if got := c.MinFreeDiskBytes(); got != 3*1024*1024*1024 {
+		t.Fatalf("3GiB got %d, want %d", got, 3*1024*1024*1024)
+	}
+}
+
+func TestMinFreeDiskBytesInvalidIsZero(t *testing.T) {
+	c := Config{Project: ProjectConfig{MinFreeDisk: "not-a-size"}}
+	if got := c.MinFreeDiskBytes(); got != 0 {
+		t.Fatalf("invalid min_free_disk got %d, want 0", got)
+	}
+}
+
 func TestMaxTurnsPerIterationOmittedDefaults(t *testing.T) {
 	var c Config
 	if got := c.MaxTurnsPerIteration(); got != DefaultMaxTurnsPerIteration {

@@ -25,6 +25,11 @@ type PrepareInput struct {
 	// minimal; cmd/start enables it unless the project opts out via
 	// allow_protected_base = true.
 	EnforceProtectedBase bool
+	// MinFreeDiskBytes is the free-space floor the disk preflight enforces
+	// before a fresh worktree checkout. Zero selects [defaultMinFreeDiskBytes].
+	// Ignored on a worktree-reuse resume, which neither re-checks-out nor
+	// re-installs.
+	MinFreeDiskBytes uint64
 }
 
 // ProtectedBases is the list of branch names Springfield refuses to ff-merge
@@ -73,10 +78,13 @@ func reject(tag, msg string) error { return &PreflightError{Tag: tag, Message: m
 // Manager owns the create/reuse decision plus the preflight matrix.
 type Manager struct {
 	Git Git
+	// Disk backs the disk-space preflight. A nil Disk skips the check, so
+	// existing callers that construct a Manager with only Git keep working.
+	Disk DiskChecker
 }
 
-// NewManager builds a manager backed by the system git CLI.
-func NewManager() *Manager { return &Manager{Git: CLIGit{}} }
+// NewManager builds a manager backed by the system git CLI and statfs.
+func NewManager() *Manager { return &Manager{Git: CLIGit{}, Disk: cliDisk{}} }
 
 // Prepare evaluates the preflight matrix and resolves the execution context
 // without yet modifying disk. The returned decision tells the caller whether
@@ -260,6 +268,13 @@ func (m *Manager) Prepare(in PrepareInput) (PrepareDecision, error) {
 			fmt.Sprintf("worktree at %s is registered with git but not tracked in Springfield state; remove or rename it before running plan %q", wtPath, in.Unit.ID))
 	}
 
+	// Fresh checkout: refuse up front if free space is below the floor, so a
+	// near-full disk fails fast here instead of crashing mid-run with ENOSPC
+	// once the agent's install (e.g. node_modules) fills the volume.
+	if err := m.checkDisk(in.ControlRoot, in.MinFreeDiskBytes, in.Unit.ID); err != nil {
+		return PrepareDecision{}, err
+	}
+
 	// Resolve base head best-effort. If the ref does not resolve yet, fail
 	// loudly: a missing base ref is a configuration error.
 	baseHead, err := m.Git.ResolveRef(in.ControlRoot, baseRef)
@@ -298,6 +313,44 @@ func (m *Manager) CreateWorktree(ctx Context) error {
 		return m.Git.WorktreeAddExistingBranch(ctx.ControlRoot, ctx.WorktreeRoot, ctx.Branch)
 	}
 	return m.Git.WorktreeAddNewBranch(ctx.ControlRoot, ctx.WorktreeRoot, ctx.Branch, ctx.BaseRef)
+}
+
+// checkDisk enforces the free-space floor before a fresh worktree checkout.
+// A nil Disk or an unmeasurable platform skips the check (fail-open): the
+// preflight is a guard against the common near-full-disk crash, not a hard
+// gate that should block runs it cannot evaluate.
+func (m *Manager) checkDisk(root string, minFree uint64, planID string) error {
+	if m.Disk == nil {
+		return nil
+	}
+	if minFree == 0 {
+		minFree = defaultMinFreeDiskBytes
+	}
+	avail, err := m.Disk.AvailableBytes(root)
+	if err != nil {
+		return nil
+	}
+	if avail < minFree {
+		return reject("preflight-insufficient-disk",
+			fmt.Sprintf("plan %q: only %s free at %s but a worktree checkout needs at least %s. Each plan worktree is a full checkout plus the agent's install (e.g. node_modules); free space before running.",
+				planID, humanBytes(avail), root, humanBytes(minFree)))
+	}
+	return nil
+}
+
+// humanBytes formats a byte count as a compact binary-unit string for
+// operator-facing preflight messages.
+func humanBytes(n uint64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := uint64(unit), 0
+	for v := n / unit; v >= unit; v /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
 func worktreePathsByOwner(states map[string]*conductor.PlanState, exclude string) map[string]string {

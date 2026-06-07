@@ -643,6 +643,114 @@ func TestPrepareRejectsMissingPlanFileBeforeWorktreeSideEffects(t *testing.T) {
 	}
 }
 
+// fakeDisk is a scripted DiskChecker double for the disk-space preflight.
+type fakeDisk struct {
+	avail uint64
+	err   error
+	asked []string
+}
+
+func (d *fakeDisk) AvailableBytes(path string) (uint64, error) {
+	d.asked = append(d.asked, path)
+	return d.avail, d.err
+}
+
+func TestPrepareRefusesInsufficientDisk(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan")
+
+	g := newFakeGit()
+	d := &fakeDisk{avail: 100 << 20} // 100 MiB free
+	m := &planrun.Manager{Git: g, Disk: d}
+	_, err := m.Prepare(planrun.PrepareInput{
+		ControlRoot:      root,
+		WorktreeBase:     ".worktrees",
+		Unit:             conductor.PlanUnit{ID: "p", Path: ".springfield/plans/p.md", Order: 1},
+		AllStates:        map[string]*conductor.PlanState{},
+		MinFreeDiskBytes: 2 << 30, // require 2 GiB
+	})
+	if err == nil {
+		t.Fatalf("expected insufficient-disk rejection")
+	}
+	pe := planrun.AsPreflight(err)
+	if pe == nil || pe.Tag != "preflight-insufficient-disk" {
+		t.Fatalf("expected preflight-insufficient-disk, got %v", err)
+	}
+	if len(g.createNew)+len(g.createExisting) != 0 {
+		t.Fatalf("worktree side effects must not fire on insufficient-disk rejection")
+	}
+}
+
+func TestPrepareAllowsSufficientDisk(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan")
+
+	g := newFakeGit()
+	d := &fakeDisk{avail: 50 << 30} // 50 GiB free
+	m := &planrun.Manager{Git: g, Disk: d}
+	dec, err := m.Prepare(planrun.PrepareInput{
+		ControlRoot:      root,
+		WorktreeBase:     ".worktrees",
+		Unit:             conductor.PlanUnit{ID: "p", Path: ".springfield/plans/p.md", Order: 1},
+		AllStates:        map[string]*conductor.PlanState{},
+		MinFreeDiskBytes: 2 << 30,
+	})
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if dec.Reason != "clean-first-run" {
+		t.Fatalf("Reason: %q", dec.Reason)
+	}
+	if len(d.asked) == 0 {
+		t.Fatalf("disk checker should have been consulted")
+	}
+}
+
+// A reuse/resume run does not re-checkout or re-install, so the disk
+// preflight must not block it even when free space is below the floor.
+func TestPrepareResumeSkipsDiskPreflight(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan body v1")
+
+	unit := conductor.PlanUnit{ID: "p", Path: ".springfield/plans/p.md", Order: 1}
+	wt := filepath.Join(root, ".worktrees", "p")
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatalf("mkdir wt: %v", err)
+	}
+	digest, err := planrun.InputDigest(root, unit)
+	if err != nil {
+		t.Fatalf("InputDigest: %v", err)
+	}
+	prior := &conductor.PlanState{
+		Status:       conductor.StatusFailed,
+		WorktreePath: wt,
+		Branch:       "springfield/p",
+		BaseRef:      "main",
+		BaseHead:     "deadbeefcafef00d",
+		InputDigest:  digest,
+	}
+
+	g := newFakeGit()
+	g.worktreePaths = []string{wt}
+	g.branchByPath = map[string]string{wt: "springfield/p"}
+	d := &fakeDisk{avail: 1 << 20} // 1 MiB — far below any floor
+	m := &planrun.Manager{Git: g, Disk: d}
+	dec, err := m.Prepare(planrun.PrepareInput{
+		ControlRoot:      root,
+		WorktreeBase:     ".worktrees",
+		Unit:             unit,
+		PriorState:       prior,
+		AllStates:        map[string]*conductor.PlanState{"p": prior},
+		MinFreeDiskBytes: 2 << 30,
+	})
+	if err != nil {
+		t.Fatalf("resume must not be blocked by disk preflight: %v", err)
+	}
+	if !dec.Reuse {
+		t.Fatalf("expected reuse")
+	}
+}
+
 func TestCreateWorktreeAddsNewBranchWhenAbsent(t *testing.T) {
 	g := newFakeGit()
 	m := &planrun.Manager{Git: g}
