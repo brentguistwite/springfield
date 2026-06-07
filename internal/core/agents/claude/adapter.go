@@ -206,6 +206,17 @@ func shellQuote(s string) string {
 func (a *adapter) springfieldControlPlaneSettingsJSON() string {
 	hookCommand := a.SpringfieldControlPlaneHookCommand()
 	payload := map[string]any{
+		// Neutralize the operator's inherited interactive output style. The
+		// "Explanatory" style bakes "★ Insight" preambles into the system
+		// prompt (dogfood #11); forcing the built-in "Default" here overrides
+		// it. --settings sits at command-line precedence — above every
+		// settings.json file scope (user/project/local) — so this wins
+		// regardless of where the operator's style was set. Residual: a
+		// genuine standalone SessionStart hook in operator config still fires
+		// (settings merge hooks additively; the only off-switch is the blunt
+		// disableAllHooks, which would also kill this control-plane hook), but
+		// the observed leak is output-style-driven and this closes it.
+		"outputStyle": "Default",
 		"hooks": map[string]any{
 			"PreToolUse": []map[string]any{{
 				"matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
