@@ -350,6 +350,18 @@ func canonicalFSPath(p string) string {
 	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
 		return filepath.Clean(resolved)
 	}
+	// The leaf no longer exists (e.g. the worktree dir was already removed), so
+	// EvalSymlinks fails. Resolve the nearest existing ancestor's symlinks and
+	// rejoin the missing tail, so a macOS /var → /private/var alias still
+	// compares equal to the path git recorded while the dir existed.
+	dir, rest := filepath.Dir(abs), filepath.Base(abs)
+	for dir != filepath.Dir(dir) {
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Clean(filepath.Join(resolved, rest))
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
+		dir = filepath.Dir(dir)
+	}
 	return filepath.Clean(abs)
 }
 
