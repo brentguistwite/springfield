@@ -39,28 +39,26 @@ import (
 )
 
 // runtimeAgentRunner is a thin adapter so cmd does not need to import the
-// shared coreruntime constructor everywhere.
-type runtimeAgentRunner struct{ inner *coreruntime.Runner }
+// shared coreruntime constructor everywhere. It EMBEDS the concrete runner
+// rather than hand-forwarding individual methods, so every capability the
+// runner exposes — Run, and the optional AssistantText the review gate
+// discovers by type assertion — is promoted automatically, including any added
+// later. Hand-forwarding only Run is exactly how BUG-1's decode silently went
+// missing in production once AssistantText was added (the assertion failed and
+// the verdict scan fell back to raw escaped stream-json); embedding makes that
+// class of omission impossible.
+type runtimeAgentRunner struct{ *coreruntime.Runner }
 
-func (r runtimeAgentRunner) Run(ctx context.Context, req coreruntime.Request) coreruntime.Result {
-	return r.inner.Run(ctx, req)
-}
-
-// Compile-time guard: the production wrapper MUST expose AssistantText so
-// planreview's optional-decoder assertion succeeds and BUG-1's decode runs in
-// shipped reviews. If this method is ever dropped, fail the build, not a review.
-var _ interface {
-	AssistantText(agents.ID, []coreexec.Event) string
-} = runtimeAgentRunner{}
-
-// AssistantText forwards transcript decoding to the concrete runner so the
-// review gate's optional-decoder type-assertion (planreview.assistantTextDecoder)
-// succeeds in production. Without this the wrapper exposes only Run, the
-// assertion fails, and the verdict scan silently falls back to raw escaped
-// stream-json — re-opening BUG-1 for every shipped review.
-func (r runtimeAgentRunner) AssistantText(agent agents.ID, events []coreexec.Event) string {
-	return r.inner.AssistantText(agent, events)
-}
+// Compile-time guards: the production wrapper MUST satisfy the review gate's
+// runner contract AND carry the optional transcript decoder, or shipped reviews
+// silently regress to BUG-1. Embedding satisfies both for free; these fail the
+// BUILD (not a review) if the wrapper is ever downgraded to hand-forwarding.
+var (
+	_ planrun.AgentRunner = runtimeAgentRunner{}
+	_ interface {
+		AssistantText(agents.ID, []coreexec.Event) string
+	} = runtimeAgentRunner{}
+)
 
 // NewStartCommand runs the active Springfield batch from its saved progress.
 func NewStartCommand() *cobra.Command {
@@ -439,7 +437,7 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 			AgentIDs:             agentIDs,
 			ExecutionSettings:    loaded.Config.ExecutionSettings(),
 			ReviewConfig:         local.Review,
-			Runner:               runtimeAgentRunner{inner: coreruntime.NewRunner(registry)},
+			Runner:               runtimeAgentRunner{coreruntime.NewRunner(registry)},
 			Manager:              planrun.NewManager(),
 			OnEvent:              traceHandler,
 			Progress:             progress,
@@ -1268,7 +1266,7 @@ func runOnePlan(ctx context.Context, w io.Writer, project *conductor.Project, ro
 		AgentIDs:             agentIDs,
 		ExecutionSettings:    loaded.Config.ExecutionSettings(),
 		ReviewConfig:         local.Review,
-		Runner:               runtimeAgentRunner{inner: coreruntime.NewRunner(registry)},
+		Runner:               runtimeAgentRunner{coreruntime.NewRunner(registry)},
 		Manager:              planrun.NewManager(),
 		Progress:             w,
 		EnforceProtectedBase: enforceProtected,

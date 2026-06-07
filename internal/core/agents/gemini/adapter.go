@@ -37,6 +37,11 @@ type adapter struct {
 	authWarnOnce sync.Once
 }
 
+// The review gate discovers transcript decoding by an optional type assertion,
+// so dropping AssistantText here would silently regress the verdict scan to raw
+// escaped stream-json (BUG-1) rather than fail a test. Pin it at compile time.
+var _ agents.TranscriptDecoder = (*adapter)(nil)
+
 // New constructs a gemini adapter with default options. Returns an
 // agents.Commander so the runtime can build runnable commands.
 func New(lookPath agents.LookPathFunc) agents.Commander {
