@@ -244,12 +244,17 @@ func ResetPlan(rootDir, planID string) (*conductor.RecoveryAction, error) {
 	}
 	worktreePath, branch := ps.WorktreePath, ps.Branch
 
-	if err := cleanupPlanArtifacts(rootDir, worktreePath, branch); err != nil {
-		return nil, err
-	}
-
+	// Validate BEFORE any git mutation. ResetPlanFresh refuses a running (and a
+	// fully-integrated) plan; running it first means a `--reset` on a live run
+	// is rejected before cleanupPlanArtifacts could delete that run's worktree
+	// and branch. It mutates state only in memory here — SaveState below is
+	// what persists, and only after cleanup succeeds (so a cleanup failure
+	// leaves on-disk state untouched).
 	rec, err := project.ResetPlanFresh(planID)
 	if err != nil {
+		return nil, err
+	}
+	if err := cleanupPlanArtifacts(rootDir, worktreePath, branch); err != nil {
 		return nil, err
 	}
 	if err := project.SaveState(); err != nil {
@@ -319,15 +324,33 @@ func isWorktreeRegistered(rootDir, worktreePath string) bool {
 	if err != nil {
 		return false
 	}
+	want := canonicalFSPath(worktreePath)
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.HasPrefix(line, "worktree ") {
 			path := strings.TrimPrefix(line, "worktree ")
-			if path == worktreePath {
+			// git canonicalizes symlinks in the paths it records (e.g. macOS
+			// /var → /private/var) while PlanState.WorktreePath does not, so an
+			// exact string compare yields false negatives. Canonicalize both.
+			if canonicalFSPath(path) == want {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// canonicalFSPath resolves a path to an absolute, symlink-free form for
+// comparison. Falls back to the cleaned absolute path when the target doesn't
+// resolve (e.g. already deleted), so a removed worktree compares unequal.
+func canonicalFSPath(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		abs = p
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return filepath.Clean(resolved)
+	}
+	return filepath.Clean(abs)
 }
 
 func isWorktreeDirty(worktreePath string) (bool, error) {

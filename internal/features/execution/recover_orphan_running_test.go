@@ -39,6 +39,61 @@ func writeStaleLock(t *testing.T, root string) {
 	}
 }
 
+// TestResetPlanRefusesRunningBeforeAnyMutation pins the round-2 ordering fix:
+// a --reset on a running plan must be refused by validation BEFORE
+// cleanupPlanArtifacts could delete that live run's worktree/branch.
+func TestResetPlanRefusesRunningBeforeAnyMutation(t *testing.T) {
+	root := newProject(t)
+	seedRunningPlan(t, root, "alpha")
+
+	if _, err := execution.ResetPlan(root, "alpha"); err == nil {
+		t.Fatal("expected ResetPlan to refuse a running plan")
+	}
+
+	// State must be untouched (still running) — validation rejected before any
+	// state mutation was persisted.
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := project.State.Plans["alpha"].Status; got != conductor.StatusRunning {
+		t.Fatalf("status = %q, want running (reset must not have mutated it)", got)
+	}
+}
+
+// TestResolveActiveBatchLivenessTreatsUnreadableLockAsRecoverable pins the
+// round-1 C3 fix: a held flock whose metadata is unreadable (PID 0) must NOT be
+// reported as a confirmed live holder, so crash recovery still proceeds.
+func TestResolveActiveBatchLivenessTreatsUnreadableLockAsRecoverable(t *testing.T) {
+	root := newProject(t)
+	seedRunningPlan(t, root, "alpha")
+
+	// Hold the flock, then garble the lock file so Inspect's readHeld yields
+	// PID 0 (held-but-unreadable) rather than a parseable holder.
+	lk, err := lock.Acquire(root)
+	if err != nil {
+		t.Fatalf("acquire lock: %v", err)
+	}
+	defer lk.Release()
+	if err := os.WriteFile(filepath.Join(root, ".springfield", ".lock"), []byte("garbage-no-newline"), 0o600); err != nil {
+		t.Fatalf("garble lock: %v", err)
+	}
+
+	live, err := execution.ResolveActiveBatchLiveness(root, true)
+	if err != nil {
+		t.Fatalf("ResolveActiveBatchLiveness: %v", err)
+	}
+	if live.Holder != nil {
+		t.Fatalf("an unreadable lock must not be a confirmed holder, got %+v", live.Holder)
+	}
+	if !live.LockUnreadable {
+		t.Fatalf("expected LockUnreadable=true for a torn lock under a held flock")
+	}
+	if len(live.Cleared) != 1 || live.Cleared[0] != "alpha" {
+		t.Fatalf("recovery must still clear stale running, got Cleared=%v", live.Cleared)
+	}
+}
+
 func TestResolveActiveBatchLivenessClearsProcessDeadRunning(t *testing.T) {
 	root := newProject(t)
 	seedRunningPlan(t, root, "alpha")

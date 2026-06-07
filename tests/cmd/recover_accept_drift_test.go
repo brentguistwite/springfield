@@ -123,9 +123,10 @@ func TestRecoverResetDiscardsWorktreeAndBranch(t *testing.T) {
 		t.Errorf("expected reset confirmation:\n%s", out)
 	}
 
-	// Worktree registration is gone.
-	if wl := gitOut(t, dir, "worktree", "list", "--porcelain"); strings.Contains(wl, wt) {
-		t.Errorf("worktree still registered after reset:\n%s", wl)
+	// Worktree dir is gone on disk (symlink-agnostic, unlike a porcelain string
+	// match: macOS git reports /private/var while wt is /var).
+	if _, statErr := os.Stat(wt); !os.IsNotExist(statErr) {
+		t.Errorf("worktree dir should be removed after reset, stat err = %v", statErr)
 	}
 	// Branch is gone.
 	if bl := strings.TrimSpace(gitOut(t, dir, "branch", "--list", "springfield/alpha")); bl != "" {
