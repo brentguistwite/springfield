@@ -226,13 +226,13 @@ func reportActiveBatchLiveness(w io.Writer, root, batchID string, diagnoseOnly b
 	}
 
 	if live.Holder != nil {
-		if live.Holder.PID != 0 {
-			fmt.Fprintf(w, "Batch %q is running (pid %d since %s) — nothing to recover.\n", batchID, live.Holder.PID, live.Holder.Since.Format(time.RFC3339))
-		} else {
-			fmt.Fprintf(w, "Batch %q is running — nothing to recover.\n", batchID)
-		}
+		fmt.Fprintf(w, "Batch %q is running (pid %d since %s) — nothing to recover.\n", batchID, live.Holder.PID, live.Holder.Since.Format(time.RFC3339))
 		fmt.Fprintln(w, "Wait for it to finish, or run \"springfield status\" to inspect.")
 		return nil
+	}
+
+	if live.LockUnreadable {
+		fmt.Fprintf(w, "WARNING: batch %q has a control-plane lock file that could not be read to confirm a holder (torn write or permission error). Proceeding as if no live process owns it — make sure no \"springfield start\" is actually running before relying on this.\n", batchID)
 	}
 
 	if len(live.StaleRunning) == 0 && len(live.Cleared) == 0 {

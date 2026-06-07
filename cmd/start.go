@@ -46,6 +46,22 @@ func (r runtimeAgentRunner) Run(ctx context.Context, req coreruntime.Request) co
 	return r.inner.Run(ctx, req)
 }
 
+// Compile-time guard: the production wrapper MUST expose AssistantText so
+// planreview's optional-decoder assertion succeeds and BUG-1's decode runs in
+// shipped reviews. If this method is ever dropped, fail the build, not a review.
+var _ interface {
+	AssistantText(agents.ID, []coreexec.Event) string
+} = runtimeAgentRunner{}
+
+// AssistantText forwards transcript decoding to the concrete runner so the
+// review gate's optional-decoder type-assertion (planreview.assistantTextDecoder)
+// succeeds in production. Without this the wrapper exposes only Run, the
+// assertion fails, and the verdict scan silently falls back to raw escaped
+// stream-json — re-opening BUG-1 for every shipped review.
+func (r runtimeAgentRunner) AssistantText(agent agents.ID, events []coreexec.Event) string {
+	return r.inner.AssistantText(agent, events)
+}
+
 // NewStartCommand runs the active Springfield batch from its saved progress.
 func NewStartCommand() *cobra.Command {
 	var dir string

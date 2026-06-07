@@ -270,8 +270,10 @@ func (m *Manager) Prepare(in PrepareInput) (PrepareDecision, error) {
 
 	// Fresh checkout: refuse up front if free space is below the floor, so a
 	// near-full disk fails fast here instead of crashing mid-run with ENOSPC
-	// once the agent's install (e.g. node_modules) fills the volume.
-	if err := m.checkDisk(in.ControlRoot, in.MinFreeDiskBytes, in.Unit.ID); err != nil {
+	// once the agent's install (e.g. node_modules) fills the volume. Measure
+	// the worktree's own filesystem (WorktreeBase may be a different mount than
+	// the control root), not in.ControlRoot.
+	if err := m.checkDisk(wtPath, in.MinFreeDiskBytes, in.Unit.ID); err != nil {
 		return PrepareDecision{}, err
 	}
 
@@ -319,23 +321,43 @@ func (m *Manager) CreateWorktree(ctx Context) error {
 // A nil Disk or an unmeasurable platform skips the check (fail-open): the
 // preflight is a guard against the common near-full-disk crash, not a hard
 // gate that should block runs it cannot evaluate.
-func (m *Manager) checkDisk(root string, minFree uint64, planID string) error {
+func (m *Manager) checkDisk(worktreePath string, minFree uint64, planID string) error {
 	if m.Disk == nil {
 		return nil
 	}
 	if minFree == 0 {
 		minFree = defaultMinFreeDiskBytes
 	}
-	avail, err := m.Disk.AvailableBytes(root)
+	// statfs needs an existing path. The worktree dir doesn't exist yet, so walk
+	// up to the nearest existing ancestor — that resolves the volume the
+	// checkout will land on (which may differ from the control root's volume).
+	target := nearestExistingDir(worktreePath)
+	avail, err := m.Disk.AvailableBytes(target)
 	if err != nil {
 		return nil
 	}
 	if avail < minFree {
 		return reject("preflight-insufficient-disk",
 			fmt.Sprintf("plan %q: only %s free at %s but a worktree checkout needs at least %s. Each plan worktree is a full checkout plus the agent's install (e.g. node_modules); free space before running.",
-				planID, humanBytes(avail), root, humanBytes(minFree)))
+				planID, humanBytes(avail), target, humanBytes(minFree)))
 	}
 	return nil
+}
+
+// nearestExistingDir walks up from path to the first ancestor that exists on
+// disk, so statfs can resolve the filesystem a not-yet-created worktree will
+// occupy. Falls back to "." if nothing resolves.
+func nearestExistingDir(path string) string {
+	for p := path; ; {
+		if info, err := os.Stat(p); err == nil && info.IsDir() {
+			return p
+		}
+		parent := filepath.Dir(p)
+		if parent == p {
+			return p
+		}
+		p = parent
+	}
 }
 
 // humanBytes formats a byte count as a compact binary-unit string for

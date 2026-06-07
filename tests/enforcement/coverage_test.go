@@ -88,6 +88,17 @@ var coveredParsers = map[string]bool{
 	"ScanMarkers":        true, // above (real implementer-story-pass transcript)
 }
 
+// exemptParsersByPkg is checked BEFORE the bare-name maps, keyed by
+// "<pkgdir>.<func>". It exists because the bare-name maps mark a function
+// covered across EVERY adapter that defines it — so a real claude+codex capture
+// silently vouches for an unverified gemini/runner implementation of the same
+// method. These entries pin those package-specific cases honestly.
+var exemptParsersByPkg = map[string]string{
+	"gemini.AssistantText": "capture-pending: gemini CLI unavailable, no real transcript to capture; claude+codex AssistantText are real-capture covered",
+	"gemini.ValidateResult": "capture-pending: gemini CLI unavailable; claude+codex ValidateResult are real-capture covered",
+	"runtime.AssistantText": "delegates to the resolved adapter's TranscriptDecoder (claude/codex real-capture covered); no transport parsing of its own",
+}
+
 // exemptParsers consume events/results but do NOT decode raw transport text, so
 // synthetic input is legitimate — OR a real capture is pending. The reason is
 // the documentation; a bare entry is not allowed.
@@ -136,6 +147,10 @@ func TestEveryTransportParserIsRegistered(t *testing.T) {
 					continue
 				}
 				name := fn.Name.Name
+				qualified := filepath.Base(pkg) + "." + name
+				if _, ok := exemptParsersByPkg[qualified]; ok {
+					continue
+				}
 				if coveredParsers[name] {
 					continue
 				}

@@ -126,6 +126,7 @@ func (r *Runner) Run(ctx context.Context, req Request) Result {
 				Err:       fmt.Errorf("resolve agent: %w", err),
 				StartedAt: start,
 				EndedAt:   r.now(),
+				Attempts:  attempts,
 			}
 		}
 
@@ -137,6 +138,7 @@ func (r *Runner) Run(ctx context.Context, req Request) Result {
 				Err:       fmt.Errorf("agent %q does not support command execution", agentID),
 				StartedAt: start,
 				EndedAt:   r.now(),
+				Attempts:  attempts,
 			}
 		}
 
@@ -152,6 +154,7 @@ func (r *Runner) Run(ctx context.Context, req Request) Result {
 				Err:       fmt.Errorf("build command for %s: %w", agentID, err),
 				StartedAt: start,
 				EndedAt:   r.now(),
+				Attempts:  attempts,
 			}
 		}
 		cmd.Timeout = req.Timeout

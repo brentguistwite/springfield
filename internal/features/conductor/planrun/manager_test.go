@@ -706,6 +706,31 @@ func TestPrepareAllowsSufficientDisk(t *testing.T) {
 	}
 }
 
+// MinFreeDiskBytes == 0 must select the built-in default floor (1 GiB), so a
+// caller that doesn't configure a floor still gets ENOSPC protection.
+func TestPrepareAppliesDefaultDiskFloorWhenUnset(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan")
+
+	g := newFakeGit()
+	d := &fakeDisk{avail: 500 << 20} // 500 MiB — below the 1 GiB default floor
+	m := &planrun.Manager{Git: g, Disk: d}
+	_, err := m.Prepare(planrun.PrepareInput{
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		Unit:         conductor.PlanUnit{ID: "p", Path: ".springfield/plans/p.md", Order: 1},
+		AllStates:    map[string]*conductor.PlanState{},
+		// MinFreeDiskBytes deliberately omitted (zero) → default floor applies.
+	})
+	if err == nil {
+		t.Fatalf("expected insufficient-disk rejection from the default floor")
+	}
+	pe := planrun.AsPreflight(err)
+	if pe == nil || pe.Tag != "preflight-insufficient-disk" {
+		t.Fatalf("expected preflight-insufficient-disk, got %v", err)
+	}
+}
+
 // A reuse/resume run does not re-checkout or re-install, so the disk
 // preflight must not block it even when free space is below the floor.
 func TestPrepareResumeSkipsDiskPreflight(t *testing.T) {

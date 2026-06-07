@@ -29,6 +29,11 @@ type BatchLiveness struct {
 	// Cleared lists plans this call normalized from running to interrupted.
 	// Non-empty only when clear is true and no live Holder exists.
 	Cleared []string
+	// LockUnreadable is true when the control-plane lock file existed but could
+	// not be read to confirm a holder (torn write, permission error). The batch
+	// is treated as not-confirmed-live so recovery can proceed, but the caller
+	// should surface this so an operator can rule out a genuinely live run.
+	LockUnreadable bool
 }
 
 // ResolveActiveBatchLiveness probes process liveness of the active batch's
@@ -38,9 +43,17 @@ type BatchLiveness struct {
 // also normalizes them to interrupted and persists, returning them in Cleared.
 // clear=false is the read-only diagnose path.
 func ResolveActiveBatchLiveness(rootDir string, clear bool) (BatchLiveness, error) {
-	if held := lock.Inspect(rootDir); held != nil {
+	// A CONFIRMED holder (PID != 0) means a live process owns the batch. A
+	// non-nil holder with PID 0 is lock.Inspect's "held-but-unreadable / open
+	// failed" sentinel — NOT proof of a live process. Treating it as live would
+	// block recovery on exactly the torn/permission-degraded .lock a crash can
+	// leave behind, so we fall through to stale-running handling and flag the
+	// unreadable lock for the caller to surface.
+	held := lock.Inspect(rootDir)
+	if held != nil && held.PID != 0 {
 		return BatchLiveness{Holder: held}, nil
 	}
+	lockUnreadable := held != nil && held.PID == 0
 
 	project, err := conductor.LoadProject(rootDir)
 	if err != nil {
@@ -59,7 +72,7 @@ func ResolveActiveBatchLiveness(rootDir string, clear bool) (BatchLiveness, erro
 	sort.Strings(stale)
 
 	if !clear {
-		return BatchLiveness{StaleRunning: stale}, nil
+		return BatchLiveness{StaleRunning: stale, LockUnreadable: lockUnreadable}, nil
 	}
 
 	cleared := project.NormalizeStaleRunning(time.Now())
@@ -68,7 +81,7 @@ func ResolveActiveBatchLiveness(rootDir string, clear bool) (BatchLiveness, erro
 			return BatchLiveness{}, fmt.Errorf("persist stale-running normalization: %w", err)
 		}
 	}
-	return BatchLiveness{StaleRunning: stale, Cleared: cleared}, nil
+	return BatchLiveness{StaleRunning: stale, Cleared: cleared, LockUnreadable: lockUnreadable}, nil
 }
 
 // DiagnosePlan loads project state, normalizes stale-running plans, inspects
@@ -223,10 +236,13 @@ func ResetPlan(rootDir, planID string) (*conductor.RecoveryAction, error) {
 		return nil, fmt.Errorf("plan %q is not registered in the execution config", planID)
 	}
 
-	var worktreePath, branch string
-	if ps, ok := project.State.Plans[planID]; ok && ps != nil {
-		worktreePath, branch = ps.WorktreePath, ps.Branch
+	ps, ok := project.State.Plans[planID]
+	if !ok || ps == nil {
+		// Registered but never run: there is no worktree, branch, or state to
+		// clean — the plan is already in a clean first-run state.
+		return &conductor.RecoveryAction{Action: "reset", Reason: "plan has no prior attempt; already clean"}, nil
 	}
+	worktreePath, branch := ps.WorktreePath, ps.Branch
 
 	if err := cleanupPlanArtifacts(rootDir, worktreePath, branch); err != nil {
 		return nil, err
@@ -249,9 +265,18 @@ func ResetPlan(rootDir, planID string) (*conductor.RecoveryAction, error) {
 // exact collision dogfood #6 reported.
 func cleanupPlanArtifacts(rootDir, worktreePath, branch string) error {
 	if worktreePath != "" {
+		// Best-effort: a manually-deleted worktree dir makes `worktree remove`
+		// fail, but prune below clears its stale registration. The post-cleanup
+		// check is what catches a genuine failure (e.g. a locked worktree).
 		_, _ = exec.Command("git", "-C", rootDir, "worktree", "remove", "--force", worktreePath).CombinedOutput()
 	}
 	_, _ = exec.Command("git", "-C", rootDir, "worktree", "prune").CombinedOutput()
+	// Verify the registration is actually gone. If it survived both remove and
+	// prune, the next `worktree add` will still collide — the exact failure
+	// reset exists to prevent — so surface it instead of reporting success.
+	if worktreePath != "" && isWorktreeRegistered(rootDir, worktreePath) {
+		return fmt.Errorf("worktree %s is still registered after remove+prune; resolve it manually (e.g. `git worktree remove --force`) before retrying reset", worktreePath)
+	}
 	if branch != "" && localBranchExists(rootDir, branch) {
 		if out, err := exec.Command("git", "-C", rootDir, "branch", "-D", branch).CombinedOutput(); err != nil {
 			return fmt.Errorf("delete plan branch %q: %w: %s", branch, err, strings.TrimSpace(string(out)))

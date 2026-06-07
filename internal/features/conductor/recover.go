@@ -82,6 +82,14 @@ func (p *Project) ResetPlanFresh(planID string) (*RecoveryAction, error) {
 	ps.BaseRef = ""
 	ps.BaseHead = ""
 	ps.InputDigest = ""
+	// Clear the prior run-record too: PlanHead points into the now-deleted
+	// branch and would surface as a dangling SHA in status/diagnosis; the rest
+	// describe an attempt that no longer exists after a clean reset.
+	ps.PlanHead = ""
+	ps.EvidencePath = ""
+	ps.Agent = ""
+	ps.StartedAt = time.Time{}
+	ps.EndedAt = time.Time{}
 	ps.RecoveryHistory = append(ps.RecoveryHistory, rec)
 	return &rec, nil
 }
