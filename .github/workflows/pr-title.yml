@@ -1,0 +1,40 @@
+name: PR Title
+
+# Squash-merge makes the PR title the commit subject on main, and
+# release-please only bumps when that subject is a parseable Conventional
+# Commit. Lint the title here so an unparseable subject can't land and
+# silently skip a release (see PR #85: title had no type -> 0 commits
+# considered -> no release PR). Types mirror release-please-config.json's
+# changelog-sections so a passing title is always release-please-parseable.
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+
+permissions:
+  pull-requests: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            deps
+            perf
+            revert
+            docs
+            chore
+            test
+            build
+            ci
+            refactor
