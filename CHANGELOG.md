@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/brentguistwite/springfield/compare/v0.20.1...v0.21.0) (2026-06-11)
+
+
+### Features
+
+* review-gate hardening + dogfood rough edges ([#85](https://github.com/brentguistwite/springfield/issues/85)) ([744dff7](https://github.com/brentguistwite/springfield/commit/744dff7ebdcd912361539751bfd911588858e0f7))
+
 ## [0.20.1](https://github.com/brentguistwite/springfield/compare/v0.20.0...v0.20.1) (2026-06-03)
 
 
