@@ -10,6 +10,32 @@ import (
 	"springfield/internal/core/agents/claude"
 )
 
+// TestClaudeAdapterNeutralizesInheritedOutputStyle pins #11: a spawned agent
+// must not inherit the operator's interactive output style (e.g. "Explanatory",
+// which injects "★ Insight" preambles). The control-plane --settings payload
+// sits at command-line precedence — above every settings.json file scope — so
+// forcing outputStyle to the neutral "Default" overrides any inherited value.
+func TestClaudeAdapterNeutralizesInheritedOutputStyle(t *testing.T) {
+	a := claude.New(exec.LookPath)
+	commander := a.(agents.Commander)
+
+	cmd, err := commander.Command(agents.CommandInput{
+		Prompt:  "do work",
+		WorkDir: "/tmp/project",
+	})
+	if err != nil {
+		t.Fatalf("Command: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(extractSettingsJSON(t, cmd.Args)), &raw); err != nil {
+		t.Fatalf("parse --settings JSON: %v", err)
+	}
+	if got, want := raw["outputStyle"], "Default"; got != want {
+		t.Fatalf("outputStyle = %v, want %q (neutralize inherited interactive style)", got, want)
+	}
+}
+
 // TestClaudeAdapterInjectsControlPlaneHookSettings verifies the adapter
 // appends a --settings JSON blob carrying a PreToolUse hook that blocks
 // writes to Springfield's control plane (.springfield/). The hook is a

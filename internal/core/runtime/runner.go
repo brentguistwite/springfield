@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -102,6 +103,7 @@ func (r *Runner) Run(ctx context.Context, req Request) Result {
 	}
 
 	var last Result
+	var attempts []Attempt
 	allSkipped := true
 	for _, agentID := range agentIDs {
 		if until, cooled := r.inCooldown(agentID, r.now()); cooled {
@@ -109,6 +111,12 @@ func (r *Runner) Run(ctx context.Context, req Request) Result {
 			continue
 		}
 		allSkipped = false
+		// Only narrate dispatch when a fallback chain exists; a single-agent
+		// run has nothing to fall through to, so the line would be pure noise
+		// in its evidence stream.
+		if len(agentIDs) > 1 {
+			r.emitLog(req.OnEvent, fmt.Sprintf("springfield: dispatching agent %s", agentID))
+		}
 
 		resolved, err := r.registry.Resolve(agents.ResolveInput{ProjectDefault: agentID})
 		if err != nil {
@@ -118,6 +126,7 @@ func (r *Runner) Run(ctx context.Context, req Request) Result {
 				Err:       fmt.Errorf("resolve agent: %w", err),
 				StartedAt: start,
 				EndedAt:   r.now(),
+				Attempts:  attempts,
 			}
 		}
 
@@ -129,6 +138,7 @@ func (r *Runner) Run(ctx context.Context, req Request) Result {
 				Err:       fmt.Errorf("agent %q does not support command execution", agentID),
 				StartedAt: start,
 				EndedAt:   r.now(),
+				Attempts:  attempts,
 			}
 		}
 
@@ -144,10 +154,12 @@ func (r *Runner) Run(ctx context.Context, req Request) Result {
 				Err:       fmt.Errorf("build command for %s: %w", agentID, err),
 				StartedAt: start,
 				EndedAt:   r.now(),
+				Attempts:  attempts,
 			}
 		}
 		cmd.Timeout = req.Timeout
 
+		iterStart := r.now()
 		execResult := r.run(ctx, cmd, req.OnEvent)
 		status := StatusPassed
 		if execResult.ExitCode != 0 || execResult.Err != nil {
@@ -177,13 +189,24 @@ func (r *Runner) Run(ctx context.Context, req Request) Result {
 
 		if status == StatusPassed {
 			if validator, ok := commander.(agents.ResultValidator); ok {
-				if err := validator.ValidateResult(execResult); err != nil {
+				// Zero-value-is-strict: a non-reviewer request leaves
+				// ReviewerRole false, so requireToolAction is true (the
+				// implementer contract). Only an explicit reviewer run relaxes.
+				if err := validator.ValidateResult(execResult, !req.ReviewerRole); err != nil {
 					status = StatusFailed
 					execResult.Err = err
 				}
 			}
 		}
 
+		attempt := Attempt{
+			Agent:     agentID,
+			ExitCode:  execResult.ExitCode,
+			Events:    execResult.Events,
+			Err:       execResult.Err,
+			StartedAt: iterStart,
+			EndedAt:   r.now(),
+		}
 		last = Result{
 			Agent:     agentID,
 			Status:    status,
@@ -191,9 +214,11 @@ func (r *Runner) Run(ctx context.Context, req Request) Result {
 			Events:    execResult.Events,
 			Err:       execResult.Err,
 			StartedAt: start,
-			EndedAt:   r.now(),
+			EndedAt:   attempt.EndedAt,
 		}
 		if status == StatusPassed {
+			attempts = append(attempts, attempt)
+			last.Attempts = attempts
 			r.clearCooldown(agentID)
 			return last
 		}
@@ -201,9 +226,14 @@ func (r *Runner) Run(ctx context.Context, req Request) Result {
 		if classifier, ok := resolved.Adapter.(agents.ErrorClassifier); ok {
 			class = classifier.ClassifyError(execResult.Events, execResult.ExitCode, execResult.Err)
 		}
+		attempt.Class = class
+		attempts = append(attempts, attempt)
+		last.Attempts = attempts
+		r.emitLog(req.OnEvent, fmt.Sprintf("springfield: agent %s failed (exit %d): %v — classified %s", agentID, execResult.ExitCode, errText(execResult.Err), class))
 		if class == agents.ErrorClassFatal {
 			return last
 		}
+		r.emitLog(req.OnEvent, fmt.Sprintf("springfield: %s failure is retryable — falling through to the next agent in the chain", agentID))
 		// Only install a cooldown for adapters that opted into Cooldowner.
 		// Adapters without it (currently codex, gemini) fall through to the
 		// next agent without being penalized for a single transient failure
@@ -229,6 +259,27 @@ func (r *Runner) Run(ctx context.Context, req Request) Result {
 	return last
 }
 
+// emitLog writes a synthetic stderr event carrying a Springfield lifecycle
+// line (dispatch, failure classification, fallthrough decision) so operators
+// and the evidence trace can see why the chain advanced. No-op if handler is
+// nil. Takes a plain string — not events — so it never counts as a transport
+// parser under the enforcement staleness gate.
+func (r *Runner) emitLog(handler exec.EventHandler, msg string) {
+	if handler == nil {
+		return
+	}
+	handler(exec.Event{Type: exec.EventStderr, Data: msg, Time: r.now()})
+}
+
+// errText renders err for a log line, tolerating nil (a clean-exit failure
+// synthesized purely from exit code).
+func errText(err error) string {
+	if err == nil {
+		return "no error detail"
+	}
+	return err.Error()
+}
+
 // emitSkipEvent writes a synthetic stderr event so operators see why an
 // agent was skipped. No-op if handler is nil.
 func (r *Runner) emitSkipEvent(handler exec.EventHandler, id agents.ID, until time.Time) {
@@ -240,6 +291,29 @@ func (r *Runner) emitSkipEvent(handler exec.EventHandler, id agents.ID, until ti
 		Data: fmt.Sprintf("springfield: %s in cooldown until %s; skipping", id, until.Format(time.RFC3339)),
 		Time: r.now(),
 	})
+}
+
+// AssistantText decodes the given agent's transcript into plain assistant
+// text via that adapter's TranscriptDecoder, so the review gate can scan a
+// verdict marker against real newlines instead of escaped stream-json. The
+// registry is the runner's, so the agent boundary stays encapsulated here
+// rather than threaded through the conductor. Falls back to the raw stdout
+// concatenation when the agent is unknown or implements no decoder (e.g. a
+// plain-text CLI), which keeps the anchored scan working for non-JSON output.
+func (r *Runner) AssistantText(agent agents.ID, events []exec.Event) string {
+	resolved, err := r.registry.Resolve(agents.ResolveInput{ProjectDefault: agent})
+	if err == nil {
+		if dec, ok := resolved.Adapter.(agents.TranscriptDecoder); ok {
+			return dec.AssistantText(events)
+		}
+	}
+	var stdout []string
+	for _, e := range events {
+		if e.Type == exec.EventStdout {
+			stdout = append(stdout, e.Data)
+		}
+	}
+	return strings.Join(stdout, "\n")
 }
 
 func normalizeAgentIDs(ids []agents.ID) []agents.ID {

@@ -46,6 +46,11 @@ type adapter struct {
 }
 
 // New constructs a claude adapter with default options.
+// The review gate discovers transcript decoding by an optional type assertion,
+// so dropping AssistantText here would silently regress the verdict scan to raw
+// escaped stream-json (BUG-1) rather than fail a test. Pin it at compile time.
+var _ agents.TranscriptDecoder = (*adapter)(nil)
+
 func New(lookPath agents.LookPathFunc) agents.Commander {
 	return NewWithOptions(lookPath, Options{})
 }
@@ -206,6 +211,17 @@ func shellQuote(s string) string {
 func (a *adapter) springfieldControlPlaneSettingsJSON() string {
 	hookCommand := a.SpringfieldControlPlaneHookCommand()
 	payload := map[string]any{
+		// Neutralize the operator's inherited interactive output style. The
+		// "Explanatory" style bakes "★ Insight" preambles into the system
+		// prompt (dogfood #11); forcing the built-in "Default" here overrides
+		// it. --settings sits at command-line precedence — above every
+		// settings.json file scope (user/project/local) — so this wins
+		// regardless of where the operator's style was set. Residual: a
+		// genuine standalone SessionStart hook in operator config still fires
+		// (settings merge hooks additively; the only off-switch is the blunt
+		// disableAllHooks, which would also kill this control-plane hook), but
+		// the observed leak is output-style-driven and this closes it.
+		"outputStyle": "Default",
 		"hooks": map[string]any{
 			"PreToolUse": []map[string]any{{
 				"matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
@@ -355,7 +371,7 @@ func (a *adapter) emitSettingsWarning(errMsg string) {
 // false. Absence of failure markers is not enough; refusal-with-no-tools and
 // all-tools-errored runs both fail validation. Process-level failures
 // (non-zero exit, hard error) also fail before stream inspection.
-func (a *adapter) ValidateResult(result coreexec.Result) error {
+func (a *adapter) ValidateResult(result coreexec.Result, requireToolAction bool) error {
 	if result.ExitCode != 0 {
 		return fmt.Errorf("claude exited with non-zero code %d", result.ExitCode)
 	}
@@ -396,9 +412,16 @@ func (a *adapter) ValidateResult(result coreexec.Result) error {
 	if sawSuccessfulToolResult {
 		return nil
 	}
+	if !requireToolAction && sawSuccessResult {
+		// Tool-free reviewer: a terminal result event with subtype "success"
+		// and is_error == false is a valid completion even with zero tool
+		// calls. The verdict scanner judges substance; this only confirms the
+		// process completed cleanly.
+		return nil
+	}
 	if sawSuccessResult && len(seenToolUseIDs) == 0 {
 		// No tool work attempted; a success-typed result alone is not
-		// a positive completion signal under the tightened contract.
+		// a positive completion signal under the implementer contract.
 		return errors.New("claude exited without taking action")
 	}
 	if len(seenToolUseIDs) == 0 {
@@ -411,6 +434,8 @@ type claudeStreamEvent struct {
 	Type    string `json:"type"`
 	Subtype string `json:"subtype"`
 	IsError bool   `json:"is_error"`
+	// Result is the final aggregate assistant text on a type=="result" event.
+	Result  string `json:"result"`
 	Message struct {
 		Content []claudeMessageContent `json:"content"`
 	} `json:"message"`
@@ -421,7 +446,37 @@ type claudeMessageContent struct {
 	ID        string `json:"id"`
 	ToolUseID string `json:"tool_use_id"`
 	IsError   bool   `json:"is_error"`
+	Text      string `json:"text"`
 	Content   any    `json:"content"`
+}
+
+// AssistantText decodes the reviewer's plain assistant text out of the
+// stream-json transport so the review gate can scan for the verdict marker
+// against REAL newlines, not the escaped JSON line (that mismatch was BUG-1).
+// The terminal result event carries the full aggregate text, so it is
+// authoritative when present; otherwise the assistant text blocks are joined.
+func (a *adapter) AssistantText(events []coreexec.Event) string {
+	var assistant []string
+	for _, e := range events {
+		if e.Type != coreexec.EventStdout {
+			continue
+		}
+		var ev claudeStreamEvent
+		if err := json.Unmarshal([]byte(e.Data), &ev); err != nil {
+			continue
+		}
+		if ev.Type == "result" && ev.Result != "" {
+			return ev.Result
+		}
+		if ev.Type == "assistant" {
+			for _, c := range ev.Message.Content {
+				if c.Type == "text" && c.Text != "" {
+					assistant = append(assistant, c.Text)
+				}
+			}
+		}
+	}
+	return strings.Join(assistant, "\n")
 }
 
 var claudeRetryableNeedles = []string{

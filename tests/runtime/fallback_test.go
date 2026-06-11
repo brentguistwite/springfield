@@ -375,6 +375,73 @@ func TestTurnCapDefusedByWorkCompleteCheck(t *testing.T) {
 	}
 }
 
+// TestRunRecordsPerAgentAttemptsAndLogsFallthrough pins dogfood #8: when
+// claude fails retryable and the run falls through to codex within a single
+// Run, BOTH dispatches must be preserved as per-agent Attempts (so the caller
+// can write iter-N/claude/ + iter-N/codex/ evidence instead of codex
+// overwriting claude's), and the fallthrough decision + classification must be
+// logged via OnEvent.
+func TestRunRecordsPerAgentAttemptsAndLogsFallthrough(t *testing.T) {
+	first := &classifyingCommander{id: agents.AgentClaude, class: agents.ErrorClassRetryable}
+	second := &classifyingCommander{id: agents.AgentCodex, class: agents.ErrorClassFatal}
+	registry := agents.NewRegistry(first, second)
+	clock := newFakeClock(time.Date(2026, 6, 5, 10, 0, 0, 0, time.UTC))
+
+	fakeRun := func(_ context.Context, cmd exec.Command, _ exec.EventHandler) exec.Result {
+		if cmd.Name == string(first.id) {
+			return exec.Result{
+				ExitCode: 1,
+				Err:      errors.New("retryable failure"),
+				Events:   []exec.Event{{Type: exec.EventStdout, Data: "CLAUDE_ATTEMPT"}},
+			}
+		}
+		return exec.Result{
+			ExitCode: 0,
+			Events:   []exec.Event{{Type: exec.EventStdout, Data: "CODEX_ATTEMPT"}},
+		}
+	}
+
+	var logs []string
+	onEvent := func(e exec.Event) {
+		if e.Type == exec.EventStderr {
+			logs = append(logs, e.Data)
+		}
+	}
+
+	runner := runtime.NewTestRunner(registry, fakeRun, clock.now)
+	result := runner.Run(context.Background(), runtime.Request{
+		AgentIDs: []agents.ID{first.id, second.id},
+		Prompt:   "test",
+		WorkDir:  "/tmp/project",
+		OnEvent:  onEvent,
+	})
+
+	if len(result.Attempts) != 2 {
+		t.Fatalf("expected 2 attempts (claude, codex), got %d: %+v", len(result.Attempts), result.Attempts)
+	}
+	a0, a1 := result.Attempts[0], result.Attempts[1]
+	if a0.Agent != first.id || a0.Class != agents.ErrorClassRetryable {
+		t.Fatalf("attempt[0] = agent %q class %q, want claude/retryable", a0.Agent, a0.Class)
+	}
+	if len(a0.Events) != 1 || a0.Events[0].Data != "CLAUDE_ATTEMPT" {
+		t.Fatalf("claude attempt evidence not preserved: %+v", a0.Events)
+	}
+	if a1.Agent != second.id {
+		t.Fatalf("attempt[1] agent = %q, want codex", a1.Agent)
+	}
+	if len(a1.Events) != 1 || a1.Events[0].Data != "CODEX_ATTEMPT" {
+		t.Fatalf("codex attempt evidence not preserved: %+v", a1.Events)
+	}
+	if result.Agent != second.id || result.Status != runtime.StatusPassed {
+		t.Fatalf("winning result = agent %q status %q, want codex/passed", result.Agent, result.Status)
+	}
+
+	joined := strings.Join(logs, "\n")
+	if !strings.Contains(joined, "claude") || !strings.Contains(joined, "retryable") {
+		t.Fatalf("expected a fallthrough log line naming claude + its retryable classification, got:\n%s", joined)
+	}
+}
+
 func TestFallbackWalksPriorityOnRetryable(t *testing.T) {
 	first := &classifyingCommander{id: agents.AgentClaude, class: agents.ErrorClassRetryable}
 	second := &classifyingCommander{id: agents.AgentCodex, class: agents.ErrorClassFatal}

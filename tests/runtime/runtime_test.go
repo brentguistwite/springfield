@@ -259,6 +259,43 @@ func TestRunnerCallsResultValidatorOnExitZero(t *testing.T) {
 	}
 }
 
+// BUG-4: the runner must thread requireToolAction = !ReviewerRole into
+// ValidateResult so a reviewer run (tool-free by design) is validated leniently
+// while every other run keeps the strict implementer contract.
+func TestRunnerThreadsReviewerRoleToValidator(t *testing.T) {
+	cases := []struct {
+		name             string
+		reviewerRole     bool
+		wantRequireTools bool
+	}{
+		{name: "implementer is strict", reviewerRole: false, wantRequireTools: true},
+		{name: "reviewer is relaxed", reviewerRole: true, wantRequireTools: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			validating := &validatingCommander{id: agents.AgentClaude}
+			registry := agents.NewRegistry(validating)
+			clock := newFakeClock(time.Date(2026, 4, 8, 10, 0, 0, 0, time.UTC))
+			fakeRun := func(_ context.Context, _ exec.Command, _ exec.EventHandler) exec.Result {
+				return exec.Result{ExitCode: 0, Events: []exec.Event{{Type: exec.EventStdout, Data: "ok"}}}
+			}
+			runner := runtime.NewTestRunner(registry, fakeRun, clock.now)
+			runner.Run(context.Background(), runtime.Request{
+				AgentIDs:     []agents.ID{agents.AgentClaude},
+				Prompt:       "test",
+				WorkDir:      "/tmp",
+				ReviewerRole: tc.reviewerRole,
+			})
+			if !validating.validateCalled {
+				t.Fatal("validator was not called")
+			}
+			if validating.validateRequireToolAction != tc.wantRequireTools {
+				t.Fatalf("requireToolAction = %v, want %v", validating.validateRequireToolAction, tc.wantRequireTools)
+			}
+		})
+	}
+}
+
 func TestRunnerSkipsValidatorOnNonZeroExit(t *testing.T) {
 	validating := &validatingCommander{
 		id:            agents.AgentClaude,
@@ -329,9 +366,10 @@ func (c *erroringCommander) Command(_ agents.CommandInput) (exec.Command, error)
 }
 
 type validatingCommander struct {
-	id             agents.ID
-	validateError  error
-	validateCalled bool
+	id                        agents.ID
+	validateError             error
+	validateCalled            bool
+	validateRequireToolAction bool
 }
 
 func (c *validatingCommander) ID() agents.ID { return c.id }
@@ -344,8 +382,9 @@ func (c *validatingCommander) Detect(context.Context) agents.Detection {
 func (c *validatingCommander) Command(input agents.CommandInput) (exec.Command, error) {
 	return exec.Command{Name: string(c.id), Dir: input.WorkDir}, nil
 }
-func (c *validatingCommander) ValidateResult(result exec.Result) error {
+func (c *validatingCommander) ValidateResult(result exec.Result, requireToolAction bool) error {
 	c.validateCalled = true
+	c.validateRequireToolAction = requireToolAction
 	return c.validateError
 }
 

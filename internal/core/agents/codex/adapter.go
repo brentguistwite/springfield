@@ -16,6 +16,11 @@ type adapter struct {
 	lookPath agents.LookPathFunc
 }
 
+// The review gate discovers transcript decoding by an optional type assertion,
+// so dropping AssistantText here would silently regress the verdict scan to raw
+// escaped stream-json (BUG-1) rather than fail a test. Pin it at compile time.
+var _ agents.TranscriptDecoder = (*adapter)(nil)
+
 func New(lookPath agents.LookPathFunc) agents.Commander {
 	if lookPath == nil {
 		lookPath = osexec.LookPath
@@ -69,8 +74,18 @@ func (a adapter) Command(input agents.CommandInput) (coreexec.Command, error) {
 	if sandboxMode := strings.TrimSpace(input.ExecutionSettings.Codex.SandboxMode); sandboxMode != "" {
 		args = append(args, "-s", sandboxMode)
 	}
+	// codex-cli >= 0.136.0 removed the `-a <policy>` flag from `exec`.
+	// The autonomous default (approval_policy=never) maps to the bypass flag,
+	// which also skips codex's trusted-directory check — load-bearing because a
+	// fresh Springfield worktree is an untrusted dir and `-c approval_policy=
+	// never` alone would block on a trust prompt with no way to answer it.
+	// Any other policy is forwarded faithfully via the `-c` config override.
 	if approvalPolicy := strings.TrimSpace(input.ExecutionSettings.Codex.ApprovalPolicy); approvalPolicy != "" {
-		args = append(args, "-a", approvalPolicy)
+		if approvalPolicy == "never" {
+			args = append(args, "--dangerously-bypass-approvals-and-sandbox")
+		} else {
+			args = append(args, "-c", "approval_policy="+approvalPolicy)
+		}
 	}
 	args = append(args, input.Prompt)
 
@@ -108,7 +123,7 @@ func (a adapter) ClassifyError(events []coreexec.Event, exitCode int, err error)
 // real tool/function-call (i.e. neither agent_message nor reasoning) and no
 // FATAL stderr appeared during the run. Text-only sessions are failures
 // under Policy A — Codex must take action to count as success.
-func (a adapter) ValidateResult(result coreexec.Result) error {
+func (a adapter) ValidateResult(result coreexec.Result, requireToolAction bool) error {
 	if result.ExitCode != 0 {
 		return fmt.Errorf("codex exited with non-zero code %d", result.ExitCode)
 	}
@@ -130,6 +145,12 @@ func (a adapter) ValidateResult(result coreexec.Result) error {
 	}
 
 	if !hasWork {
+		if !requireToolAction {
+			// Tool-free reviewer: a clean exit (0) with no FATAL stderr is a
+			// valid completion even with no tool/function-call work. The
+			// verdict scanner judges substance.
+			return nil
+		}
 		return errors.New("codex exited without taking action")
 	}
 
@@ -152,6 +173,30 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max] + "..."
+}
+
+// AssistantText decodes the reviewer's plain text out of codex's stream-json
+// (the verdict lives escaped inside an item.completed agent_message), so the
+// review gate scans real newlines, not the JSON transport (BUG-1).
+func (a adapter) AssistantText(events []coreexec.Event) string {
+	var parts []string
+	for _, e := range events {
+		if e.Type != coreexec.EventStdout {
+			continue
+		}
+		var ev codexStreamEvent
+		if err := json.Unmarshal([]byte(e.Data), &ev); err != nil || ev.Type != "item.completed" || len(ev.Item) == 0 {
+			continue
+		}
+		var item codexStreamItem
+		if err := json.Unmarshal(ev.Item, &item); err != nil {
+			continue
+		}
+		if item.Type == "agent_message" && item.Text != "" {
+			parts = append(parts, item.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 type codexStreamEvent struct {

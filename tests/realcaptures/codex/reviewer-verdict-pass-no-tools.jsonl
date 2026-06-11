@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"019e90cf-39c6-7d13-8f1e-69a0bad7f3f8"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"No blocking issues found in the reviewed diff.\n<review-verdict>pass</review-verdict>"}}
+{"type":"turn.completed","usage":{"input_tokens":17300,"cached_input_tokens":4480,"output_tokens":65,"reasoning_output_tokens":39}}

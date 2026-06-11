@@ -155,6 +155,67 @@ func projectFixtureWithPRD(t *testing.T, planID string, p prd.PRD) (string, *con
 	return root, project
 }
 
+// TestSinglePlanWritesPerAgentEvidenceOnFallthrough pins dogfood #8: when a
+// single iteration's Run fell through claude→codex, the per-agent evidence for
+// BOTH agents must be preserved under iter-N/<agent>/ (the bug: codex
+// overwrote claude's iter-1/, leaving claude's failed attempt with no trace).
+func TestSinglePlanWritesPerAgentEvidenceOnFallthrough(t *testing.T) {
+	p := prd.PRD{
+		ID:    "feat",
+		Title: "Feature Plan",
+		UserStories: []prd.UserStory{
+			{ID: "US-001", Title: "Story 1", Priority: 1, Passes: false},
+		},
+	}
+	root, project := projectFixtureWithPRD(t, "feat", p)
+	g := newFakeGit()
+
+	// One iteration whose Result fell through claude (retryable failure) to
+	// codex (passed + complete). The runtime would populate Attempts with both.
+	fallthrough1 := makePassAndCompleteResult("US-001")
+	fallthrough1.Agent = agents.AgentCodex
+	fallthrough1.Attempts = []coreruntime.Attempt{
+		{
+			Agent:    agents.AgentClaude,
+			ExitCode: 1,
+			Events:   []coreexec.Event{{Type: coreexec.EventStdout, Data: "CLAUDE_FAILED_ATTEMPT", Time: time.Now()}},
+			Class:    agents.ErrorClassRetryable,
+		},
+		{
+			Agent:    agents.AgentCodex,
+			ExitCode: 0,
+			Events:   fallthrough1.Events,
+		},
+	}
+	runner := &iterScriptRunner{replies: []coreruntime.Result{fallthrough1}}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentClaude, agents.AgentCodex},
+		Runner:       runner,
+		Manager:      &planrun.Manager{Git: g},
+		ProjectRoot:  root,
+	})
+	if res.Err != nil {
+		t.Fatalf("SinglePlan: %v", res.Err)
+	}
+
+	iter1 := filepath.Join(planrun.EvidenceRoot(root, "feat"), "iter-1")
+	claudeEvents := filepath.Join(iter1, "claude", "events.jsonl")
+	data, err := os.ReadFile(claudeEvents)
+	if err != nil {
+		t.Fatalf("claude per-agent evidence missing at %s: %v", claudeEvents, err)
+	}
+	if !strings.Contains(string(data), "CLAUDE_FAILED_ATTEMPT") {
+		t.Fatalf("claude attempt events not preserved: %s", data)
+	}
+	if _, err := os.Stat(filepath.Join(iter1, "codex", "events.jsonl")); err != nil {
+		t.Fatalf("codex per-agent evidence missing: %v", err)
+	}
+}
+
 func TestSinglePlanIterationThreeStoryFullPass(t *testing.T) {
 	p := prd.PRD{
 		ID:    "feat",

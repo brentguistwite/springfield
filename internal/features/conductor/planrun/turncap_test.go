@@ -177,6 +177,59 @@ func TestSinglePlanTurnCapDefusedByLegitimateCompletion(t *testing.T) {
 	}
 }
 
+// TestSinglePlanTurnCapDefusedByMidPlanStoryCommit pins the BUG-3 fix (dogfood
+// flo360 #3): an over-cap iteration that finished only its TARGET story (no
+// whole-plan COMPLETE yet) but COMMITTED must NOT be failed by the turn cap and
+// must discard nothing — the loop proceeds to the next story. On main this
+// iteration trips the cap (iterationWorkComplete requires COMPLETE), failing the
+// plan at 0/2 and throwing away green, committed work.
+func TestSinglePlanTurnCapDefusedByMidPlanStoryCommit(t *testing.T) {
+	p := prd.PRD{
+		ID:    "feat",
+		Title: "Feature Plan",
+		UserStories: []prd.UserStory{
+			{ID: "US-001", Title: "Story 1", Priority: 1, Passes: false},
+			{ID: "US-002", Title: "Story 2", Priority: 2, Passes: false},
+		},
+	}
+	root, project := projectFixtureWithPRD(t, "feat", p)
+	g := newFakeGit() // ResolveRef(main)=deadbeef… , Head()=headcafe… → worktree advanced
+
+	// Iter 1: 200 turns (5× the cap) but US-001 passed and committed, and NO
+	// COMPLETE (US-002 still pending). iterationStoryComplete must defuse the cap.
+	midPlan := coreruntime.Result{
+		Agent:    agents.AgentClaude,
+		Status:   coreruntime.StatusPassed,
+		ExitCode: 0,
+		Events: []coreexec.Event{
+			{Type: coreexec.EventStdout, Data: "<story-pass>US-001</story-pass>", Time: time.Now()},
+			resultEvent(200),
+		},
+	}
+	runner := &iterScriptRunner{replies: []coreruntime.Result{
+		midPlan,
+		makePassAndCompleteResult("US-002"),
+	}}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:              project,
+		ControlRoot:          root,
+		WorktreeBase:         ".worktrees",
+		AgentIDs:             []agents.ID{agents.AgentClaude},
+		Runner:               runner,
+		Manager:              &planrun.Manager{Git: g},
+		ProjectRoot:          root,
+		MaxTurnsPerIteration: 40,
+	})
+
+	if res.Status != conductor.StatusCompleted {
+		t.Fatalf("status = %s, want completed (mid-plan story commit should defuse the cap); reason=%q err=%v", res.Status, res.Reason, res.Err)
+	}
+	if runner.calls != 2 {
+		t.Fatalf("expected 2 agent calls (iter 1 defused, iter 2 completes), got %d", runner.calls)
+	}
+}
+
 // TestSinglePlanTripsTurnCap pins the loop wiring: a clean-exiting iteration
 // that reports more turns than the cap without completing fails the plan with
 // the [planrun.TurnCapExceededReason] tag.

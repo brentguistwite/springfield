@@ -37,6 +37,11 @@ type adapter struct {
 	authWarnOnce sync.Once
 }
 
+// The review gate discovers transcript decoding by an optional type assertion,
+// so dropping AssistantText here would silently regress the verdict scan to raw
+// escaped stream-json (BUG-1) rather than fail a test. Pin it at compile time.
+var _ agents.TranscriptDecoder = (*adapter)(nil)
+
 // New constructs a gemini adapter with default options. Returns an
 // agents.Commander so the runtime can build runnable commands.
 func New(lookPath agents.LookPathFunc) agents.Commander {
@@ -210,8 +215,9 @@ func (a *adapter) maybeEmitAuthWarning() {
 // errored, and text-only runs all fail validation. OS exit code special
 // cases (53 turn-limit, 42 rejected-input) short-circuit at the top before
 // stream inspection. Process-level failures (any non-zero exit) also fail.
-func (a *adapter) ValidateResult(result coreexec.Result) error {
-	// OS exit code special cases — Gemini-specific, take precedence.
+func (a *adapter) ValidateResult(result coreexec.Result, requireToolAction bool) error {
+	// OS exit code special cases — Gemini-specific, take precedence over BOTH
+	// modes (a turn-limit/rejected-input failure is real even for a reviewer).
 	switch result.ExitCode {
 	case 53:
 		return errors.New("gemini exceeded turn limit without completing task")
@@ -220,6 +226,14 @@ func (a *adapter) ValidateResult(result coreexec.Result) error {
 	}
 	if result.ExitCode != 0 {
 		return fmt.Errorf("gemini exited with non-zero code %d", result.ExitCode)
+	}
+
+	// Tool-free reviewer: past the 53/42/non-zero guards, a clean exit is a
+	// valid completion even with no tool work; the verdict scanner judges
+	// substance. NOTE: not yet validated against a real captured gemini
+	// reviewer transcript (gemini CLI unavailable locally) — capture-pending.
+	if !requireToolAction {
+		return nil
 	}
 
 	seenToolUseIDs := map[string]bool{}
@@ -252,6 +266,27 @@ func (a *adapter) ValidateResult(result coreexec.Result) error {
 		return nil
 	}
 	return errors.New("gemini exited without completing tool work")
+}
+
+// AssistantText decodes the reviewer's plain text out of gemini's stream-json
+// message events so the review gate scans real newlines, not the JSON
+// transport (BUG-1). NOTE: shape not yet confirmed against a real captured
+// gemini reviewer transcript (CLI unavailable locally) — capture-pending.
+func (a *adapter) AssistantText(events []coreexec.Event) string {
+	var parts []string
+	for _, e := range events {
+		if e.Type != coreexec.EventStdout {
+			continue
+		}
+		var ev geminiStreamEvent
+		if err := json.Unmarshal([]byte(e.Data), &ev); err != nil {
+			continue
+		}
+		if ev.Type == "message" && ev.Text != "" {
+			parts = append(parts, ev.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 type geminiStreamEvent struct {

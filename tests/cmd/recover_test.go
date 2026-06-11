@@ -73,14 +73,18 @@ func TestSpringfieldRecoverIdempotent(t *testing.T) {
 	}
 }
 
-func TestSpringfieldRecoverOnLiveBatchIsNoop(t *testing.T) {
+// TestSpringfieldRecoverOnIdleBatchIsNoop pins that a freshly-planned batch
+// (batch.json present, plans pending, no owning process) is not archived. Note
+// the corrected liveness model (#10): batch.json presence alone no longer means
+// "live" — the recover keys off the process flock, and with no stale running
+// plan there is simply nothing to recover.
+func TestSpringfieldRecoverOnIdleBatchIsNoop(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 	writeProjectConfig(t, dir, "claude")
 
-	// Compile a real batch via planWithPRD — batch.json is live.
 	env := prd.BatchPRDEnvelope{
-		Title:  "live-batch",
+		Title:  "idle-batch",
 		Source: "src",
 		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-login"}}},
 		Plans:  []prd.BatchPRDPlan{minPRDPlan("plan-login", "Implement login")},
@@ -92,15 +96,70 @@ func TestSpringfieldRecoverOnLiveBatchIsNoop(t *testing.T) {
 
 	output, err := runBinaryIn(t, bin, dir, "recover")
 	if err != nil {
-		t.Fatalf("recover on live batch: %v\n%s", err, output)
+		t.Fatalf("recover on idle batch: %v\n%s", err, output)
 	}
-	if !strings.Contains(output, "still has a live batch.json") {
-		t.Errorf("expected live-batch message, got:\n%s", output)
+	if !strings.Contains(output, "nothing to recover") {
+		t.Errorf("expected no-op message, got:\n%s", output)
 	}
-	// Archive still empty — we didn't archive a live batch.
+	// Archive still empty — we didn't archive an idle batch.
 	archiveDir := filepath.Join(dir, ".springfield", "archive")
 	if entries, _ := os.ReadDir(archiveDir); len(entries) != 0 {
-		t.Errorf("expected 0 archives for live batch, got %d", len(entries))
+		t.Errorf("expected 0 archives for idle batch, got %d", len(entries))
+	}
+}
+
+// TestSpringfieldRecoverDetectsProcessDeadRunning pins the dogfood #10 fix: a
+// batch whose owning process crashed leaves batch.json behind with a plan still
+// marked running and no live flock holder. recover must detect the orphan and
+// reset the stale running marker to interrupted (rather than the old "still has
+// a live batch.json — nothing to recover").
+func TestSpringfieldRecoverDetectsProcessDeadRunning(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+	writeProjectConfig(t, dir, "claude")
+
+	env := prd.BatchPRDEnvelope{
+		Title:  "crashed-batch",
+		Source: "src",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-login"}}},
+		Plans:  []prd.BatchPRDPlan{minPRDPlan("plan-login", "Implement login")},
+	}
+	envJSON, _ := json.MarshalIndent(env, "", "  ")
+	if _, err := planWithPRD(t, bin, dir, string(envJSON)); err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+
+	// Simulate a crash mid-run: plan stuck running, lock file left behind with
+	// a dead pid (flock probe will find no live holder).
+	statePath := filepath.Join(dir, ".springfield", "execution", "state.json")
+	staleState, _ := json.MarshalIndent(map[string]any{
+		"plans": map[string]any{
+			"plan-login": map[string]any{"status": "running", "attempts": 1},
+		},
+	}, "", "  ")
+	if err := os.WriteFile(statePath, staleState, 0o644); err != nil {
+		t.Fatalf("write stale state: %v", err)
+	}
+	lockPath := filepath.Join(dir, ".springfield", ".lock")
+	if err := os.WriteFile(lockPath, []byte("000000999999\n2026-05-04T00:00:00Z\n"), 0o600); err != nil {
+		t.Fatalf("write stale lock: %v", err)
+	}
+
+	output, err := runBinaryIn(t, bin, dir, "recover")
+	if err != nil {
+		t.Fatalf("recover on process-dead batch: %v\n%s", err, output)
+	}
+	if !strings.Contains(output, "no live springfield process") || !strings.Contains(output, "plan-login") {
+		t.Errorf("expected orphan-running detection naming the plan, got:\n%s", output)
+	}
+
+	// The stale running marker must be reset to interrupted on disk.
+	project, err := conductor.LoadProject(dir)
+	if err != nil {
+		t.Fatalf("reload project: %v", err)
+	}
+	if got := project.State.Plans["plan-login"].Status; got != conductor.StatusInterrupted {
+		t.Errorf("plan status = %q, want interrupted", got)
 	}
 }
 

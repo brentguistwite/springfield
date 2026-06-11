@@ -39,12 +39,26 @@ import (
 )
 
 // runtimeAgentRunner is a thin adapter so cmd does not need to import the
-// shared coreruntime constructor everywhere.
-type runtimeAgentRunner struct{ inner *coreruntime.Runner }
+// shared coreruntime constructor everywhere. It EMBEDS the concrete runner
+// rather than hand-forwarding individual methods, so every capability the
+// runner exposes — Run, and the optional AssistantText the review gate
+// discovers by type assertion — is promoted automatically, including any added
+// later. Hand-forwarding only Run is exactly how BUG-1's decode silently went
+// missing in production once AssistantText was added (the assertion failed and
+// the verdict scan fell back to raw escaped stream-json); embedding makes that
+// class of omission impossible.
+type runtimeAgentRunner struct{ *coreruntime.Runner }
 
-func (r runtimeAgentRunner) Run(ctx context.Context, req coreruntime.Request) coreruntime.Result {
-	return r.inner.Run(ctx, req)
-}
+// Compile-time guards: the production wrapper MUST satisfy the review gate's
+// runner contract AND carry the optional transcript decoder, or shipped reviews
+// silently regress to BUG-1. Embedding satisfies both for free; these fail the
+// BUILD (not a review) if the wrapper is ever downgraded to hand-forwarding.
+var (
+	_ planrun.AgentRunner = runtimeAgentRunner{}
+	_ interface {
+		AssistantText(agents.ID, []coreexec.Event) string
+	} = runtimeAgentRunner{}
+)
 
 // NewStartCommand runs the active Springfield batch from its saved progress.
 func NewStartCommand() *cobra.Command {
@@ -423,7 +437,7 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 			AgentIDs:             agentIDs,
 			ExecutionSettings:    loaded.Config.ExecutionSettings(),
 			ReviewConfig:         local.Review,
-			Runner:               runtimeAgentRunner{inner: coreruntime.NewRunner(registry)},
+			Runner:               runtimeAgentRunner{coreruntime.NewRunner(registry)},
 			Manager:              planrun.NewManager(),
 			OnEvent:              traceHandler,
 			Progress:             progress,
@@ -432,6 +446,7 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 			TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(root, ".springfield", "plans"), controlRoot: root},
 			Ctx:                  ctx,
 			MaxTurnsPerIteration: loaded.Config.MaxTurnsPerIteration(),
+			MinFreeDiskBytes:     loaded.Config.MinFreeDiskBytes(),
 			CostCapUSD:           costCap,
 			BatchID:              b.ID,
 		})
@@ -1251,7 +1266,7 @@ func runOnePlan(ctx context.Context, w io.Writer, project *conductor.Project, ro
 		AgentIDs:             agentIDs,
 		ExecutionSettings:    loaded.Config.ExecutionSettings(),
 		ReviewConfig:         local.Review,
-		Runner:               runtimeAgentRunner{inner: coreruntime.NewRunner(registry)},
+		Runner:               runtimeAgentRunner{coreruntime.NewRunner(registry)},
 		Manager:              planrun.NewManager(),
 		Progress:             w,
 		EnforceProtectedBase: enforceProtected,

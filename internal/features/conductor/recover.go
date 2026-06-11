@@ -44,6 +44,56 @@ func (p *Project) RecoverRetry(planID string) (*RecoveryAction, error) {
 	return &rec, nil
 }
 
+// ResetPlanFresh discards a prior attempt entirely: it resets the plan to a
+// clean first-run state, clearing the recorded worktree path, branch, base
+// head, and input digest. Unlike RecoverRetry (which resumes the preserved
+// worktree) and AcceptInputDrift (which keeps the worktree and only re-records
+// the digest), reset is the discard path — the caller is expected to also
+// remove the on-disk worktree and delete the plan branch so the next start
+// re-creates them from base. Refuses a mid-flight running plan and a
+// fully-integrated completed plan (its work is already merged). The caller
+// must persist via SaveState.
+func (p *Project) ResetPlanFresh(planID string) (*RecoveryAction, error) {
+	ps, ok := p.State.Plans[planID]
+	if !ok {
+		return nil, fmt.Errorf("plan %q has no recorded state", planID)
+	}
+	if ps.Status == StatusRunning {
+		return nil, fmt.Errorf("plan %q is currently running; wait for it to finish or run \"springfield recover --plan %s\" to normalize state before resetting", planID, planID)
+	}
+	if ps.Status == StatusCompleted && ps.IsIntegrated() {
+		return nil, fmt.Errorf("plan %q is already integrated; its work is merged — remove the plan unit instead of resetting", planID)
+	}
+
+	rec := RecoveryAction{
+		Action: "reset",
+		Reason: fmt.Sprintf("discarded prior attempt and reset from %s to a clean first-run", ps.Status),
+		At:     time.Now(),
+	}
+
+	ps.Status = StatusPending
+	ps.Error = ""
+	ps.ExitReason = ""
+	ps.Merge = nil
+	ps.Cleanup = nil
+	ps.Attempts = 0
+	ps.WorktreePath = ""
+	ps.Branch = ""
+	ps.BaseRef = ""
+	ps.BaseHead = ""
+	ps.InputDigest = ""
+	// Clear the prior run-record too: PlanHead points into the now-deleted
+	// branch and would surface as a dangling SHA in status/diagnosis; the rest
+	// describe an attempt that no longer exists after a clean reset.
+	ps.PlanHead = ""
+	ps.EvidencePath = ""
+	ps.Agent = ""
+	ps.StartedAt = time.Time{}
+	ps.EndedAt = time.Time{}
+	ps.RecoveryHistory = append(ps.RecoveryHistory, rec)
+	return &rec, nil
+}
+
 // RecoverRetryMerge clears merge and cleanup state for a completed plan whose
 // merge was refused or failed before the target branch was advanced. The next
 // springfield start re-enters the full merge integration phase. The caller must

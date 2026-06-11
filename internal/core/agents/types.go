@@ -122,15 +122,34 @@ type Commander interface {
 // ResultValidator optionally validates whether exit code 0 truly means task success.
 // Adapters that implement this are checked by the runner after a clean exit.
 type ResultValidator interface {
-	// Positive-signal contract: ValidateResult returns nil only when the
-	// agent's transcript carries an explicit positive completion signal
-	// (e.g. a tool_use/tool_result success pair, or an adapter-specific
-	// item.completed work event). Absence of failure markers is not
-	// enough; refusal-with-no-tools, all-tools-errored, and text-only
-	// runs all return a non-nil, operator-readable error. Adapter-
-	// specific OS exit-code rules (Gemini exit 53/42) and process-level
-	// failures take precedence over stream inspection.
-	ValidateResult(result exec.Result) error
+	// Positive-signal contract (requireToolAction == true): ValidateResult
+	// returns nil only when the agent's transcript carries an explicit
+	// positive completion signal (e.g. a tool_use/tool_result success pair,
+	// or an adapter-specific item.completed work event). Absence of failure
+	// markers is not enough; refusal-with-no-tools, all-tools-errored, and
+	// text-only runs all return a non-nil, operator-readable error.
+	//
+	// requireToolAction == false relaxes the tool requirement for agents that
+	// are legitimately tool-free — the reviewer reasons over an inline diff
+	// with tools forbidden, so a clean terminal-success transcript with zero
+	// tool calls is a valid completion. The reviewer's substance is judged by
+	// the verdict scanner, not here. The parameter is zero-value-is-strict by
+	// design: a caller that forgets to pass it gets the implementer contract,
+	// never an accidentally-relaxed one.
+	//
+	// Adapter-specific OS exit-code rules (Gemini exit 53/42) and process-
+	// level failures take precedence over both modes.
+	ValidateResult(result exec.Result, requireToolAction bool) error
+}
+
+// TranscriptDecoder optionally extracts the agent's plain assistant/final text
+// out of its (tool-specific) stream-json transport. The review gate uses it to
+// scan for the verdict marker against decoded text with real newlines, rather
+// than the raw escaped JSON line where an anchored regex never matches. Each
+// adapter owns its own transport shape — keeping that knowledge behind the
+// adapter boundary instead of branching per-agent in the review feature.
+type TranscriptDecoder interface {
+	AssistantText(events []exec.Event) string
 }
 
 // ErrorClass classifies whether a runtime failure is worth falling back to the
