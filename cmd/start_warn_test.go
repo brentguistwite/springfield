@@ -86,6 +86,12 @@ func TestEmitClaudeBillingWarning_NoHistory(t *testing.T) {
 	if !regexp.MustCompile(`claude is in agent_priority`).MatchString(out) {
 		t.Errorf("missing warning header: %q", out)
 	}
+	// Pin a phrase from the warning body so the metered-path prose can't be
+	// silently reworded/dropped (the body is only reachable when the switch
+	// is on, so nothing else guards it).
+	if !regexp.MustCompile(`currently metered separately`).MatchString(out) {
+		t.Errorf("missing metered-policy body line: %q", out)
+	}
 	if !regexp.MustCompile(`no prior batches`).MatchString(out) {
 		t.Errorf("missing no-history hint: %q", out)
 	}

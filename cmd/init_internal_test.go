@@ -65,21 +65,26 @@ func TestNewModelSuggesterReturnsNilWhenAdapterHasNoModelProvider(t *testing.T) 
 // operator's toggle order. Two operators picking the same set must end up
 // with byte-identical springfield.toml.
 func TestPreservedOrderUsesCanonicalAgentOrdering(t *testing.T) {
-	canonical := []agents.ID{agents.AgentClaude, agents.AgentCodex, agents.AgentGemini}
+	claudeFirst := []agents.ID{agents.AgentClaude, agents.AgentCodex, agents.AgentGemini}
+	codexFirst := []agents.ID{agents.AgentCodex, agents.AgentClaude, agents.AgentGemini}
 
 	cases := []struct {
-		name     string
-		selected []string
-		want     []string
+		name      string
+		canonical []agents.ID
+		selected  []string
+		want      []string
 	}{
-		{"toggle-reverse", []string{"gemini", "codex", "claude"}, []string{"claude", "codex", "gemini"}},
-		{"toggle-codex-first", []string{"codex", "claude"}, []string{"claude", "codex"}},
-		{"empty", nil, []string{}},
+		{"toggle-reverse", claudeFirst, []string{"gemini", "codex", "claude"}, []string{"claude", "codex", "gemini"}},
+		{"toggle-codex-first", claudeFirst, []string{"codex", "claude"}, []string{"claude", "codex"}},
+		{"empty", claudeFirst, nil, []string{}},
+		// Metered canonical (ClaudeHeadlessMetered=true): the result follows
+		// the codex-first canonical, not the operator's toggle order.
+		{"metered-canonical", codexFirst, []string{"claude", "codex"}, []string{"codex", "claude"}},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := preservedOrder(tc.selected, canonical)
+			got := preservedOrder(tc.selected, tc.canonical)
 			if len(got) != len(tc.want) {
 				t.Fatalf("len(got) = %d, want %d (%v)", len(got), len(tc.want), got)
 			}
