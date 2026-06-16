@@ -48,22 +48,26 @@ func runInitForm(
 
 	supported := agents.SupportedForExecution()
 
+	// The lead agent (first in priority order) is the pre-checked default —
+	// the path of least resistance. That order is governed by
+	// agents.ClaudeHeadlessMetered, so pre-selecting supported[0] tracks the
+	// master switch automatically (no agent ID hardcoded here).
+	lead := string(supported[0])
+
 	options := make([]huh.Option[string], 0, len(supported))
 	for _, id := range supported {
 		marker := agentDetectionMarker(det.Detect(id))
 		label := fmt.Sprintf("%s — %s", id, marker)
 		opt := huh.NewOption(label, string(id))
-		// Codex is pre-checked by default — subscription-friendly path.
-		// Claude and Gemini remain opt-in.
-		if id == agents.AgentCodex {
+		if string(id) == lead {
 			opt = opt.Selected(true)
 		}
 		options = append(options, opt)
 	}
 
-	// Pre-populate selected so accessible-mode renders codex as the default
-	// when the operator simply confirms without re-entering picks.
-	selected := []string{string(agents.AgentCodex)}
+	// Pre-populate selected so accessible-mode renders the lead agent as the
+	// default when the operator simply confirms without re-entering picks.
+	selected := []string{lead}
 	pickAgents := huh.NewForm(
 		huh.NewGroup(
 			huh.NewMultiSelect[string]().

@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 
+	"springfield/internal/core/agents"
 	"springfield/internal/features/cost"
 )
 
@@ -22,6 +23,13 @@ const suppressClaudeBillingWarningEnv = "SPRINGFIELD_SUPPRESS_CLAUDE_BILLING_WAR
 // rather than a dollar range so the operator is not misled by a fabricated
 // number.
 func emitClaudeBillingWarning(w io.Writer, root string, agentPriority []string) bool {
+	// Master switch: while `claude -p` is not separately metered (Anthropic
+	// reverted the 2026-05-14 change), there is no billing surprise to warn
+	// about. agents.ClaudeHeadlessMetered also governs the codex-vs-claude
+	// init default, so both revert together by flipping that one flag.
+	if !agents.ClaudeHeadlessMetered {
+		return false
+	}
 	if !slices.Contains(agentPriority, "claude") {
 		return false
 	}

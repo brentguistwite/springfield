@@ -2,25 +2,28 @@ package agents
 
 import "slices"
 
-// supportedForExecution lists agents with fully wired execution support.
-//
-// Order is also the init picker's display + default-priority order. As of
-// the 2026-05-14 Anthropic billing change to `claude -p`, codex is listed
-// first so subscription-friendly defaults are the path of least resistance;
-// claude remains fully supported but is opt-in.
-var supportedForExecution = []ID{AgentCodex, AgentClaude, AgentGemini}
+// executionOrder returns the execution-supported agents in priority order.
+// The set is fixed; only the lead position depends on ClaudeHeadlessMetered.
+// When claude headless runs are NOT separately metered (the shipped default),
+// claude leads as the path of least resistance and matches the catalog order;
+// when metered, codex leads so subscription-friendly defaults win. The order
+// is also the init picker's display + default-priority order (lead = default).
+func executionOrder() []ID {
+	if ClaudeHeadlessMetered {
+		return []ID{AgentCodex, AgentClaude, AgentGemini}
+	}
+	return []ID{AgentClaude, AgentCodex, AgentGemini}
+}
 
 // SupportedForExecution returns the ordered list of agent IDs that can be
 // used for plan execution. This is the single source of truth; use it
 // anywhere execution eligibility must be checked.
 func SupportedForExecution() []ID {
-	out := make([]ID, len(supportedForExecution))
-	copy(out, supportedForExecution)
-	return out
+	return executionOrder()
 }
 
 // IsExecutionSupported reports whether the given agent ID is wired for
 // execution.
 func IsExecutionSupported(id ID) bool {
-	return slices.Contains(supportedForExecution, id)
+	return slices.Contains(executionOrder(), id)
 }

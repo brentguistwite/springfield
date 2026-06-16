@@ -281,9 +281,9 @@ func TestInitAcceptsGeminiInAgentsFlag(t *testing.T) {
 
 // TestInitNonTTYEmptyStdinErrors verifies that running init non-interactively
 // with an empty stdin still fails before writing springfield.toml. The
-// init form pre-selects codex as the default priority (see the
-// vendor-economics pivot, 2026-05-14), but the model picker and write
-// confirmation still require input — empty stdin cannot satisfy them.
+// init form pre-selects claude as the default priority (the lead agent; see
+// agents.ClaudeHeadlessMetered), but the model picker and write confirmation
+// still require input — empty stdin cannot satisfy them.
 func TestInitNonTTYEmptyStdinErrors(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
@@ -300,18 +300,19 @@ func TestInitNonTTYEmptyStdinErrors(t *testing.T) {
 }
 
 // TestInitNonTTYPipedAccessibleModeMatchesFlagOutput pipes the canonical
-// "codex only, adapter default" answer script into init's accessible-mode
+// "claude only, adapter default" answer script into init's accessible-mode
 // form and asserts the resulting springfield.toml is byte-identical to the
-// flag-driven equivalent. Codex is the default after the 2026-05-14
-// vendor-economics pivot.
+// flag-driven equivalent. Claude is the lead/default agent while
+// agents.ClaudeHeadlessMetered is false (Anthropic reverted the 2026-05-14
+// `claude -p` metering change).
 //
 // Answer-script derivation (empirical, 2026-05-15):
 //
-//	Prompt                                            Input     Effect
-//	───────────────────────────────────────────────── ──────    ───────────────────────────
-//	MultiSelect "Which agents..." (codex pre-checked) "0\n"     confirm selection as-is
-//	Select "Model for codex"                          "1\n"     pick "(use adapter default)"
-//	Confirm "Write springfield.toml..."               "y\n"     write
+//	Prompt                                             Input     Effect
+//	─────────────────────────────────────────────────  ──────    ───────────────────────────
+//	MultiSelect "Which agents..." (claude pre-checked) "0\n"     confirm selection as-is
+//	Select "Model for claude"                          "1\n"     pick "(use adapter default)"
+//	Confirm "Write springfield.toml..."                "y\n"     write
 //
 // Drift warning: huh's accessible-mode output format (numbered separators,
 // prompt phrasing) is not API-stable. If this test fails on a `huh` bump:
@@ -324,7 +325,7 @@ func TestInitNonTTYPipedAccessibleModeMatchesFlagOutput(t *testing.T) {
 	flagDir := t.TempDir()
 	pipeDir := t.TempDir()
 
-	if out, err := runBinaryIn(t, bin, flagDir, "init", "--agents", "codex"); err != nil {
+	if out, err := runBinaryIn(t, bin, flagDir, "init", "--agents", "claude"); err != nil {
 		t.Fatalf("flag-driven init failed: %v\n%s", err, out)
 	}
 	flagBytes, err := os.ReadFile(filepath.Join(flagDir, "springfield.toml"))
