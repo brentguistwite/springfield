@@ -250,6 +250,52 @@ func TestLineByLineReaderRespectsBufferLimit(t *testing.T) {
 	}
 }
 
+// TestRunInitFormPreSelectsLeadAgent pins that the agent picker pre-checks the
+// lead agent from agents.SupportedForExecution() — and that the lead tracks the
+// ClaudeHeadlessMetered switch. It drives the accessible-mode form in-process
+// and confirms the pre-checked default as-is, asserting the resulting priority.
+// The subprocess test in tests/cmd cannot flip the in-process switch, so the
+// metered (codex-led) path is only reachable here; this also guards against a
+// future re-hardcode of the lead in init_form.go on either switch state.
+func TestRunInitFormPreSelectsLeadAgent(t *testing.T) {
+	cases := []struct {
+		name     string
+		metered  bool
+		wantLead string
+	}{
+		{"not-metered: claude leads", false, "claude"},
+		{"metered: codex leads", true, "codex"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prev := agents.ClaudeHeadlessMetered
+			agents.ClaudeHeadlessMetered = tc.metered
+			t.Cleanup(func() { agents.ClaudeHeadlessMetered = prev })
+
+			// Accessible-mode answer script: confirm the pre-checked lead as-is
+			// (0), take the adapter-default model (1), write (y). Same derivation
+			// as TestInitNonTTYPipedAccessibleModeMatchesFlagOutput in tests/cmd.
+			in := strings.NewReader("0\n1\ny\n")
+			suggest := func(agents.ID) []string { return nil }
+			priority, _, err := runInitForm(in, io.Discard, fakeDetector{}, suggest, true)
+			if err != nil {
+				t.Fatalf("runInitForm: %v", err)
+			}
+			if len(priority) != 1 || priority[0] != tc.wantLead {
+				t.Fatalf("priority = %v, want [%s] (the pre-selected lead)", priority, tc.wantLead)
+			}
+		})
+	}
+}
+
+// fakeDetector reports every agent as available so the picker renders all rows
+// without a real PATH sweep.
+type fakeDetector struct{}
+
+func (fakeDetector) Detect(agents.ID) agents.DetectionStatus {
+	return agents.DetectionStatusAvailable
+}
+
 type fakeAdapterNoModelProvider struct {
 	id agents.ID
 }
