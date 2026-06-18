@@ -4,9 +4,9 @@
 
 Local-state conductor for multi-agent code work, distributed as a Claude Code (and Codex) marketplace plugin.
 
-Springfield turns a plan (file or prompt) into a sequential batch of agent runs, executes each slice in an isolated git worktree, captures per-slice evidence, and falls through `agent_priority` (default: Codex → opt-in Claude → opt-in Gemini) when a run is retryable. State lives under `.springfield/` in the repo; install ships through Claude Code and Codex marketplace plugins.
+Springfield turns a plan (file or prompt) into a sequential batch of agent runs, executes each slice in an isolated git worktree, captures per-slice evidence, and falls through `agent_priority` (default: Claude → opt-in Codex → opt-in Gemini) when a run is retryable. State lives under `.springfield/` in the repo; install ships through Claude Code and Codex marketplace plugins.
 
-> **Vendor economics (2026-05-14):** Anthropic announced that `claude -p` headless invocations bill against `ANTHROPIC_API_KEY` at API rates rather than the Claude Max/Pro subscription. Springfield defaults to Codex (subscription-friendly); Claude is available via opt-in. `springfield start` emits a stderr warning before any dispatch when `claude` is in `agent_priority`, and `--cost-cap $X` aborts the batch when spend hits the threshold.
+> **Vendor economics:** `claude -p` headless invocations count against the Claude Max/Pro subscription, so Springfield defaults to Claude (Codex and Gemini are opt-in). Anthropic briefly metered `claude -p` separately (2026-05-14) before reverting; Springfield keeps that response — a Codex-led default plus a `springfield start` billing warning — one flag flip away (`ClaudeHeadlessMetered` in `internal/core/agents`) for if it returns. `--cost-cap $X` aborts the batch when spend hits the threshold regardless.
 
 > "Plugin-distributed" here means Springfield is *installed via* the marketplace plugin flow. Springfield does not currently expose a plugin or extension API of its own.
 
@@ -14,7 +14,7 @@ When you run `springfield start`, the conductor will:
 
 1. Load the next plan from the compiled batch.
 2. Cut an isolated worktree on `springfield/<plan-id>` so the host clone stays untouched.
-3. Dispatch the first id in `agent_priority` (default: Codex; Claude/Gemini opt-in) against the plan envelope.
+3. Dispatch the first id in `agent_priority` (default: Claude; Codex/Gemini opt-in) against the plan envelope.
 4. Stream the agent's output to `.springfield/execution/plans/<plan-id>/evidence/iter-<N>/` and watch for the runner-sole-writer markers that signal pass/fail.
 5. Fast-forward merge the plan back into your base branch on success; fall through to the next agent on a retryable failure.
 6. Move to the next plan, repeating until the batch is complete or a fatal failure stops it.
@@ -171,20 +171,17 @@ Project-level agent execution settings live in `springfield.toml`. Example:
 
 ```toml
 [project]
-agent_priority = ["codex"]
+agent_priority = ["claude"]
 
-[agents.codex]
-model = "gpt-5-codex"
-sandbox_mode = "danger-full-access"
-approval_policy = "never"
+[agents.claude]
+model = "claude-sonnet-4-6"
+permission_mode = "bypassPermissions"
 
-# Opt in to Claude by adding "claude" to agent_priority; scaffold below.
-# As of 2026-05-14 claude -p bills against ANTHROPIC_API_KEY at API
-# rates rather than your Claude Max/Pro subscription. springfield start
-# warns when "claude" is in agent_priority.
-# [agents.claude]
-# model = "claude-sonnet-4-6"
-# permission_mode = "bypassPermissions"
+# Opt in to Codex by adding "codex" to agent_priority; scaffold below.
+# [agents.codex]
+# model = "gpt-5-codex"
+# sandbox_mode = "danger-full-access"
+# approval_policy = "never"
 
 # Opt in to Gemini by adding "gemini" to agent_priority; scaffold below.
 # [agents.gemini]
@@ -194,7 +191,7 @@ approval_policy = "never"
 
 Notes:
 
-- `springfield init` runs an interactive TUI: multi-select agents (Codex is pre-checked; Claude and Gemini are opt-in), pick a model per agent (or take the adapter default), then confirm a summary before write. Shift+Tab navigates back; Esc edits any answer. For non-interactive installs, pass `--agents codex,claude` and optionally `--model codex=<id>,claude=<id>,gemini=<id>` — or pipe answers on stdin and Springfield falls through to huh's accessible plain-text mode.
+- `springfield init` runs an interactive TUI: multi-select agents (Claude is pre-checked; Codex and Gemini are opt-in), pick a model per agent (or take the adapter default), then confirm a summary before write. Shift+Tab navigates back; Esc edits any answer. For non-interactive installs, pass `--agents claude,codex` and optionally `--model claude=<id>,codex=<id>,gemini=<id>` — or pipe answers on stdin and Springfield falls through to huh's accessible plain-text mode.
 - `springfield init` scaffolds `springfield.toml` + `.springfield/` with recommended execution settings for each selected agent.
 - Gemini is execution-supported but opt-in. Pass `--agents claude,codex,gemini` (or edit `agent_priority`) to include it. See [`docs/release.md`](docs/release.md#2026-04-gemini-cli-execution-support) for the migration note.
 - Primary install is two pieces: the CLI via Homebrew (or tarball/source on non-mac) and the plugin via the Claude or Codex marketplace — see [Install](#install).
@@ -206,7 +203,7 @@ Notes:
 
 ### `agent_priority` semantics
 
-> **Billing-change note (2026-05-14):** Anthropic announced that `claude -p` headless invocations bill against `ANTHROPIC_API_KEY` at API rates rather than the Claude Max/Pro subscription. Springfield defaults `agent_priority` to `["codex"]` for new projects and emits a stderr warning at `springfield start` when `claude` is in the list. See [Cost visibility](#cost-visibility) for the cost-capture surface and `--cost-cap` flag.
+> **Billing note:** `claude -p` currently counts against the Claude Max/Pro subscription, so new projects default `agent_priority` to `["claude"]` and `springfield start` prints no billing warning. If Anthropic re-meters `claude -p` separately (as briefly happened 2026-05-14), flip `ClaudeHeadlessMetered` (`internal/core/agents`) to restore the `["codex"]` default and the stderr warning. See [Cost visibility](#cost-visibility) for the cost-capture surface and `--cost-cap` flag.
 
 `agent_priority` is an ordered list of agent IDs. Springfield always starts with the **first** id for each plan dispatch and only advances down the list on a retryable failure.
 
@@ -254,9 +251,9 @@ The resume cap must be strictly greater than the current spend. Without `--cost-
 
 ### Historical estimates
 
-Archived batches retain a `total_usd` field; the `springfield start` warning (when `claude` is in `agent_priority`) reads the last 5 archives' per-plan mean and renders a `~$X.XX–$Y.YY` range so the cost message has a concrete number. Fresh projects render `(no prior batches)` rather than fabricate a number.
+Archived batches retain a `total_usd` field; when the `claude -p` billing warning is active (see the billing note under [`agent_priority` semantics](#agent_priority-semantics)) it reads the last 5 archives' per-plan mean and renders a `~$X.XX–$Y.YY` range so the cost message has a concrete number. Fresh projects render `(no prior batches)` rather than fabricate a number.
 
-To silence the warning entirely: `SPRINGFIELD_SUPPRESS_CLAUDE_BILLING_WARNING=1`.
+When that warning is active, silence it per-operator with `SPRINGFIELD_SUPPRESS_CLAUDE_BILLING_WARNING=1`. The warning is dormant by default while `claude -p` is subscription-billed.
 
 ## Recommended Workflow
 

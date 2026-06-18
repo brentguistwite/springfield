@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 
+	"springfield/internal/core/agents"
 	"springfield/internal/features/cost"
 )
 
@@ -22,6 +23,13 @@ const suppressClaudeBillingWarningEnv = "SPRINGFIELD_SUPPRESS_CLAUDE_BILLING_WAR
 // rather than a dollar range so the operator is not misled by a fabricated
 // number.
 func emitClaudeBillingWarning(w io.Writer, root string, agentPriority []string) bool {
+	// Master switch: while `claude -p` is not separately metered (Anthropic
+	// reverted the 2026-05-14 change), there is no billing surprise to warn
+	// about. agents.ClaudeHeadlessMetered also governs the codex-vs-claude
+	// init default, so both revert together by flipping that one flag.
+	if !agents.ClaudeHeadlessMetered {
+		return false
+	}
 	if !slices.Contains(agentPriority, "claude") {
 		return false
 	}
@@ -40,8 +48,8 @@ func emitClaudeBillingWarning(w io.Writer, root string, agentPriority []string) 
 		estimate = fmt.Sprintf("Estimated cost per plan: ~$%.2f–$%.2f (mean of last %d batches; multiply by your plan count for a total)", low, high, batches)
 	}
 
-	fmt.Fprintln(w, "[!] claude is in agent_priority. As of 2026-05-14, `claude -p` headless")
-	fmt.Fprintln(w, "    invocations are metered separately from your Claude Max/Pro subscription:")
+	fmt.Fprintln(w, "[!] claude is in agent_priority, and `claude -p` headless invocations are")
+	fmt.Fprintln(w, "    currently metered separately from your Claude Max/Pro subscription:")
 	fmt.Fprintln(w, "    they draw from a Console-account credit pool, then either bill at API")
 	fmt.Fprintln(w, "    rates (if API billing is configured) or rate-limit mid-batch (if not).")
 	fmt.Fprintf(w, "    %s\n", estimate)
