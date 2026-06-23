@@ -86,7 +86,7 @@ func assertRequiredSkillsExist(t *testing.T, root string) {
 
 	for _, rel := range []string{
 		"skills/plan/SKILL.md",
-		"skills/plan-from-jira/SKILL.md",
+		"skills/plan-from-issue/SKILL.md",
 		"skills/status/SKILL.md",
 		"skills/recover/SKILL.md",
 	} {
@@ -121,7 +121,7 @@ func assertRequiredCommandsExist(t *testing.T, root string) {
 
 	for _, rel := range []string{
 		"commands/plan.md",
-		"commands/plan-from-jira.md",
+		"commands/plan-from-issue.md",
 		"commands/status.md",
 		"commands/recover.md",
 	} {
