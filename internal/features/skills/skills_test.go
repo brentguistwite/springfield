@@ -704,11 +704,11 @@ func TestPlanFromIssueSkillIngestsIssues(t *testing.T) {
 	for label, content := range map[string]string{"skill": skill.Content, "command": command.Content} {
 		for _, want := range []string{
 			// Tracker-neutral core (survives the generalization).
-			"Select the active tracker",           // new Step 0
+			"Select the active tracker",
 			"Tracker profile",                     // the profile-block boundary
 			"No issue-tracker tool detected",      // generalized precondition failure
 			"unknown tracker",                     // toml validation against the profile registry
-			"Slug the plan",                       // mapping grain preserved
+			"Slug the plan",                       // issue key -> plan id slug
 			"user stories",                        // sub-items -> stories
 			"topologically sort",                  // ordering preserved
 			"parent-acceptance",                   // synthetic parent-DoD story preserved
