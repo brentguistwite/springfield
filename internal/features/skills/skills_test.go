@@ -704,7 +704,7 @@ func TestPlanFromIssueSkillIngestsIssues(t *testing.T) {
 	for label, content := range map[string]string{"skill": skill.Content, "command": command.Content} {
 		for _, want := range []string{
 			// Tracker-neutral core (survives the generalization).
-			"Select the active tracker",          // new Step 0
+			"Select the active tracker",           // new Step 0
 			"Tracker profile",                     // the profile-block boundary
 			"No issue-tracker tool detected",      // generalized precondition failure
 			"unknown tracker",                     // toml validation against the profile registry
@@ -732,6 +732,19 @@ func TestPlanFromIssueSkillIngestsIssues(t *testing.T) {
 			"gitBranchName",    // canonical Linear branch name
 			"[A-Z0-9]+-\\d+",   // alphanumeric team-key pattern (not letters-only)
 			"fixes <KEY>",      // PR closing keyword for status automation
+			// Behavioral contract clauses hardened during prior adversarial review —
+			// tracker-neutral, they survive the generalization and stay pinned so a
+			// future prose rewrite can't silently drop the safety/degradation logic.
+			"never started by ANY session",                      // active-batch gate is batch history, not the current user's action
+			"different parent issue",                            // cross-issue sub-item dependency links are skipped (was "different parent ticket")
+			"story dependency graph blocked: no eligible story", // story-dep cycle degrades, not hard-fails
+			"unknown provenance",                                // any doubt defaults to the non-replace path
+			"springfield:recover",                               // batch recovery delegated to the recover skill
+			"recover --plan",                                    // bare recover only archives orphans; a failed plan needs --plan <id>
+			"try to reverse the queued plan ids",                // don't reconstruct keys from lossy slugs — user supplies keys
+			"--replace --prd -",                                 // active-batch persist uses --replace (plain --prd - hard-errors)
+			"how do we know this story is done",                 // DoD prompt reused from the plan skill
+			"don't ask me about criteria",                       // bulk escape hatch
 		} {
 			if !strings.Contains(content, want) {
 				t.Errorf("plan-from-issue %s missing token %q", label, want)

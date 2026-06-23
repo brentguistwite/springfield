@@ -47,8 +47,8 @@ func writeSystemSettings(root, hookBin string) (string, error) {
 			"BeforeTool": {{
 				Matcher: hookGuardMatchers,
 				Hooks: []hookSpec{{
-					Type:    "command",
-					Name:    "springfield-control-plane-guard",
+					Type: "command",
+					Name: "springfield-control-plane-guard",
 					// --block-reentry: subagent context — block all
 					// springfield start/plan/recover (see cmd/hook_guard.go).
 					Command: shellQuote(hookBin) + " hook-guard --block-reentry",
@@ -61,11 +61,11 @@ func writeSystemSettings(root, hookBin string) (string, error) {
 			// skills. Matches the agents.overrides schema documented in
 			// docs/core/subagents.md.
 			"overrides": map[string]any{
-				"springfield:start":          map[string]any{"enabled": false},
-				"springfield:plan":           map[string]any{"enabled": false},
+				"springfield:start":           map[string]any{"enabled": false},
+				"springfield:plan":            map[string]any{"enabled": false},
 				"springfield:plan-from-issue": map[string]any{"enabled": false},
-				"springfield:status":         map[string]any{"enabled": false},
-				"springfield:recover":        map[string]any{"enabled": false},
+				"springfield:status":          map[string]any{"enabled": false},
+				"springfield:recover":         map[string]any{"enabled": false},
 			},
 		},
 	}

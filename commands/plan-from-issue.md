@@ -56,8 +56,8 @@ This skill emits the SAME PRD envelope as the `plan` skill (see `docs/prd-format
 
 Decide which **Tracker profile** (below) governs this run:
 
-1. If `springfield.toml` has a `tracker = "<name>"` line, use that profile. (Read the toml directly — no engine config parsing.) **Validate** the value against the `### Tracker profile:` headings below; on a miss, stop and surface: `unknown tracker "<value>" — known profiles: jira, linear; fix springfield.toml or tell me which`. There is no tracker-name list in code — the profile headings are the registry.
-2. Otherwise auto-detect by the connected tool: a Jira tool → **jira**; a Linear tool → **linear**.
+1. If `springfield.toml` has a `tracker = "<name>"` line, use that profile. (Read the toml directly — no engine config parsing.) **Validate** the value against the `### Tracker profile:` headings below; on a miss, stop and surface: `unknown tracker "<value>" — known profiles: jira, linear; fix springfield.toml or tell me which`. The `### Tracker profile:` headings are the registry — there is no tracker-name list in code, so keep this known-profiles hint in sync with the headings if you add a profile.
+2. Otherwise auto-detect by the tool the agent already has connected, using the active profile's **Fetch** signals below: a Jira tool (e.g. `getJiraIssue` / `searchJiraIssuesUsingJql`) → **jira**; a Linear tool (e.g. `get_issue` via `mcp.linear.app`) → **linear**.
 3. If both or neither are connected, ask once: "Which tracker — jira or linear?"
 
 Then follow the matching **Tracker profile** block below for fetch, key parsing, container expansion, and field mapping. Everything else in this skill is tracker-neutral.
@@ -155,14 +155,14 @@ springfield plan --prd - <<'JSON'
   "title": "<container or batch title>",
   "source": "<concatenated raw issues, verbatim>",
   "phases": [
-    {"mode": "serial", "plans": ["<issue-key-1>", "<issue-key-2>"]}
+    {"mode": "serial", "plans": ["proj-123", "b2b2c-299"]}
   ],
   "plans": [
     {
-      "id": "<issue-key-1>",
+      "id": "proj-123",
       "title": "<issue 1 summary>",
       "description": "<issue 1 one-paragraph summary>",
-      "context_md": "Source: <issue-key-1> — <title>\n<issue url>\n\n<issue description minus the acceptance-criteria section>",
+      "context_md": "Source: PROJ-123 — <title>\n<issue url>\n\n<issue description minus the acceptance-criteria section>",
       "review": true,
       "user_stories": [
         {
@@ -186,10 +186,10 @@ springfield plan --prd - <<'JSON'
       ]
     },
     {
-      "id": "<issue-key-2>",
+      "id": "b2b2c-299",
       "title": "<issue 2 summary>",
       "description": "<issue 2 one-paragraph summary>",
-      "context_md": "Source: <issue-key-2> — <title>\n<issue url>\n\n<issue description minus the acceptance-criteria section>",
+      "context_md": "Source: B2B2C-299 — <title>\n<issue url>\n\n<issue description minus the acceptance-criteria section>",
       "review": true,
       "user_stories": [
         {
@@ -245,7 +245,7 @@ Follow the block matching the tracker selected in Step 0. Each block is the sing
 - **Container expansion:** Linear has no epic — the container is a **Project** (an Initiative sits above; a Milestone groups issues within a project). Resolve via `list_projects` / `get_project`; expand to its issues with `list_issues(project: <name|id|slug>)`.
 - **Structure:** **sub-issues = children → user stories**, via `list_issues(parentId: <issue>)`. **Dependencies:** `get_issue(id, includeRelations: true)` returns `relations: { blocks: [...], blockedBy: [...], relatedTo: [...], duplicateOf: ... }` — use `blockedBy` / `blocks` (same-parent only → same-plan deps). Ordering signals: `priority` (0=None, 1=Urgent … 4=Low), then project/cycle order.
 - **Acceptance criteria location:** Linear has no first-class AC field — criteria live in the issue **description** markdown (`get_issue` returns the full description; `## Context` / `## Acceptance Criteria` style sections are common, esp. on Jira-mirrored issues opening with "Mirrored from Jira <KEY>"). Look for an AC heading; else ask.
-- **Branch name:** every issue carries a **`gitBranchName`** field (e.g. `b2b2c-299-…`) — the canonical Linear branch name. Read it; don't synthesize one.
+- **Branch name:** every issue carries a **`gitBranchName`** field (e.g. `b2b2c-299-…`) — the canonical Linear branch name. This skill only emits an envelope and never sets a branch, so there's nothing to do with it here; it's noted only because it's the branch name Linear's status automation keys off (see the **Workflow note** below).
 - **Source header:** `Source: <KEY> — <title>` + the issue's `linear.app/...` URL.
 - **Workflow note:** Linear advances status from linked GitHub activity when the branch carries the ID (use the issue's `gitBranchName`) or the PR body uses a closing keyword (`fixes <KEY>`). Springfield's auto-cut `springfield/batch-<id>` branch does **not** carry the ID, so status won't move on its own — put `fixes <KEY>` in the PR. Per-team config.
 
