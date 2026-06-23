@@ -237,7 +237,7 @@ func TestRegenLoopOmitsStart(t *testing.T) {
 	}
 	body := string(src)
 
-	for _, want := range []string{`"plan"`, `"plan-from-jira"`, `"status"`, `"recover"`} {
+	for _, want := range []string{`"plan"`, `"plan-from-issue"`, `"status"`, `"recover"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("cmd/regen/main.go must include %s in loop slice", want)
 		}

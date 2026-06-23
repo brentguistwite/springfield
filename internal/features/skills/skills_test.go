@@ -15,7 +15,7 @@ func TestCatalogShapeLockedToSpringfieldSkills(t *testing.T) {
 	t.Parallel()
 
 	catalog := Catalog()
-	want := []string{"plan", "plan-from-jira", "status", "recover"}
+	want := []string{"plan", "plan-from-issue", "status", "recover"}
 	if len(catalog) != len(want) {
 		t.Fatalf("catalog len = %d, want %d", len(catalog), len(want))
 	}
@@ -55,32 +55,32 @@ func TestLookup_Plan(t *testing.T) {
 	}
 }
 
-func TestCatalog_IncludesPlanFromJira(t *testing.T) {
+func TestCatalog_IncludesPlanFromIssue(t *testing.T) {
 	t.Parallel()
 
 	for _, s := range Catalog() {
-		if string(s.Name) == "plan-from-jira" {
+		if string(s.Name) == "plan-from-issue" {
 			if s.Purpose != playbooks.PurposePlan {
-				t.Errorf("plan-from-jira skill Purpose = %q, want %q", s.Purpose, playbooks.PurposePlan)
+				t.Errorf("plan-from-issue skill Purpose = %q, want %q", s.Purpose, playbooks.PurposePlan)
 			}
-			if s.RelativePath != "skills/plan-from-jira/SKILL.md" {
-				t.Errorf("plan-from-jira skill RelativePath = %q, want skills/plan-from-jira/SKILL.md", s.RelativePath)
+			if s.RelativePath != "skills/plan-from-issue/SKILL.md" {
+				t.Errorf("plan-from-issue skill RelativePath = %q, want skills/plan-from-issue/SKILL.md", s.RelativePath)
 			}
 			return
 		}
 	}
-	t.Fatalf("plan-from-jira skill missing from catalog")
+	t.Fatalf("plan-from-issue skill missing from catalog")
 }
 
-func TestLookup_PlanFromJira(t *testing.T) {
+func TestLookup_PlanFromIssue(t *testing.T) {
 	t.Parallel()
 
-	s, err := Lookup("plan-from-jira")
+	s, err := Lookup("plan-from-issue")
 	if err != nil {
-		t.Fatalf("Lookup(plan-from-jira): %v", err)
+		t.Fatalf("Lookup(plan-from-issue): %v", err)
 	}
-	if string(s.Name) != "plan-from-jira" {
-		t.Errorf("Name = %q, want plan-from-jira", s.Name)
+	if string(s.Name) != "plan-from-issue" {
+		t.Errorf("Name = %q, want plan-from-issue", s.Name)
 	}
 }
 
@@ -169,7 +169,7 @@ func compareSemver(t *testing.T, a, b string) int {
 func TestRenderedSkillsCarryVersionCheckPreamble(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"plan", "plan-from-jira", "status", "recover"} {
+	for _, name := range []string{"plan", "plan-from-issue", "status", "recover"} {
 		skill, err := Render(name)
 		if err != nil {
 			t.Fatalf("Render(%s): %v", name, err)
@@ -386,7 +386,7 @@ func TestCanonicalCheckedInSkillsMatchRenderedContent(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
-	for _, name := range []string{"plan", "plan-from-jira", "status", "recover"} {
+	for _, name := range []string{"plan", "plan-from-issue", "status", "recover"} {
 		rendered, err := Render(name)
 		if err != nil {
 			t.Fatalf("render %s: %v", name, err)
@@ -406,7 +406,7 @@ func TestCanonicalCheckedInCommandsMatchRenderedContent(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
-	for _, name := range []string{"plan", "plan-from-jira", "status", "recover"} {
+	for _, name := range []string{"plan", "plan-from-issue", "status", "recover"} {
 		rendered, err := RenderCommand(name)
 		if err != nil {
 			t.Fatalf("render command %s: %v", name, err)
@@ -425,7 +425,7 @@ func TestCanonicalCheckedInCommandsMatchRenderedContent(t *testing.T) {
 func TestRenderedSkillsIncludeFrontmatter(t *testing.T) {
 	t.Parallel()
 
-	for _, name := range []string{"plan", "plan-from-jira", "status", "recover"} {
+	for _, name := range []string{"plan", "plan-from-issue", "status", "recover"} {
 		rendered, err := Render(name)
 		if err != nil {
 			t.Fatalf("render %s: %v", name, err)
@@ -470,7 +470,7 @@ func TestInstallWritesSelectedHostArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read installed codex artifact: %v", err)
 	}
-	for _, marker := range []string{"Springfield", "plan", "plan-from-jira", "status", "recover"} {
+	for _, marker := range []string{"Springfield", "plan", "plan-from-issue", "status", "recover"} {
 		if !strings.Contains(string(data), marker) {
 			t.Fatalf("expected installed codex artifact to contain %q, got:\n%s", marker, string(data))
 		}
@@ -485,7 +485,7 @@ func TestInstallWritesSelectedHostArtifacts(t *testing.T) {
 		t.Fatalf("installed codex helper missing '## Springfield Skills' section:\n%s", body)
 	}
 	section := body[sectionIdx:]
-	wantOrder := []string{"- plan", "- plan-from-jira", "- status", "- recover"}
+	wantOrder := []string{"- plan", "- plan-from-issue", "- status", "- recover"}
 	last := -1
 	for _, marker := range wantOrder {
 		idx := strings.Index(section, marker)
@@ -681,62 +681,60 @@ func repoRoot(t *testing.T) string {
 	return filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", ".."))
 }
 
-// TestPlanFromJiraSkillIngestsTickets pins the plan-from-jira ingest contract
-// into the generated skill + command. The prose lives in the TaskBody literal
-// (types.go) and is regenerated onto disk by cmd/regen; this guard fails if a
-// future regen drops it, or (its red-first role) before the literal carries it.
-func TestPlanFromJiraSkillIngestsTickets(t *testing.T) {
+// TestPlanFromIssueSkillIngestsIssues pins the plan-from-issue ingest contract
+// into the generated skill + command. The skill is now tracker-neutral: a core
+// that selects an active tracker, plus two inline profile blocks (jira, linear).
+// The prose lives in the TaskBody literal (types.go) and is regenerated onto
+// disk by cmd/regen; this guard fails if a future regen drops it, or (its
+// red-first role) before the literal carries it. Three token groups are pinned:
+// the tracker-neutral core that survives the generalization, the Jira profile,
+// and the Linear profile (tool names verified against the live Linear MCP).
+func TestPlanFromIssueSkillIngestsIssues(t *testing.T) {
 	t.Parallel()
 
-	skill, err := Render("plan-from-jira")
+	skill, err := Render("plan-from-issue")
 	if err != nil {
-		t.Fatalf("Render(plan-from-jira): %v", err)
+		t.Fatalf("Render(plan-from-issue): %v", err)
 	}
-	command, err := RenderCommand("plan-from-jira")
+	command, err := RenderCommand("plan-from-issue")
 	if err != nil {
-		t.Fatalf("RenderCommand(plan-from-jira): %v", err)
+		t.Fatalf("RenderCommand(plan-from-issue): %v", err)
 	}
 
 	for label, content := range map[string]string{"skill": skill.Content, "command": command.Content} {
 		for _, want := range []string{
-			// BYO-Jira precondition, not setup.
-			"Springfield does NOT manage Jira access",
-			"No Jira tool detected",
-			// Input + epic expansion guardrail.
-			"give me an epic key",
-			"These N tickets",
-			// Mapping grain: ticket->plan (id from key), subtask->story.
-			"Slug the plan",
-			"subtasks",
-			"user stories",
-			// Ordering from Jira links.
-			"topologically sort",
-			// DoD reuse + bulk escape hatch.
-			"how do we know this story is done",
-			"don't ask me about criteria",
-			// Honest criteria framing (lifted from plan skill).
-			"<story-pass>",
-			"the only independent check",
-			// Review offer, serialized.
-			"Enable independent pre-merge review",
-			"Serialize the answer",
-			"plans[].review",
-			// Read-only boundary.
-			"does NOT write back to Jira",
-			// Contract clauses hardened during adversarial review — load-bearing,
-			// pinned so a future prose rewrite can't silently drop them.
-			"parent-acceptance",                                 // parent ticket's DoD survives subtask expansion
-			"different parent ticket",                           // cross-ticket subtask blocks links are skipped
-			"story dependency graph blocked: no eligible story", // story-dep cycle degrades, not hard-fails
-			"never started by ANY session",                      // gate is batch history, not the current user's action (durable .springfield state)
-			"unknown provenance",                                // any doubt defaults to the non-replace path
-			"springfield:recover",                               // batch recovery is delegated to the recover skill, not hardcoded here
-			"recover --plan",                                    // bare recover only archives orphans; a failed plan needs --plan <id>
-			"try to reverse the queued plan ids",                // don't reconstruct Jira keys from lossy slugs — user supplies keys
-			"--replace --prd -",                                 // active-batch persist uses --replace (plain --prd - hard-errors)
+			// Tracker-neutral core (survives the generalization).
+			"Select the active tracker",          // new Step 0
+			"Tracker profile",                     // the profile-block boundary
+			"No issue-tracker tool detected",      // generalized precondition failure
+			"unknown tracker",                     // toml validation against the profile registry
+			"Slug the plan",                       // mapping grain preserved
+			"user stories",                        // sub-items -> stories
+			"topologically sort",                  // ordering preserved
+			"parent-acceptance",                   // synthetic parent-DoD story preserved
+			"<story-pass>",                        // marker-is-the-gate honesty
+			"the only independent check",          // review-gate honesty line
+			"Enable independent pre-merge review", // review offer
+			"Serialize the answer",                // serialize the review value
+			"plans[].review",                      // per-plan toggle
+			"does NOT write back",                 // read-only boundary (tracker-neutral)
+			// Jira profile.
+			"Atlassian MCP", // jira fetch mechanism
+			"getJiraIssue",  // jira MCP tool
+			"parent = ",     // jira epic-child query
+			"Epic Link",     // jira epic-child fallback query
+			// Linear profile (tool names verified against the live Linear MCP 2026-06-23).
+			"mcp.linear.app",   // hosted Linear MCP endpoint
+			"get_issue",        // Linear single-issue fetch
+			"parentId",         // Linear children query
+			"includeRelations", // Linear dependency fetch
+			"blockedBy",        // Linear dependency relation
+			"gitBranchName",    // canonical Linear branch name
+			"[A-Z0-9]+-\\d+",   // alphanumeric team-key pattern (not letters-only)
+			"fixes <KEY>",      // PR closing keyword for status automation
 		} {
 			if !strings.Contains(content, want) {
-				t.Errorf("plan-from-jira %s missing token %q", label, want)
+				t.Errorf("plan-from-issue %s missing token %q", label, want)
 			}
 		}
 	}

@@ -127,7 +127,7 @@ func TestGeminiSystemSettingsDisablesSpringfieldSkills(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	for _, name := range []string{"springfield:start", "springfield:plan", "springfield:plan-from-jira", "springfield:status", "springfield:recover"} {
+	for _, name := range []string{"springfield:start", "springfield:plan", "springfield:plan-from-issue", "springfield:status", "springfield:recover"} {
 		entry, ok := parsed.Agents.Overrides[name]
 		if !ok {
 			t.Errorf("missing overrides entry for %s", name)
