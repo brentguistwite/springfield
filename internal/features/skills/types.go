@@ -274,7 +274,7 @@ Then follow the matching **Tracker profile** block below for fetch, key parsing,
 
 ## Step 1 — Confirm an issue-tracker tool is available (precondition, not setup)
 
-Springfield does NOT manage tracker access. This is a precondition, not setup — detect whatever the running agent already has per the active profile's **Fetch** list, using the first one found. If none is available, stop and tell the user: "No issue-tracker tool detected for <tracker>. <the active profile's connect hint>" Do not attempt to install or authenticate anything.
+Springfield does NOT manage tracker access. This is a precondition, not setup — detect whatever the running agent already has per the active profile's **Fetch** list, using the first one found. If none is available, stop and surface the full "No issue-tracker tool detected for <tracker>…" message spelled out at the end of the active profile's **Fetch** bullet (it already names the connect options). Do not attempt to install or authenticate anything.
 
 ## Step 2 — Determine input
 
@@ -315,7 +315,7 @@ Grain:
 
 Ordering and dependencies (honor the structure the active tracker already holds — use the dependency links and ordering signals named in the active profile):
 
-- **Plan order** within the single serial phase: topologically sort issues by the profile's dependency links (`+"`blocks`"+` / `+"`is blocked by`"+`); where there is no link, fall back to the profile's ordering signals (backlog rank or project/cycle order), then priority, then the order the user listed them.
+- **Plan order** within the single serial phase: topologically sort issues by the profile's dependency links (`+"`blocks`"+` / `+"`is blocked by`"+`); where there is no link, fall back to the active profile's **ordering signals** (each profile lists them in priority order — don't re-rank), then the order the user listed them.
 - **Story deps** (`+"`user_stories[].deps`"+`): a dependency link between two sub-items of the **same** parent issue → a dep within that plan. **Skip** any link whose target sub-item belongs to a different parent issue — the envelope forbids cross-plan deps, so a cross-issue link is a plan-order edge at most, never a story dep (emitting it produces a `+"`dep not found in same plan`"+` hard error).
 - A dependency cycle → degrade, never fail. At the **plan** level (`+"`A blocks B blocks A`"+`) drop the cyclic ordering edge and keep rank order. At the **story** level (two sub-items blocking each other) drop **both** `+"`deps`"+` links and emit the stories in rank order — a cyclic `+"`deps`"+` passes envelope validation but leaves no eligible story, so the runner hard-fails the plan with `+"`story dependency graph blocked: no eligible story`"+`. Note the degradation either way.
 
@@ -448,7 +448,7 @@ Follow the block matching the tracker selected in Step 0. Each block is the sing
 
 ### Tracker profile: linear
 
-*(Tool names + mechanisms VERIFIED against the live Linear MCP `+"`tools/list`"+` + a real `+"`get_issue`"+`, 2026-06-23. The read tools below are stable core; if a call fails, introspect the connected tool list — Linear's write/upsert tools churn, e.g. `+"`create_issue`"+`/`+"`update_issue`"+` were merged into `+"`save_issue`"+`.)*
+*(Tool names, the `+"`get_issue`"+` call shape, and the `+"`includeRelations`"+` response schema were VERIFIED against the live Linear MCP `+"`tools/list`"+` + a real `+"`get_issue`"+`, 2026-06-23. The `+"`parentId`"+` id-form below is inferred from Linear's GraphQL spec, not that same live session — the zero-children guard is the safety net if it's wrong. The read tools are stable core; if a call fails, introspect the connected tool list — Linear's write/upsert tools churn, e.g. `+"`create_issue`"+`/`+"`update_issue`"+` were merged into `+"`save_issue`"+`.)*
 
 - **Fetch (precondition, not setup):** detect, in order — (1) the **Linear MCP** (hosted `+"`https://mcp.linear.app/mcp`"+`, `+"`Authorization: Bearer <token>`"+` for non-interactive): fetch one issue with `+"`get_issue(id)`"+` — `+"`id`"+` accepts the identifier (e.g. `+"`B2B2C-299`"+`) — and search with `+"`list_issues`"+`. (2) a `+"`linear`"+` CLI on PATH (third-party/unofficial). (3) the Linear GraphQL API with a personal API key. First found wins. None → stop: "No issue-tracker tool detected for linear. Connect the Linear MCP (mcp.linear.app), install a linear CLI, or set a Linear API key, then re-run."
 - **Issue reference:** identifiers are `+"`<TEAMKEY>-<n>`"+` where the team key is **alphanumeric** — pattern `+"`[A-Z0-9]+-\\d+`"+` (real example `+"`B2B2C-299`"+`: digit *in* the prefix — a letters-only regex silently drops whole teams). No single org-wide prefix; keys are per-team and there are dozens. Parse the key from any `+"`linear.app/<workspace>/issue/<KEY>/...`"+` URL.
