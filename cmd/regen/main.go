@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	for _, name := range []string{"plan", "plan-from-jira", "status", "recover"} {
+	for _, name := range []string{"plan", "plan-from-issue", "status", "recover"} {
 		r, err := skills.Render(name)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "render %s: %v\n", name, err)
