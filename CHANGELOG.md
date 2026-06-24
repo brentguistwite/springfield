@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.22.0](https://github.com/brentguistwite/springfield/compare/v0.21.0...v0.22.0) (2026-06-24)
+
+
+### Features
+
+* default to claude and gate the claude -p billing warning behind a switch ([#87](https://github.com/brentguistwite/springfield/issues/87)) ([207ec82](https://github.com/brentguistwite/springfield/commit/207ec82e96309b315300737f1de9d41d606ed24c))
+* **skills:** rename plan-from-jira to plan-from-issue with jira+linear tracker profiles ([#89](https://github.com/brentguistwite/springfield/issues/89)) ([38cc873](https://github.com/brentguistwite/springfield/commit/38cc873024940acc32952db6d6ecdbaf13f487e5))
+
 ## [0.21.0](https://github.com/brentguistwite/springfield/compare/v0.20.1...v0.21.0) (2026-06-11)
 
 
