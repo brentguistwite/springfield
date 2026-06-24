@@ -86,7 +86,7 @@ func assertRequiredSkillsExist(t *testing.T, root string) {
 
 	for _, rel := range []string{
 		"skills/plan/SKILL.md",
-		"skills/plan-from-jira/SKILL.md",
+		"skills/plan-from-issue/SKILL.md",
 		"skills/status/SKILL.md",
 		"skills/recover/SKILL.md",
 	} {
@@ -121,7 +121,7 @@ func assertRequiredCommandsExist(t *testing.T, root string) {
 
 	for _, rel := range []string{
 		"commands/plan.md",
-		"commands/plan-from-jira.md",
+		"commands/plan-from-issue.md",
 		"commands/status.md",
 		"commands/recover.md",
 	} {
@@ -237,7 +237,7 @@ func TestRegenLoopOmitsStart(t *testing.T) {
 	}
 	body := string(src)
 
-	for _, want := range []string{`"plan"`, `"plan-from-jira"`, `"status"`, `"recover"`} {
+	for _, want := range []string{`"plan"`, `"plan-from-issue"`, `"status"`, `"recover"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("cmd/regen/main.go must include %s in loop slice", want)
 		}
@@ -293,5 +293,44 @@ func TestClaudePluginStructure(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "commands", "start.md")); !os.IsNotExist(err) {
 		t.Fatalf("commands/start.md must be absent after removal, stat err=%v", err)
+	}
+
+	// The on-disk generated set must be EXACTLY the catalog set — no extras.
+	// The drift guards only check that the current skills match the literal;
+	// they never catch a leftover (e.g. a directory orphaned by a rename), so
+	// cmd/regen's prune pass is the only thing removing stragglers. Pinning the
+	// exact set is what proves the prune ran, without naming any retired skill.
+	assertNoUnexpectedGeneratedArtifacts(t, root, []string{"plan", "plan-from-issue", "status", "recover"})
+}
+
+// assertNoUnexpectedGeneratedArtifacts fails if skills/ or commands/ holds any
+// generated artifact whose name is not in want.
+func assertNoUnexpectedGeneratedArtifacts(t *testing.T, root string, want []string) {
+	t.Helper()
+
+	known := make(map[string]bool, len(want))
+	for _, name := range want {
+		known[name] = true
+	}
+
+	skillEntries, err := os.ReadDir(filepath.Join(root, "skills"))
+	if err != nil {
+		t.Fatalf("read skills dir: %v", err)
+	}
+	for _, e := range skillEntries {
+		if e.IsDir() && !known[e.Name()] {
+			t.Fatalf("unexpected skill directory skills/%s/ — rename prune did not run or a stray artifact was added", e.Name())
+		}
+	}
+
+	cmdEntries, err := os.ReadDir(filepath.Join(root, "commands"))
+	if err != nil {
+		t.Fatalf("read commands dir: %v", err)
+	}
+	for _, e := range cmdEntries {
+		name := strings.TrimSuffix(e.Name(), ".md")
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") && !known[name] {
+			t.Fatalf("unexpected command file commands/%s — rename prune did not run or a stray artifact was added", e.Name())
+		}
 	}
 }
