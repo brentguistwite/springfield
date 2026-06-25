@@ -39,7 +39,7 @@ Every response carries `schema_version` and a `state` discriminator
 | `phase_index` | current phase index (0-based); -1 when all done |
 | `phase_total` | total phase count |
 | `all_done` | true when every plan is integrated |
-| `parallel_in_flight` | true when current phase runs plans in parallel and 2+ are in-flight |
+| `parallel_in_flight` | true when the current phase runs plans in parallel and 2+ are `running` (same classifier as per-plan `status`, so it is never true while those plans read `stalled`) |
 
 ## Per-plan card
 

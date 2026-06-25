@@ -178,8 +178,13 @@ func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State, live
 
 	switch {
 	case len(running) > 0:
+		// Label sourced from statusview.ParallelInFlight — the SAME classifier
+		// that filled the running slice above and the JSON view-model's
+		// progress.parallel_in_flight — so the text and JSON surfaces report
+		// parallelism identically (not p.ParallelInFlight, which keys off
+		// ClassifyPlan and would drift from the running/stalled classification).
 		label := "running"
-		if p.ParallelInFlight {
+		if statusview.ParallelInFlight(b, state, live) {
 			label = "parallel"
 		}
 		fmt.Fprintf(w, "Current: %s (%s)\n", strings.Join(running, ", "), label)

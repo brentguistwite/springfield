@@ -501,8 +501,10 @@ func TestActive_BaseBranch_NonEmpty(t *testing.T) {
 	}
 }
 
-// TestActive_ParallelInFlight asserts that progress.parallel_in_flight reflects
-// the computed value from batch.Progress.ParallelInFlight.
+// TestActive_ParallelInFlight asserts that progress.parallel_in_flight is
+// derived from statusview.ParallelInFlight (the ComposeStatus-based classifier),
+// so it agrees with the per-plan running/stalled status and never reports
+// "parallel" for plans that read "stalled".
 func TestActive_ParallelInFlight(t *testing.T) {
 	t.Run("parallel_false_for_serial", func(t *testing.T) {
 		b := batch.Batch{
@@ -545,13 +547,53 @@ func TestActive_ParallelInFlight(t *testing.T) {
 			Run:   batch.Run{ActiveBatchID: "b"},
 			State: state,
 			Units: []conductor.PlanUnit{{ID: "p1", Title: "Plan 1"}, {ID: "p2", Title: "Plan 2"}},
+			// A live process owns the lock, so the two in-flight plans are
+			// genuinely running in parallel. parallel_in_flight keys off the
+			// same running/stalled classifier as per-plan status.
+			Live: true,
 		}
 		v := statusview.Active(in)
 		if v.Progress == nil {
 			t.Fatal("progress must be non-nil when state is present")
 		}
 		if !v.Progress.ParallelInFlight {
-			t.Error("ParallelInFlight should be true for 2+ in-flight parallel phase")
+			t.Error("ParallelInFlight should be true for 2+ running plans in a parallel phase")
+		}
+	})
+
+	// Single source of truth: parallel_in_flight must agree with per-plan
+	// status. Two running-persisted plans whose owning process has died are
+	// stalled, not running — so the phase is NOT parallel-in-flight, and the
+	// JSON cannot claim "parallel" while the plans it refers to read "stalled".
+	t.Run("parallel_false_when_running_plans_are_stalled", func(t *testing.T) {
+		b := batch.Batch{
+			ID:      "b",
+			Title:   "T",
+			PlanIDs: []string{"p1", "p2"},
+			Phases:  []batch.Phase{{Mode: batch.PhaseParallel, Plans: []string{"p1", "p2"}}},
+		}
+		state := &conductor.State{Plans: map[string]*conductor.PlanState{
+			"p1": {Status: conductor.StatusRunning},
+			"p2": {Status: conductor.StatusRunning},
+		}}
+		in := statusview.ActiveInput{
+			Batch: b,
+			Run:   batch.Run{ActiveBatchID: "b"},
+			State: state,
+			Units: []conductor.PlanUnit{{ID: "p1", Title: "Plan 1"}, {ID: "p2", Title: "Plan 2"}},
+			Live:  false, // no live process owns the lock → plans are stalled
+		}
+		v := statusview.Active(in)
+		if v.Progress == nil {
+			t.Fatal("progress must be non-nil when state is present")
+		}
+		if v.Progress.ParallelInFlight {
+			t.Error("ParallelInFlight must be false when the in-flight plans are stalled (dead process)")
+		}
+		for _, p := range v.Plans {
+			if p.Status != statusview.StatusStalled {
+				t.Errorf("plan %s: want stalled, got %s — parallel_in_flight and status drifted", p.ID, p.Status)
+			}
 		}
 	})
 

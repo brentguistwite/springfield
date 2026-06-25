@@ -227,6 +227,23 @@ func TestPrintProgressBlock_LiveVsStalled(t *testing.T) {
 			t.Fatalf("live parallel: want Current: 01, 02 (parallel), got:\n%s", buf.String())
 		}
 	})
+
+	// The "parallel" signal must key off the SAME running/stalled classifier
+	// (ComposeStatus) the per-plan status uses — not ClassifyPlan, which counts
+	// only StatusRunning and so would render this two-running parallel phase as
+	// "(running)". An interrupted plan with a live process owning the lock is
+	// running (it's being resumed), so two such plans are running in parallel.
+	mixedState := &conductor.State{Plans: map[string]*conductor.PlanState{
+		"01": {Status: conductor.StatusRunning},
+		"02": {Status: conductor.StatusInterrupted},
+	}}
+	t.Run("live_parallel_running_plus_interrupted", func(t *testing.T) {
+		var buf bytes.Buffer
+		printProgressBlock(&buf, parallel, mixedState, true)
+		if !strings.Contains(buf.String(), "Current: 01, 02 (parallel)") {
+			t.Fatalf("live mixed parallel: want Current: 01, 02 (parallel), got:\n%s", buf.String())
+		}
+	})
 }
 
 func TestStatusRollupAllDone(t *testing.T) {

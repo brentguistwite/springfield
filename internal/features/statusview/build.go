@@ -91,6 +91,43 @@ func ComposeStatus(ps *conductor.PlanState, live bool) string {
 	}
 }
 
+// ParallelInFlight is THE definition of the "parallel" signal, consumed by
+// both the JSON view-model (progress.parallel_in_flight) and the text
+// renderer's Current-line label — so the two surfaces cannot disagree about
+// parallelism any more than they can disagree about per-plan status. It is
+// true when the current phase runs plans concurrently AND 2+ of them are in
+// the running state per ComposeStatus.
+//
+// It keys off ComposeStatus, NOT batch.ClassifyPlan: the two differ on
+// StatusInterrupted-while-live (ComposeStatus: running; ClassifyPlan: pending)
+// and on StatusRunning-while-dead (ComposeStatus: stalled; ClassifyPlan:
+// in-flight). Sourcing the signal from ComposeStatus keeps it consistent with
+// the per-plan statuses both surfaces render — a phase is never reported
+// "parallel" while the plans it refers to read "stalled". The current phase is
+// the first not fully integrated, reusing batch.ComputeProgress so phase
+// detection stays single-source too.
+func ParallelInFlight(b batch.Batch, state *conductor.State, live bool) bool {
+	idx := batch.ComputeProgress(b, state).CurrentPhaseIdx
+	if idx < 0 || idx >= len(b.Phases) {
+		return false
+	}
+	ph := b.Phases[idx]
+	if ph.Mode != batch.PhaseParallel {
+		return false
+	}
+	running := 0
+	for _, id := range ph.Plans {
+		var ps *conductor.PlanState
+		if state != nil {
+			ps = state.Plans[id]
+		}
+		if ComposeStatus(ps, live) == StatusRunning {
+			running++
+		}
+	}
+	return running >= 2
+}
+
 // deriveIntegration rolls post-merge disposition into one trustworthy signal.
 // A plan whose merge succeeded but is NOT integrated (cleanup or source-sync
 // failed) is "needs_attention" — the case merge.status:"succeeded" alone would
@@ -229,7 +266,7 @@ func Active(in ActiveInput) View {
 			PhaseIndex:       prog.CurrentPhaseIdx,
 			PhaseTotal:       prog.TotalPhases,
 			AllDone:          prog.AllDone,
-			ParallelInFlight: prog.ParallelInFlight,
+			ParallelInFlight: ParallelInFlight(in.Batch, in.State, in.Live),
 		}
 		if in.HasRollup {
 			v.Spend = &SpendView{
