@@ -23,7 +23,7 @@ func TestPrintBatchStatusRendersCostCapped(t *testing.T) {
 	var buf bytes.Buffer
 	b := batch.Batch{ID: "test-1", Title: "T"}
 	run := batch.Run{ActiveBatchID: "test-1", CostCapped: true}
-	if err := printBatchStatus(&buf, t.TempDir(), b, run, nil); err != nil {
+	if err := printBatchStatus(&buf, t.TempDir(), b, run, nil, true); err != nil {
 		t.Fatalf("printBatchStatus: %v", err)
 	}
 	out := buf.String()
@@ -44,7 +44,7 @@ func TestPrintBatchStatusCostCappedSurvivesNilState(t *testing.T) {
 	var buf bytes.Buffer
 	b := batch.Batch{ID: "test-1", Title: "T"}
 	run := batch.Run{ActiveBatchID: "test-1", CostCapped: true}
-	_ = printBatchStatus(&buf, t.TempDir(), b, run, nil)
+	_ = printBatchStatus(&buf, t.TempDir(), b, run, nil, true)
 	if !strings.Contains(buf.String(), "Status: cost-capped") {
 		t.Errorf("cost-capped must render even when state == nil, got:\n%s", buf.String())
 	}
@@ -90,7 +90,7 @@ func TestPrintBatchStatusSpendLineMultiAdapter(t *testing.T) {
 
 	var buf bytes.Buffer
 	b := batch.Batch{ID: "test-1", Title: "T"}
-	_ = printBatchStatus(&buf, root, b, batch.Run{ActiveBatchID: "test-1"}, conductor.NewState())
+	_ = printBatchStatus(&buf, root, b, batch.Run{ActiveBatchID: "test-1"}, conductor.NewState(), true)
 	out := buf.String()
 	// claude must appear before codex in the parenthetical breakdown.
 	claudeIdx := strings.Index(out, "claude")
@@ -131,7 +131,7 @@ func TestPrintBatchStatusSpendLineRenders(t *testing.T) {
 	var buf bytes.Buffer
 	b := batch.Batch{ID: "test-1", Title: "T"}
 	// state non-nil required to enter printSpendLine path.
-	_ = printBatchStatus(&buf, root, b, batch.Run{ActiveBatchID: "test-1"}, conductor.NewState())
+	_ = printBatchStatus(&buf, root, b, batch.Run{ActiveBatchID: "test-1"}, conductor.NewState(), true)
 	out := buf.String()
 	if !strings.Contains(out, "Spend:") {
 		t.Errorf("expected Spend: line, got:\n%s", out)

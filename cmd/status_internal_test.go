@@ -10,6 +10,7 @@ import (
 
 	"springfield/internal/core/lock"
 	"springfield/internal/features/batch"
+	"springfield/internal/features/conductor"
 )
 
 func TestStatusNoConfigPointsAtRegistrationFlow(t *testing.T) {
@@ -141,8 +142,10 @@ func TestStatusRollupOneInFlight(t *testing.T) {
 	if !strings.Contains(out, "Plans: 0/2 integrated") {
 		t.Fatalf("expected Plans: 0/2 integrated:\n%s", out)
 	}
-	if !strings.Contains(out, "Current: 01 (running)") {
-		t.Fatalf("expected Current running line:\n%s", out)
+	// No live springfield process holds the lock in this in-process test, so the
+	// running-persisted plan is surfaced as stalled (parity with JSON's stalled).
+	if !strings.Contains(out, "Stalled: 01 (no running springfield process") {
+		t.Fatalf("expected Stalled line:\n%s", out)
 	}
 	if !strings.Contains(out, "Next: 02") {
 		t.Fatalf("expected Next: 02:\n%s", out)
@@ -168,9 +171,62 @@ func TestStatusRollupParallelInFlight(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if !strings.Contains(out, "Current: 01, 02 (parallel)") {
-		t.Fatalf("expected Current: 01, 02 (parallel) line:\n%s", out)
+	// No live process in this in-process test → the parallel in-flight plans
+	// surface as stalled. The live "Current: ... (parallel)" rendering is
+	// covered directly by TestPrintProgressBlock_LiveVsStalled.
+	if !strings.Contains(out, "Stalled: 01, 02 (no running springfield process") {
+		t.Fatalf("expected Stalled parallel line:\n%s", out)
 	}
+}
+
+// TestPrintProgressBlock_LiveVsStalled exercises the in-flight rendering of
+// printProgressBlock directly (no lock/process dependency): live=true renders
+// the running/parallel "Current:" line; live=false renders the "Stalled:" line.
+func TestPrintProgressBlock_LiveVsStalled(t *testing.T) {
+	serial := batch.Batch{
+		ID:      "b",
+		Title:   "T",
+		PlanIDs: []string{"01", "02"},
+		Phases:  []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"01", "02"}}},
+	}
+	serialState := &conductor.State{Plans: map[string]*conductor.PlanState{
+		"01": {Status: conductor.StatusRunning},
+	}}
+
+	t.Run("live_serial_running", func(t *testing.T) {
+		var buf bytes.Buffer
+		printProgressBlock(&buf, serial, serialState, true)
+		if !strings.Contains(buf.String(), "Current: 01 (running)") {
+			t.Fatalf("live serial: want Current: 01 (running), got:\n%s", buf.String())
+		}
+	})
+
+	t.Run("dead_serial_stalled", func(t *testing.T) {
+		var buf bytes.Buffer
+		printProgressBlock(&buf, serial, serialState, false)
+		if !strings.Contains(buf.String(), "Stalled: 01 (no running springfield process") {
+			t.Fatalf("dead serial: want Stalled line, got:\n%s", buf.String())
+		}
+	})
+
+	parallel := batch.Batch{
+		ID:      "b",
+		Title:   "T",
+		PlanIDs: []string{"01", "02"},
+		Phases:  []batch.Phase{{Mode: batch.PhaseParallel, Plans: []string{"01", "02"}}},
+	}
+	parallelState := &conductor.State{Plans: map[string]*conductor.PlanState{
+		"01": {Status: conductor.StatusRunning},
+		"02": {Status: conductor.StatusRunning},
+	}}
+
+	t.Run("live_parallel", func(t *testing.T) {
+		var buf bytes.Buffer
+		printProgressBlock(&buf, parallel, parallelState, true)
+		if !strings.Contains(buf.String(), "Current: 01, 02 (parallel)") {
+			t.Fatalf("live parallel: want Current: 01, 02 (parallel), got:\n%s", buf.String())
+		}
+	})
 }
 
 func TestStatusRollupAllDone(t *testing.T) {
