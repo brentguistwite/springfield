@@ -246,6 +246,43 @@ func TestPrintProgressBlock_LiveVsStalled(t *testing.T) {
 	})
 }
 
+// TestPrintProgressBlock_SurfacesEveryStatus locks in text↔JSON parity at the
+// classification level: every status ComposeStatus can emit (and that the JSON
+// view-model surfaces per-plan) has a home in the text progress block. Before
+// this, failed/needs-human/done plans fell through the running/stalled/pending
+// switch and were silently omitted — a human reading text could not see what
+// JSON makes explicit (e.g. which plan in a multi-plan batch actually failed).
+func TestPrintProgressBlock_SurfacesEveryStatus(t *testing.T) {
+	b := batch.Batch{
+		ID:      "b",
+		Title:   "T",
+		PlanIDs: []string{"01", "02", "03", "04"},
+		Phases:  []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"01", "02", "03", "04"}}},
+	}
+	state := &conductor.State{Plans: map[string]*conductor.PlanState{
+		"01": {Status: conductor.StatusFailed, Error: "boom"},
+		"02": {Status: conductor.StatusNeedsHuman},
+		// completed but not integrated (merge refused) → "done"
+		"03": {Status: conductor.StatusCompleted, Merge: &conductor.MergeOutcome{Status: conductor.MergeRefused}},
+		"04": {Status: conductor.StatusPending},
+	}}
+
+	var buf bytes.Buffer
+	printProgressBlock(&buf, b, state, false)
+	out := buf.String()
+
+	for _, want := range []string{
+		"Failed: 01",
+		"Needs human: 02",
+		"Done (not integrated): 03",
+		"Next: 04",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q in progress block; got:\n%s", want, out)
+		}
+	}
+}
+
 func TestStatusRollupAllDone(t *testing.T) {
 	root := newStatusRoot(t)
 	writeStatusPlan(t, root, "feature.md")

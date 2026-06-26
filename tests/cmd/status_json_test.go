@@ -137,6 +137,68 @@ func TestStatusParity_InterruptedStalled(t *testing.T) {
 	}
 }
 
+// TestStatusParity_FailedPlan proves text and JSON agree on a failed plan in a
+// multi-plan batch: the text progress block names the failed plan (not just a
+// batch-level "Fatal error:" line) and JSON classifies the same plan as
+// status:"failed". Both derive from statusview.ComposeStatus, so neither can
+// surface a classification the other hides.
+func TestStatusParity_FailedPlan(t *testing.T) {
+	bin := buildBinary(t)
+	root := t.TempDir()
+	writeSpringfieldConfig(t, root, "claude")
+
+	plans := []conductor.PlanUnit{
+		{ID: "01", Title: "Plan 01", Path: ".springfield/plans/01/prd.json", Order: 1},
+		{ID: "02", Title: "Plan 02", Path: ".springfield/plans/02/prd.json", Order: 2},
+	}
+	for _, p := range plans {
+		writePRDJSON(t, root, p.ID)
+	}
+	writeConductorConfigBinary(t, root, &conductor.Config{
+		PlansDir:                   ".springfield/plans",
+		WorktreeBase:               ".worktrees",
+		MaxRetries:                 2,
+		SingleWorkstreamIterations: 50,
+		SingleWorkstreamTimeout:    3600,
+		Tool:                       "claude",
+		PlanUnits:                  plans,
+	})
+	writeActiveBatchBinaryN(t, root, "batch-001", "Active Batch", []string{"01", "02"})
+	writeConductorStateBinary(t, root, &conductor.State{
+		Plans: map[string]*conductor.PlanState{
+			"01": {Status: conductor.StatusFailed, Error: "boom"},
+			"02": {Status: conductor.StatusPending},
+		},
+	})
+
+	// Text surface: must name the failed plan per-plan, not just batch-level.
+	textOut, err := runBinaryIn(t, bin, root, "status")
+	if err != nil {
+		t.Fatalf("status (text): %v\n%s", err, textOut)
+	}
+	if !strings.Contains(textOut, "Failed: 01") {
+		t.Fatalf("text must name the failed plan; got:\n%s", textOut)
+	}
+
+	// JSON surface: must classify the same plan as failed.
+	jsonOut, err := runBinaryIn(t, bin, root, "status", "--json")
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, jsonOut)
+	}
+	var v map[string]any
+	if err := json.Unmarshal([]byte(jsonOut), &v); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, jsonOut)
+	}
+	plansArr, _ := v["plans"].([]any)
+	if len(plansArr) == 0 {
+		t.Fatalf("no plans in JSON: %v", v["plans"])
+	}
+	plan0, _ := plansArr[0].(map[string]any)
+	if plan0["status"] != "failed" {
+		t.Fatalf("JSON must classify plan 01 as failed; got %v", plan0["status"])
+	}
+}
+
 // TestStatusJSON_Idle verifies that a project with no active batch emits
 // state == "idle" and plans == null via --json.
 func TestStatusJSON_Idle(t *testing.T) {

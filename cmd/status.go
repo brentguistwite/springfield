@@ -157,10 +157,14 @@ func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State, live
 		return
 	}
 
-	// Group the non-terminal plans by canonical status. Because live is
-	// batch-level, running and stalled are mutually exclusive (all in-flight
+	// Group plans by canonical status. The grouping is TOTAL over the
+	// statusview enum: every status the JSON view-model can emit per plan has a
+	// home here, so a plan classified by JSON is never silently dropped from the
+	// text surface (failed/needs-human/done used to fall through). merged plans
+	// are already accounted for in the "X/Y integrated" line above. Because live
+	// is batch-level, running and stalled are mutually exclusive (all in-flight
 	// plans are running when a process owns the lock, stalled when none does).
-	var running, stalled, pending []string
+	var running, stalled, pending, failed, needsHuman, done []string
 	for _, id := range b.PlanIDs {
 		var ps *conductor.PlanState
 		if state != nil {
@@ -173,6 +177,12 @@ func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State, live
 			stalled = append(stalled, id)
 		case statusview.StatusPending:
 			pending = append(pending, id)
+		case statusview.StatusFailed:
+			failed = append(failed, id)
+		case statusview.StatusNeedsHuman:
+			needsHuman = append(needsHuman, id)
+		case statusview.StatusDone:
+			done = append(done, id)
 		}
 	}
 
@@ -190,6 +200,15 @@ func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State, live
 		fmt.Fprintf(w, "Current: %s (%s)\n", strings.Join(running, ", "), label)
 	case len(stalled) > 0:
 		fmt.Fprintf(w, "Stalled: %s (no running springfield process — run \"springfield recover\")\n", strings.Join(stalled, ", "))
+	}
+	if len(failed) > 0 {
+		fmt.Fprintf(w, "Failed: %s\n", strings.Join(failed, ", "))
+	}
+	if len(needsHuman) > 0 {
+		fmt.Fprintf(w, "Needs human: %s\n", strings.Join(needsHuman, ", "))
+	}
+	if len(done) > 0 {
+		fmt.Fprintf(w, "Done (not integrated): %s\n", strings.Join(done, ", "))
 	}
 	if len(pending) > 0 {
 		fmt.Fprintf(w, "Next: %s\n", pending[0])
