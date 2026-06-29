@@ -185,7 +185,13 @@ func Inspect(root string) *ErrLockHeld {
 }
 
 func probeHeldLock(path string) *ErrLockHeld {
-	f, err := os.OpenFile(path, os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	// O_RDONLY, not O_RDWR: this is a read-only liveness probe. flock(LOCK_EX)
+	// is advisory and independent of the open mode on Linux and macOS, so the
+	// probe still detects a held lock with only read access. Opening O_RDWR
+	// would require write permission a status caller may lack (e.g. a dashboard
+	// service account reading a 0600 lock file owned by the user who ran
+	// `start`), turning a live batch into a false "no holder" → stalled.
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil

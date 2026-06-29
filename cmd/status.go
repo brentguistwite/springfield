@@ -210,7 +210,14 @@ func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State, live
 	if len(done) > 0 {
 		fmt.Fprintf(w, "Done (not integrated): %s\n", strings.Join(done, ", "))
 	}
-	if len(pending) > 0 {
+	// "Next:" hints at what the queue runs next. It is meaningful only when the
+	// queue can actually advance: when something is running (the next plan is
+	// genuinely up after it), or when nothing is blocking. When the batch is
+	// blocked — a stalled/failed/needs-human plan with nothing running — the
+	// queue does not advance until the operator intervenes, so suppress the hint
+	// rather than imply forward progress the batch cannot make.
+	blocked := len(stalled) > 0 || len(failed) > 0 || len(needsHuman) > 0
+	if len(pending) > 0 && (len(running) > 0 || !blocked) {
 		fmt.Fprintf(w, "Next: %s\n", pending[0])
 	}
 }

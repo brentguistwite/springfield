@@ -186,6 +186,41 @@ func TestInspectIgnoresParseableStaleMetadataWithoutHeldFlock(t *testing.T) {
 	}
 }
 
+// TestInspectWorksOnReadOnlyLockFile pins that the liveness probe needs only
+// READ access to the lock file. A status caller that can read but not write
+// .springfield/.lock — e.g. a dashboard service account that is not the user
+// who ran `start` (the file is mode 0600, owned by the start user) — must still
+// see the live holder. With an O_RDWR open the read-only caller got EACCES,
+// which Inspect reported as "no live holder" (PID 0), misclassifying running
+// plans as stalled while a batch was actively executing.
+func TestInspectWorksOnReadOnlyLockFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root bypasses file permission checks; cannot simulate a read-only caller")
+	}
+	root := t.TempDir()
+
+	lk, err := lock.Acquire(root)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	defer lk.Release()
+
+	// Drop write permission to model a caller that can read but not write the
+	// lock file. The probe must not require write access.
+	path := filepath.Join(root, ".springfield", ".lock")
+	if err := os.Chmod(path, 0o400); err != nil {
+		t.Fatalf("chmod 0400: %v", err)
+	}
+
+	held := lock.Inspect(root)
+	if held == nil {
+		t.Fatal("Inspect returned nil for a held flock on a read-only lock file (false 'no holder')")
+	}
+	if held.PID != os.Getpid() {
+		t.Fatalf("Inspect PID = %d, want %d — must detect the live holder via read-only access", held.PID, os.Getpid())
+	}
+}
+
 func TestInspectSeesRealHeldFlockWithParseableMetadata(t *testing.T) {
 	root := t.TempDir()
 
