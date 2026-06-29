@@ -25,7 +25,7 @@ Every response carries `schema_version` and a `state` discriminator
 | field | meaning |
 |-------|---------|
 | `total_usd` | sum of all priced iterations |
-| `per_adapter` | per-adapter breakdown (omitted when empty) |
+| `per_adapter` | per-adapter breakdown of priced spend; adapters with no positive cost are excluded (matching the text `Spend:` line — unpriced adapters surface via `unpriced_runs`, not a `$0.00` entry), so the field is omitted when nothing is priced |
 | `iterations` | total iteration count |
 | `unpriced_runs` | runs with non-zero tokens but no price (omitted when zero) |
 | `skipped_files` | cost.json files that could not be read; non-zero means `total_usd` may under-count (omitted when zero) |

@@ -11,6 +11,92 @@ import (
 	"springfield/internal/features/statusview"
 )
 
+// TestActive_SpendPerAdapterOmitsZero locks in spend parity with the text
+// surface: the text "Spend:" breakdown skips adapters with amount <= 0
+// (cost.formatSpendLine), so the JSON per_adapter must too — otherwise an
+// unpriced adapter (e.g. gemini, CostUSD==0, which rollup.go still records as a
+// {"gemini": 0.0} entry) appears in JSON but not in text. Unpriced runs are
+// already surfaced via unpriced_runs; a $0.00 per-adapter entry implies cost
+// attribution with no cost data.
+func TestActive_SpendPerAdapterOmitsZero(t *testing.T) {
+	b := batch.Batch{
+		ID:      "b",
+		Title:   "T",
+		PlanIDs: []string{"p1"},
+		Phases:  []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"p1"}}},
+	}
+	state := &conductor.State{Plans: map[string]*conductor.PlanState{
+		"p1": {Status: conductor.StatusRunning},
+	}}
+	in := statusview.ActiveInput{
+		Batch:     b,
+		Run:       batch.Run{ActiveBatchID: "b"},
+		State:     state,
+		Units:     []conductor.PlanUnit{{ID: "p1", Title: "Plan 1"}},
+		HasRollup: true,
+		Rollup: cost.Rollup{
+			TotalUSD:     1.5,
+			PerAdapter:   map[string]float64{"claude": 1.5, "gemini": 0},
+			Iterations:   3,
+			UnpricedRuns: 1,
+		},
+	}
+	v := statusview.Active(in)
+	if v.Spend == nil {
+		t.Fatal("spend must be present when HasRollup")
+	}
+	if _, ok := v.Spend.PerAdapter["gemini"]; ok {
+		t.Errorf("per_adapter must omit the zero-cost gemini entry (text breakdown does); got %v", v.Spend.PerAdapter)
+	}
+	if got := v.Spend.PerAdapter["claude"]; got != 1.5 {
+		t.Errorf("per_adapter[claude] = %v, want 1.5", got)
+	}
+}
+
+// TestActive_MergedCountEqualsCompleted pins the documented consumer rule
+// count(status=="merged") == progress.completed. Both derive from
+// IsIntegrated() today; this test fails loudly if ComputeProgress.DonePlans or
+// ComposeStatus's merged predicate ever drift apart, breaking the contract.
+func TestActive_MergedCountEqualsCompleted(t *testing.T) {
+	merged := func() *conductor.PlanState {
+		return &conductor.PlanState{
+			Status:  conductor.StatusCompleted,
+			Merge:   &conductor.MergeOutcome{Status: conductor.MergeSucceeded, SourceSyncStatus: "synced"},
+			Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupSucceeded},
+		}
+	}
+	b := batch.Batch{
+		ID:      "b",
+		Title:   "T",
+		PlanIDs: []string{"p1", "p2", "p3"},
+		Phases:  []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"p1", "p2", "p3"}}},
+	}
+	state := &conductor.State{Plans: map[string]*conductor.PlanState{
+		"p1": merged(),
+		"p2": merged(),
+		"p3": {Status: conductor.StatusRunning},
+	}}
+	v := statusview.Active(statusview.ActiveInput{
+		Batch: b, Run: batch.Run{ActiveBatchID: "b"}, State: state,
+		Units: []conductor.PlanUnit{{ID: "p1"}, {ID: "p2"}, {ID: "p3"}},
+	})
+	mergedCount := 0
+	for _, p := range v.Plans {
+		if p.Status == statusview.StatusMerged {
+			mergedCount++
+		}
+	}
+	if v.Progress == nil {
+		t.Fatal("progress must be non-nil")
+	}
+	if mergedCount != v.Progress.Completed {
+		t.Errorf("count(merged)=%d != progress.completed=%d — consumer-rule invariant broken", mergedCount, v.Progress.Completed)
+	}
+	if mergedCount != 2 {
+		t.Errorf("expected 2 merged plans, got %d", mergedCount)
+	}
+}
+
 func TestIdle_EnvelopeShape(t *testing.T) {
 	v := statusview.Idle()
 	if v.SchemaVersion != 1 {

@@ -271,7 +271,7 @@ func Active(in ActiveInput) View {
 		if in.HasRollup {
 			v.Spend = &SpendView{
 				TotalUSD:     in.Rollup.TotalUSD,
-				PerAdapter:   in.Rollup.PerAdapter,
+				PerAdapter:   pricedAdapters(in.Rollup.PerAdapter),
 				Iterations:   in.Rollup.Iterations,
 				UnpricedRuns: in.Rollup.UnpricedRuns,
 				SkippedFiles: in.Rollup.SkippedFiles,
@@ -281,6 +281,26 @@ func Active(in ActiveInput) View {
 		v.Summary = "Batch " + in.Batch.ID + ": state unavailable."
 	}
 	return v
+}
+
+// pricedAdapters drops adapters with no positive cost so the JSON per_adapter
+// breakdown matches the text "Spend:" line, which skips amount <= 0 entries
+// (cost.formatSpendLine). An unpriced adapter (e.g. gemini, CostUSD==0) is
+// recorded as a zero entry by the rollup but carries no cost data; it is
+// surfaced via unpriced_runs, not as a $0.00 attribution. Returns nil when
+// nothing is priced, so omitempty drops the field entirely.
+func pricedAdapters(in map[string]float64) map[string]float64 {
+	var out map[string]float64
+	for name, amount := range in {
+		if amount <= 0 {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]float64, len(in))
+		}
+		out[name] = amount
+	}
+	return out
 }
 
 func activeSummary(b batch.Batch, p batch.Progress) string {

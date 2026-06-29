@@ -137,6 +137,73 @@ func TestStatusParity_InterruptedStalled(t *testing.T) {
 	}
 }
 
+// TestStatusJSON_IntegrationNeedsAttention pins the contract's headline
+// consumer rule ("Trust integration.state, not raw merge fields") end to end: a
+// plan whose merge succeeded but whose cleanup failed is NOT integrated, so
+// --json must surface integration.state == "needs_attention" with the
+// cleanup-failed reason — even though merge.status reads "succeeded". This
+// guards the full cmd → Active → buildPlan → deriveIntegration wiring, not just
+// the unit-level derivation.
+func TestStatusJSON_IntegrationNeedsAttention(t *testing.T) {
+	bin := buildBinary(t)
+	root := t.TempDir()
+	writeSpringfieldConfig(t, root, "claude")
+
+	plans := []conductor.PlanUnit{
+		{ID: "01", Title: "Plan 01", Path: ".springfield/plans/01/prd.json", Order: 1},
+	}
+	writePRDJSON(t, root, "01")
+	writeConductorConfigBinary(t, root, &conductor.Config{
+		PlansDir:                   ".springfield/plans",
+		WorktreeBase:               ".worktrees",
+		MaxRetries:                 2,
+		SingleWorkstreamIterations: 50,
+		SingleWorkstreamTimeout:    3600,
+		Tool:                       "claude",
+		PlanUnits:                  plans,
+	})
+	writeActiveBatchBinaryN(t, root, "batch-001", "Active Batch", []string{"01"})
+	writeConductorStateBinary(t, root, &conductor.State{
+		Plans: map[string]*conductor.PlanState{
+			"01": {
+				Status:  conductor.StatusCompleted,
+				Merge:   &conductor.MergeOutcome{Status: conductor.MergeSucceeded, SourceSyncStatus: "synced"},
+				Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupFailed},
+			},
+		},
+	})
+
+	output, err := runBinaryIn(t, bin, root, "status", "--json")
+	if err != nil {
+		t.Fatalf("status --json: %v\n%s", err, output)
+	}
+	var v map[string]any
+	if err := json.Unmarshal([]byte(output), &v); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, output)
+	}
+	plansArr, _ := v["plans"].([]any)
+	if len(plansArr) == 0 {
+		t.Fatalf("no plans in JSON: %v", v["plans"])
+	}
+	plan0, _ := plansArr[0].(map[string]any)
+	integ, ok := plan0["integration"].(map[string]any)
+	if !ok {
+		t.Fatalf("plans[0].integration missing/wrong type: %v", plan0["integration"])
+	}
+	if integ["state"] != "needs_attention" {
+		t.Fatalf("integration.state = %v, want needs_attention (cleanup failed despite merge succeeded)", integ["state"])
+	}
+	if integ["reason"] != "cleanup-failed" {
+		t.Fatalf("integration.reason = %v, want cleanup-failed", integ["reason"])
+	}
+	// The headline point: raw merge.status still reads "succeeded" — consumers
+	// must trust integration.state, which the rule documents.
+	merge, _ := plan0["merge"].(map[string]any)
+	if merge["status"] != "succeeded" {
+		t.Fatalf("merge.status = %v, want succeeded (the masked-success the rule warns about)", merge["status"])
+	}
+}
+
 // TestStatusParity_FailedPlan proves text and JSON agree on a failed plan in a
 // multi-plan batch: the text progress block names the failed plan (not just a
 // batch-level "Fatal error:" line) and JSON classifies the same plan as
