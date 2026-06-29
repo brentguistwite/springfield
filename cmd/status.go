@@ -157,13 +157,14 @@ func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State, live
 		return
 	}
 
-	// Group plans by canonical status. The grouping is TOTAL over the
-	// statusview enum: every status the JSON view-model can emit per plan has a
-	// home here, so a plan classified by JSON is never silently dropped from the
-	// text surface (failed/needs-human/done used to fall through). merged plans
-	// are already accounted for in the "X/Y integrated" line above. Because live
-	// is batch-level, running and stalled are mutually exclusive (all in-flight
-	// plans are running when a process owns the lock, stalled when none does).
+	// Group plans by canonical status. The switch is exhaustive over the
+	// statusview enum: every status the JSON view-model can emit per plan has an
+	// explicit arm, so a plan classified by JSON is never silently dropped from
+	// the text surface (failed/needs-human/done used to fall through). merged is
+	// the one status with no line — it is counted in the "X/Y integrated" tally
+	// above, so its arm is an explicit no-op. Because live is batch-level,
+	// running and stalled are mutually exclusive (all in-flight plans are running
+	// when a process owns the lock, stalled when none does).
 	var running, stalled, pending, failed, needsHuman, done []string
 	for _, id := range b.PlanIDs {
 		var ps *conductor.PlanState
@@ -183,6 +184,8 @@ func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State, live
 			needsHuman = append(needsHuman, id)
 		case statusview.StatusDone:
 			done = append(done, id)
+		case statusview.StatusMerged:
+			// Counted in the "X/Y integrated" line above; no per-plan line.
 		}
 	}
 
@@ -216,7 +219,10 @@ func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State, live
 	// blocked — a stalled/failed/needs-human plan with nothing running — the
 	// queue does not advance until the operator intervenes, so suppress the hint
 	// rather than imply forward progress the batch cannot make.
-	blocked := len(stalled) > 0 || len(failed) > 0 || len(needsHuman) > 0
+	// A done (completed-but-not-integrated) plan blocks the sequential queue too:
+	// the scheduler stays on its phase until it integrates, so a pending sibling
+	// is not actually next.
+	blocked := len(stalled) > 0 || len(failed) > 0 || len(needsHuman) > 0 || len(done) > 0
 	if len(pending) > 0 && (len(running) > 0 || !blocked) {
 		fmt.Fprintf(w, "Next: %s\n", pending[0])
 	}

@@ -139,9 +139,19 @@ func deriveIntegration(ps *conductor.PlanState) IntegrationView {
 		return IntegrationView{State: "clean"}
 	}
 	if ps.Merge.Status == conductor.MergeSucceeded && !ps.IsIntegrated() {
+		// Reason mirrors IsIntegrated's not-integrated causes, in its order, so
+		// the consumer's remediation matches the actual fault. cleanup-unrecorded
+		// (Cleanup==nil, the ledger was never persisted) is distinct from
+		// cleanup-failed (cleanup ran and failed): the former is an audit-trail
+		// gap to verify, the latter a failure to investigate. Mislabeling the
+		// first as the second sends the consumer chasing a cleanup error that
+		// never happened.
 		reason := "cleanup-failed"
-		if ps.Merge.SourceSyncStatus == "failed" {
+		switch {
+		case ps.Merge.SourceSyncStatus == "failed":
 			reason = "source-sync-failed"
+		case ps.Cleanup == nil:
+			reason = "cleanup-unrecorded"
 		}
 		return IntegrationView{State: "needs_attention", Reason: &reason}
 	}

@@ -338,6 +338,21 @@ func TestPrintProgressBlock_NextSuppressedWhenBlocked(t *testing.T) {
 			t.Fatalf("failed batch must suppress Next; got:\n%s", buf.String())
 		}
 	})
+
+	// A completed-but-not-integrated ("done") plan blocks the sequential queue:
+	// the scheduler stays on its phase until it integrates, so the pending
+	// sibling is not actually next. Next must be suppressed.
+	t.Run("done_not_integrated_blocks_next", func(t *testing.T) {
+		b, st := mk(map[string]*conductor.PlanState{
+			"01": {Status: conductor.StatusCompleted, Merge: &conductor.MergeOutcome{Status: conductor.MergeRefused}},
+			"02": {Status: conductor.StatusPending},
+		}, "01", "02")
+		var buf bytes.Buffer
+		printProgressBlock(&buf, b, st, false)
+		if strings.Contains(buf.String(), "Next:") {
+			t.Fatalf("done-but-not-integrated batch must suppress Next; got:\n%s", buf.String())
+		}
+	})
 }
 
 // TestPrintProgressBlock_MergedCountedNotNamed pins the intentional handling of

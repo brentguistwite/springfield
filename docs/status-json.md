@@ -14,7 +14,7 @@ Every response carries `schema_version` and a `state` discriminator
 | `schema_version` | contract version (currently `1`; additive changes bump it) |
 | `state` | `active`, `orphan` (batch.json missing), or `idle` (no active batch) |
 | `summary` | human-readable one-liner, always present |
-| `batch` | `{id, title}` or null |
+| `batch` | `{id, title}` or null. In the `orphan` state `title` is `""` (batch.json is gone, so the title is unrecoverable) — fall back to `id` for display |
 | `progress` | `{completed, total, phase_index, phase_total, all_done, parallel_in_flight}` or null |
 | `spend` | `{total_usd, per_adapter, iterations, unpriced_runs, skipped_files}` or null |
 | `flags` | `{fatal_error, cost_capped, last_retry}` or null |
@@ -36,7 +36,7 @@ Every response carries `schema_version` and a `state` discriminator
 |-------|---------|
 | `completed` | number of integrated plans |
 | `total` | total plan count |
-| `phase_index` | current phase index (0-based); -1 when all done |
+| `phase_index` | current phase index (0-based); `-1` when all done **or** when `phase_total == 0` (no phase data) — check `phase_total > 0` before interpreting |
 | `phase_total` | total phase count |
 | `all_done` | true when every plan is integrated |
 | `parallel_in_flight` | true when the current phase runs plans in parallel and 2+ are `running` (same classifier as per-plan `status`, so it is never true while those plans read `stalled`) |
@@ -70,8 +70,12 @@ Every response carries `schema_version` and a `state` discriminator
     — a stuck plan that `merge.status:"succeeded"` alone would mask. Everything
     else (not yet merged, merge pending/refused/failed, or cleanly integrated)
     is `clean`.
-  - `reason`: `cleanup-failed` | `source-sync-failed` when `needs_attention`;
-    omitted when `clean`.
+  - `reason` (when `needs_attention`; omitted when `clean`):
+    - `cleanup-failed` — cleanup ran and failed (artifacts preserved; investigate).
+    - `cleanup-unrecorded` — the cleanup ledger was never persisted (a save
+      failure); cleanup may have run in memory. An audit-trail gap to verify,
+      **not** an active cleanup failure — distinct remediation.
+    - `source-sync-failed` — the source resync left the checkout phantom-dirty.
 
 ### `flags` fields
 

@@ -439,7 +439,10 @@ func TestDeriveIntegration(t *testing.T) {
 		{"merge-refused->clean", &conductor.PlanState{Status: conductor.StatusCompleted, Merge: &conductor.MergeOutcome{Status: conductor.MergeRefused}}, "clean", ""},
 		// The masked-attention cases: merge succeeded but NOT integrated.
 		{"succeeded-cleanup-failed->needs_attention", &conductor.PlanState{Status: conductor.StatusCompleted, Merge: &conductor.MergeOutcome{Status: conductor.MergeSucceeded}, Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupFailed}}, "needs_attention", "cleanup-failed"},
-		{"succeeded-cleanup-nil->needs_attention", &conductor.PlanState{Status: conductor.StatusCompleted, Merge: &conductor.MergeOutcome{Status: conductor.MergeSucceeded}}, "needs_attention", "cleanup-failed"},
+		// Cleanup==nil is a save-failure (ledger never recorded), NOT an active
+		// cleanup failure — it gets a distinct reason so a consumer takes the
+		// right remediation (verify state) rather than chasing a cleanup error.
+		{"succeeded-cleanup-nil->needs_attention", &conductor.PlanState{Status: conductor.StatusCompleted, Merge: &conductor.MergeOutcome{Status: conductor.MergeSucceeded}}, "needs_attention", "cleanup-unrecorded"},
 		{"succeeded-source-sync-failed->needs_attention", &conductor.PlanState{Status: conductor.StatusCompleted, Merge: &conductor.MergeOutcome{Status: conductor.MergeSucceeded, SourceSyncStatus: "failed"}, Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupSucceeded}}, "needs_attention", "source-sync-failed"},
 	}
 	for _, tc := range cases {
