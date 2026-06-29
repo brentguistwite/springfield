@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.0](https://github.com/brentguistwite/springfield/compare/v0.22.0...v0.23.0) (2026-06-29)
+
+
+### Features
+
+* **status:** add --json machine-readable view-model ([#90](https://github.com/brentguistwite/springfield/issues/90)) ([a2a0d99](https://github.com/brentguistwite/springfield/commit/a2a0d99afb5082b9c0eeaac467446653f6a4ac18))
+
 ## [0.22.0](https://github.com/brentguistwite/springfield/compare/v0.21.0...v0.22.0) (2026-06-24)
 
 
