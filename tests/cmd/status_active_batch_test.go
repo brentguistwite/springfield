@@ -90,7 +90,10 @@ func TestStatusActiveBatchRollupShapeViaBinary(t *testing.T) {
 	want := []string{
 		"Batch: batch-001",
 		"Plans: 1/2 integrated",
-		"Current: 02 (running)",
+		// No live springfield process owns the lock during the test, so the
+		// running-persisted plan is correctly surfaced as stalled (parity with
+		// the JSON view-model's stalled status).
+		"Stalled: 02 (no running springfield process — run \"springfield recover\")",
 	}
 	for _, w := range want {
 		if !strings.Contains(output, w) {

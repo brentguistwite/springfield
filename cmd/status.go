@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
@@ -9,15 +10,18 @@ import (
 	"github.com/spf13/cobra"
 
 	"springfield/internal/core/config"
+	"springfield/internal/core/lock"
 	"springfield/internal/features/batch"
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/cost"
 	"springfield/internal/features/execution"
+	"springfield/internal/features/statusview"
 )
 
 // NewStatusCommand shows status for the active Springfield batch.
 func NewStatusCommand() *cobra.Command {
 	var dir string
+	var jsonOut bool
 
 	cmd := &cobra.Command{
 		Use:   "status",
@@ -36,6 +40,9 @@ func NewStatusCommand() *cobra.Command {
 				return err
 			}
 			if !hasRun || run.ActiveBatchID == "" {
+				if jsonOut {
+					return emitStatusJSON(cmd.OutOrStdout(), statusview.Idle())
+				}
 				return printPlanRegistry(cmd.OutOrStdout(), root)
 			}
 
@@ -46,6 +53,9 @@ func NewStatusCommand() *cobra.Command {
 			b, err := batch.ReadBatch(paths)
 			if err != nil {
 				if batch.IsMissingBatchError(err) {
+					if jsonOut {
+						return emitStatusJSON(cmd.OutOrStdout(), statusview.Orphan(run))
+					}
 					printOrphanStatus(cmd.OutOrStdout(), run)
 					return nil
 				}
@@ -53,26 +63,56 @@ func NewStatusCommand() *cobra.Command {
 			}
 
 			var state *conductor.State
+			var units []conductor.PlanUnit
 			project, loadErr := conductor.LoadProjectRaw(root)
 			if loadErr != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "[warn] could not load project state: %v; progress rollup will be limited.\n", loadErr)
 			} else {
 				state = project.State
+				units = project.Config.PlanUnits
 			}
-			return printBatchStatus(cmd.OutOrStdout(), root, b, run, state)
+
+			// Read-only liveness probe: a confirmed holder (PID != 0) means a live
+			// springfield process owns the control-plane lock, so in-flight plans
+			// are genuinely running; otherwise a started-but-non-terminal plan is
+			// stalled (owning process died without a terminal result). Shared by
+			// the text and JSON paths so both agree on running vs stalled.
+			held := lock.Inspect(root)
+			live := held != nil && held.PID != 0
+
+			if jsonOut {
+				rollup, rollupErr := cost.ComputeRollup(root, b.ID)
+				effectiveFatalError := ""
+				if run.FatalError != "" && batchHasFailedPlan(b, state) {
+					effectiveFatalError = run.FatalError
+				}
+				in := statusview.ActiveInput{
+					Batch:      b,
+					Run:        run,
+					State:      state,
+					Units:      units,
+					Rollup:     rollup,
+					HasRollup:  rollupErr == nil && rollup.Iterations > 0,
+					FatalError: effectiveFatalError,
+					Live:       live,
+				}
+				return emitStatusJSON(cmd.OutOrStdout(), statusview.Active(in))
+			}
+			return printBatchStatus(cmd.OutOrStdout(), root, b, run, state, live)
 		},
 	}
 
 	cmd.Flags().StringVar(&dir, "dir", ".", "project root or nested path inside the Springfield project")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit machine-readable JSON (stable view-model for tooling)")
 	return cmd
 }
 
-func printBatchStatus(w io.Writer, root string, b batch.Batch, run batch.Run, state *conductor.State) error {
+func printBatchStatus(w io.Writer, root string, b batch.Batch, run batch.Run, state *conductor.State, live bool) error {
 	fmt.Fprintf(w, "Batch: %s\n", b.ID)
 	fmt.Fprintf(w, "Title: %s\n", b.Title)
 
 	if state != nil {
-		printProgressBlock(w, b, state)
+		printProgressBlock(w, b, state, live)
 		printSpendLine(w, root, b.ID)
 	}
 
@@ -101,25 +141,90 @@ func printBatchStatus(w io.Writer, root string, b batch.Batch, run batch.Run, st
 	return nil
 }
 
-// printProgressBlock emits the plan-centric progress lines (Plans/Current/Next
-// or Status: complete) used by both `springfield status` and the start-header.
-func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State) {
+// printProgressBlock emits the plan-centric progress lines (Plans/Current/Next/
+// Stalled or Status: complete) used by both `springfield status` and the
+// start-header. Per-plan classification routes through statusview.ComposeStatus
+// — the SAME canonical classifier the JSON view-model uses — so the text and
+// JSON surfaces cannot disagree about a plan's state (e.g. an interrupted plan
+// on a dead process is stalled in both, never "Next" in one and "stalled" in
+// the other). live reports whether a springfield process owns the control-plane
+// lock; the start-header caller passes live=true (the running start owns it).
+func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State, live bool) {
 	p := batch.ComputeProgress(b, state)
 	fmt.Fprintf(w, "Plans: %d/%d integrated\n", p.DonePlans, p.TotalPlans)
-	switch {
-	case p.AllDone:
+	if p.AllDone {
 		fmt.Fprintln(w, "Status: complete")
-	case len(p.InFlight) > 0:
+		return
+	}
+
+	// Group plans by canonical status. The switch is exhaustive over the
+	// statusview enum: every status the JSON view-model can emit per plan has an
+	// explicit arm, so a plan classified by JSON is never silently dropped from
+	// the text surface (failed/needs-human/done used to fall through). merged is
+	// the one status with no line — it is counted in the "X/Y integrated" tally
+	// above, so its arm is an explicit no-op. Because live is batch-level,
+	// running and stalled are mutually exclusive (all in-flight plans are running
+	// when a process owns the lock, stalled when none does).
+	var running, stalled, pending, failed, needsHuman, done []string
+	for _, id := range b.PlanIDs {
+		var ps *conductor.PlanState
+		if state != nil {
+			ps = state.Plans[id]
+		}
+		switch statusview.ComposeStatus(ps, live) {
+		case statusview.StatusRunning:
+			running = append(running, id)
+		case statusview.StatusStalled:
+			stalled = append(stalled, id)
+		case statusview.StatusPending:
+			pending = append(pending, id)
+		case statusview.StatusFailed:
+			failed = append(failed, id)
+		case statusview.StatusNeedsHuman:
+			needsHuman = append(needsHuman, id)
+		case statusview.StatusDone:
+			done = append(done, id)
+		case statusview.StatusMerged:
+			// Counted in the "X/Y integrated" line above; no per-plan line.
+		}
+	}
+
+	switch {
+	case len(running) > 0:
+		// Label sourced from statusview.ParallelInFlight — the SAME classifier
+		// that filled the running slice above and the JSON view-model's
+		// progress.parallel_in_flight — so the text and JSON surfaces report
+		// parallelism identically (not p.ParallelInFlight, which keys off
+		// ClassifyPlan and would drift from the running/stalled classification).
 		label := "running"
-		if p.ParallelInFlight {
+		if statusview.ParallelInFlight(b, state, live) {
 			label = "parallel"
 		}
-		fmt.Fprintf(w, "Current: %s (%s)\n", strings.Join(p.InFlight, ", "), label)
-		if len(p.Pending) > 0 {
-			fmt.Fprintf(w, "Next: %s\n", p.Pending[0])
-		}
-	case len(p.Pending) > 0:
-		fmt.Fprintf(w, "Next: %s\n", p.Pending[0])
+		fmt.Fprintf(w, "Current: %s (%s)\n", strings.Join(running, ", "), label)
+	case len(stalled) > 0:
+		fmt.Fprintf(w, "Stalled: %s (no running springfield process — run \"springfield recover\")\n", strings.Join(stalled, ", "))
+	}
+	if len(failed) > 0 {
+		fmt.Fprintf(w, "Failed: %s\n", strings.Join(failed, ", "))
+	}
+	if len(needsHuman) > 0 {
+		fmt.Fprintf(w, "Needs human: %s\n", strings.Join(needsHuman, ", "))
+	}
+	if len(done) > 0 {
+		fmt.Fprintf(w, "Done (not integrated): %s\n", strings.Join(done, ", "))
+	}
+	// "Next:" hints at what the queue runs next. It is meaningful only when the
+	// queue can actually advance: when something is running (the next plan is
+	// genuinely up after it), or when nothing is blocking. When the batch is
+	// blocked — a stalled/failed/needs-human plan with nothing running — the
+	// queue does not advance until the operator intervenes, so suppress the hint
+	// rather than imply forward progress the batch cannot make.
+	// A done (completed-but-not-integrated) plan blocks the sequential queue too:
+	// the scheduler stays on its phase until it integrates, so a pending sibling
+	// is not actually next.
+	blocked := len(stalled) > 0 || len(failed) > 0 || len(needsHuman) > 0 || len(done) > 0
+	if len(pending) > 0 && (len(running) > 0 || !blocked) {
+		fmt.Fprintf(w, "Next: %s\n", pending[0])
 	}
 }
 
@@ -257,4 +362,15 @@ func printOrphanStatus(w io.Writer, run batch.Run) {
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Run \"springfield recover\" to archive the orphan and clear state,")
 	fmt.Fprintln(w, "then \"springfield plan\" to start fresh.")
+}
+
+// emitStatusJSON marshals the status view-model with a trailing newline so
+// piped consumers get a clean line-terminated document.
+func emitStatusJSON(w io.Writer, v statusview.View) error {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(w, string(b))
+	return err
 }

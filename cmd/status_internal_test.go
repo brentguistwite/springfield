@@ -10,6 +10,7 @@ import (
 
 	"springfield/internal/core/lock"
 	"springfield/internal/features/batch"
+	"springfield/internal/features/conductor"
 )
 
 func TestStatusNoConfigPointsAtRegistrationFlow(t *testing.T) {
@@ -141,11 +142,16 @@ func TestStatusRollupOneInFlight(t *testing.T) {
 	if !strings.Contains(out, "Plans: 0/2 integrated") {
 		t.Fatalf("expected Plans: 0/2 integrated:\n%s", out)
 	}
-	if !strings.Contains(out, "Current: 01 (running)") {
-		t.Fatalf("expected Current running line:\n%s", out)
+	// No live springfield process holds the lock in this in-process test, so the
+	// running-persisted plan is surfaced as stalled (parity with JSON's stalled).
+	if !strings.Contains(out, "Stalled: 01 (no running springfield process") {
+		t.Fatalf("expected Stalled line:\n%s", out)
 	}
-	if !strings.Contains(out, "Next: 02") {
-		t.Fatalf("expected Next: 02:\n%s", out)
+	// The batch is blocked (stalled, nothing running): "Next:" is suppressed so
+	// the text does not imply 02 is about to run when nothing advances until the
+	// operator recovers the stalled plan.
+	if strings.Contains(out, "Next:") {
+		t.Fatalf("Next: must be suppressed while the batch is blocked by a stalled plan:\n%s", out)
 	}
 }
 
@@ -168,8 +174,215 @@ func TestStatusRollupParallelInFlight(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if !strings.Contains(out, "Current: 01, 02 (parallel)") {
-		t.Fatalf("expected Current: 01, 02 (parallel) line:\n%s", out)
+	// No live process in this in-process test → the parallel in-flight plans
+	// surface as stalled. The live "Current: ... (parallel)" rendering is
+	// covered directly by TestPrintProgressBlock_LiveVsStalled.
+	if !strings.Contains(out, "Stalled: 01, 02 (no running springfield process") {
+		t.Fatalf("expected Stalled parallel line:\n%s", out)
+	}
+}
+
+// TestPrintProgressBlock_LiveVsStalled exercises the in-flight rendering of
+// printProgressBlock directly (no lock/process dependency): live=true renders
+// the running/parallel "Current:" line; live=false renders the "Stalled:" line.
+func TestPrintProgressBlock_LiveVsStalled(t *testing.T) {
+	serial := batch.Batch{
+		ID:      "b",
+		Title:   "T",
+		PlanIDs: []string{"01", "02"},
+		Phases:  []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"01", "02"}}},
+	}
+	serialState := &conductor.State{Plans: map[string]*conductor.PlanState{
+		"01": {Status: conductor.StatusRunning},
+	}}
+
+	t.Run("live_serial_running", func(t *testing.T) {
+		var buf bytes.Buffer
+		printProgressBlock(&buf, serial, serialState, true)
+		if !strings.Contains(buf.String(), "Current: 01 (running)") {
+			t.Fatalf("live serial: want Current: 01 (running), got:\n%s", buf.String())
+		}
+	})
+
+	t.Run("dead_serial_stalled", func(t *testing.T) {
+		var buf bytes.Buffer
+		printProgressBlock(&buf, serial, serialState, false)
+		if !strings.Contains(buf.String(), "Stalled: 01 (no running springfield process") {
+			t.Fatalf("dead serial: want Stalled line, got:\n%s", buf.String())
+		}
+	})
+
+	parallel := batch.Batch{
+		ID:      "b",
+		Title:   "T",
+		PlanIDs: []string{"01", "02"},
+		Phases:  []batch.Phase{{Mode: batch.PhaseParallel, Plans: []string{"01", "02"}}},
+	}
+	parallelState := &conductor.State{Plans: map[string]*conductor.PlanState{
+		"01": {Status: conductor.StatusRunning},
+		"02": {Status: conductor.StatusRunning},
+	}}
+
+	t.Run("live_parallel", func(t *testing.T) {
+		var buf bytes.Buffer
+		printProgressBlock(&buf, parallel, parallelState, true)
+		if !strings.Contains(buf.String(), "Current: 01, 02 (parallel)") {
+			t.Fatalf("live parallel: want Current: 01, 02 (parallel), got:\n%s", buf.String())
+		}
+	})
+
+	// The "parallel" signal must key off the SAME running/stalled classifier
+	// (ComposeStatus) the per-plan status uses — not ClassifyPlan, which counts
+	// only StatusRunning and so would render this two-running parallel phase as
+	// "(running)". An interrupted plan with a live process owning the lock is
+	// running (it's being resumed), so two such plans are running in parallel.
+	mixedState := &conductor.State{Plans: map[string]*conductor.PlanState{
+		"01": {Status: conductor.StatusRunning},
+		"02": {Status: conductor.StatusInterrupted},
+	}}
+	t.Run("live_parallel_running_plus_interrupted", func(t *testing.T) {
+		var buf bytes.Buffer
+		printProgressBlock(&buf, parallel, mixedState, true)
+		if !strings.Contains(buf.String(), "Current: 01, 02 (parallel)") {
+			t.Fatalf("live mixed parallel: want Current: 01, 02 (parallel), got:\n%s", buf.String())
+		}
+	})
+}
+
+// TestPrintProgressBlock_SurfacesEveryStatus locks in text↔JSON parity at the
+// classification level: every status ComposeStatus can emit (and that the JSON
+// view-model surfaces per-plan) has a home in the text progress block. Before
+// this, failed/needs-human/done plans fell through the running/stalled/pending
+// switch and were silently omitted — a human reading text could not see what
+// JSON makes explicit (e.g. which plan in a multi-plan batch actually failed).
+func TestPrintProgressBlock_SurfacesEveryStatus(t *testing.T) {
+	b := batch.Batch{
+		ID:      "b",
+		Title:   "T",
+		PlanIDs: []string{"01", "02", "03", "04"},
+		Phases:  []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"01", "02", "03", "04"}}},
+	}
+	state := &conductor.State{Plans: map[string]*conductor.PlanState{
+		"01": {Status: conductor.StatusFailed, Error: "boom"},
+		"02": {Status: conductor.StatusNeedsHuman},
+		// completed but not integrated (merge refused) → "done"
+		"03": {Status: conductor.StatusCompleted, Merge: &conductor.MergeOutcome{Status: conductor.MergeRefused}},
+		"04": {Status: conductor.StatusPending},
+	}}
+
+	var buf bytes.Buffer
+	printProgressBlock(&buf, b, state, false)
+	out := buf.String()
+
+	for _, want := range []string{
+		"Failed: 01",
+		"Needs human: 02",
+		"Done (not integrated): 03",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q in progress block; got:\n%s", want, out)
+		}
+	}
+	// The batch is blocked (failed/needs-human present, nothing running), so the
+	// "Next:" hint is suppressed — nothing advances until the operator acts.
+	if strings.Contains(out, "Next:") {
+		t.Errorf("Next: must be suppressed when the batch is blocked; got:\n%s", out)
+	}
+}
+
+// TestPrintProgressBlock_NextSuppressedWhenBlocked pins that "Next:" — a hint
+// about what runs next — only appears when the queue can actually advance: when
+// something is running, or when nothing is blocking. A blocked batch
+// (stalled/failed/needs-human present with nothing running) suppresses it so
+// the text never implies forward progress the batch cannot make.
+func TestPrintProgressBlock_NextSuppressedWhenBlocked(t *testing.T) {
+	mk := func(plans map[string]*conductor.PlanState, ids ...string) (batch.Batch, *conductor.State) {
+		return batch.Batch{
+				ID: "b", Title: "T", PlanIDs: ids,
+				Phases: []batch.Phase{{Mode: batch.PhaseSerial, Plans: ids}},
+			},
+			&conductor.State{Plans: plans}
+	}
+
+	t.Run("running_shows_next", func(t *testing.T) {
+		b, st := mk(map[string]*conductor.PlanState{
+			"01": {Status: conductor.StatusRunning},
+			"02": {Status: conductor.StatusPending},
+		}, "01", "02")
+		var buf bytes.Buffer
+		printProgressBlock(&buf, b, st, true) // live → 01 running
+		if !strings.Contains(buf.String(), "Next: 02") {
+			t.Fatalf("running batch must show Next: 02; got:\n%s", buf.String())
+		}
+	})
+
+	t.Run("clean_pending_shows_next", func(t *testing.T) {
+		b, st := mk(map[string]*conductor.PlanState{
+			"02": {Status: conductor.StatusPending},
+		}, "01", "02") // 01 has no state → pending
+		var buf bytes.Buffer
+		printProgressBlock(&buf, b, st, false)
+		if !strings.Contains(buf.String(), "Next: 01") {
+			t.Fatalf("unblocked all-pending batch must show Next: 01; got:\n%s", buf.String())
+		}
+	})
+
+	t.Run("failed_blocks_next", func(t *testing.T) {
+		b, st := mk(map[string]*conductor.PlanState{
+			"01": {Status: conductor.StatusFailed},
+			"02": {Status: conductor.StatusPending},
+		}, "01", "02")
+		var buf bytes.Buffer
+		printProgressBlock(&buf, b, st, false)
+		if strings.Contains(buf.String(), "Next:") {
+			t.Fatalf("failed batch must suppress Next; got:\n%s", buf.String())
+		}
+	})
+
+	// A completed-but-not-integrated ("done") plan blocks the sequential queue:
+	// the scheduler stays on its phase until it integrates, so the pending
+	// sibling is not actually next. Next must be suppressed.
+	t.Run("done_not_integrated_blocks_next", func(t *testing.T) {
+		b, st := mk(map[string]*conductor.PlanState{
+			"01": {Status: conductor.StatusCompleted, Merge: &conductor.MergeOutcome{Status: conductor.MergeRefused}},
+			"02": {Status: conductor.StatusPending},
+		}, "01", "02")
+		var buf bytes.Buffer
+		printProgressBlock(&buf, b, st, false)
+		if strings.Contains(buf.String(), "Next:") {
+			t.Fatalf("done-but-not-integrated batch must suppress Next; got:\n%s", buf.String())
+		}
+	})
+}
+
+// TestPrintProgressBlock_MergedCountedNotNamed pins the intentional handling of
+// merged plans in a non-all-done batch: they are counted in the "X/Y
+// integrated" tally, never listed by name in a per-plan line. Guards against a
+// future switch change that accidentally surfaces a "Merged:" line.
+func TestPrintProgressBlock_MergedCountedNotNamed(t *testing.T) {
+	b := batch.Batch{
+		ID: "b", Title: "T", PlanIDs: []string{"01", "02"},
+		Phases: []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"01", "02"}}},
+	}
+	state := &conductor.State{Plans: map[string]*conductor.PlanState{
+		"01": {
+			Status:  conductor.StatusCompleted,
+			Merge:   &conductor.MergeOutcome{Status: conductor.MergeSucceeded, SourceSyncStatus: "synced"},
+			Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupSucceeded},
+		},
+		"02": {Status: conductor.StatusPending},
+	}}
+	var buf bytes.Buffer
+	printProgressBlock(&buf, b, state, false)
+	out := buf.String()
+	if !strings.Contains(out, "Plans: 1/2 integrated") {
+		t.Fatalf("want Plans: 1/2 integrated; got:\n%s", out)
+	}
+	if strings.Contains(out, "01") && (strings.Contains(out, "Merged") || strings.Contains(out, "Done") || strings.Contains(out, "Current") || strings.Contains(out, "Stalled")) {
+		t.Fatalf("merged plan 01 must not be named in a per-plan line; got:\n%s", out)
+	}
+	if !strings.Contains(out, "Next: 02") {
+		t.Fatalf("want Next: 02 (batch not blocked); got:\n%s", out)
 	}
 }
 

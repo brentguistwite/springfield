@@ -175,7 +175,9 @@ func NewStartCommand() *cobra.Command {
 			fmt.Fprintf(w, "Batch: %s\n", b.ID)
 			fmt.Fprintf(w, "Title: %s\n", b.Title)
 			if project, projectErr := conductor.LoadProjectRaw(root); projectErr == nil {
-				printProgressBlock(w, b, project.State)
+				// The start-header prints while this start process owns the
+				// control-plane lock, so in-flight plans are genuinely running.
+				printProgressBlock(w, b, project.State, true)
 			} else {
 				fmt.Fprintf(cmd.ErrOrStderr(), "[warn] could not load project state: %v; progress rollup will be limited.\n", projectErr)
 			}
