@@ -35,7 +35,17 @@ func TestFinalizeBatchConvergesAfterPartialRelocateCrash(t *testing.T) {
 	if err := os.MkdirAll(archiveDir, 0o755); err != nil {
 		t.Fatalf("mkdir archive: %v", err)
 	}
-	preEntry := batch.ArchiveEntry{BatchID: "batch-1", Title: "Test Batch", Reason: "completed", BatchMode: "per-plan"}
+	// A realistic crash leaves the ENRICHED entry: writeEnrichedArchive writes
+	// the Plans-bearing record (step 2) before any relocate (step 3) runs, so a
+	// crash mid-relocate finds Plans already present. Re-convergence must NOT
+	// clobber them (maybeWriteArchiveSibling no-ops on the matching reason).
+	preEntry := batch.ArchiveEntry{
+		BatchID: "batch-1", Title: "Test Batch", Reason: "completed", BatchMode: "per-plan",
+		Plans: []batch.ArchivePlan{
+			{ID: "alpha", Title: "Alpha", Status: "completed", Branch: "springfield/alpha", BaseRef: "develop"},
+			{ID: "beta", Title: "Beta", Status: "completed", Branch: "springfield/beta", BaseRef: "develop"},
+		},
+	}
 	data, _ := json.MarshalIndent(preEntry, "", "  ")
 	if err := os.WriteFile(filepath.Join(archiveDir, "batch-1.json"), append(data, '\n'), 0o644); err != nil {
 		t.Fatalf("pre-write entry: %v", err)
@@ -59,6 +69,23 @@ func TestFinalizeBatchConvergesAfterPartialRelocateCrash(t *testing.T) {
 	for _, e := range entries {
 		if !e.IsDir() && e.Name() != "batch-1.json" {
 			t.Fatalf("unexpected extra archive file after re-run: %s", e.Name())
+		}
+	}
+	// The enriched entry survives re-convergence intact — Plans not clobbered.
+	var finalEntry batch.ArchiveEntry
+	entryData, err := os.ReadFile(filepath.Join(archiveDir, "batch-1.json"))
+	if err != nil {
+		t.Fatalf("read entry after re-run: %v", err)
+	}
+	if err := json.Unmarshal(entryData, &finalEntry); err != nil {
+		t.Fatalf("decode entry: %v", err)
+	}
+	if len(finalEntry.Plans) != 2 {
+		t.Fatalf("entry Plans must be preserved (want 2), got %d: %+v", len(finalEntry.Plans), finalEntry.Plans)
+	}
+	for _, p := range finalEntry.Plans {
+		if p.Branch == "" {
+			t.Fatalf("plan %s lost its Branch on re-convergence: %+v", p.ID, p)
 		}
 	}
 	// Both plans' evidence at the durable path; sources gone.

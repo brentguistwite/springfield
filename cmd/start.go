@@ -352,7 +352,7 @@ func NewStartCommand() *cobra.Command {
 			// archive path so the batch still archives + clears.
 			if project, projErr := conductor.LoadProject(root); projErr != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: load project for finalize: %v; archiving without per-plan enrichment\n", projErr)
-				if archiveErr := batch.ArchiveBatchNormalized(root, b, "completed", archiveRollup); archiveErr != nil {
+				if archiveErr := batch.ArchiveBatchNormalizedWithMode(root, b, "completed", archiveRollup, run.BatchMode); archiveErr != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "warning: archive completed batch %q: %v\n", b.ID, archiveErr)
 				}
 				if clearErr := batch.ClearRun(root); clearErr != nil {
@@ -435,6 +435,10 @@ func resolveBatchModeAndBase(g planrun.Git, root string, run batch.Run, perPlanF
 	case stamped:
 		// Resume of a batch started on this feature: stamped mode is authoritative.
 		perPlan = run.BatchMode == string(config.BranchModePerPlan)
+		// A per-plan ask against a stamped consolidate batch is dropped (mode is
+		// locked) — surface it, same as the unstamped-in-progress case below,
+		// rather than silently ignoring the flag.
+		suppressed = requestedPerPlan && !perPlan
 	case batchHasProgress:
 		// Unstamped but already in progress → pre-feature consolidate batch; never flip.
 		perPlan = false

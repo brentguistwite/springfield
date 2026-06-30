@@ -104,13 +104,22 @@ func FinalizeBatch(rootDir string, b Batch, project *conductor.Project, rollup *
 		}
 		// (4) Deregister the batch's own units (Fix 2). Scoped to b.PlanIDs so
 		// standalone `plans add` units survive. RemovePlanUnit also clears
-		// State.Plans — safe now that records are snapshotted. A unit already
-		// absent (e.g. a re-run after a prior partial finalize) is tolerated.
+		// State.Plans in memory — safe now that records are snapshotted. A unit
+		// already absent (e.g. a re-run after a prior partial finalize) is
+		// tolerated.
 		for _, planID := range b.PlanIDs {
 			_ = project.RemovePlanUnit(planID)
 		}
 		if err := project.SaveConfig(); err != nil {
 			warn("warning: archive: deregister batch plan units: %v\n", err)
+		}
+		// SaveConfig persists only config.json; the State.Plans deletions above
+		// live in a separate state.json and are lost unless flushed. Without
+		// this, completed plan entries survive on disk and a later batch that
+		// reuses a plan ID reads stale non-pending state (anyPlanStarted → forces
+		// consolidate, drops --per-plan-branches). Best-effort, like SaveConfig.
+		if err := project.SaveState(); err != nil {
+			warn("warning: archive: persist cleared plan state: %v\n", err)
 		}
 	}
 
@@ -240,6 +249,17 @@ func copyTree(src, dst string) error {
 				mode = info.Mode().Perm()
 			}
 			return os.MkdirAll(target, mode)
+		}
+		// A symlink must be recreated as a symlink: WalkDir does not follow it
+		// (d.IsDir() is false even for a symlink-to-dir), so copyFile would
+		// os.Open the target — failing with "is a directory" for a dir link, or
+		// silently materializing a regular file for a file link. Preserve it.
+		if d.Type()&fs.ModeSymlink != 0 {
+			linkTarget, linkErr := os.Readlink(path)
+			if linkErr != nil {
+				return linkErr
+			}
+			return os.Symlink(linkTarget, target)
 		}
 		return copyFile(path, target)
 	})

@@ -172,6 +172,37 @@ func TestResolveModeFreshPerPlanNotSuppressed(t *testing.T) {
 	}
 }
 
+// A stamped CONSOLIDATE batch resumed with --per-plan-branches must also flag
+// the dropped request (symmetry with the unstamped-in-progress path) so the
+// caller warns instead of silently ignoring the flag.
+func TestResolveModeStampedConsolidateFlagSetsSuppressed(t *testing.T) {
+	g := fakeBaseGit{branch: "main"}
+	run := batch.Run{BatchMode: "consolidate"}
+	d, err := resolveBatchModeAndBase(g, "/r", run, true, "", config.Config{}, false)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if d.PerPlan {
+		t.Fatalf("stamped consolidate must not flip to per-plan, got %+v", d)
+	}
+	if !d.SuppressedPerPlanRequest {
+		t.Fatalf("a dropped per-plan request on a stamped consolidate batch must set SuppressedPerPlanRequest, got %+v", d)
+	}
+}
+
+// A stamped PER-PLAN resume with the flag re-passed is honored, not suppressed.
+func TestResolveModeStampedPerPlanFlagNotSuppressed(t *testing.T) {
+	g := fakeBaseGit{branch: "main"}
+	run := batch.Run{BatchMode: "per-plan", BatchBase: "develop"}
+	d, err := resolveBatchModeAndBase(g, "/r", run, true, "", config.Config{}, false)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !d.PerPlan || d.SuppressedPerPlanRequest {
+		t.Fatalf("honored per-plan resume must not suppress, got %+v", d)
+	}
+}
+
 func TestResolveModePerPlanDetachedHeadRejected(t *testing.T) {
 	g := fakeBaseGit{detached: true}
 	_, err := resolveBatchModeAndBase(g, "/r", batch.Run{}, true, "", config.Config{}, false)

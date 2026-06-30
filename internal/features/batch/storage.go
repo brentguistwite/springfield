@@ -177,6 +177,17 @@ func ClearRun(rootDir string) error {
 // are reaped. Callers that have no rollup (orphan recovery, legacy paths)
 // pass nil.
 func ArchiveBatchNormalized(rootDir string, b Batch, reason string, rollup *cost.Rollup) error {
+	return ArchiveBatchNormalizedWithMode(rootDir, b, reason, rollup, "")
+}
+
+// ArchiveBatchNormalizedWithMode is [ArchiveBatchNormalized] plus the
+// branch-output mode stamped onto the entry. The completion-path fallback (used
+// when the project can't be loaded to build the enriched entry) passes
+// run.BatchMode so a per-plan batch still archives as "per-plan" — otherwise the
+// archived status view projects every plan as "merged" when the branches are in
+// fact retained. mode "" matches the prior behavior for the reap/replace/orphan
+// callers, where branch-output mode is not meaningful.
+func ArchiveBatchNormalizedWithMode(rootDir string, b Batch, reason string, rollup *cost.Rollup, mode string) error {
 	archivePath := StableArchivePath(rootDir, b.ID)
 
 	if err := os.MkdirAll(ArchiveDir(rootDir), 0o755); err != nil {
@@ -184,6 +195,7 @@ func ArchiveBatchNormalized(rootDir string, b Batch, reason string, rollup *cost
 	}
 
 	entry := newArchiveEntry(b, reason, rollup, time.Now().UTC())
+	entry.BatchMode = mode
 
 	existed, err := writeJSONExclusive(archivePath, entry)
 	if err != nil {

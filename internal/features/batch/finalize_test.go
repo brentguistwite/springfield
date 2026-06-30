@@ -177,6 +177,13 @@ func TestFinalizeBatchEnrichesEntryRelocatesEvidenceAndDeregisters(t *testing.T)
 		t.Fatalf("standalone unit must survive, got %+v", reloaded.Config.PlanUnits)
 	}
 
+	// State.Plans deletions must be PERSISTED (SaveState), not just in-memory —
+	// else completed entries survive on disk and a later batch reusing the IDs
+	// reads stale non-pending state.
+	if reloaded.State.Plans["alpha"] != nil || reloaded.State.Plans["beta"] != nil {
+		t.Fatalf("batch plan state must be cleared on disk after finalize, got %+v", reloaded.State.Plans)
+	}
+
 	// run.json cleared.
 	if _, _, errRun := batch.ReadRun(root); errRun != nil {
 		t.Fatalf("ReadRun after finalize: %v", errRun)

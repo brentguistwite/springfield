@@ -193,10 +193,9 @@ func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State, live
 			done = append(done, id)
 		case statusview.StatusMerged, statusview.StatusRetained:
 			// Counted in the "X/Y integrated" line above; no per-plan line.
-			// StatusRetained is only produced by the archived projection (not by
-			// ComposeStatus, which feeds this switch), so it is unreachable here
-			// today — the arm is a defensive guard against a future ComposeStatus
-			// extension silently dropping retained plans from the text surface.
+			// Both are reachable here: ComposeStatus (which feeds this switch)
+			// returns StatusRetained for an integrated standalone (per-plan) plan
+			// and StatusMerged for a consolidate-merged one.
 		}
 	}
 

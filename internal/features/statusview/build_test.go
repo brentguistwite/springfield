@@ -176,6 +176,12 @@ func TestComposeStatus_Totality(t *testing.T) {
 		// Finding 2: MergePending and MergeFailed are done, not merged.
 		{"completed-merge-pending->done", &conductor.PlanState{Status: conductor.StatusCompleted, Merge: &conductor.MergeOutcome{Status: conductor.MergePending}}, true, statusview.StatusDone},
 		{"completed-merge-failed->done", &conductor.PlanState{Status: conductor.StatusCompleted, Merge: &conductor.MergeOutcome{Status: conductor.MergeFailed}}, true, statusview.StatusDone},
+		// Per-plan retained: integrated (MergeSucceeded+CleanupSucceeded) but the
+		// branch was kept, not merged — Mode "standalone" (planmerge.ModeStandalone)
+		// → retained, NOT merged, on the live/text surface.
+		{"completed-standalone-integrated->retained", &conductor.PlanState{Status: conductor.StatusCompleted, Merge: &conductor.MergeOutcome{Status: conductor.MergeSucceeded, Mode: "standalone"}, Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupSucceeded}}, true, statusview.StatusRetained},
+		// Standalone mode must NOT override non-integration: cleanup-failed is still done.
+		{"completed-standalone-not-integrated->done", &conductor.PlanState{Status: conductor.StatusCompleted, Merge: &conductor.MergeOutcome{Status: conductor.MergeSucceeded, Mode: "standalone"}, Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupFailed}}, true, statusview.StatusDone},
 		{"nil->pending", nil, true, statusview.StatusPending},
 		{"unknown->needs-human", &conductor.PlanState{Status: conductor.PlanStatus("future-state")}, true, statusview.StatusNeedsHuman},
 	}
