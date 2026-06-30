@@ -91,10 +91,10 @@ type Result struct {
 // Attempt is one agent dispatch within a Run, capturing enough to persist
 // per-agent evidence and explain a fallthrough.
 type Attempt struct {
-	Agent     agents.ID
-	ExitCode  int
-	Events    []exec.Event
-	Err       error
+	Agent    agents.ID
+	ExitCode int
+	Events   []exec.Event
+	Err      error
 	// Class is the error classification of a failed attempt (retryable/fatal),
 	// the reason the chain did or did not fall through. Empty on a passing
 	// attempt.

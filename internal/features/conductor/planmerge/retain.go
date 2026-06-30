@@ -1,8 +1,11 @@
 package planmerge
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"os"
 	"time"
 
 	"springfield/internal/features/conductor"
@@ -91,7 +94,15 @@ func Retain(in RetainInput) IntegrateResult {
 	}
 
 	execCleanup := &conductor.ArtifactCleanup{Status: conductor.CleanupSucceeded, Path: state.WorktreePath}
-	if err := in.Git.WorktreeRemoveForce(in.ControlRoot, state.WorktreePath); err != nil {
+	// Idempotent re-entry: a prior Retain may have removed the worktree but then
+	// failed to persist (a SaveState error), so a resume re-runs this with the
+	// path already gone. Re-attempting WorktreeRemoveForce on an absent path
+	// errors and would falsely report CleanupFailed — deadlocking the batch the
+	// same way the merge path's retryArtifactRemove avoids. Treat an
+	// already-absent worktree as a successful removal.
+	if _, statErr := os.Stat(state.WorktreePath); errors.Is(statErr, fs.ErrNotExist) {
+		progress(in.Progress, "retain %s: execution worktree already removed\n", in.PlanID)
+	} else if err := in.Git.WorktreeRemoveForce(in.ControlRoot, state.WorktreePath); err != nil {
 		execCleanup.Status = conductor.CleanupFailed
 		execCleanup.Error = err.Error()
 		cleanup.Status = conductor.CleanupFailed

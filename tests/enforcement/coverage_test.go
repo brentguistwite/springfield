@@ -82,10 +82,10 @@ var parserPkgs = []string{
 // coveredParsers are exercised against a real capture (here or in a sibling
 // real-capture test). Keyed by function/method name.
 var coveredParsers = map[string]bool{
-	"ValidateResult":     true, // reviewer_validation_test + above (real captures)
-	"AssistantText":      true, // transcript_decoder_test + above (claude+codex captures)
-	"ScanReviewVerdict":  true, // transcript_decoder_test + above (decoded real text)
-	"ScanMarkers":        true, // above (real implementer-story-pass transcript)
+	"ValidateResult":    true, // reviewer_validation_test + above (real captures)
+	"AssistantText":     true, // transcript_decoder_test + above (claude+codex captures)
+	"ScanReviewVerdict": true, // transcript_decoder_test + above (decoded real text)
+	"ScanMarkers":       true, // above (real implementer-story-pass transcript)
 }
 
 // exemptParsersByPkg is checked BEFORE the bare-name maps, keyed by
@@ -94,7 +94,7 @@ var coveredParsers = map[string]bool{
 // silently vouches for an unverified gemini/runner implementation of the same
 // method. These entries pin those package-specific cases honestly.
 var exemptParsersByPkg = map[string]string{
-	"gemini.AssistantText": "capture-pending: gemini CLI unavailable, no real transcript to capture; claude+codex AssistantText are real-capture covered",
+	"gemini.AssistantText":  "capture-pending: gemini CLI unavailable, no real transcript to capture; claude+codex AssistantText are real-capture covered",
 	"gemini.ValidateResult": "capture-pending: gemini CLI unavailable; claude+codex ValidateResult are real-capture covered",
 	"runtime.AssistantText": "delegates to the resolved adapter's TranscriptDecoder (claude/codex real-capture covered); no transport parsing of its own",
 }

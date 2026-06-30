@@ -2,11 +2,43 @@ package planmerge_test
 
 import (
 	"errors"
+	"os"
 	"testing"
 
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/conductor/planmerge"
 )
+
+func TestRetainWorktreeAlreadyGoneIsSuccess(t *testing.T) {
+	root, project, wt := projectFixture(t, "alpha", "springfield/alpha", "develop", "AAAA", "BBBB")
+	// Simulate a prior Retain that removed the worktree but failed to persist:
+	// the path is gone, but state still says Completed with no Cleanup.
+	if err := os.RemoveAll(wt); err != nil {
+		t.Fatalf("rm worktree: %v", err)
+	}
+	g := newFakeGit()
+
+	res := planmerge.Retain(planmerge.RetainInput{Project: project, PlanID: "alpha", ControlRoot: root, Git: g})
+	if res.Err != nil {
+		t.Fatalf("Retain: %v", res.Err)
+	}
+	// Must NOT re-attempt removal on an already-absent worktree (that errors
+	// and would deadlock the batch re-entry).
+	if len(g.worktreeRemoveAll) != 0 {
+		t.Fatalf("retain must skip removal of an absent worktree, got %v", g.worktreeRemoveAll)
+	}
+	if res.Cleanup == nil || res.Cleanup.ExecutionWorktree == nil ||
+		res.Cleanup.ExecutionWorktree.Status != conductor.CleanupSucceeded {
+		t.Fatalf("absent worktree must record succeeded, got %+v", res.Cleanup)
+	}
+	reloaded, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if !reloaded.State.Plans["alpha"].IsIntegrated() {
+		t.Fatal("idempotent retain on an absent worktree must integrate the plan")
+	}
+}
 
 func TestRetainKeepsBranchRemovesWorktreeAndIsIntegrated(t *testing.T) {
 	root, project, wt := projectFixture(t, "alpha", "springfield/alpha", "develop", "AAAA", "BBBB")

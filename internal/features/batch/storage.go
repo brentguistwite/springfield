@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"springfield/internal/features/cost"
@@ -282,6 +283,13 @@ func LatestArchive(rootDir string) (ArchiveEntry, bool, error) {
 	found := false
 	for _, de := range dirEntries {
 		if de.IsDir() || filepath.Ext(de.Name()) != ".json" {
+			continue
+		}
+		// Skip tamper forensics sidecars (<id>.<nanos>.tamper.json): they share
+		// the archive dir but are a different shape (a map with no archived_at),
+		// so they would deserialize to a zero-time ArchiveEntry and could win the
+		// mod-time fallback, surfacing a misleading "archived" view.
+		if strings.Contains(de.Name(), ".tamper.") {
 			continue
 		}
 		path := filepath.Join(dir, de.Name())

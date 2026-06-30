@@ -642,6 +642,15 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 // past pending — i.e. the batch has already begun executing. Used to detect a
 // pre-feature batch (no BatchMode stamp) that is mid-flight, so its branch mode
 // cannot be flipped by a re-passed flag on resume.
+//
+// Limitation: PlanState has no batch provenance, so a genuinely fresh batch
+// that reuses a plan ID still carrying stale state from a prior archived batch
+// is read as in-progress and locked to consolidate (silently ignoring
+// --per-plan-branches). The narrow trigger is a stale non-Completed state for a
+// reused ID — a stale Completed state is already rejected upstream by
+// preflight-already-completed. Locking to consolidate is the conservative
+// direction (no mixed-output corruption), so this is accepted over the larger
+// fix of stamping batch provenance onto PlanState.
 func anyPlanStarted(b batch.Batch, state *conductor.State) bool {
 	if state == nil {
 		return false
