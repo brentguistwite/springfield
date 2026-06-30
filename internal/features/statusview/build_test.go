@@ -53,10 +53,12 @@ func TestActive_SpendPerAdapterOmitsZero(t *testing.T) {
 	}
 }
 
-// TestActive_MergedCountEqualsCompleted pins the documented consumer rule
-// count(status=="merged") == progress.completed. Both derive from
-// IsIntegrated() today; this test fails loudly if ComputeProgress.DonePlans or
-// ComposeStatus's merged predicate ever drift apart, breaking the contract.
+// TestActive_MergedCountEqualsCompleted pins the documented consumer rule for a
+// CONSOLIDATE batch: count(status=="merged") == progress.completed. With
+// per-plan mode the integrated total splits across merged + retained, so the
+// general invariant is count(merged)+count(retained) == progress.completed —
+// see TestActive_IntegratedCountSplitsMergedAndRetained. This test fails loudly
+// if ComputeProgress.DonePlans or ComposeStatus's integrated predicate drift.
 func TestActive_MergedCountEqualsCompleted(t *testing.T) {
 	merged := func() *conductor.PlanState {
 		return &conductor.PlanState{
@@ -94,6 +96,55 @@ func TestActive_MergedCountEqualsCompleted(t *testing.T) {
 	}
 	if mergedCount != 2 {
 		t.Errorf("expected 2 merged plans, got %d", mergedCount)
+	}
+}
+
+// TestActive_IntegratedCountSplitsMergedAndRetained locks the GENERAL consumer
+// invariant across a per-plan batch: integrated plans surface as "retained"
+// (standalone branch kept), not "merged", yet still count toward
+// progress.completed. A controller must read merged+retained == completed, not
+// merged alone — in a per-plan batch count(merged) is 0 while completed is N.
+func TestActive_IntegratedCountSplitsMergedAndRetained(t *testing.T) {
+	retained := func() *conductor.PlanState {
+		return &conductor.PlanState{
+			Status:  conductor.StatusCompleted,
+			Merge:   &conductor.MergeOutcome{Status: conductor.MergeSucceeded, Mode: "standalone", SourceSyncStatus: "synced"},
+			Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupSucceeded},
+		}
+	}
+	b := batch.Batch{
+		ID: "b", Title: "T", PlanIDs: []string{"p1", "p2", "p3"},
+		Phases: []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"p1", "p2", "p3"}}},
+	}
+	state := &conductor.State{Plans: map[string]*conductor.PlanState{
+		"p1": retained(),
+		"p2": retained(),
+		"p3": {Status: conductor.StatusRunning},
+	}}
+	v := statusview.Active(statusview.ActiveInput{
+		Batch: b, Run: batch.Run{ActiveBatchID: "b"}, State: state,
+		Units: []conductor.PlanUnit{{ID: "p1"}, {ID: "p2"}, {ID: "p3"}},
+	})
+	merged, ret := 0, 0
+	for _, p := range v.Plans {
+		switch p.Status {
+		case statusview.StatusMerged:
+			merged++
+		case statusview.StatusRetained:
+			ret++
+		}
+	}
+	if v.Progress == nil {
+		t.Fatal("progress must be non-nil")
+	}
+	if merged != 0 {
+		t.Errorf("per-plan batch must report 0 merged, got %d", merged)
+	}
+	if ret != 2 {
+		t.Errorf("expected 2 retained plans, got %d", ret)
+	}
+	if merged+ret != v.Progress.Completed {
+		t.Errorf("count(merged)+count(retained)=%d != progress.completed=%d — general integrated invariant broken", merged+ret, v.Progress.Completed)
 	}
 }
 

@@ -96,6 +96,86 @@ func TestSpringfieldStartBatchReentryIntegratesWithoutRedispatch(t *testing.T) {
 	}
 }
 
+// TestSpringfieldStartPerPlanReentryHaltsOnRetainCleanupFailure covers the
+// per-plan HALT semantics through the full start path: a Completed-but-not-
+// integrated per-plan plan whose Retain fails (execution worktree can't be
+// removed) must HALT the batch (non-zero exit), NOT advance and NOT re-dispatch
+// the agent — the standalone branch is preserved and the run cursor is kept so
+// the operator can recover. The worktree path exists but is not a registered
+// git worktree, so `git worktree remove --force` fails deterministically →
+// CleanupFailed → integratePlan returns a halt.
+func TestSpringfieldStartPerPlanReentryHaltsOnRetainCleanupFailure(t *testing.T) {
+	bin := buildBinary(t)
+	dir := initRealGitRepo(t)
+	writeProjectConfig(t, dir, "claude")
+
+	env := prd.BatchPRDEnvelope{
+		Title:  "Halt batch",
+		Source: "src",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-1"}}},
+		Plans:  []prd.BatchPRDPlan{minPRDPlan("plan-1", "Plan One")},
+	}
+	if out, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, env)); err != nil {
+		t.Fatalf("compile batch: %v\n%s", err, out)
+	}
+	gitMust(t, dir, "add", ".")
+	gitMust(t, dir, "commit", "-m", "scaffold")
+	mainSHA := gitOut(t, dir, "rev-parse", "main")
+	gitMust(t, dir, "branch", "springfield/plan-1")
+
+	// A real directory that is NOT a registered git worktree — its presence makes
+	// Retain attempt (not skip) the removal, and `git worktree remove` fails on it.
+	notAWorktree := filepath.Join(dir, "not-a-worktree")
+	if err := os.MkdirAll(notAWorktree, 0o755); err != nil {
+		t.Fatalf("mkdir fake worktree: %v", err)
+	}
+
+	run := readRunJSON(t, dir)
+	run.BatchMode = "per-plan"
+	run.BatchBase = "main"
+	if err := batch.WriteRun(dir, run); err != nil {
+		t.Fatalf("write run.json: %v", err)
+	}
+	writeConductorStateBinary(t, dir, &conductor.State{
+		Plans: map[string]*conductor.PlanState{
+			"plan-1": {
+				Status:       conductor.StatusCompleted,
+				Branch:       "springfield/plan-1",
+				WorktreePath: notAWorktree,
+				BaseRef:      "main",
+				BaseHead:     mainSHA,
+				Merge:        &conductor.MergeOutcome{Status: conductor.MergePending},
+			},
+		},
+	})
+
+	fakeBinDir := filepath.Join(dir, "bin")
+	canary := filepath.Join(dir, "agent-was-invoked")
+	installCanaryAgent(t, fakeBinDir, "claude", canary)
+
+	output, err := runBinaryInWithEnv(t, bin, dir,
+		[]string{"PATH=" + fakeBinDir + ":" + os.Getenv("PATH")},
+		"start")
+	if err == nil {
+		t.Fatalf("batch must halt non-zero on Retain cleanup failure, got success:\n%s", output)
+	}
+	if !strings.Contains(output, "cleanup failed") {
+		t.Fatalf("expected a cleanup-failure halt message, got:\n%s", output)
+	}
+	// Agent must NOT have been dispatched (re-entry routes to integration).
+	if _, statErr := os.Stat(canary); !os.IsNotExist(statErr) {
+		t.Fatalf("agent must not be invoked on integration re-entry; canary stat err=%v", statErr)
+	}
+	// Standalone branch preserved despite the halt.
+	if strings.TrimSpace(gitOut(t, dir, "branch", "--list", "springfield/plan-1")) == "" {
+		t.Fatal("per-plan branch must be preserved on a cleanup-failure halt")
+	}
+	// Run cursor kept (batch halted, not completed) so the operator can recover.
+	if _, statErr := os.Stat(filepath.Join(dir, ".springfield", "run.json")); statErr != nil {
+		t.Fatalf("run.json must be kept after a halt, stat err=%v", statErr)
+	}
+}
+
 // TestSpringfieldStartUnstampedInProgressWarnsWhenPerPlanDropped covers the
 // in-scope mitigation for the provenance gap: when --per-plan-branches is passed
 // against an UNSTAMPED batch that already carries non-pending plan state, the

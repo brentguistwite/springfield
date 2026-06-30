@@ -58,6 +58,43 @@ func TestFinalizeBatchArchiveFailurePreservesEvidenceAndUnits(t *testing.T) {
 	}
 }
 
+// TestFinalizeBatchRelocateFailureStillClearsCursor proves the "only ClearRun
+// is fatal" contract for a sub-step INSIDE the archiveOK block: when evidence
+// relocation fails (here a file occupies the archive/<batchID> path so the dst
+// dir cannot be created), FinalizeBatch warns, leaves the evidence in place, and
+// STILL clears the run cursor. A regression that moved ClearRun inside a
+// sub-step's error arm would strand the cursor and be caught here.
+func TestFinalizeBatchRelocateFailureStillClearsCursor(t *testing.T) {
+	root, project, b := finalizeFixture(t)
+	archiveDir := filepath.Join(root, ".springfield", "archive")
+	if err := os.MkdirAll(archiveDir, 0o755); err != nil {
+		t.Fatalf("mkdir archive: %v", err)
+	}
+	// Occupy the per-batch archive dir path with a FILE: the entry write targets
+	// archive/batch-1.json (succeeds, archiveOK=true), but relocation's
+	// MkdirAll(archive/batch-1/plans) then fails ("not a directory").
+	if err := os.WriteFile(filepath.Join(archiveDir, "batch-1"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("seed relocate collision: %v", err)
+	}
+	var warns bytes.Buffer
+
+	if err := batch.FinalizeBatch(root, b, project, &cost.Rollup{}, "per-plan", &warns); err != nil {
+		t.Fatalf("FinalizeBatch must not hard-fail on a relocate failure: %v", err)
+	}
+
+	if !strings.Contains(warns.String(), "relocate evidence") {
+		t.Fatalf("expected a relocate warning, got %q", warns.String())
+	}
+	// Evidence preserved in place because the relocate failed.
+	if _, err := os.Stat(filepath.Join(root, ".springfield", "execution", "plans", "alpha", "iter-1", "cost.json")); err != nil {
+		t.Fatalf("evidence must stay in execution/ when relocate fails: %v", err)
+	}
+	// The only fatal step still ran: run cursor cleared.
+	if _, ok, _ := batch.ReadRun(root); ok {
+		t.Fatal("run cursor must be cleared even when a best-effort sub-step fails")
+	}
+}
+
 // TestFinalizeBatchRecordsEvidencePathWhenAlreadyRelocated proves the relocate
 // idempotency + entry-first ordering: if a crash already moved evidence to the
 // archive namespace (src gone), FinalizeBatch still records a non-empty

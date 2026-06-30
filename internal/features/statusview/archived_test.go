@@ -11,7 +11,9 @@ import (
 // TestArchivedPlanParityWithLive locks the contract that a per-ticket card
 // projected from an archived record has the SAME shape and core fields as the
 // live PlanView it was snapshotted from. A completed plan with no merge ledger
-// is "done" both live and archived — exact parity on the round-tripping fields.
+// is "merged" both live and archived — the legacy nil-Merge path treats it as
+// integrated (ComposeStatus → merged; statusFromArchiveStatus mode="" → merged)
+// — exact parity on the round-tripping fields.
 func TestArchivedPlanParityWithLive(t *testing.T) {
 	ps := &conductor.PlanState{
 		Status:       conductor.StatusCompleted,

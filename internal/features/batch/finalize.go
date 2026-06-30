@@ -118,6 +118,13 @@ func FinalizeBatch(rootDir string, b Batch, project *conductor.Project, rollup *
 		// this, completed plan entries survive on disk and a later batch that
 		// reuses a plan ID reads stale non-pending state (anyPlanStarted → forces
 		// consolidate, drops --per-plan-branches). Best-effort, like SaveConfig.
+		//
+		// SaveConfig and SaveState are independent writes; a partial failure
+		// leaves config.json and state.json inconsistent (and both warn). Either
+		// is operator-recoverable: a SaveState failure leaves stale completed
+		// plan entries — `springfield recover` re-reconciles them, or delete the
+		// entries from state.json; a SaveConfig failure leaves orphan units —
+		// re-run `springfield plan --replace` to rebuild the registry.
 		if err := project.SaveState(); err != nil {
 			warn("warning: archive: persist cleared plan state: %v\n", err)
 		}
