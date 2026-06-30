@@ -120,6 +120,58 @@ func TestResolveModeResumeFlagDoesNotFlipStampedMode(t *testing.T) {
 	}
 }
 
+// A requested per-plan mode that gets overridden by an unstamped-but-in-progress
+// batch must be surfaced (SuppressedPerPlanRequest) so the caller can warn —
+// otherwise --per-plan-branches is silently dropped. True whether the request
+// came from the flag or [project] branch_mode.
+func TestResolveModeLegacyInProgressFlagSetsSuppressedFlag(t *testing.T) {
+	g := fakeBaseGit{branch: "main"}
+	d, err := resolveBatchModeAndBase(g, "/r", batch.Run{}, true, "", config.Config{}, true)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !d.SuppressedPerPlanRequest {
+		t.Fatalf("a dropped --per-plan-branches request must set SuppressedPerPlanRequest, got %+v", d)
+	}
+}
+
+func TestResolveModeLegacyInProgressConfigSetsSuppressedFlag(t *testing.T) {
+	g := fakeBaseGit{branch: "main"}
+	d, err := resolveBatchModeAndBase(g, "/r", batch.Run{}, false, "", perPlanConfig(), true)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if !d.SuppressedPerPlanRequest {
+		t.Fatalf("a dropped [project] per-plan request must set SuppressedPerPlanRequest, got %+v", d)
+	}
+}
+
+// No request → nothing suppressed; a legacy consolidate resume without any
+// per-plan ask must NOT warn.
+func TestResolveModeLegacyInProgressNoRequestNoSuppression(t *testing.T) {
+	g := fakeBaseGit{branch: "main"}
+	d, err := resolveBatchModeAndBase(g, "/r", batch.Run{}, false, "", config.Config{}, true)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if d.SuppressedPerPlanRequest {
+		t.Fatalf("no per-plan request must not set SuppressedPerPlanRequest, got %+v", d)
+	}
+}
+
+// A genuinely-honored per-plan request (fresh, no prior progress) must NOT set
+// the suppressed flag — the flag is specifically the "asked-but-denied" signal.
+func TestResolveModeFreshPerPlanNotSuppressed(t *testing.T) {
+	g := fakeBaseGit{branch: "main"}
+	d, err := resolveBatchModeAndBase(g, "/r", batch.Run{}, true, "", config.Config{}, false)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if d.SuppressedPerPlanRequest {
+		t.Fatalf("an honored per-plan request must not set SuppressedPerPlanRequest, got %+v", d)
+	}
+}
+
 func TestResolveModePerPlanDetachedHeadRejected(t *testing.T) {
 	g := fakeBaseGit{detached: true}
 	_, err := resolveBatchModeAndBase(g, "/r", batch.Run{}, true, "", config.Config{}, false)

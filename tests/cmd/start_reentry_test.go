@@ -96,6 +96,64 @@ func TestSpringfieldStartBatchReentryIntegratesWithoutRedispatch(t *testing.T) {
 	}
 }
 
+// TestSpringfieldStartUnstampedInProgressWarnsWhenPerPlanDropped covers the
+// in-scope mitigation for the provenance gap: when --per-plan-branches is passed
+// against an UNSTAMPED batch that already carries non-pending plan state, the
+// mode is locked to consolidate (correct, conservative) but the dropped request
+// must NOT be silent — start warns on stderr. The plan is seeded Completed (with
+// an absent worktree) so the start path routes through integration and never
+// dispatches the agent, keeping the assertion deterministic.
+func TestSpringfieldStartUnstampedInProgressWarnsWhenPerPlanDropped(t *testing.T) {
+	bin := buildBinary(t)
+	dir := initRealGitRepo(t)
+	writeProjectConfig(t, dir, "claude")
+
+	env := prd.BatchPRDEnvelope{
+		Title:  "Reused-slug batch",
+		Source: "src",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-1"}}},
+		Plans:  []prd.BatchPRDPlan{minPRDPlan("plan-1", "Plan One")},
+	}
+	if out, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, env)); err != nil {
+		t.Fatalf("compile batch: %v\n%s", err, out)
+	}
+	gitMust(t, dir, "add", ".")
+	gitMust(t, dir, "commit", "-m", "scaffold")
+
+	// run.json is left as-compiled — UNSTAMPED (BatchMode == "") — and a
+	// non-pending plan state is seeded for the reused slug: the exact
+	// stale-PlanState shape that drives the suppression path.
+	writeConductorStateBinary(t, dir, &conductor.State{
+		Plans: map[string]*conductor.PlanState{
+			"plan-1": {
+				Status:       conductor.StatusCompleted,
+				Branch:       "springfield/plan-1",
+				WorktreePath: filepath.Join(dir, ".worktrees", "plan-1"), // absent → Integrate fails fast, no dispatch
+				BaseRef:      "main",
+				BaseHead:     "deadbeefcafef00ddeadbeefcafef00ddeadbeef",
+				Merge:        &conductor.MergeOutcome{Status: conductor.MergePending},
+			},
+		},
+	})
+
+	fakeBinDir := filepath.Join(dir, "bin")
+	canary := filepath.Join(dir, "agent-was-invoked")
+	installCanaryAgent(t, fakeBinDir, "claude", canary)
+
+	output, _ := runBinaryInWithEnv(t, bin, dir,
+		[]string{"PATH=" + fakeBinDir + ":" + os.Getenv("PATH")},
+		"start", "--per-plan-branches")
+	if !strings.Contains(output, "--per-plan-branches ignored") {
+		t.Fatalf("dropped per-plan flag must warn, got:\n%s", output)
+	}
+	if strings.Contains(output, "Branch mode: per-plan") {
+		t.Fatalf("mode must be locked to consolidate, not per-plan:\n%s", output)
+	}
+	if _, statErr := os.Stat(canary); !os.IsNotExist(statErr) {
+		t.Fatalf("agent must not be dispatched on this path; canary stat err=%v", statErr)
+	}
+}
+
 // TestSpringfieldStartBatchReentryConsolidateRoutesToIntegrate covers the
 // consolidate side of the round-1 "both modes" re-entry fix: a Completed-but-
 // not-integrated plan in a consolidate batch must be driven through Integrate

@@ -208,6 +208,12 @@ func NewStartCommand() *cobra.Command {
 			if perPlan {
 				fmt.Fprintf(w, "Branch mode: per-plan (base: %s)\n", batchBase)
 			}
+			if modeDecision.SuppressedPerPlanRequest {
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"warning: --per-plan-branches ignored: batch %s is already in progress; continuing in consolidate mode. "+
+						"If this is a fresh batch, a reused plan ID may be carrying stale state from a prior batch — run \"springfield batch abort\" then recompile.\n",
+					b.ID)
+			}
 
 			hadPriorAutoBranch := run.AutoBranchName != ""
 			activation, abErr := autobranch.Activate(autobranch.Input{
@@ -387,6 +393,14 @@ type batchModeDecision struct {
 	Stamp bool
 	// Mode is the value to stamp into run.BatchMode (only when Stamp).
 	Mode string
+	// SuppressedPerPlanRequest is true when the operator asked for per-plan mode
+	// (via --per-plan-branches or [project] branch_mode) but it was overridden to
+	// consolidate because the batch is unstamped-but-already-in-progress. The
+	// caller warns on it so the dropped request is visible rather than silent —
+	// in both the genuine cross-version resume and the (rarer) stale-PlanState
+	// false positive where a fresh batch reuses a plan ID still carrying a
+	// non-pending state from a prior --replace'd or crashed batch.
+	SuppressedPerPlanRequest bool
 }
 
 // resolveBatchModeAndBase decides the effective per-plan mode and batch base
@@ -414,7 +428,9 @@ type batchModeDecision struct {
 func resolveBatchModeAndBase(g planrun.Git, root string, run batch.Run, perPlanFlag bool, baseFlag string, cfg config.Config, batchHasProgress bool) (batchModeDecision, error) {
 	stamped := run.BatchMode != ""
 
-	var perPlan bool
+	requestedPerPlan := perPlanFlag || cfg.BranchMode() == config.BranchModePerPlan
+
+	var perPlan, suppressed bool
 	switch {
 	case stamped:
 		// Resume of a batch started on this feature: stamped mode is authoritative.
@@ -422,12 +438,15 @@ func resolveBatchModeAndBase(g planrun.Git, root string, run batch.Run, perPlanF
 	case batchHasProgress:
 		// Unstamped but already in progress → pre-feature consolidate batch; never flip.
 		perPlan = false
+		// A per-plan ask that lands here is being dropped — record it so the
+		// caller can warn instead of silently ignoring the flag.
+		suppressed = requestedPerPlan
 	default:
 		// Genuinely fresh: flag beats config.
-		perPlan = perPlanFlag || cfg.BranchMode() == config.BranchModePerPlan
+		perPlan = requestedPerPlan
 	}
 
-	d := batchModeDecision{PerPlan: perPlan, Stamp: !stamped}
+	d := batchModeDecision{PerPlan: perPlan, Stamp: !stamped, SuppressedPerPlanRequest: suppressed}
 	if perPlan {
 		configBase := cfg.BaseBranch()
 		if stamped {
@@ -644,13 +663,20 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 // cannot be flipped by a re-passed flag on resume.
 //
 // Limitation: PlanState has no batch provenance, so a genuinely fresh batch
-// that reuses a plan ID still carrying stale state from a prior archived batch
-// is read as in-progress and locked to consolidate (silently ignoring
-// --per-plan-branches). The narrow trigger is a stale non-Completed state for a
-// reused ID — a stale Completed state is already rejected upstream by
-// preflight-already-completed. Locking to consolidate is the conservative
-// direction (no mixed-output corruption), so this is accepted over the larger
-// fix of stamping batch provenance onto PlanState.
+// that reuses a plan ID still carrying stale state from a prior batch is read as
+// in-progress and locked to consolidate. This is reachable (verified, not
+// hypothetical): `springfield plan --replace` archives the prior batch via
+// ArchiveBatchNormalized, which does NOT clear State.Plans, and a reused unit
+// whose Title/Path/Order are unchanged is preserved (RemovePlanUnit is skipped),
+// so a mid-flight non-Completed state survives; a crashed batch followed by a
+// new batch reusing the slug reaches the same state. A stale Completed state is
+// already rejected upstream by preflight-already-completed.
+//
+// Locking to consolidate is the conservative direction (no mixed-output
+// corruption), and the override is no longer silent — resolveBatchModeAndBase
+// sets SuppressedPerPlanRequest and the start path warns. The root fix (batch
+// provenance on PlanState, or clearing State.Plans at compile/replace) lives
+// outside this package and is deferred as out-of-scope here.
 func anyPlanStarted(b batch.Batch, state *conductor.State) bool {
 	if state == nil {
 		return false
