@@ -21,10 +21,12 @@ import (
 //
 //  1. snapshot a per-plan record (branch/base/status/evidence) from PlanState —
 //     MUST precede deregister, which clears PlanState;
-//  2. relocate .springfield/execution/plans/<key> →
+//  2. write the enriched ArchiveEntry (rollup + per-plan records) FIRST, before
+//     any destructive teardown, so an entry-write failure leaves evidence in
+//     place rather than stranded under archive/ with no entry;
+//  3. relocate .springfield/execution/plans/<key> →
 //     .springfield/archive/<batchID>/plans/<key> (os.Rename, copy+remove on a
 //     cross-device EXDEV) so evidence survives teardown;
-//  3. write the enriched ArchiveEntry (rollup + per-plan records);
 //  4. deregister the batch's OWN plan units (Fix 2) + SaveConfig;
 //  5. ClearRun.
 //

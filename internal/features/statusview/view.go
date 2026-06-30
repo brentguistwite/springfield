@@ -25,7 +25,7 @@ const (
 // View is the top-level envelope. Absent sections are explicit null.
 type View struct {
 	SchemaVersion int           `json:"schema_version"`
-	State         string        `json:"state"` // "active" | "orphan" | "idle"
+	State         string        `json:"state"` // "active" | "orphan" | "idle" | "archived"
 	Summary       string        `json:"summary"`
 	Batch         *BatchView    `json:"batch"`
 	Progress      *ProgressView `json:"progress"`

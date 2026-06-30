@@ -95,3 +95,65 @@ func TestSpringfieldStartBatchReentryIntegratesWithoutRedispatch(t *testing.T) {
 		t.Fatalf("run.json must be cleared after completion, stat err=%v", statErr)
 	}
 }
+
+// TestSpringfieldStartBatchReentryConsolidateRoutesToIntegrate covers the
+// consolidate side of the round-1 "both modes" re-entry fix: a Completed-but-
+// not-integrated plan in a consolidate batch must be driven through Integrate
+// (the merge phase), NOT re-dispatched to the agent and NOT rejected with
+// preflight-already-completed. The seeded state is deliberately broken (absent
+// worktree) so Integrate fails fast — the point is to prove the routing, not a
+// successful merge.
+func TestSpringfieldStartBatchReentryConsolidateRoutesToIntegrate(t *testing.T) {
+	bin := buildBinary(t)
+	dir := initRealGitRepo(t)
+	writeProjectConfig(t, dir, "claude")
+
+	env := prd.BatchPRDEnvelope{
+		Title:  "Re-entry consolidate",
+		Source: "src",
+		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-1"}}},
+		Plans:  []prd.BatchPRDPlan{minPRDPlan("plan-1", "Plan One")},
+	}
+	if out, err := planWithPRD(t, bin, dir, buildEnvelopeJSON(t, env)); err != nil {
+		t.Fatalf("compile batch: %v\n%s", err, out)
+	}
+	gitMust(t, dir, "add", ".")
+	gitMust(t, dir, "commit", "-m", "scaffold")
+
+	run := readRunJSON(t, dir)
+	run.BatchMode = "consolidate"
+	if err := batch.WriteRun(dir, run); err != nil {
+		t.Fatalf("write run.json: %v", err)
+	}
+	writeConductorStateBinary(t, dir, &conductor.State{
+		Plans: map[string]*conductor.PlanState{
+			"plan-1": {
+				Status:       conductor.StatusCompleted,
+				Branch:       "springfield/plan-1",
+				WorktreePath: filepath.Join(dir, ".worktrees", "plan-1"), // absent → Integrate fails fast
+				BaseRef:      "main",
+				BaseHead:     "deadbeefcafef00ddeadbeefcafef00ddeadbeef",
+				Merge:        &conductor.MergeOutcome{Status: conductor.MergePending},
+			},
+		},
+	})
+
+	fakeBinDir := filepath.Join(dir, "bin")
+	canary := filepath.Join(dir, "agent-was-invoked")
+	installCanaryAgent(t, fakeBinDir, "claude", canary)
+
+	output, _ := runBinaryInWithEnv(t, bin, dir,
+		[]string{"PATH=" + fakeBinDir + ":" + os.Getenv("PATH")},
+		"start")
+	// Re-entry must have fired (banner) and routed to the merge phase, NOT to
+	// SinglePlan (which would print preflight-already-completed).
+	if !strings.Contains(output, "resuming integration") {
+		t.Fatalf("expected the re-entry banner, got:\n%s", output)
+	}
+	if strings.Contains(output, "preflight-already-completed") {
+		t.Fatalf("re-entry must NOT route through SinglePlan, got:\n%s", output)
+	}
+	if _, statErr := os.Stat(canary); !os.IsNotExist(statErr) {
+		t.Fatalf("agent must not be invoked on consolidate re-entry; canary stat err=%v", statErr)
+	}
+}

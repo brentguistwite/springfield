@@ -165,10 +165,10 @@ func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State, live
 	}
 
 	// Group plans by canonical status. The switch is exhaustive over the
-	// statusview enum: every status the JSON view-model can emit per plan has an
-	// explicit arm, so a plan classified by JSON is never silently dropped from
-	// the text surface (failed/needs-human/done used to fall through). merged is
-	// the one status with no line — it is counted in the "X/Y integrated" tally
+	// statuses ComposeStatus can produce (which feeds it): every such status has
+	// an explicit arm, so a plan classified by JSON is never silently dropped from
+	// the text surface (failed/needs-human/done used to fall through). merged (and
+	// the archive-only retained) is the one status with no line — it is counted in the "X/Y integrated" tally
 	// above, so its arm is an explicit no-op. Because live is batch-level,
 	// running and stalled are mutually exclusive (all in-flight plans are running
 	// when a process owns the lock, stalled when none does).
@@ -191,8 +191,12 @@ func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State, live
 			needsHuman = append(needsHuman, id)
 		case statusview.StatusDone:
 			done = append(done, id)
-		case statusview.StatusMerged:
+		case statusview.StatusMerged, statusview.StatusRetained:
 			// Counted in the "X/Y integrated" line above; no per-plan line.
+			// StatusRetained is only produced by the archived projection (not by
+			// ComposeStatus, which feeds this switch), so it is unreachable here
+			// today — the arm is a defensive guard against a future ComposeStatus
+			// extension silently dropping retained plans from the text surface.
 		}
 	}
 
