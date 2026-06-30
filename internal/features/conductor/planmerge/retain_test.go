@@ -1,0 +1,89 @@
+package planmerge_test
+
+import (
+	"errors"
+	"testing"
+
+	"springfield/internal/features/conductor"
+	"springfield/internal/features/conductor/planmerge"
+)
+
+func TestRetainKeepsBranchRemovesWorktreeAndIsIntegrated(t *testing.T) {
+	root, project, wt := projectFixture(t, "alpha", "springfield/alpha", "develop", "AAAA", "BBBB")
+	g := newFakeGit()
+
+	res := planmerge.Retain(planmerge.RetainInput{
+		Project:     project,
+		PlanID:      "alpha",
+		ControlRoot: root,
+		Git:         g,
+	})
+
+	if res.Err != nil {
+		t.Fatalf("Retain returned err: %v", res.Err)
+	}
+	// Execution worktree removed directly...
+	if len(g.worktreeRemoveAll) != 1 || g.worktreeRemoveAll[0] != wt {
+		t.Fatalf("expected execution worktree %q removed once, got %v", wt, g.worktreeRemoveAll)
+	}
+	// ...but the plan branch is NEVER deleted (the whole point of per-plan mode).
+	if len(g.branchDeleteCalls) != 0 {
+		t.Fatalf("standalone retain must not delete the plan branch, got %v", g.branchDeleteCalls)
+	}
+	if res.Merge == nil || res.Merge.Status != conductor.MergeSucceeded {
+		t.Fatalf("Merge must be recorded succeeded, got %+v", res.Merge)
+	}
+	if res.Merge.Mode != "standalone" {
+		t.Fatalf("Merge.Mode = %q, want standalone", res.Merge.Mode)
+	}
+	if res.Cleanup == nil ||
+		res.Cleanup.ExecutionWorktree == nil || res.Cleanup.ExecutionWorktree.Status != conductor.CleanupSucceeded ||
+		res.Cleanup.PlanBranch == nil || res.Cleanup.PlanBranch.Status != conductor.CleanupPreserved ||
+		res.Cleanup.PlanBranch.Branch != "springfield/alpha" {
+		t.Fatalf("cleanup ledger wrong: %+v", res.Cleanup)
+	}
+
+	// Persisted + queue-advanceable.
+	reloaded, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("re-load: %v", err)
+	}
+	st := reloaded.State.Plans["alpha"]
+	if !st.IsIntegrated() {
+		t.Fatalf("standalone-retained plan must count as integrated: %+v", st)
+	}
+}
+
+func TestRetainWorktreeRemoveFailurePreservesBranch(t *testing.T) {
+	root, project, wt := projectFixture(t, "alpha", "springfield/alpha", "develop", "AAAA", "BBBB")
+	g := newFakeGit()
+	g.worktreeRemoveErr[wt] = errors.New("device busy")
+
+	res := planmerge.Retain(planmerge.RetainInput{
+		Project:     project,
+		PlanID:      "alpha",
+		ControlRoot: root,
+		Git:         g,
+	})
+
+	if res.Cleanup == nil || res.Cleanup.ExecutionWorktree == nil ||
+		res.Cleanup.ExecutionWorktree.Status != conductor.CleanupFailed {
+		t.Fatalf("worktree-remove failure must record execution worktree failed: %+v", res.Cleanup)
+	}
+	if res.Cleanup.Status != conductor.CleanupFailed {
+		t.Fatalf("aggregate cleanup must be failed, got %q", res.Cleanup.Status)
+	}
+	// Branch is preserved regardless of worktree-remove failure.
+	if res.Cleanup.PlanBranch == nil || res.Cleanup.PlanBranch.Status != conductor.CleanupPreserved {
+		t.Fatalf("plan branch must stay preserved on worktree-remove failure: %+v", res.Cleanup.PlanBranch)
+	}
+	if len(g.branchDeleteCalls) != 0 {
+		t.Fatalf("branch must never be deleted, got %v", g.branchDeleteCalls)
+	}
+	// A failed cleanup is not queue-integrated — operator inspects.
+	reloaded, _ := conductor.LoadProject(root)
+	if reloaded.State.Plans["alpha"].IsIntegrated() {
+		t.Fatalf("cleanup-failed plan must not count as integrated")
+	}
+	_ = wt
+}

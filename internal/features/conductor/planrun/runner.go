@@ -69,6 +69,11 @@ type SinglePlanInput struct {
 	// protected branch (see [ProtectedBases]). Threaded through to
 	// PrepareInput; cmd/start enables this by default.
 	EnforceProtectedBase bool
+	// BatchBaseRef is the resolved batch-wide base ref (--base > base_branch >
+	// current branch) threaded to PrepareInput as the Ref-less-plan fallback.
+	// Empty preserves the prior current-branch fallback for callers that don't
+	// resolve a batch base. See [ResolveBatchBase].
+	BatchBaseRef string
 	// MinFreeDiskBytes is the disk-space floor threaded to PrepareInput for the
 	// fresh-checkout preflight. Zero selects the manager's built-in default.
 	// cmd/start passes config.Config.MinFreeDiskBytes().
@@ -220,6 +225,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		AllStates:            in.Project.State.Plans,
 		EnforceProtectedBase: in.EnforceProtectedBase,
 		MinFreeDiskBytes:     in.MinFreeDiskBytes,
+		BatchBaseRef:         in.BatchBaseRef,
 	})
 	if err != nil {
 		tag := "preflight-error"

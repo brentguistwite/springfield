@@ -7,18 +7,30 @@ not an internal state dump.
 ## Envelope
 
 Every response carries `schema_version` and a `state` discriminator
-(`active` | `orphan` | `idle`). Absent sections are explicit `null`.
+(`active` | `orphan` | `idle` | `archived`). Absent sections are explicit `null`.
 
 | field | meaning |
 |-------|---------|
 | `schema_version` | contract version (currently `1`; additive changes bump it) |
-| `state` | `active`, `orphan` (batch.json missing), or `idle` (no active batch) |
+| `state` | `active`, `orphan` (batch.json missing), `idle` (no active batch and no archive), or `archived` (no active batch; the most-recently-archived batch is surfaced) |
 | `summary` | human-readable one-liner, always present |
 | `batch` | `{id, title}` or null. In the `orphan` state `title` is `""` (batch.json is gone, so the title is unrecoverable) — fall back to `id` for display |
 | `progress` | `{completed, total, phase_index, phase_total, all_done, parallel_in_flight}` or null |
 | `spend` | `{total_usd, per_adapter, iterations, unpriced_runs, skipped_files}` or null |
 | `flags` | `{fatal_error, cost_capped, last_retry}` or null |
-| `plans` | array of per-plan cards (always an array, possibly empty, in `active` state); `null` in `idle` and `orphan` states |
+| `plans` | array of per-plan cards (always an array, possibly empty, in `active` and `archived` states); `null` in `idle` and `orphan` states |
+
+### `archived` state
+
+When no batch is active but at least one batch has been archived, `status --json`
+reports the most-recently-archived batch (`state: "archived"`) instead of `idle`,
+so a controller can read back a just-completed batch after its run cursor was
+cleared. Each per-plan card carries `id`, `title`, `status` (`merged` — an
+archived plan is terminal-integrated), `branch`, `base_branch`, and
+`evidence_path` (the durable path the plan's evidence was relocated to under
+`.springfield/archive/<batch-id>/plans/`). The compact archive record carries no
+merge/cleanup ledger, so `merge`, `review`, and `integration` are their
+empty/clean projections. A repo that has never archived a batch stays `idle`.
 
 ### `spend` fields
 

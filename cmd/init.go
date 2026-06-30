@@ -300,10 +300,15 @@ func parseAndValidateModels(raw string, priority []string) (map[string]string, e
 	return models, nil
 }
 
+// springfieldGitignoreBlock ignores Springfield's local-only state. The final
+// line ignores config.LocalFileName ("springfield.local.toml"), the per-operator
+// review override that sits at the project root (outside .springfield/) and must
+// never be committed. Kept literal because this is a raw-string const.
 const springfieldGitignoreBlock = `# Springfield — plans tracked; runtime state local-only
 .springfield/*
 !.springfield/plans/
 .springfield/plans/*/
+springfield.local.toml
 `
 
 // ensureSpringfieldGitignore writes the selective Springfield gitignore

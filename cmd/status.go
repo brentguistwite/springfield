@@ -41,6 +41,13 @@ func NewStatusCommand() *cobra.Command {
 			}
 			if !hasRun || run.ActiveBatchID == "" {
 				if jsonOut {
+					// Once the run cursor is cleared, the just-completed batch's
+					// per-ticket results live only in the archive. Surface the
+					// latest archive so a controller can read them back; fall to
+					// idle only when no batch has ever been archived.
+					if entry, ok, archErr := batch.LatestArchive(root); archErr == nil && ok {
+						return emitStatusJSON(cmd.OutOrStdout(), statusview.Archived(entry))
+					}
 					return emitStatusJSON(cmd.OutOrStdout(), statusview.Idle())
 				}
 				return printPlanRegistry(cmd.OutOrStdout(), root)

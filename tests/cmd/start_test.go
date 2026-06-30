@@ -167,7 +167,20 @@ func TestSpringfieldStartRunsBatchSlices(t *testing.T) {
 		t.Fatal("expected archive entry after completed batch")
 	}
 
-	archiveData, err := os.ReadFile(filepath.Join(archiveDir, entries[0].Name()))
+	// The archive dir holds the entry file (<id>.json) plus a co-located
+	// evidence dir (<id>/) relocated by FinalizeBatch; pick the entry file,
+	// as every production consumer does (filter .json / skip dirs).
+	var entryName string
+	for _, e := range entries {
+		if !e.IsDir() && filepath.Ext(e.Name()) == ".json" {
+			entryName = e.Name()
+			break
+		}
+	}
+	if entryName == "" {
+		t.Fatalf("no .json archive entry found in %v", entries)
+	}
+	archiveData, err := os.ReadFile(filepath.Join(archiveDir, entryName))
 	if err != nil {
 		t.Fatalf("read archive entry: %v", err)
 	}

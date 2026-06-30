@@ -182,21 +182,7 @@ func ArchiveBatchNormalized(rootDir string, b Batch, reason string, rollup *cost
 		return fmt.Errorf("create archive dir: %w", err)
 	}
 
-	entry := ArchiveEntry{
-		BatchID:    b.ID,
-		Title:      b.Title,
-		ArchivedAt: time.Now().UTC(),
-		Reason:     reason,
-	}
-	if rollup != nil {
-		entry.TotalUSD = rollup.TotalUSD
-		if len(rollup.PerAdapter) > 0 {
-			entry.CostBreakdown = make(map[string]float64, len(rollup.PerAdapter))
-			for k, v := range rollup.PerAdapter {
-				entry.CostBreakdown[k] = v
-			}
-		}
-	}
+	entry := newArchiveEntry(b, reason, rollup, time.Now().UTC())
 
 	existed, err := writeJSONExclusive(archivePath, entry)
 	if err != nil {
@@ -274,6 +260,52 @@ func RecoverOrphan(rootDir string, run Run) error {
 	_ = os.RemoveAll(filepath.Join(rootDir, springfieldDir, "execution", "plans"))
 
 	return ClearRun(rootDir)
+}
+
+// LatestArchive returns the most-recently-archived batch entry (by ArchivedAt,
+// falling back to file mod-time when the field is zero). Returns ok=false when
+// no archive exists. Used by `springfield status` to surface a just-completed
+// batch's per-ticket results once the run cursor has been cleared — the archive
+// entry is the only place that data lives post-completion.
+func LatestArchive(rootDir string) (ArchiveEntry, bool, error) {
+	dir := ArchiveDir(rootDir)
+	dirEntries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return ArchiveEntry{}, false, nil
+		}
+		return ArchiveEntry{}, false, fmt.Errorf("read archive dir: %w", err)
+	}
+
+	var best ArchiveEntry
+	var bestAt time.Time
+	found := false
+	for _, de := range dirEntries {
+		if de.IsDir() || filepath.Ext(de.Name()) != ".json" {
+			continue
+		}
+		path := filepath.Join(dir, de.Name())
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			continue
+		}
+		var entry ArchiveEntry
+		if json.Unmarshal(data, &entry) != nil {
+			continue
+		}
+		at := entry.ArchivedAt
+		if at.IsZero() {
+			if info, statErr := de.Info(); statErr == nil {
+				at = info.ModTime()
+			}
+		}
+		if !found || at.After(bestAt) {
+			best = entry
+			bestAt = at
+			found = true
+		}
+	}
+	return best, found, nil
 }
 
 // IsMissingBatchError reports whether an error chain represents a missing
