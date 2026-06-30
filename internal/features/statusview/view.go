@@ -17,8 +17,9 @@ const (
 	StatusStalled    = "stalled" // started but no live process owns the control-plane lock — needs resume/abandon
 	StatusNeedsHuman = "needs-human"
 	StatusFailed     = "failed"
-	StatusDone       = "done"   // completed, not merged
-	StatusMerged     = "merged" // completed + merge succeeded
+	StatusDone       = "done"     // completed, not merged
+	StatusMerged     = "merged"   // completed + merge succeeded
+	StatusRetained   = "retained" // archived per-plan: completed, branch kept for a standalone PR (never merged into a base)
 )
 
 // View is the top-level envelope. Absent sections are explicit null.

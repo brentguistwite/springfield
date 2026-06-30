@@ -3,6 +3,7 @@ package statusview
 import (
 	"fmt"
 
+	"springfield/internal/core/config"
 	"springfield/internal/features/batch"
 	"springfield/internal/features/conductor"
 )
@@ -14,7 +15,7 @@ import (
 func Archived(entry batch.ArchiveEntry) View {
 	plans := make([]PlanView, 0, len(entry.Plans))
 	for _, ap := range entry.Plans {
-		plans = append(plans, PlanFromArchive(ap))
+		plans = append(plans, PlanFromArchive(ap, entry.BatchMode))
 	}
 	v := View{
 		SchemaVersion: SchemaVersion,
@@ -32,8 +33,9 @@ func Archived(entry batch.ArchiveEntry) View {
 // PlanFromArchive projects one archived per-plan record into the same PlanView
 // shape buildPlan emits for live plans. The compact archive record carries no
 // merge/cleanup ledger, so Merge/Review default to empty and Integration to
-// "clean"; Status maps the recorded raw plan status to the board enum.
-func PlanFromArchive(ap batch.ArchivePlan) PlanView {
+// "clean"; Status maps the recorded raw plan status to the board enum, using
+// the batch's branch mode to distinguish a merged plan from a retained one.
+func PlanFromArchive(ap batch.ArchivePlan, mode string) PlanView {
 	title := ap.Title
 	if title == "" {
 		title = ap.ID
@@ -41,7 +43,7 @@ func PlanFromArchive(ap batch.ArchivePlan) PlanView {
 	return PlanView{
 		ID:           ap.ID,
 		Title:        title,
-		Status:       statusFromArchiveStatus(ap.Status),
+		Status:       statusFromArchiveStatus(ap.Status, mode),
 		Branch:       ap.Branch,
 		BaseBranch:   ap.BaseRef,
 		EvidencePath: ap.EvidencePath,
@@ -51,14 +53,18 @@ func PlanFromArchive(ap batch.ArchivePlan) PlanView {
 	}
 }
 
-// statusFromArchiveStatus maps a stored raw plan-status string to the public
-// board enum. A completed plan projects to StatusMerged: FinalizeBatch only
-// archives a fully-completed batch (every plan integrated — merged in
-// consolidate mode, retained in per-plan mode), so a completed archive record
-// is terminal-integrated, matching the live integrated projection.
-func statusFromArchiveStatus(raw string) string {
+// statusFromArchiveStatus maps a stored raw plan-status string + batch mode to
+// the public board enum. FinalizeBatch only archives a fully-completed batch
+// (every plan integrated), so a completed record is terminal-integrated: it
+// projects to StatusRetained in per-plan mode (the branch is standing, awaiting
+// a PR — NOT merged into a base) and StatusMerged otherwise. An empty/legacy
+// mode falls back to StatusMerged, preserving the prior projection.
+func statusFromArchiveStatus(raw, mode string) string {
 	switch conductor.PlanStatus(raw) {
 	case conductor.StatusCompleted:
+		if mode == string(config.BranchModePerPlan) {
+			return StatusRetained
+		}
 		return StatusMerged
 	case conductor.StatusFailed:
 		return StatusFailed

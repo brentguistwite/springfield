@@ -25,12 +25,18 @@ Every response carries `schema_version` and a `state` discriminator
 When no batch is active but at least one batch has been archived, `status --json`
 reports the most-recently-archived batch (`state: "archived"`) instead of `idle`,
 so a controller can read back a just-completed batch after its run cursor was
-cleared. Each per-plan card carries `id`, `title`, `status` (`merged` — an
-archived plan is terminal-integrated), `branch`, `base_branch`, and
-`evidence_path` (the durable path the plan's evidence was relocated to under
-`.springfield/archive/<batch-id>/plans/`). The compact archive record carries no
-merge/cleanup ledger, so `merge`, `review`, and `integration` are their
-empty/clean projections. A repo that has never archived a batch stays `idle`.
+cleared. Each per-plan card carries `id`, `title`, `status`, `branch`,
+`base_branch`, and `evidence_path` (the durable path the plan's evidence was
+relocated to under `.springfield/archive/<batch-id>/plans/`).
+
+An archived plan is terminal-integrated, so `status` reflects how it landed:
+`merged` in consolidate mode (ff-merged into the base, branch deleted) and
+`retained` in per-plan mode (the standalone `springfield/<plan>` branch is
+standing, awaiting a PR — nothing was merged into a base). A controller polling
+for "which branches still need a PR" keys on `retained`. The compact archive
+record carries no merge/cleanup ledger, so `merge`, `review`, and `integration`
+are their empty/clean projections. A repo that has never archived a batch stays
+`idle`.
 
 ### `spend` fields
 

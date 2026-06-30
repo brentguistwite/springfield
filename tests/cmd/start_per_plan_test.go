@@ -113,6 +113,11 @@ func TestSpringfieldStartPerPlanBranchesLeavesStandaloneBranches(t *testing.T) {
 		if pv.Branch != "springfield/"+pv.ID {
 			t.Fatalf("plan %s branch = %q, want springfield/%s", pv.ID, pv.Branch, pv.ID)
 		}
+		// Per-plan archived plans are "retained" (standing branch awaiting a PR),
+		// NOT "merged" — the controller-facing distinction.
+		if pv.Status != "retained" {
+			t.Fatalf("plan %s status = %q, want retained", pv.ID, pv.Status)
+		}
 		if pv.BaseBranch != "main" {
 			t.Fatalf("plan %s base = %q, want main", pv.ID, pv.BaseBranch)
 		}

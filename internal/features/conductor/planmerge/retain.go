@@ -68,6 +68,12 @@ func Retain(in RetainInput) IntegrateResult {
 	if state.Branch == "" || state.WorktreePath == "" {
 		return IntegrateResult{PlanID: in.PlanID, Err: fmt.Errorf("plan %q is missing identity fields needed for retain", in.PlanID), Reason: ReasonStateMissing}
 	}
+	// Retain records a terminal MergeSucceeded; only a plan that actually
+	// finished execution may earn that. Refuse otherwise rather than stamping a
+	// fraudulent success a caller bug could later read as integrated.
+	if state.Status != conductor.StatusCompleted {
+		return IntegrateResult{PlanID: in.PlanID, Err: fmt.Errorf("retain requires plan %q to be completed, got %q", in.PlanID, state.Status), Reason: ReasonStateMissing}
+	}
 
 	progress(in.Progress, "retain %s: keeping standalone branch %s; removing execution worktree\n", in.PlanID, state.Branch)
 

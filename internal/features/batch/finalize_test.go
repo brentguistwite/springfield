@@ -117,7 +117,7 @@ func TestFinalizeBatchEnrichesEntryRelocatesEvidenceAndDeregisters(t *testing.T)
 	root, project, b := finalizeFixture(t)
 	rollup := &cost.Rollup{TotalUSD: 1.23, PerAdapter: map[string]float64{"claude": 1.23}, Iterations: 1}
 
-	if err := batch.FinalizeBatch(root, b, project, rollup, io.Discard); err != nil {
+	if err := batch.FinalizeBatch(root, b, project, rollup, "per-plan", io.Discard); err != nil {
 		t.Fatalf("FinalizeBatch: %v", err)
 	}
 

@@ -30,7 +30,7 @@ func TestArchivedPlanParityWithLive(t *testing.T) {
 		BaseRef:      "develop",
 		EvidencePath: ".springfield/archive/batch-1/plans/alpha",
 	}
-	archived := statusview.PlanFromArchive(ap)
+	archived := statusview.PlanFromArchive(ap, "")
 
 	if archived.ID != live.ID || archived.Title != live.Title {
 		t.Fatalf("identity mismatch: live=%+v archived=%+v", live, archived)

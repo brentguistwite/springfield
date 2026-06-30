@@ -38,7 +38,7 @@ import (
 // first would make cost.ComputeRollup (which walks execution/plans/<key>) read
 // $0. project is the live project whose state runBatch saved; b.PlanIDs scopes
 // every batch-owned mutation so standalone `plans add` units are left alone.
-func FinalizeBatch(rootDir string, b Batch, project *conductor.Project, rollup *cost.Rollup, warnW io.Writer) error {
+func FinalizeBatch(rootDir string, b Batch, project *conductor.Project, rollup *cost.Rollup, mode string, warnW io.Writer) error {
 	if project == nil || project.Config == nil || project.State == nil {
 		return fmt.Errorf("finalize batch %s: project is not loaded", b.ID)
 	}
@@ -61,34 +61,40 @@ func FinalizeBatch(rootDir string, b Batch, project *conductor.Project, rollup *
 			rec.Branch = st.Branch
 			rec.BaseRef = st.BaseRef
 		}
+		// EvidencePath is the durable archive location the evidence lives at
+		// AFTER relocation. It is computed here (without moving anything) so the
+		// record can be written before the relocate runs — see step 2. The path
+		// is recorded only when evidence actually exists (live, or already moved
+		// by a prior partial finalize), so a plan with no evidence stays empty.
+		if rel, ok := planEvidenceLocation(rootDir, b.ID, planID); ok {
+			rec.EvidencePath = rel
+		}
 		records = append(records, rec)
 	}
 
-	// (2) Relocate evidence into the durable archive namespace per plan
-	// (best-effort: a failure leaves the evidence in place, EvidencePath empty).
-	for i := range records {
-		durable, moved, err := relocatePlanEvidence(rootDir, b.ID, records[i].ID)
-		if err != nil {
-			warn("warning: archive: relocate evidence for plan %s: %v\n", records[i].ID, err)
-			continue
-		}
-		if moved {
-			records[i].EvidencePath = durable
-		}
-	}
-
-	// (3) Write the enriched archive entry (best-effort, idempotent).
+	// (2) Write the enriched archive entry FIRST — before any destructive
+	// relocate/teardown. Writing the durable record before moving evidence is
+	// what makes an entry-write failure safe: the evidence is left untouched in
+	// execution/plans/<key> (preserved in place, matching the prior
+	// ArchiveBatchNormalized best-effort contract) rather than stranded under
+	// archive/ with no entry pointing at it.
 	archiveOK := true
-	if err := writeEnrichedArchive(rootDir, b, rollup, records); err != nil {
+	if err := writeEnrichedArchive(rootDir, b, rollup, mode, records); err != nil {
 		warn("warning: archive completed batch %q: %v\n", b.ID, err)
 		archiveOK = false
 	}
 
-	// Only after a durable archive do we perform the destructive teardown:
-	// remove the compiled batch plan dir and deregister the batch's own units.
-	// On archive failure these are preserved so nothing is lost without a
-	// record (mirrors the prior ArchiveBatchNormalized best-effort contract).
+	// Only after a durable archive do we perform the destructive teardown.
 	if archiveOK {
+		// (3) Relocate evidence into the durable archive namespace. Idempotent
+		// (no-op when already moved or absent) and best-effort — a failure
+		// leaves the evidence discoverable in execution/plans/<key>.
+		for _, planID := range b.PlanIDs {
+			if err := relocatePlanEvidence(rootDir, b.ID, planID); err != nil {
+				warn("warning: archive: relocate evidence for plan %s: %v\n", planID, err)
+			}
+		}
+		// Remove the compiled batch plan dir (prd.json/context.md/batch.json).
 		if paths, err := NewPaths(rootDir, b.ID); err == nil {
 			if rmErr := os.RemoveAll(paths.PlanDir()); rmErr != nil {
 				warn("warning: archive: remove batch plan dir: %v\n", rmErr)
@@ -114,12 +120,13 @@ func FinalizeBatch(rootDir string, b Batch, project *conductor.Project, rollup *
 // per-plan records) via the same single-writer/O_EXCL path as
 // ArchiveBatchNormalized. Returns an error when the archive dir or entry file
 // cannot be written; the caller treats that as a best-effort warning.
-func writeEnrichedArchive(rootDir string, b Batch, rollup *cost.Rollup, records []ArchivePlan) error {
+func writeEnrichedArchive(rootDir string, b Batch, rollup *cost.Rollup, mode string, records []ArchivePlan) error {
 	if err := os.MkdirAll(ArchiveDir(rootDir), 0o755); err != nil {
 		return fmt.Errorf("create archive dir: %w", err)
 	}
 	archivePath := StableArchivePath(rootDir, b.ID)
 	entry := newArchiveEntry(b, "completed", rollup, time.Now().UTC())
+	entry.BatchMode = mode
 	entry.Plans = records
 	existed, err := writeJSONExclusive(archivePath, entry)
 	if err != nil {
@@ -153,46 +160,64 @@ func newArchiveEntry(b Batch, reason string, rollup *cost.Rollup, now time.Time)
 	return entry
 }
 
-// relocatePlanEvidence moves a plan's execution evidence from
-// .springfield/execution/plans/<key> to .springfield/archive/<batchID>/plans/<key>
-// and returns the durable project-relative destination. Returns moved=false
-// when the plan produced no evidence. os.Rename is tried first; a cross-device
-// (EXDEV) error falls back to a recursive copy-then-remove.
-func relocatePlanEvidence(rootDir, batchID, planID string) (durableRel string, moved bool, err error) {
+// planEvidenceLocation returns the durable project-relative archive path for a
+// plan's evidence and whether any evidence exists — at the live execution
+// location OR already relocated under the archive namespace (a prior partial
+// finalize). It performs NO move, so the path can be recorded in the archive
+// entry before relocation runs. Empty/false when the plan produced no evidence.
+func planEvidenceLocation(rootDir, batchID, planID string) (rel string, exists bool) {
 	planKey := SanitizeID(planID)
 	if planKey == "" {
-		return "", false, nil
+		return "", false
+	}
+	rel = filepath.Join(springfieldDir, "archive", batchID, "plans", planKey)
+	src := filepath.Join(rootDir, springfieldDir, "execution", "plans", planKey)
+	dst := filepath.Join(rootDir, rel)
+	if pathExists(src) || pathExists(dst) {
+		return rel, true
+	}
+	return "", false
+}
+
+func pathExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+// relocatePlanEvidence moves a plan's execution evidence from
+// .springfield/execution/plans/<key> to .springfield/archive/<batchID>/plans/<key>.
+// Idempotent: a no-op when the source is already gone (relocated by a prior
+// call) or never existed, so a crash mid-finalize re-converges cleanly on the
+// next start. os.Rename is tried first; a cross-device (EXDEV) error falls back
+// to a recursive copy-then-remove.
+func relocatePlanEvidence(rootDir, batchID, planID string) error {
+	planKey := SanitizeID(planID)
+	if planKey == "" {
+		return nil
 	}
 	src := filepath.Join(rootDir, springfieldDir, "execution", "plans", planKey)
-	if _, statErr := os.Stat(src); statErr != nil {
-		if errors.Is(statErr, fs.ErrNotExist) {
-			return "", false, nil
-		}
-		return "", false, statErr
+	if !pathExists(src) {
+		return nil // already relocated or no evidence — nothing to do
 	}
-
-	dstRel := filepath.Join(springfieldDir, "archive", batchID, "plans", planKey)
-	dst := filepath.Join(rootDir, dstRel)
+	dst := filepath.Join(rootDir, springfieldDir, "archive", batchID, "plans", planKey)
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return "", false, err
+		return err
 	}
-	// Clear any stale destination from a prior partial finalize so Rename
-	// (which fails onto a non-empty dir) and the copy fallback are clean.
+	// src is the authoritative copy when both exist (a prior partial move):
+	// clear any stale/partial destination before re-moving.
 	_ = os.RemoveAll(dst)
 
 	if renErr := os.Rename(src, dst); renErr != nil {
 		if !errors.Is(renErr, syscall.EXDEV) {
-			return "", false, renErr
+			return renErr
 		}
-		// Cross-device move: copy the tree then remove the source.
+		// Cross-device move: copy the tree (fsync'd per file) then remove src.
 		if cpErr := copyTree(src, dst); cpErr != nil {
-			return "", false, cpErr
+			return cpErr
 		}
-		if rmErr := os.RemoveAll(src); rmErr != nil {
-			return "", false, rmErr
-		}
+		return os.RemoveAll(src)
 	}
-	return dstRel, true, nil
+	return nil
 }
 
 // copyTree recursively copies the directory tree at src into dst, preserving
@@ -237,6 +262,13 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	// fsync before the caller removes the source: on the EXDEV path
+	// os.RemoveAll(src) deletes the only other copy, so an unsynced dst could
+	// be truncated/empty after a power loss between write and flush.
+	if err := out.Sync(); err != nil {
 		out.Close()
 		return err
 	}

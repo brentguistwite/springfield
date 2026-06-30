@@ -37,7 +37,7 @@ func perPlanConfig() config.Config {
 
 func TestResolveModeFreshPerPlanViaFlagStamps(t *testing.T) {
 	g := fakeBaseGit{branch: "main"}
-	d, err := resolveBatchModeAndBase(g, "/r", batch.Run{}, true, "develop", config.Config{})
+	d, err := resolveBatchModeAndBase(g, "/r", batch.Run{}, true, "develop", config.Config{}, false)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestResolveModeFreshPerPlanViaFlagStamps(t *testing.T) {
 
 func TestResolveModeFreshConsolidateDefault(t *testing.T) {
 	g := fakeBaseGit{branch: "main"}
-	d, err := resolveBatchModeAndBase(g, "/r", batch.Run{}, false, "", config.Config{})
+	d, err := resolveBatchModeAndBase(g, "/r", batch.Run{}, false, "", config.Config{}, false)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestResolveModeFreshConsolidateDefault(t *testing.T) {
 
 func TestResolveModeFreshPerPlanViaConfig(t *testing.T) {
 	g := fakeBaseGit{branch: "main"}
-	d, err := resolveBatchModeAndBase(g, "/r", batch.Run{}, false, "", perPlanConfig())
+	d, err := resolveBatchModeAndBase(g, "/r", batch.Run{}, false, "", perPlanConfig(), false)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestResolveModeFreshPerPlanViaConfig(t *testing.T) {
 func TestResolveModeResumeStaysPerPlan(t *testing.T) {
 	g := fakeBaseGit{branch: "main"}
 	run := batch.Run{BatchMode: "per-plan", BatchBase: "develop"}
-	d, err := resolveBatchModeAndBase(g, "/r", run, false, "", config.Config{})
+	d, err := resolveBatchModeAndBase(g, "/r", run, false, "", config.Config{}, false)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestResolveModeResumeStaysPerPlan(t *testing.T) {
 func TestResolveModeResumeRebaseOverridesWithoutStamp(t *testing.T) {
 	g := fakeBaseGit{branch: "main"}
 	run := batch.Run{BatchMode: "per-plan", BatchBase: "old-base"}
-	d, err := resolveBatchModeAndBase(g, "/r", run, false, "new-base", config.Config{})
+	d, err := resolveBatchModeAndBase(g, "/r", run, false, "new-base", config.Config{}, false)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestResolveModeResumeRebaseOverridesWithoutStamp(t *testing.T) {
 func TestResolveModeResumeFlagDoesNotFlipStampedMode(t *testing.T) {
 	g := fakeBaseGit{branch: "main"}
 	run := batch.Run{BatchMode: "consolidate"}
-	d, err := resolveBatchModeAndBase(g, "/r", run, true, "", config.Config{})
+	d, err := resolveBatchModeAndBase(g, "/r", run, true, "", config.Config{}, false)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestResolveModeResumeFlagDoesNotFlipStampedMode(t *testing.T) {
 
 func TestResolveModePerPlanDetachedHeadRejected(t *testing.T) {
 	g := fakeBaseGit{detached: true}
-	_, err := resolveBatchModeAndBase(g, "/r", batch.Run{}, true, "", config.Config{})
+	_, err := resolveBatchModeAndBase(g, "/r", batch.Run{}, true, "", config.Config{}, false)
 	if err == nil {
 		t.Fatal("per-plan with detached HEAD and no base must be rejected")
 	}
@@ -132,11 +132,27 @@ func TestResolveModeConsolidateSkipsBaseResolution(t *testing.T) {
 	// Detached HEAD must NOT matter in consolidate mode — base is resolved
 	// per-plan (post-autobranch) as before, not here.
 	g := fakeBaseGit{detached: true}
-	d, err := resolveBatchModeAndBase(g, "/r", batch.Run{}, false, "", config.Config{})
+	d, err := resolveBatchModeAndBase(g, "/r", batch.Run{}, false, "", config.Config{}, false)
 	if err != nil {
 		t.Fatalf("consolidate must not resolve base (got err %v)", err)
 	}
 	if d.BatchBase != "" {
 		t.Fatalf("consolidate BatchBase must stay empty, got %q", d.BatchBase)
+	}
+}
+
+// Pre-feature in-progress batch (unstamped + has progress) must NOT flip to
+// per-plan when --per-plan-branches is passed on resume.
+func TestResolveModeLegacyInProgressLocksConsolidate(t *testing.T) {
+	g := fakeBaseGit{branch: "main"}
+	d, err := resolveBatchModeAndBase(g, "/r", batch.Run{}, true, "", config.Config{}, true)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if d.PerPlan {
+		t.Fatalf("legacy in-progress batch must lock consolidate, got %+v", d)
+	}
+	if !d.Stamp || d.Mode != "consolidate" {
+		t.Fatalf("must stamp consolidate to lock the mode, got %+v", d)
 	}
 }

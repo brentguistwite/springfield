@@ -97,6 +97,11 @@ type ArchiveEntry struct {
 	Plans         []ArchivePlan      `json:"plans,omitempty"`
 	TotalUSD      float64            `json:"total_usd,omitempty"`
 	CostBreakdown map[string]float64 `json:"cost_breakdown,omitempty"`
+	// BatchMode is the branch-output mode the batch ran in ("consolidate" |
+	// "per-plan"), stamped at completion so a status consumer can tell a
+	// merged-and-deleted plan from a standalone branch still awaiting a PR.
+	// Empty on legacy archives written before per-plan mode.
+	BatchMode string `json:"batch_mode,omitempty"`
 }
 
 // ArchivePlan is the per-plan summary in an archive entry.

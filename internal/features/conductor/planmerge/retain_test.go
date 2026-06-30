@@ -87,3 +87,20 @@ func TestRetainWorktreeRemoveFailurePreservesBranch(t *testing.T) {
 	}
 	_ = wt
 }
+
+func TestRetainRefusesNonCompletedPlan(t *testing.T) {
+	root, project, _ := projectFixture(t, "alpha", "springfield/alpha", "develop", "AAAA", "BBBB")
+	project.State.Plans["alpha"].Status = conductor.StatusRunning
+	if err := project.SaveState(); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+	g := newFakeGit()
+
+	res := planmerge.Retain(planmerge.RetainInput{Project: project, PlanID: "alpha", ControlRoot: root, Git: g})
+	if res.Err == nil {
+		t.Fatal("retain must refuse a non-completed plan rather than stamp a fraudulent success")
+	}
+	if len(g.worktreeRemoveAll) != 0 {
+		t.Fatalf("retain must not remove the worktree on refusal, got %v", g.worktreeRemoveAll)
+	}
+}

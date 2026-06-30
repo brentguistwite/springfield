@@ -148,6 +148,7 @@ var (
 //   - VCS restores: `git restore .springfield/x`, `git checkout -- .springfield/x`
 //   - sync/wrappers: `rsync`, `bash -c "..."`, `env`, `sudo`, `xargs`
 //   - exotic redirects: `<>` read-write open
+//
 // These regressed from the prior naive substring check; the trade is deliberate
 // — that check false-positived on every commit body, grep, and read mentioning
 // the path. The real backstop is defense-in-depth (permissions.deny strips
