@@ -4,7 +4,52 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"springfield/internal/features/cost"
 )
+
+// A poorer prior entry (the completion fallback writes one with no Plans when
+// the project can't be loaded) must not swallow a later, richer same-reason
+// entry: maybeWriteArchiveSibling promotes the enriched Plans/cost/mode onto the
+// stable file instead of no-oping or merging only cost.
+func TestArchiveSiblingPromotesPlansFromRicherSameReasonEntry(t *testing.T) {
+	root := t.TempDir()
+	b := Batch{ID: "batch-1", Title: "T", PlanIDs: []string{"a"}}
+
+	// 1) Fallback shape: same reason "completed", no Plans, no cost.
+	if err := ArchiveBatchNormalizedWithMode(root, b, "completed", &cost.Rollup{}, "per-plan"); err != nil {
+		t.Fatalf("fallback archive: %v", err)
+	}
+	// 2) A later successful finalize re-archives the SAME reason with enriched
+	//    Plans and a real rollup.
+	records := []ArchivePlan{{ID: "a", Title: "A", Status: "completed", Branch: "springfield/a", BaseRef: "main"}}
+	rollup := &cost.Rollup{TotalUSD: 2.0, PerAdapter: map[string]float64{"claude": 2.0}}
+	if err := writeEnrichedArchive(root, b, rollup, "per-plan", records); err != nil {
+		t.Fatalf("enriched archive: %v", err)
+	}
+
+	entry, ok, err := LatestArchive(root)
+	if err != nil || !ok {
+		t.Fatalf("LatestArchive: ok=%v err=%v", ok, err)
+	}
+	if len(entry.Plans) != 1 || entry.Plans[0].Branch != "springfield/a" {
+		t.Fatalf("enriched Plans must be promoted onto the stable entry, got %+v", entry.Plans)
+	}
+	if entry.TotalUSD != 2.0 {
+		t.Fatalf("cost must also be promoted, got %v", entry.TotalUSD)
+	}
+	// No spurious sibling — the richer entry overwrote the stable file in place.
+	files, _ := os.ReadDir(ArchiveDir(root))
+	jsonCount := 0
+	for _, f := range files {
+		if !f.IsDir() && filepath.Ext(f.Name()) == ".json" {
+			jsonCount++
+		}
+	}
+	if jsonCount != 1 {
+		t.Fatalf("expected exactly one archive json (no sibling), got %d", jsonCount)
+	}
+}
 
 // copyTree is the EXDEV (cross-device) fallback for evidence relocation. It must
 // preserve a symlink AS a symlink — WalkDir does not follow links, so without

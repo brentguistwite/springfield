@@ -381,15 +381,27 @@ func maybeWriteArchiveSibling(stablePath string, incoming ArchiveEntry) error {
 	}
 
 	if decoded && prior.Reason == incoming.Reason {
-		// Same reason: usually a true idempotent re-archive (no-op). But
-		// if the prior archive has no cost data and the incoming call
-		// carries a real rollup, the cost info would be silently lost.
-		// Overwrite the stable file with the richer entry so historical
-		// estimates can see this batch.
-		if prior.TotalUSD == 0 && incoming.TotalUSD > 0 {
+		// Same reason: usually a true idempotent re-archive (no-op). But the
+		// prior entry can be POORER than the incoming one — the completion
+		// fallback (project load failed) writes a Plans-less, cost-less entry,
+		// and a later successful FinalizeBatch then carries the enriched Plans
+		// (and cost/mode). Promote any field the prior lacks so neither the
+		// per-plan records, the cost estimate, nor the branch mode are lost.
+		needsCost := prior.TotalUSD == 0 && incoming.TotalUSD > 0
+		needsPlans := len(prior.Plans) == 0 && len(incoming.Plans) > 0
+		needsMode := prior.BatchMode == "" && incoming.BatchMode != ""
+		if needsCost || needsPlans || needsMode {
 			merged := prior
-			merged.TotalUSD = incoming.TotalUSD
-			merged.CostBreakdown = incoming.CostBreakdown
+			if needsCost {
+				merged.TotalUSD = incoming.TotalUSD
+				merged.CostBreakdown = incoming.CostBreakdown
+			}
+			if needsPlans {
+				merged.Plans = incoming.Plans
+			}
+			if needsMode {
+				merged.BatchMode = incoming.BatchMode
+			}
 			return writeJSON(stablePath, merged)
 		}
 		return nil

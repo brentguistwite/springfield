@@ -65,16 +65,21 @@ are their empty/clean projections. A repo that has never archived a batch stays
 `attempt`, `last_error`, `evidence_path`, `merge`, `integration`.
 
 - `status` (owned enum): `pending` | `running` | `stalled` | `needs-human` |
-  `failed` | `done` | `merged`.
+  `failed` | `done` | `merged` | `retained`.
   - `running` vs `stalled`: a started-but-non-terminal plan (internally
     `running` or `interrupted`) is `running` only when a live `springfield`
     process owns the control-plane lock; otherwise it is `stalled` — the owning
     process died without recording a terminal result and the plan needs resume
     or abandon. `stalled` is distinct from `needs-human` (mechanical stop vs
     semantic review stop — different remedy).
-  - `done` = completed-but-not-fully-integrated, `merged` = fully integrated
-    (`count(status=="merged")` equals `progress.completed`). Unknown future
-    internal states surface as `needs-human`.
+  - `done` = completed-but-not-fully-integrated; `merged` = fully integrated in
+    consolidate mode (ff-merged, branch deleted); `retained` = fully integrated
+    in per-plan mode (standalone `springfield/<plan>` branch kept for a PR,
+    nothing merged into a base). Both `merged` and `retained` appear in active
+    batches (via `ComposeStatus`) and in the `archived` state. The integrated
+    invariant is `count(merged) + count(retained)` equals `progress.completed`
+    — in a per-plan batch `count(merged)` is 0. Unknown future internal states
+    surface as `needs-human`.
 - `branch` is the per-plan worktree branch (deleted on merge success).
   **`base_branch` is the durable integration target — push this to open the PR.**
 - `review.verdict` is `halt` (with a `reason` excerpt) only when the plan

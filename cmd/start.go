@@ -209,10 +209,21 @@ func NewStartCommand() *cobra.Command {
 				fmt.Fprintf(w, "Branch mode: per-plan (base: %s)\n", batchBase)
 			}
 			if modeDecision.SuppressedPerPlanRequest {
-				fmt.Fprintf(cmd.ErrOrStderr(),
-					"warning: --per-plan-branches ignored: batch %s is already in progress; continuing in consolidate mode. "+
-						"If this is a fresh batch, a reused plan ID may be carrying stale state from a prior batch — run \"springfield batch abort\" then recompile.\n",
-					b.ID)
+				if run.BatchMode != "" {
+					// Stamped consolidate resume: the mode is locked by design; the
+					// stale-plan-ID hint below does not apply.
+					fmt.Fprintf(cmd.ErrOrStderr(),
+						"warning: --per-plan-branches ignored: batch %s was started in consolidate mode and cannot be switched mid-batch; continuing in consolidate mode.\n",
+						b.ID)
+				} else {
+					// Unstamped but in progress: either a genuine pre-feature resume
+					// or a fresh batch reusing a plan ID that still carries stale
+					// state — surface the recovery path for the latter.
+					fmt.Fprintf(cmd.ErrOrStderr(),
+						"warning: --per-plan-branches ignored: batch %s is already in progress; continuing in consolidate mode. "+
+							"If this is a fresh batch, a reused plan ID may be carrying stale state from a prior batch — run \"springfield batch abort\" then recompile.\n",
+						b.ID)
+				}
 			}
 
 			hadPriorAutoBranch := run.AutoBranchName != ""
