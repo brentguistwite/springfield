@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.0](https://github.com/brentguistwite/springfield/compare/v0.23.0...v0.24.0) (2026-07-02)
+
+
+### Features
+
+* per-plan branch output mode + teardown robustness fixes ([#92](https://github.com/brentguistwite/springfield/issues/92)) ([697bda0](https://github.com/brentguistwite/springfield/commit/697bda016849c9d7ce0f0e2d644a23094b0afab6))
+
 ## [0.23.0](https://github.com/brentguistwite/springfield/compare/v0.22.0...v0.23.0) (2026-06-29)
 
 
