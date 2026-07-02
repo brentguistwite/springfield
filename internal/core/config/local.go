@@ -97,4 +97,3 @@ func ReviewEnabledForPlan(global ReviewConfig, perPlan *bool) bool {
 	}
 	return global.Enabled
 }
-

@@ -16,6 +16,18 @@ const (
 	ExecutionModeCustom      ExecutionMode = "custom"
 )
 
+// BranchMode selects how a multi-plan batch lands its work.
+type BranchMode string
+
+const (
+	// BranchModeConsolidate (default) merges each plan branch into a shared
+	// base, leaving one branch for the whole batch.
+	BranchModeConsolidate BranchMode = "consolidate"
+	// BranchModePerPlan keeps one standalone springfield/<plan> branch per
+	// plan (one PR per ticket); nothing merges into the base.
+	BranchModePerPlan BranchMode = "per-plan"
+)
+
 type AgentExecutionModes struct {
 	Claude ExecutionMode
 	Codex  ExecutionMode
@@ -74,6 +86,16 @@ type ProjectConfig struct {
 	// auto-cut branch name. Supported placeholder: {id} (batch ID).
 	// Empty → defaults to "springfield/batch-{id}".
 	AutoBranchPattern string `toml:"auto_branch_pattern,omitempty"`
+	// BranchMode is the standing default for how a multi-plan batch lands its
+	// work: "consolidate" (merge each plan into a shared base) or "per-plan"
+	// (one standalone branch per plan). Empty → "consolidate". Override per-run
+	// with `springfield start --per-plan-branches`. Resolve via BranchMode().
+	BranchMode string `toml:"branch_mode,omitempty"`
+	// BaseBranch is the default base each plan branch is cut from in per-plan
+	// mode. Empty falls back to the operator's current branch — controllers
+	// running unattended should set this so the current-branch fallback stays
+	// manual-only. Resolve via BaseBranch().
+	BaseBranch string `toml:"base_branch,omitempty"`
 	// MaxTurnsPerIteration caps how many agent turns a single plan iteration
 	// may consume before Springfield synthesizes an
 	// 'iteration-turn-cap-exceeded' failure — the early circuit-breaker for the
@@ -104,6 +126,23 @@ func (c Config) AutoBranchEnabled() bool {
 		return true
 	}
 	return *c.Project.AutoBranch
+}
+
+// BranchMode resolves the effective branch mode. Default is
+// [BranchModeConsolidate]: only an explicit branch_mode = "per-plan" in
+// springfield.toml selects per-plan output. Any other value (including unknown
+// strings) is treated as the conservative consolidate default.
+func (c Config) BranchMode() BranchMode {
+	if strings.TrimSpace(c.Project.BranchMode) == string(BranchModePerPlan) {
+		return BranchModePerPlan
+	}
+	return BranchModeConsolidate
+}
+
+// BaseBranch resolves the configured default base branch, trimmed. Empty means
+// "no configured base" — callers fall back to the operator's current branch.
+func (c Config) BaseBranch() string {
+	return strings.TrimSpace(c.Project.BaseBranch)
 }
 
 // AutoBranchPatternOrDefault returns the configured branch-name pattern, or

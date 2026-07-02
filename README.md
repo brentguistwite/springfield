@@ -199,7 +199,9 @@ Notes:
 - Re-running `init` preserves existing config, only filling in missing recommended defaults and agent priority. Use `springfield init --reset` when `springfield.toml` has drifted (stale agent blocks, manual edits you want gone): it backs up the current `springfield.toml` and regenerates it from your `--agents`/`--model` selection. `--reset` rewrites `springfield.toml` and updates the execution config's primary tool to match your new agent priority; your registered plans are preserved.
 - `auto_branch = true` (default) auto-cuts a feature branch (`springfield/batch-<id>`) when you run `springfield start` from `main` or `master`, switches to it for the run, and switches you back when the batch finishes. See [Recommended Workflow](#recommended-workflow). Override the name with `auto_branch_pattern = "feat/{id}"` (only `{id}` is supported). Set `auto_branch = false` to disable.
 - `allow_protected_base = false` (default) refuses to ff-merge plan results into `main` or `master`. Only consulted when `auto_branch = false` (otherwise the auto-cut feature branch becomes the base and the guard does not apply).
-- Runtime state under `.springfield/` is local project state and should not be committed.
+- `branch_mode = "consolidate"` (default) merges every plan in a batch onto one shared base (one PR for the batch). Set `branch_mode = "per-plan"` to instead leave one standalone `springfield/<plan>` branch per plan (one PR per ticket) — nothing merges into the base. Override per-run with `springfield start --per-plan-branches`. See [Per-plan branches](#per-plan-branches).
+- `base_branch = "develop"` sets the base each per-plan branch is cut from (per-plan mode only). Precedence: `--base` flag > `base_branch` > the current branch. Unattended controllers should set this so the current-branch fallback stays a deliberate, manual-only choice.
+- Runtime state under `.springfield/` is local project state and should not be committed. `springfield.local.toml` (per-operator review overrides) is also git-ignored by `springfield init`.
 
 ### `agent_priority` semantics
 
@@ -305,6 +307,36 @@ With `auto_branch = false` and `allow_protected_base = false`, Springfield refus
 Per-plan override: set `Ref = "feat/other"` on a `PlanUnit` to integrate that one plan into a different feature branch.
 
 > Drift caveat: ff-only merge refuses if the base branch advanced between plan start and integrate. Pick a base branch you control during the run; don't `git pull` mid-batch.
+
+### Per-plan branches
+
+The default consolidate mode lands a whole batch on one branch (one PR). **Per-plan mode** instead leaves one standalone `springfield/<plan>` branch per plan, each cut from the same base — so a batch of N tickets yields N independent branches you open as N PRs. Nothing is merged into the base, so auto-branching and the protected-base guard are both suppressed (there is nothing to consolidate onto).
+
+Enable it per-run or as a project default:
+
+```bash
+springfield start --per-plan-branches --base develop
+```
+
+```toml
+[project]
+branch_mode = "per-plan"
+base_branch = "develop"
+```
+
+Base precedence is `--base` > `[project] base_branch` > the branch you have checked out. On a detached HEAD with no `--base`/`base_branch`, Springfield refuses rather than guess a base.
+
+On clean success each plan's worktree is removed but its branch is **kept** (Springfield never pushes — `git push` + PR is yours):
+
+```bash
+git push -u origin springfield/<plan-a>
+git push -u origin springfield/<plan-b>
+gh pr create --base develop --head springfield/<plan-a>
+```
+
+The mode is fixed when the batch first starts and is **not** flippable on resume — a re-passed `--per-plan-branches` (or its absence) cannot flip a batch already underway, since that would merge the front half and retain the back half. A re-passed `--base` on resume only re-bases plans that have not run yet.
+
+**Controller / dashboard guidance:** always set `base_branch` so the current-branch fallback never silently picks an unexpected base in an unattended run. After a batch completes, `springfield status --json` reports the archived batch (`state: "archived"`) with one card per ticket — branch, base, and durable evidence path — so a controller can read back each ticket's result and branch even though the run cursor has been cleared.
 
 ## Critical Concepts
 

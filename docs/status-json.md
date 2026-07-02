@@ -7,18 +7,36 @@ not an internal state dump.
 ## Envelope
 
 Every response carries `schema_version` and a `state` discriminator
-(`active` | `orphan` | `idle`). Absent sections are explicit `null`.
+(`active` | `orphan` | `idle` | `archived`). Absent sections are explicit `null`.
 
 | field | meaning |
 |-------|---------|
 | `schema_version` | contract version (currently `1`; additive changes bump it) |
-| `state` | `active`, `orphan` (batch.json missing), or `idle` (no active batch) |
+| `state` | `active`, `orphan` (batch.json missing), `idle` (no active batch and no archive), or `archived` (no active batch; the most-recently-archived batch is surfaced) |
 | `summary` | human-readable one-liner, always present |
 | `batch` | `{id, title}` or null. In the `orphan` state `title` is `""` (batch.json is gone, so the title is unrecoverable) — fall back to `id` for display |
 | `progress` | `{completed, total, phase_index, phase_total, all_done, parallel_in_flight}` or null |
 | `spend` | `{total_usd, per_adapter, iterations, unpriced_runs, skipped_files}` or null |
 | `flags` | `{fatal_error, cost_capped, last_retry}` or null |
-| `plans` | array of per-plan cards (always an array, possibly empty, in `active` state); `null` in `idle` and `orphan` states |
+| `plans` | array of per-plan cards (always an array, possibly empty, in `active` and `archived` states); `null` in `idle` and `orphan` states |
+
+### `archived` state
+
+When no batch is active but at least one batch has been archived, `status --json`
+reports the most-recently-archived batch (`state: "archived"`) instead of `idle`,
+so a controller can read back a just-completed batch after its run cursor was
+cleared. Each per-plan card carries `id`, `title`, `status`, `branch`,
+`base_branch`, and `evidence_path` (the durable path the plan's evidence was
+relocated to under `.springfield/archive/<batch-id>/plans/`).
+
+An archived plan is terminal-integrated, so `status` reflects how it landed:
+`merged` in consolidate mode (ff-merged into the base, branch deleted) and
+`retained` in per-plan mode (the standalone `springfield/<plan>` branch is
+standing, awaiting a PR — nothing was merged into a base). A controller polling
+for "which branches still need a PR" keys on `retained`. The compact archive
+record carries no merge/cleanup ledger, so `merge`, `review`, and `integration`
+are their empty/clean projections. A repo that has never archived a batch stays
+`idle`.
 
 ### `spend` fields
 
@@ -47,16 +65,21 @@ Every response carries `schema_version` and a `state` discriminator
 `attempt`, `last_error`, `evidence_path`, `merge`, `integration`.
 
 - `status` (owned enum): `pending` | `running` | `stalled` | `needs-human` |
-  `failed` | `done` | `merged`.
+  `failed` | `done` | `merged` | `retained`.
   - `running` vs `stalled`: a started-but-non-terminal plan (internally
     `running` or `interrupted`) is `running` only when a live `springfield`
     process owns the control-plane lock; otherwise it is `stalled` — the owning
     process died without recording a terminal result and the plan needs resume
     or abandon. `stalled` is distinct from `needs-human` (mechanical stop vs
     semantic review stop — different remedy).
-  - `done` = completed-but-not-fully-integrated, `merged` = fully integrated
-    (`count(status=="merged")` equals `progress.completed`). Unknown future
-    internal states surface as `needs-human`.
+  - `done` = completed-but-not-fully-integrated; `merged` = fully integrated in
+    consolidate mode (ff-merged, branch deleted); `retained` = fully integrated
+    in per-plan mode (standalone `springfield/<plan>` branch kept for a PR,
+    nothing merged into a base). Both `merged` and `retained` appear in active
+    batches (via `ComposeStatus`) and in the `archived` state. The integrated
+    invariant is `count(merged) + count(retained)` equals `progress.completed`
+    — in a per-plan batch `count(merged)` is 0. Unknown future internal states
+    surface as `needs-human`.
 - `branch` is the per-plan worktree branch (deleted on merge success).
   **`base_branch` is the durable integration target — push this to open the PR.**
 - `review.verdict` is `halt` (with a `reason` excerpt) only when the plan

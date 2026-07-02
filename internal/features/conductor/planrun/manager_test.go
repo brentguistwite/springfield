@@ -822,3 +822,51 @@ func TestCreateWorktreeAddsExistingBranchWhenPresent(t *testing.T) {
 		t.Fatalf("expected existing-branch add, got %v", g.createExisting)
 	}
 }
+
+func TestPrepareUsesBatchBaseRefWhenUnitRefEmpty(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan")
+
+	g := newFakeGit() // currentBranch = "main"
+	g.branches["develop"] = struct{}{}
+	g.resolveOK["develop"] = "d0d0d0d0d0d0"
+	m := &planrun.Manager{Git: g}
+	dec, err := m.Prepare(planrun.PrepareInput{
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		Unit:         conductor.PlanUnit{ID: "feature-a", Path: ".springfield/plans/p.md", Order: 1},
+		AllStates:    map[string]*conductor.PlanState{},
+		BatchBaseRef: "develop",
+	})
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if dec.Context.BaseRef != "develop" || dec.Context.BaseHead != "d0d0d0d0d0d0" {
+		t.Fatalf("BatchBaseRef must replace current-branch fallback: %+v", dec.Context)
+	}
+}
+
+func TestPrepareUnitRefBeatsBatchBaseRef(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, ".springfield/plans/p.md"), "plan")
+
+	g := newFakeGit()
+	g.branches["feat/stack"] = struct{}{}
+	g.resolveOK["feat/stack"] = "5tack5tack"
+	g.branches["develop"] = struct{}{}
+	g.resolveOK["develop"] = "d0d0d0d0d0d0"
+	m := &planrun.Manager{Git: g}
+	dec, err := m.Prepare(planrun.PrepareInput{
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		Unit:         conductor.PlanUnit{ID: "feature-a", Path: ".springfield/plans/p.md", Ref: "feat/stack", Order: 1},
+		AllStates:    map[string]*conductor.PlanState{},
+		BatchBaseRef: "develop",
+	})
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if dec.Context.BaseRef != "feat/stack" {
+		t.Fatalf("Unit.Ref must beat BatchBaseRef, got %q", dec.Context.BaseRef)
+	}
+}

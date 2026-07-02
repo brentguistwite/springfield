@@ -196,3 +196,60 @@ agent_priority = ["claude"]
 		t.Fatalf("default pattern got %q", got)
 	}
 }
+
+func TestBranchModeDefaultIsConsolidate(t *testing.T) {
+	var c Config
+	if got := c.BranchMode(); got != BranchModeConsolidate {
+		t.Fatalf("default BranchMode got %q, want %q", got, BranchModeConsolidate)
+	}
+}
+
+func TestBranchModePerPlanOverride(t *testing.T) {
+	c := Config{Project: ProjectConfig{BranchMode: "per-plan"}}
+	if got := c.BranchMode(); got != BranchModePerPlan {
+		t.Fatalf("branch_mode=per-plan got %q, want %q", got, BranchModePerPlan)
+	}
+}
+
+func TestBranchModeUnknownFallsBackToConsolidate(t *testing.T) {
+	c := Config{Project: ProjectConfig{BranchMode: "bananas"}}
+	if got := c.BranchMode(); got != BranchModeConsolidate {
+		t.Fatalf("unknown branch_mode must fall back to consolidate, got %q", got)
+	}
+}
+
+func TestBaseBranchTrimmed(t *testing.T) {
+	c := Config{Project: ProjectConfig{BaseBranch: "  develop  "}}
+	if got := c.BaseBranch(); got != "develop" {
+		t.Fatalf("BaseBranch got %q, want %q", got, "develop")
+	}
+}
+
+func TestBaseBranchOmittedIsEmpty(t *testing.T) {
+	var c Config
+	if got := c.BaseBranch(); got != "" {
+		t.Fatalf("omitted base_branch got %q, want empty", got)
+	}
+}
+
+func TestLoadBranchModeAndBaseFromTOML(t *testing.T) {
+	dir := t.TempDir()
+	content := `[project]
+agent_priority = ["claude"]
+branch_mode = "per-plan"
+base_branch = "develop"
+`
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(content), 0o644); err != nil {
+		t.Fatalf("write toml: %v", err)
+	}
+	loaded, err := LoadFrom(dir)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if got := loaded.Config.BranchMode(); got != BranchModePerPlan {
+		t.Fatalf("branch_mode from toml got %q, want per-plan", got)
+	}
+	if got := loaded.Config.BaseBranch(); got != "develop" {
+		t.Fatalf("base_branch from toml got %q, want develop", got)
+	}
+}

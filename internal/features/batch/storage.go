@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"springfield/internal/features/cost"
@@ -176,27 +177,25 @@ func ClearRun(rootDir string) error {
 // are reaped. Callers that have no rollup (orphan recovery, legacy paths)
 // pass nil.
 func ArchiveBatchNormalized(rootDir string, b Batch, reason string, rollup *cost.Rollup) error {
+	return ArchiveBatchNormalizedWithMode(rootDir, b, reason, rollup, "")
+}
+
+// ArchiveBatchNormalizedWithMode is [ArchiveBatchNormalized] plus the
+// branch-output mode stamped onto the entry. The completion-path fallback (used
+// when the project can't be loaded to build the enriched entry) passes
+// run.BatchMode so a per-plan batch still archives as "per-plan" — otherwise the
+// archived status view projects every plan as "merged" when the branches are in
+// fact retained. mode "" matches the prior behavior for the reap/replace/orphan
+// callers, where branch-output mode is not meaningful.
+func ArchiveBatchNormalizedWithMode(rootDir string, b Batch, reason string, rollup *cost.Rollup, mode string) error {
 	archivePath := StableArchivePath(rootDir, b.ID)
 
 	if err := os.MkdirAll(ArchiveDir(rootDir), 0o755); err != nil {
 		return fmt.Errorf("create archive dir: %w", err)
 	}
 
-	entry := ArchiveEntry{
-		BatchID:    b.ID,
-		Title:      b.Title,
-		ArchivedAt: time.Now().UTC(),
-		Reason:     reason,
-	}
-	if rollup != nil {
-		entry.TotalUSD = rollup.TotalUSD
-		if len(rollup.PerAdapter) > 0 {
-			entry.CostBreakdown = make(map[string]float64, len(rollup.PerAdapter))
-			for k, v := range rollup.PerAdapter {
-				entry.CostBreakdown[k] = v
-			}
-		}
-	}
+	entry := newArchiveEntry(b, reason, rollup, time.Now().UTC())
+	entry.BatchMode = mode
 
 	existed, err := writeJSONExclusive(archivePath, entry)
 	if err != nil {
@@ -276,6 +275,59 @@ func RecoverOrphan(rootDir string, run Run) error {
 	return ClearRun(rootDir)
 }
 
+// LatestArchive returns the most-recently-archived batch entry (by ArchivedAt,
+// falling back to file mod-time when the field is zero). Returns ok=false when
+// no archive exists. Used by `springfield status` to surface a just-completed
+// batch's per-ticket results once the run cursor has been cleared — the archive
+// entry is the only place that data lives post-completion.
+func LatestArchive(rootDir string) (ArchiveEntry, bool, error) {
+	dir := ArchiveDir(rootDir)
+	dirEntries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return ArchiveEntry{}, false, nil
+		}
+		return ArchiveEntry{}, false, fmt.Errorf("read archive dir: %w", err)
+	}
+
+	var best ArchiveEntry
+	var bestAt time.Time
+	found := false
+	for _, de := range dirEntries {
+		if de.IsDir() || filepath.Ext(de.Name()) != ".json" {
+			continue
+		}
+		// Skip tamper forensics sidecars (<id>.<nanos>.tamper.json): they share
+		// the archive dir but are a different shape (a map with no archived_at),
+		// so they would deserialize to a zero-time ArchiveEntry and could win the
+		// mod-time fallback, surfacing a misleading "archived" view.
+		if strings.Contains(de.Name(), ".tamper.") {
+			continue
+		}
+		path := filepath.Join(dir, de.Name())
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			continue
+		}
+		var entry ArchiveEntry
+		if json.Unmarshal(data, &entry) != nil {
+			continue
+		}
+		at := entry.ArchivedAt
+		if at.IsZero() {
+			if info, statErr := de.Info(); statErr == nil {
+				at = info.ModTime()
+			}
+		}
+		if !found || at.After(bestAt) {
+			best = entry
+			bestAt = at
+			found = true
+		}
+	}
+	return best, found, nil
+}
+
 // IsMissingBatchError reports whether an error chain represents a missing
 // batch.json file (a run.json pointing at a vanished batch). Works through
 // ReadBatch's fmt.Errorf %w wrapping.
@@ -329,15 +381,27 @@ func maybeWriteArchiveSibling(stablePath string, incoming ArchiveEntry) error {
 	}
 
 	if decoded && prior.Reason == incoming.Reason {
-		// Same reason: usually a true idempotent re-archive (no-op). But
-		// if the prior archive has no cost data and the incoming call
-		// carries a real rollup, the cost info would be silently lost.
-		// Overwrite the stable file with the richer entry so historical
-		// estimates can see this batch.
-		if prior.TotalUSD == 0 && incoming.TotalUSD > 0 {
+		// Same reason: usually a true idempotent re-archive (no-op). But the
+		// prior entry can be POORER than the incoming one — the completion
+		// fallback (project load failed) writes a Plans-less, cost-less entry,
+		// and a later successful FinalizeBatch then carries the enriched Plans
+		// (and cost/mode). Promote any field the prior lacks so neither the
+		// per-plan records, the cost estimate, nor the branch mode are lost.
+		needsCost := prior.TotalUSD == 0 && incoming.TotalUSD > 0
+		needsPlans := len(prior.Plans) == 0 && len(incoming.Plans) > 0
+		needsMode := prior.BatchMode == "" && incoming.BatchMode != ""
+		if needsCost || needsPlans || needsMode {
 			merged := prior
-			merged.TotalUSD = incoming.TotalUSD
-			merged.CostBreakdown = incoming.CostBreakdown
+			if needsCost {
+				merged.TotalUSD = incoming.TotalUSD
+				merged.CostBreakdown = incoming.CostBreakdown
+			}
+			if needsPlans {
+				merged.Plans = incoming.Plans
+			}
+			if needsMode {
+				merged.BatchMode = incoming.BatchMode
+			}
 			return writeJSON(stablePath, merged)
 		}
 		return nil

@@ -41,6 +41,13 @@ func NewStatusCommand() *cobra.Command {
 			}
 			if !hasRun || run.ActiveBatchID == "" {
 				if jsonOut {
+					// Once the run cursor is cleared, the just-completed batch's
+					// per-ticket results live only in the archive. Surface the
+					// latest archive so a controller can read them back; fall to
+					// idle only when no batch has ever been archived.
+					if entry, ok, archErr := batch.LatestArchive(root); archErr == nil && ok {
+						return emitStatusJSON(cmd.OutOrStdout(), statusview.Archived(entry))
+					}
 					return emitStatusJSON(cmd.OutOrStdout(), statusview.Idle())
 				}
 				return printPlanRegistry(cmd.OutOrStdout(), root)
@@ -158,10 +165,10 @@ func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State, live
 	}
 
 	// Group plans by canonical status. The switch is exhaustive over the
-	// statusview enum: every status the JSON view-model can emit per plan has an
-	// explicit arm, so a plan classified by JSON is never silently dropped from
-	// the text surface (failed/needs-human/done used to fall through). merged is
-	// the one status with no line — it is counted in the "X/Y integrated" tally
+	// statuses ComposeStatus can produce (which feeds it): every such status has
+	// an explicit arm, so a plan classified by JSON is never silently dropped from
+	// the text surface (failed/needs-human/done used to fall through). merged (and
+	// the archive-only retained) is the one status with no line — it is counted in the "X/Y integrated" tally
 	// above, so its arm is an explicit no-op. Because live is batch-level,
 	// running and stalled are mutually exclusive (all in-flight plans are running
 	// when a process owns the lock, stalled when none does).
@@ -184,8 +191,11 @@ func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State, live
 			needsHuman = append(needsHuman, id)
 		case statusview.StatusDone:
 			done = append(done, id)
-		case statusview.StatusMerged:
+		case statusview.StatusMerged, statusview.StatusRetained:
 			// Counted in the "X/Y integrated" line above; no per-plan line.
+			// Both are reachable here: ComposeStatus (which feeds this switch)
+			// returns StatusRetained for an integrated standalone (per-plan) plan
+			// and StatusMerged for a consolidate-merged one.
 		}
 	}
 

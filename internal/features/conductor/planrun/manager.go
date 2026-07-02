@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"springfield/internal/features/conductor"
 )
@@ -20,6 +21,14 @@ type PrepareInput struct {
 	// plans so a sanitized-key collision doesn't overwrite a sibling's
 	// worktree. Pass project.State.Plans directly.
 	AllStates map[string]*conductor.PlanState
+	// BatchBaseRef is the batch-wide base ref a Ref-less plan branches from,
+	// resolved once at runBatch entry via [ResolveBatchBase] (precedence
+	// --base > [project] base_branch > current branch). It replaces the bare
+	// current-branch fallback: Unit.Ref still wins per-plan, and an empty
+	// BatchBaseRef falls back to the current branch so library-level callers
+	// that don't set it keep their prior behavior. A resume reuse keeps the
+	// recorded PriorState.BaseRef regardless (already-run plans never re-base).
+	BatchBaseRef string
 	// EnforceProtectedBase refuses preflight when the resolved base ref is in
 	// [ProtectedBases]. Off by default so library-level callers stay
 	// minimal; cmd/start enables it unless the project opts out via
@@ -139,14 +148,22 @@ func (m *Manager) Prepare(in PrepareInput) (PrepareDecision, error) {
 	}
 
 	branch := BranchName(in.Unit)
+	// Base ref precedence: per-plan Unit.Ref > batch-wide BatchBaseRef >
+	// current branch. BatchBaseRef is the already-resolved batch base
+	// (--base > base_branch > current) threaded from runBatch; an explicit
+	// ref from either source must name a local branch, while the bare
+	// current-branch fallback needs no such check.
 	baseRef := in.Unit.Ref
+	if baseRef == "" {
+		baseRef = strings.TrimSpace(in.BatchBaseRef)
+	}
 	if baseRef == "" {
 		baseRef, err = m.Git.CurrentBranch(in.ControlRoot)
 		if err != nil {
 			return PrepareDecision{}, fmt.Errorf("resolve base ref: %w", err)
 		}
 	} else {
-		// Slice-3 contract: explicit Ref must name a local branch so the
+		// Slice-3 contract: an explicit base must name a local branch so the
 		// merge phase can publish via `git update-ref refs/heads/<ref>`.
 		// Verify before any worktree side effects so an unknown branch is
 		// rejected up front instead of failing mid-merge.
@@ -156,7 +173,7 @@ func (m *Manager) Prepare(in PrepareInput) (PrepareDecision, error) {
 		}
 		if !exists {
 			return PrepareDecision{}, reject("preflight-ref-not-local-branch",
-				fmt.Sprintf("plan %q ref %q is not a local branch in %s; merge integration requires a local branch target", in.Unit.ID, baseRef, in.ControlRoot))
+				fmt.Sprintf("plan %q base %q is not a local branch in %s; merge integration requires a local branch target", in.Unit.ID, baseRef, in.ControlRoot))
 		}
 	}
 

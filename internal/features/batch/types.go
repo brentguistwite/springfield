@@ -54,6 +54,19 @@ type Run struct {
 	// resumable pause (rerun with a higher --cost-cap to continue), not a
 	// terminal failure requiring `springfield recover`.
 	CostCapped bool `json:"cost_capped,omitempty"`
+	// BatchMode is the branch-output mode ("consolidate" | "per-plan") chosen
+	// when the batch first started. Stamped ONCE before the first plan runs
+	// and never rewritten on resume — it is authoritative on resume so a
+	// re-passed --per-plan-branches cannot flip a batch mid-flight (which would
+	// merge the front half and retain the back half). Empty marks a batch that
+	// predates per-plan mode (treated as consolidate) or a not-yet-stamped run.
+	BatchMode string `json:"batch_mode,omitempty"`
+	// BatchBase is the resolved batch-wide base ref stamped alongside BatchMode
+	// on the first start, as a resume FALLBACK only (never rewritten). On resume
+	// a re-passed --base wins over it; per-plan PlanState.BaseRef remains the
+	// authoritative reporting source. Empty in consolidate mode (base resolves
+	// per-plan, post-autobranch, as before).
+	BatchBase string `json:"batch_base,omitempty"`
 }
 
 const maxLastRetry = 10
@@ -84,12 +97,32 @@ type ArchiveEntry struct {
 	Plans         []ArchivePlan      `json:"plans,omitempty"`
 	TotalUSD      float64            `json:"total_usd,omitempty"`
 	CostBreakdown map[string]float64 `json:"cost_breakdown,omitempty"`
+	// BatchMode is the branch-output mode the batch ran in ("consolidate" |
+	// "per-plan"), stamped at completion so a status consumer can tell a
+	// merged-and-deleted plan from a standalone branch still awaiting a PR.
+	// Empty on legacy archives written before per-plan mode.
+	BatchMode string `json:"batch_mode,omitempty"`
 }
 
 // ArchivePlan is the per-plan summary in an archive entry.
 // Status is a freeform string carried for archive forensics.
+//
+// Branch/BaseRef/EvidencePath capture the per-ticket trail (branch ↔ ticket ↔
+// base ↔ durable evidence) so it survives the live PlanState being cleared at
+// teardown — the only place this data lives once the batch is archived. All
+// three are omitempty so legacy 3-field archives deserialize with them zeroed.
 type ArchivePlan struct {
 	ID     string `json:"id"`
 	Title  string `json:"title"`
 	Status string `json:"status"`
+	// Branch is the plan's springfield/<plan> branch (preserved in per-plan
+	// mode; deleted in consolidate mode, so empty there).
+	Branch string `json:"branch,omitempty"`
+	// BaseRef is the base the plan branched from (the authoritative per-plan
+	// base, snapshotted from PlanState before teardown).
+	BaseRef string `json:"base_ref,omitempty"`
+	// EvidencePath is the durable, project-relative path the plan's execution
+	// evidence was relocated to under .springfield/archive/<batchID>/plans/.
+	// Empty when the plan produced no evidence.
+	EvidencePath string `json:"evidence_path,omitempty"`
 }

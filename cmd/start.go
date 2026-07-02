@@ -65,6 +65,8 @@ func NewStartCommand() *cobra.Command {
 	var dir string
 	var noKeepAwake bool
 	var costCap float64
+	var perPlanFlag bool
+	var baseFlag string
 
 	cmd := &cobra.Command{
 		Use:   "start",
@@ -174,10 +176,15 @@ func NewStartCommand() *cobra.Command {
 			w := cmd.OutOrStdout()
 			fmt.Fprintf(w, "Batch: %s\n", b.ID)
 			fmt.Fprintf(w, "Title: %s\n", b.Title)
+			// batchHasProgress: whether any of this batch's plans has already
+			// run (used below to lock a pre-feature, unstamped batch to
+			// consolidate). Loaded once here and reused for the start header.
+			batchHasProgress := false
 			if project, projectErr := conductor.LoadProjectRaw(root); projectErr == nil {
 				// The start-header prints while this start process owns the
 				// control-plane lock, so in-flight plans are genuinely running.
 				printProgressBlock(w, b, project.State, true)
+				batchHasProgress = anyPlanStarted(b, project.State)
 			} else {
 				fmt.Fprintf(cmd.ErrOrStderr(), "[warn] could not load project state: %v; progress rollup will be limited.\n", projectErr)
 			}
@@ -186,13 +193,46 @@ func NewStartCommand() *cobra.Command {
 			}
 
 			git := planrun.CLIGit{}
+
+			// Resolve branch-output mode + base BEFORE auto-branch: per-plan
+			// mode suppresses auto-branching (nothing merges into base, so the
+			// protected-base guard has nothing to wrap), and the mode/base must
+			// be durable before the first plan runs so a resume re-derives them
+			// from run.json instead of re-reading the flag/config.
+			modeDecision, modeErr := resolveBatchModeAndBase(git, root, run, perPlanFlag, baseFlag, loaded.Config, batchHasProgress)
+			if modeErr != nil {
+				return modeErr
+			}
+			perPlan := modeDecision.PerPlan
+			batchBase := modeDecision.BatchBase
+			if perPlan {
+				fmt.Fprintf(w, "Branch mode: per-plan (base: %s)\n", batchBase)
+			}
+			if modeDecision.SuppressedPerPlanRequest {
+				if run.BatchMode != "" {
+					// Stamped consolidate resume: the mode is locked by design; the
+					// stale-plan-ID hint below does not apply.
+					fmt.Fprintf(cmd.ErrOrStderr(),
+						"warning: --per-plan-branches ignored: batch %s was started in consolidate mode and cannot be switched mid-batch; continuing in consolidate mode.\n",
+						b.ID)
+				} else {
+					// Unstamped but in progress: either a genuine pre-feature resume
+					// or a fresh batch reusing a plan ID that still carries stale
+					// state — surface the recovery path for the latter.
+					fmt.Fprintf(cmd.ErrOrStderr(),
+						"warning: --per-plan-branches ignored: batch %s is already in progress; continuing in consolidate mode. "+
+							"If this is a fresh batch, a reused plan ID may be carrying stale state from a prior batch — run \"springfield batch abort\" then recompile.\n",
+						b.ID)
+				}
+			}
+
 			hadPriorAutoBranch := run.AutoBranchName != ""
 			activation, abErr := autobranch.Activate(autobranch.Input{
 				Git:                 git,
 				Dir:                 root,
 				BatchID:             b.ID,
 				Pattern:             loaded.Config.AutoBranchPatternOrDefault(),
-				Enabled:             loaded.Config.AutoBranchEnabled(),
+				Enabled:             loaded.Config.AutoBranchEnabled() && !perPlan,
 				AlreadyAutoBranch:   hadPriorAutoBranch,
 				PriorOriginalBranch: run.OriginalBranch,
 				PriorAutoBranchName: run.AutoBranchName,
@@ -216,6 +256,19 @@ func NewStartCommand() *cobra.Command {
 				return fmt.Errorf("auto-branch: %w", abErr)
 			}
 
+			// Stamp the branch mode + base ONCE, AFTER auto-branch's clean-tree
+			// check has passed (a pre-Activate run.json write would read as a dirty
+			// working tree in a repo that tracks .springfield/). On resume
+			// run.BatchMode is already set, so Stamp is false and the authoritative
+			// on-disk values are left untouched.
+			if modeDecision.Stamp {
+				run.BatchMode = modeDecision.Mode
+				run.BatchBase = modeDecision.BatchBase
+				if writeErr := batch.WriteRun(root, run); writeErr != nil {
+					return fmt.Errorf("persist batch branch mode: %w", writeErr)
+				}
+			}
+
 			// Defer Restore so a panic in runBatch / archive / clear cannot
 			// strand the operator on the auto-branch with no message. The
 			// outcome closure is updated below before each known exit so the
@@ -237,7 +290,7 @@ func NewStartCommand() *cobra.Command {
 				}
 			}
 
-			result, execErr := runBatch(root, run, b, w, logPath, costCap)
+			result, execErr := runBatch(root, run, b, w, logPath, costCap, perPlan, batchBase)
 
 			// Interrupted by signal: leave batch state intact so the user can
 			// rerun "springfield start" to resume. Do NOT archive as completed.
@@ -301,11 +354,23 @@ func NewStartCommand() *cobra.Command {
 			if r, rollupErr := cost.ComputeRollup(root, b.ID); rollupErr == nil {
 				archiveRollup = &r
 			}
-			if archiveErr := batch.ArchiveBatchNormalized(root, b, "completed", archiveRollup); archiveErr != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: archive completed batch %q: %v\n", b.ID, archiveErr)
-			}
-			if clearErr := batch.ClearRun(root); clearErr != nil {
-				return fmt.Errorf("clear run state after completion: %w", clearErr)
+			// FinalizeBatch (completion path only) preserves the per-ticket
+			// trail: it relocates evidence into the archive namespace, writes
+			// an enriched entry, deregisters the batch's own plan units, and
+			// clears the run cursor. The rollup MUST be computed first (above)
+			// — FinalizeBatch relocates evidence, after which ComputeRollup
+			// would read $0. A project-load failure falls back to the reaping
+			// archive path so the batch still archives + clears.
+			if project, projErr := conductor.LoadProject(root); projErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: load project for finalize: %v; archiving without per-plan enrichment\n", projErr)
+				if archiveErr := batch.ArchiveBatchNormalizedWithMode(root, b, "completed", archiveRollup, run.BatchMode); archiveErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: archive completed batch %q: %v\n", b.ID, archiveErr)
+				}
+				if clearErr := batch.ClearRun(root); clearErr != nil {
+					return fmt.Errorf("clear run state after completion: %w", clearErr)
+				}
+			} else if finErr := batch.FinalizeBatch(root, b, project, archiveRollup, run.BatchMode, cmd.ErrOrStderr()); finErr != nil {
+				return fmt.Errorf("finalize completed batch %q: %w", b.ID, finErr)
 			}
 
 			autoBranchOutcome = autobranch.OutcomeSuccess
@@ -320,7 +385,109 @@ func NewStartCommand() *cobra.Command {
 	cmd.Flags().StringVar(&dir, "dir", ".", "project root or nested path inside the Springfield project")
 	cmd.Flags().BoolVar(&noKeepAwake, "no-keep-awake", false, "disable sleep prevention for this run")
 	cmd.Flags().Float64Var(&costCap, "cost-cap", 0, "Abort the batch when total spend reaches this many USD (0 = no cap). Cap-aborted batches are resumable: rerun with a higher --cost-cap to continue.")
+	cmd.Flags().BoolVar(&perPlanFlag, "per-plan-branches", false, "Leave one standalone springfield/<plan> branch per plan (one PR per ticket) instead of consolidating onto a shared base. Overrides [project] branch_mode for this run. Mode is fixed at first start and is NOT flippable on resume.")
+	cmd.Flags().StringVar(&baseFlag, "base", "", "Base branch each per-plan branch is cut from (per-plan mode only). Precedence: --base > [project] base_branch > current branch. A re-passed --base on resume re-bases only not-yet-run plans.")
 	return cmd
+}
+
+// batchModeDecision is the resolved branch-output mode + base for one start
+// invocation, plus whether the run cursor must be stamped (fresh runs only).
+type batchModeDecision struct {
+	// PerPlan is the effective mode for this invocation.
+	PerPlan bool
+	// BatchBase is the resolved batch-wide base ref threaded to runBatch.
+	// Empty in consolidate mode (base resolves per-plan, post-autobranch).
+	BatchBase string
+	// Stamp is true on a fresh run: the caller must set run.BatchMode/BatchBase
+	// from this decision and persist once. False on resume — the on-disk values
+	// are authoritative and must never be rewritten.
+	Stamp bool
+	// Mode is the value to stamp into run.BatchMode (only when Stamp).
+	Mode string
+	// SuppressedPerPlanRequest is true when the operator asked for per-plan mode
+	// (via --per-plan-branches or [project] branch_mode) but it was overridden to
+	// consolidate because the batch is unstamped-but-already-in-progress. The
+	// caller warns on it so the dropped request is visible rather than silent —
+	// in both the genuine cross-version resume and the (rarer) stale-PlanState
+	// false positive where a fresh batch reuses a plan ID still carrying a
+	// non-pending state from a prior --replace'd or crashed batch.
+	SuppressedPerPlanRequest bool
+}
+
+// resolveBatchModeAndBase decides the effective per-plan mode and batch base
+// for a start invocation, honoring the fresh-vs-resume precedence the plan
+// fixes:
+//
+//   - Mode: fresh = --per-plan-branches flag OR [project] branch_mode; resume =
+//     run.BatchMode (authoritative — a re-passed flag cannot flip a stamped
+//     batch, which would mix merged + retained output across the same batch).
+//   - Base (per-plan only): fresh = --base > [project] base_branch > current;
+//     resume = re-passed --base > run.BatchBase > [project] base_branch >
+//     current. Consolidate mode resolves no base here (kept empty) so the
+//     existing per-plan, post-autobranch current-branch fallback is preserved
+//     and an auto-branch run is not refused for a transient detached HEAD.
+//
+// batchHasProgress closes the cross-version gap: a batch that began on a
+// pre-feature build has no BatchMode stamp (run.BatchMode == "") yet may already
+// have run plans in consolidate mode. Treating that as "fresh" would let a
+// re-passed --per-plan-branches flip it mid-batch. When unstamped-but-with-
+// progress, the mode is locked to consolidate (the only mode a pre-feature batch
+// could have used) and stamped so future resumes are unambiguous.
+//
+// A detached HEAD with no flag/config base in per-plan mode is rejected (via
+// ResolveBatchBase) rather than silently picking a SHA.
+func resolveBatchModeAndBase(g planrun.Git, root string, run batch.Run, perPlanFlag bool, baseFlag string, cfg config.Config, batchHasProgress bool) (batchModeDecision, error) {
+	stamped := run.BatchMode != ""
+
+	requestedPerPlan := perPlanFlag || cfg.BranchMode() == config.BranchModePerPlan
+
+	var perPlan, suppressed bool
+	switch {
+	case stamped:
+		// Resume of a batch started on this feature: stamped mode is authoritative.
+		perPlan = run.BatchMode == string(config.BranchModePerPlan)
+		// A per-plan ask against a stamped consolidate batch is dropped (mode is
+		// locked) — surface it, same as the unstamped-in-progress case below,
+		// rather than silently ignoring the flag.
+		suppressed = requestedPerPlan && !perPlan
+	case batchHasProgress:
+		// Unstamped but already in progress → pre-feature consolidate batch; never flip.
+		perPlan = false
+		// A per-plan ask that lands here is being dropped — record it so the
+		// caller can warn instead of silently ignoring the flag.
+		suppressed = requestedPerPlan
+	default:
+		// Genuinely fresh: flag beats config.
+		perPlan = requestedPerPlan
+	}
+
+	d := batchModeDecision{PerPlan: perPlan, Stamp: !stamped, SuppressedPerPlanRequest: suppressed}
+	if perPlan {
+		configBase := cfg.BaseBranch()
+		if stamped {
+			configBase = firstNonEmptyStr(run.BatchBase, configBase)
+		}
+		base, err := planrun.ResolveBatchBase(g, root, baseFlag, configBase)
+		if err != nil {
+			return batchModeDecision{}, err
+		}
+		d.BatchBase = base
+	}
+	if !stamped {
+		if perPlan {
+			d.Mode = string(config.BranchModePerPlan)
+		} else {
+			d.Mode = string(config.BranchModeConsolidate)
+		}
+	}
+	return d, nil
+}
+
+func firstNonEmptyStr(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 // BatchRunResult summarizes the outcome of running a batch.
@@ -340,17 +507,17 @@ type BatchRunResult struct {
 	SpendUSD float64
 }
 
-func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string, costCap float64) (BatchRunResult, error) {
+func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string, costCap float64, perPlan bool, batchBase string) (BatchRunResult, error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return runBatchWithContext(ctx, root, run, b, progress, logPath, costCap)
+	return runBatchWithContext(ctx, root, run, b, progress, logPath, costCap, perPlan, batchBase)
 }
 
 // runBatchWithContext is the testable core of runBatch. ctx controls interrupt
 // detection: when ctx is cancelled mid-loop (or on entry) the function returns
 // context.Canceled so the caller can distinguish a user interrupt (preserve
 // batch state) from normal completion (archive + clear run.json).
-func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string, costCap float64) (BatchRunResult, error) {
+func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string, costCap float64, perPlan bool, batchBase string) (BatchRunResult, error) {
 	// Check for pre-cancellation before any setup so tests and real signal
 	// handlers both get the same early-exit path.
 	if ctx.Err() != nil {
@@ -412,7 +579,9 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 		return BatchRunResult{Error: e.Error()}, e
 	}
 
-	enforceProtected := !loaded.Config.Project.AllowProtectedBase
+	// Per-plan mode merges nothing into the base, so the protected-base guard
+	// has nothing to refuse — suppress it (mirrors auto-branch suppression).
+	enforceProtected := !loaded.Config.Project.AllowProtectedBase && !perPlan
 
 	for {
 		if ctx.Err() != nil {
@@ -431,6 +600,21 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 			break
 		}
 
+		// Re-entry: a plan that already finished execution (Status=Completed)
+		// but is not yet integrated — a crash between execution and integration,
+		// or a prior integration whose cleanup failed (e.g. a transient
+		// `git worktree remove` failure) — must NOT be re-dispatched through
+		// SinglePlan, which would reject it with preflight-already-completed and
+		// deadlock the batch. Drive only the integration/cleanup step instead.
+		if st := project.State.Plans[planID]; st != nil && st.Status == conductor.StatusCompleted {
+			fmt.Fprintf(progress, "Plan: %s\n", planID)
+			fmt.Fprintf(progress, "Status: resuming integration\n")
+			if halt, err := integratePlan(perPlan, project, root, worktreeBase, planID, progress); halt != nil {
+				return *halt, err
+			}
+			continue
+		}
+
 		res := planrun.SinglePlan(planrun.SinglePlanInput{
 			Project:              project,
 			ControlRoot:          root,
@@ -445,6 +629,7 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 			Progress:             progress,
 			TargetPlanID:         planID,
 			EnforceProtectedBase: enforceProtected,
+			BatchBaseRef:         batchBase,
 			TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(root, ".springfield", "plans"), controlRoot: root},
 			Ctx:                  ctx,
 			MaxTurnsPerIteration: loaded.Config.MaxTurnsPerIteration(),
@@ -480,32 +665,88 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 			fmt.Fprintf(progress, "Evidence: %s\n", res.EvidencePath)
 		}
 
-		mergeRes := planmerge.Integrate(planmerge.IntegrateInput{
+		if halt, err := integratePlan(perPlan, project, root, worktreeBase, res.PlanID, progress); halt != nil {
+			return *halt, err
+		}
+	}
+	return BatchRunResult{}, nil
+}
+
+// anyPlanStarted reports whether any plan in the batch has a recorded state
+// past pending — i.e. the batch has already begun executing. Used to detect a
+// pre-feature batch (no BatchMode stamp) that is mid-flight, so its branch mode
+// cannot be flipped by a re-passed flag on resume.
+//
+// Limitation: PlanState has no batch provenance, so a genuinely fresh batch
+// that reuses a plan ID still carrying stale state from a prior batch is read as
+// in-progress and locked to consolidate. This is reachable (verified, not
+// hypothetical): `springfield plan --replace` archives the prior batch via
+// ArchiveBatchNormalized, which does NOT clear State.Plans, and a reused unit
+// whose Title/Path/Order are unchanged is preserved (RemovePlanUnit is skipped),
+// so a mid-flight non-Completed state survives; a crashed batch followed by a
+// new batch reusing the slug reaches the same state. A stale Completed state is
+// already rejected upstream by preflight-already-completed.
+//
+// Locking to consolidate is the conservative direction (no mixed-output
+// corruption), and the override is no longer silent — resolveBatchModeAndBase
+// sets SuppressedPerPlanRequest and the start path warns. The root fix (batch
+// provenance on PlanState, or clearing State.Plans at compile/replace) lives
+// outside this package and is deferred as out-of-scope here.
+func anyPlanStarted(b batch.Batch, state *conductor.State) bool {
+	if state == nil {
+		return false
+	}
+	for _, id := range b.PlanIDs {
+		if ps := state.Plans[id]; ps != nil && ps.Status != "" && ps.Status != conductor.StatusPending {
+			return true
+		}
+	}
+	return false
+}
+
+// integratePlan runs the post-execution integration step for one completed
+// plan — Retain in per-plan mode (keep the standalone branch, drop the
+// worktree) or Integrate in consolidate mode (ff-merge into the base) — and
+// returns a non-nil *BatchRunResult (with the matching error) when the batch
+// must halt; nil means the plan integrated cleanly and the loop may advance.
+// Shared by the normal dispatch path and the completed-but-not-integrated
+// re-entry path so both apply identical halt semantics.
+func integratePlan(perPlan bool, project *conductor.Project, root, worktreeBase, planID string, progress io.Writer) (*BatchRunResult, error) {
+	var mergeRes planmerge.IntegrateResult
+	if perPlan {
+		mergeRes = planmerge.Retain(planmerge.RetainInput{
+			Project:     project,
+			PlanID:      planID,
+			ControlRoot: root,
+			Progress:    progress,
+		})
+	} else {
+		mergeRes = planmerge.Integrate(planmerge.IntegrateInput{
 			Project:      project,
-			PlanID:       res.PlanID,
+			PlanID:       planID,
 			ControlRoot:  root,
 			WorktreeBase: worktreeBase,
 			Progress:     progress,
 		})
-		renderMergeOutcome(progress, mergeRes)
-		if mergeRes.Err != nil {
-			e := fmt.Errorf("plan %s merge integration failed: %w", res.PlanID, mergeRes.Err)
-			return BatchRunResult{Error: e.Error()}, e
-		}
-		if mergeRes.Merge != nil && mergeRes.Merge.Status != conductor.MergeSucceeded {
-			e := fmt.Errorf("plan %s merge %s: %s", res.PlanID, mergeRes.Merge.Status, mergeRes.Merge.Reason)
-			return BatchRunResult{Error: e.Error()}, e
-		}
-		if mergeRes.Cleanup != nil && mergeRes.Cleanup.Status == conductor.CleanupFailed {
-			e := fmt.Errorf("plan %s merge succeeded but cleanup failed: artifacts preserved", res.PlanID)
-			return BatchRunResult{Error: e.Error()}, e
-		}
-		if mergeRes.Merge != nil && mergeRes.Merge.SourceSyncStatus == "failed" {
-			e := fmt.Errorf("plan %s merge succeeded but source resync failed: %s", res.PlanID, mergeRes.Merge.SourceSyncError)
-			return BatchRunResult{Error: e.Error()}, e
-		}
 	}
-	return BatchRunResult{}, nil
+	renderMergeOutcome(progress, mergeRes)
+	if mergeRes.Err != nil {
+		e := fmt.Errorf("plan %s merge integration failed: %w", planID, mergeRes.Err)
+		return &BatchRunResult{Error: e.Error()}, e
+	}
+	if mergeRes.Merge != nil && mergeRes.Merge.Status != conductor.MergeSucceeded {
+		e := fmt.Errorf("plan %s merge %s: %s", planID, mergeRes.Merge.Status, mergeRes.Merge.Reason)
+		return &BatchRunResult{Error: e.Error()}, e
+	}
+	if mergeRes.Cleanup != nil && mergeRes.Cleanup.Status == conductor.CleanupFailed {
+		e := fmt.Errorf("plan %s merge succeeded but cleanup failed: artifacts preserved", planID)
+		return &BatchRunResult{Error: e.Error()}, e
+	}
+	if mergeRes.Merge != nil && mergeRes.Merge.SourceSyncStatus == "failed" {
+		e := fmt.Errorf("plan %s merge succeeded but source resync failed: %s", planID, mergeRes.Merge.SourceSyncError)
+		return &BatchRunResult{Error: e.Error()}, e
+	}
+	return nil, nil
 }
 
 // batchNextPlanID returns the ID of the first non-integrated plan in the

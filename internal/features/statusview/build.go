@@ -5,6 +5,7 @@ import (
 
 	"springfield/internal/features/batch"
 	"springfield/internal/features/conductor"
+	"springfield/internal/features/conductor/planmerge"
 	"springfield/internal/features/cost"
 )
 
@@ -83,6 +84,14 @@ func ComposeStatus(ps *conductor.PlanState, live bool) string {
 		return StatusNeedsHuman
 	case conductor.StatusCompleted:
 		if ps.IsIntegrated() {
+			// A plan retained in per-plan mode is integrated (Retain records a
+			// terminal MergeSucceeded + Cleanup) but its branch was kept, NOT
+			// merged into a base. Distinguish it so the live/text surfaces match
+			// the archived projection — otherwise a controller polling an active
+			// per-plan batch sees "merged" for a standing branch.
+			if ps.Merge != nil && ps.Merge.Mode == planmerge.ModeStandalone {
+				return StatusRetained
+			}
 			return StatusMerged
 		}
 		return StatusDone
