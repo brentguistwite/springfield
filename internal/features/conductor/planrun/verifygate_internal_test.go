@@ -36,7 +36,7 @@ func (s *seqCmd) run(_ context.Context, req verify.Request) verify.Result {
 	return r
 }
 
-func vgInput(cmd verifyCommandFunc, agent AgentRunner, max int) verifyGateInput {
+func vgInput(t *testing.T, cmd verifyCommandFunc, agent AgentRunner, max int) verifyGateInput {
 	return verifyGateInput{
 		Command:           cmd,
 		Runner:            agent,
@@ -49,14 +49,18 @@ func vgInput(cmd verifyCommandFunc, agent AgentRunner, max int) verifyGateInput 
 			ID:          "P",
 			UserStories: []prd.UserStory{{ID: "US-1", AcceptanceCriteria: []string{"works"}}},
 		},
-		EvidenceDir: "",
+		// Default to a per-test temp dir, never "". An empty EvidenceDir makes a
+		// failing round write filepath.Join("", "verify-iter-N") relative to the
+		// package cwd, leaking evidence dirs into the source tree and dirtying the
+		// working copy (which would trip Springfield's own dirty-source preflight).
+		EvidenceDir: t.TempDir(),
 	}
 }
 
 func TestVerifyGatePassOnExitZero(t *testing.T) {
 	cmd := &seqCmd{results: []verify.Result{{ExitCode: 0}}}
 	agent := &seqRunner{} // must never be called
-	got := runVerifyGate(vgInput(cmd.run, agent, 3))
+	got := runVerifyGate(vgInput(t, cmd.run, agent, 3))
 	if got.Outcome != verifyPassed {
 		t.Fatalf("outcome = %v, want verifyPassed", got.Outcome)
 	}
@@ -76,7 +80,7 @@ func TestVerifyGateFailThenFixThenPass(t *testing.T) {
 	agent := &seqRunner{results: []coreruntime.Result{
 		{Agent: agents.AgentClaude, Events: []coreexec.Event{stdout("<promise>COMPLETE</promise>")}}, // fix 1
 	}}
-	got := runVerifyGate(vgInput(cmd.run, agent, 3))
+	got := runVerifyGate(vgInput(t, cmd.run, agent, 3))
 	if got.Outcome != verifyPassed {
 		t.Fatalf("outcome = %v, want verifyPassed", got.Outcome)
 	}
@@ -98,7 +102,7 @@ func TestVerifyGateExhaustionEscalatesToNeedsHuman(t *testing.T) {
 	agent := &seqRunner{results: []coreruntime.Result{
 		{Agent: agents.AgentClaude, Events: []coreexec.Event{stdout("fix")}},
 	}}
-	got := runVerifyGate(vgInput(cmd.run, agent, 2))
+	got := runVerifyGate(vgInput(t, cmd.run, agent, 2))
 	if got.Outcome != verifyNeedsHuman {
 		t.Fatalf("outcome = %v, want verifyNeedsHuman (exhaustion)", got.Outcome)
 	}
@@ -112,7 +116,7 @@ func TestVerifyGateAgentErrorIsErrored(t *testing.T) {
 	agent := &seqRunner{results: []coreruntime.Result{
 		{Agent: agents.AgentClaude, Err: errors.New("fix boom")},
 	}}
-	got := runVerifyGate(vgInput(cmd.run, agent, 3))
+	got := runVerifyGate(vgInput(t, cmd.run, agent, 3))
 	if got.Outcome != verifyErrored || got.Err == nil {
 		t.Fatalf("outcome = %v err=%v, want verifyErrored with err", got.Outcome, got.Err)
 	}
@@ -124,7 +128,7 @@ func TestVerifyGateLaunchFailureIsErrored(t *testing.T) {
 	boom := errors.New("chdir: no such directory")
 	cmd := &seqCmd{results: []verify.Result{{ExitCode: -1, Err: boom}}}
 	agent := &seqRunner{}
-	got := runVerifyGate(vgInput(cmd.run, agent, 3))
+	got := runVerifyGate(vgInput(t, cmd.run, agent, 3))
 	if got.Outcome != verifyErrored {
 		t.Fatalf("outcome = %v, want verifyErrored", got.Outcome)
 	}
@@ -146,7 +150,7 @@ func TestVerifyGateTwoConsecutiveTimeoutsEscalateEarly(t *testing.T) {
 	agent := &seqRunner{results: []coreruntime.Result{
 		{Agent: agents.AgentClaude, Events: []coreexec.Event{stdout("fix")}},
 	}}
-	got := runVerifyGate(vgInput(cmd.run, agent, 5))
+	got := runVerifyGate(vgInput(t, cmd.run, agent, 5))
 	if got.Outcome != verifyNeedsHuman {
 		t.Fatalf("outcome = %v, want verifyNeedsHuman (early timeout)", got.Outcome)
 	}
@@ -165,7 +169,7 @@ func TestVerifyGateSingleTimeoutDoesNotEscalate(t *testing.T) {
 	agent := &seqRunner{results: []coreruntime.Result{
 		{Agent: agents.AgentClaude, Events: []coreexec.Event{stdout("fix")}},
 	}}
-	got := runVerifyGate(vgInput(cmd.run, agent, 5))
+	got := runVerifyGate(vgInput(t, cmd.run, agent, 5))
 	if got.Outcome != verifyPassed {
 		t.Fatalf("outcome = %v, want verifyPassed", got.Outcome)
 	}
@@ -180,7 +184,7 @@ func TestVerifyGateEvidenceWrittenEachRound(t *testing.T) {
 	agent := &seqRunner{results: []coreruntime.Result{
 		{Agent: agents.AgentClaude, Events: []coreexec.Event{stdout("fix")}},
 	}}
-	in := vgInput(cmd.run, agent, 2)
+	in := vgInput(t, cmd.run, agent, 2)
 	in.EvidenceDir = dir
 	got := runVerifyGate(in)
 	if got.Outcome != verifyNeedsHuman {
@@ -199,7 +203,7 @@ func TestVerifyGateCancelledContextErrorsBeforeCommand(t *testing.T) {
 	cancel()
 	cmd := &seqCmd{}
 	agent := &seqRunner{}
-	in := vgInput(cmd.run, agent, 3)
+	in := vgInput(t, cmd.run, agent, 3)
 	in.Ctx = ctx
 	got := runVerifyGate(in)
 	if got.Outcome != verifyErrored {

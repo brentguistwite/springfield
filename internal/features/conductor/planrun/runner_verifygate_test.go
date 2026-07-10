@@ -3,6 +3,7 @@ package planrun_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -297,6 +298,85 @@ func TestVerifyGateErroredYieldsStatusFailed(t *testing.T) {
 	}
 	if len(runner.calls) != 0 {
 		t.Fatalf("expected ZERO agent calls (review must not run after verify error), got %d", len(runner.calls))
+	}
+}
+
+// TestVerifyDisabledLeavesMarkerOnlyCompletion pins the US-008 opt-in regression
+// guard: an unconfigured plan (no [verify] config, no per-plan verify override,
+// AND no review) completes purely on markers, exactly as before the verify gate
+// existed. The verify command boundary is a fail-the-test tripwire — proving the
+// gate is skipped ENTIRELY, not merely that its verdict happened to pass.
+func TestVerifyDisabledLeavesMarkerOnlyCompletion(t *testing.T) {
+	root := projectFixtureWithUnpassedStory(t, "alpha")
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+	g := newFakeGit()
+
+	// Single dispatch: story passes + COMPLETE. No review, no verify → the plan
+	// must complete on the marker alone.
+	runner := &queuedAgentRunner{results: []coreruntime.Result{
+		{
+			Agent:  agents.AgentClaude,
+			Status: coreruntime.StatusPassed,
+			Events: []coreexec.Event{{Type: coreexec.EventStdout, Data: "<story-pass>US-001</story-pass><promise>COMPLETE</promise>"}},
+		},
+	}}
+
+	// Tripwire: if the disabled gate ever dispatches the verify command, fail loudly.
+	verifyInvoked := false
+	tripwire := func(_ context.Context, _ verify.Request) verify.Result {
+		verifyInvoked = true
+		t.Error("verify command must NOT run when verify is unconfigured")
+		return verify.Result{ExitCode: 0}
+	}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:       project,
+		ControlRoot:   root,
+		WorktreeBase:  ".worktrees",
+		AgentIDs:      []agents.ID{agents.AgentClaude},
+		Runner:        runner,
+		Manager:       &planrun.Manager{Git: g},
+		VerifyCommand: tripwire,
+		// VerifyConfig zero value: gate disabled. ReviewConfig omitted: marker-only.
+	})
+
+	if res.Err != nil {
+		t.Fatalf("marker-only completion must succeed with verify disabled, got: %v", res.Err)
+	}
+	if res.Status != conductor.StatusCompleted {
+		t.Fatalf("Status = %v, want StatusCompleted (markers alone complete the plan)", res.Status)
+	}
+	if verifyInvoked {
+		t.Fatal("verify command was invoked despite no [verify] config")
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("expected exactly 1 agent call (story only; no verify, no review), got %d", len(runner.calls))
+	}
+
+	// The completed plan must be queued for merge integration exactly as a
+	// pre-verify-gate marker completion was — the gate did not alter the terminal shape.
+	reloaded, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("re-LoadProject: %v", err)
+	}
+	st := reloaded.State.Plans["alpha"]
+	if st == nil {
+		t.Fatal("no persisted state for alpha")
+	}
+	if st.Status != conductor.StatusCompleted {
+		t.Fatalf("persisted Status = %v, want StatusCompleted", st.Status)
+	}
+	if st.Merge == nil || st.Merge.Status != conductor.MergePending {
+		t.Fatalf("completed marker-only plan must be pending merge integration; got Merge=%+v", st.Merge)
+	}
+
+	// No verify evidence may exist: skipping the gate means writing nothing under
+	// verify-iter-*. Any such dir proves the gate ran a round.
+	if entries, _ := filepath.Glob(filepath.Join(res.EvidencePath, "verify-iter-*")); len(entries) != 0 {
+		t.Fatalf("verify evidence written despite disabled gate: %v", entries)
 	}
 }
 
