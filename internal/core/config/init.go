@@ -26,6 +26,14 @@ type InitOptions struct {
 	// init-time selections for agents in priority, where a missing/empty entry
 	// means "use adapter default" and therefore omit the model line.
 	Models map[string]string
+	// BranchMode, when non-empty, is written to [project] branch_mode. Empty
+	// means "omit on fresh init / leave existing alone in merge mode". Callers
+	// validate the value (consolidate|per-plan) before passing it here — Init
+	// emits it verbatim.
+	BranchMode string
+	// BaseBranch, when non-empty, is written to [project] base_branch. Empty
+	// means "omit on fresh init / leave existing alone in merge mode".
+	BaseBranch string
 }
 
 // InitResult reports what Init created, updated, or backed up.
@@ -69,7 +77,7 @@ func Init(dir string, priority []string, opts InitOptions) (InitResult, error) {
 
 	if !exists {
 		// Fresh init.
-		content := buildScaffold(priority, opts.Models)
+		content := buildScaffold(priority, opts)
 		if err := writeFileAtomic(configPath, []byte(content), 0644); err != nil {
 			return result, fmt.Errorf("write springfield.toml: %w", err)
 		}
@@ -87,7 +95,7 @@ func Init(dir string, priority []string, opts InitOptions) (InitResult, error) {
 		}
 		result.BackupPath = backupPath
 
-		content := buildScaffold(priority, opts.Models)
+		content := buildScaffold(priority, opts)
 		if err := writeFileAtomic(configPath, []byte(content), 0644); err != nil {
 			return result, fmt.Errorf("write springfield.toml (original preserved at %s): %w", backupPath, err)
 		}
@@ -168,6 +176,18 @@ func Init(dir string, priority []string, opts InitOptions) (InitResult, error) {
 			}
 		}
 
+		// Branch-mode / base-branch: update like agent_priority, but only when
+		// the caller supplied a value. Empty means "leave the existing key
+		// alone" so a re-init that omits the flags never clears a prior choice.
+		if opts.BranchMode != "" && loaded.Config.Project.BranchMode != opts.BranchMode {
+			loaded.Config.Project.BranchMode = opts.BranchMode
+			changed = true
+		}
+		if opts.BaseBranch != "" && loaded.Config.Project.BaseBranch != opts.BaseBranch {
+			loaded.Config.Project.BaseBranch = opts.BaseBranch
+			changed = true
+		}
+
 		if changed {
 			if err := Save(loaded); err != nil {
 				return result, fmt.Errorf("save merged config: %w", err)
@@ -194,7 +214,9 @@ func Init(dir string, priority []string, opts InitOptions) (InitResult, error) {
 // [project] section with `agent_priority = []` and no agent blocks. The first
 // entry of priority is the implicit default at runtime — no default_agent field
 // is emitted.
-func buildScaffold(priority []string, models map[string]string) string {
+func buildScaffold(priority []string, opts InitOptions) string {
+	models := opts.Models
+
 	// Format agent_priority as a TOML inline array.
 	quoted := make([]string, len(priority))
 	for i, a := range priority {
@@ -205,6 +227,15 @@ func buildScaffold(priority []string, models map[string]string) string {
 	rec := RecommendedExecutionSettings()
 
 	base := fmt.Sprintf("[project]\nagent_priority = %s\n", agentPriority)
+
+	// Branch-mode / base-branch are optional [project] keys — emit only when the
+	// caller supplied them so an unconfigured project keeps a minimal scaffold.
+	if opts.BranchMode != "" {
+		base += fmt.Sprintf("branch_mode = %q\n", opts.BranchMode)
+	}
+	if opts.BaseBranch != "" {
+		base += fmt.Sprintf("base_branch = %q\n", opts.BaseBranch)
+	}
 
 	if slices.Contains(priority, string(agents.AgentClaude)) {
 		base += "\n[agents.claude]\n"

@@ -587,3 +587,100 @@ func TestInitAtomicWriteLeavesNoOrphan(t *testing.T) {
 		}
 	}
 }
+
+// TestInitWritesBranchModeAndBaseBranch verifies fresh init emits branch_mode
+// and base_branch into [project] when the options carry them, and that a loaded
+// config round-trips both values.
+func TestInitWritesBranchModeAndBaseBranch(t *testing.T) {
+	dir := t.TempDir()
+
+	if _, err := config.Init(dir, []string{"claude"}, config.InitOptions{
+		BranchMode: string(config.BranchModePerPlan),
+		BaseBranch: "main",
+	}); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, config.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(raw)
+	if !strings.Contains(s, `branch_mode = "per-plan"`) {
+		t.Errorf("expected branch_mode line:\n%s", s)
+	}
+	if !strings.Contains(s, `base_branch = "main"`) {
+		t.Errorf("expected base_branch line:\n%s", s)
+	}
+
+	loaded, err := config.LoadFrom(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := loaded.Config.Project.BranchMode; got != "per-plan" {
+		t.Errorf("branch_mode: want per-plan, got %q", got)
+	}
+	if got := loaded.Config.Project.BaseBranch; got != "main" {
+		t.Errorf("base_branch: want main, got %q", got)
+	}
+}
+
+// TestInitOmitsBranchKeysWhenUnset verifies neither key is emitted when the
+// options leave them empty — an unconfigured project keeps a minimal scaffold.
+func TestInitOmitsBranchKeysWhenUnset(t *testing.T) {
+	dir := t.TempDir()
+
+	if _, err := config.Init(dir, []string{"claude"}, config.InitOptions{}); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, config.FileName))
+	s := string(raw)
+	if strings.Contains(s, "branch_mode") {
+		t.Errorf("branch_mode should be omitted when unset:\n%s", s)
+	}
+	if strings.Contains(s, "base_branch") {
+		t.Errorf("base_branch should be omitted when unset:\n%s", s)
+	}
+}
+
+// TestInitMergeUpdatesBranchModeAndBaseBranch verifies re-init (merge mode)
+// updates branch_mode/base_branch like agent_priority, and that omitting the
+// options on a later re-init leaves the prior values untouched.
+func TestInitMergeUpdatesBranchModeAndBaseBranch(t *testing.T) {
+	dir := t.TempDir()
+
+	// Seed with consolidate/develop.
+	if _, err := config.Init(dir, []string{"claude"}, config.InitOptions{
+		BranchMode: string(config.BranchModeConsolidate),
+		BaseBranch: "develop",
+	}); err != nil {
+		t.Fatalf("seed Init: %v", err)
+	}
+
+	// Merge-mode re-init flips both.
+	res, err := config.Init(dir, []string{"claude"}, config.InitOptions{
+		BranchMode: string(config.BranchModePerPlan),
+		BaseBranch: "main",
+	})
+	if err != nil {
+		t.Fatalf("merge Init: %v", err)
+	}
+	if !res.ConfigUpdated {
+		t.Error("expected ConfigUpdated=true when branch settings change")
+	}
+	loaded, _ := config.LoadFrom(dir)
+	if loaded.Config.Project.BranchMode != "per-plan" || loaded.Config.Project.BaseBranch != "main" {
+		t.Fatalf("merge did not update branch settings: mode=%q base=%q",
+			loaded.Config.Project.BranchMode, loaded.Config.Project.BaseBranch)
+	}
+
+	// A later re-init that omits the flags must preserve the prior values.
+	if _, err := config.Init(dir, []string{"claude"}, config.InitOptions{}); err != nil {
+		t.Fatalf("omit Init: %v", err)
+	}
+	loaded, _ = config.LoadFrom(dir)
+	if loaded.Config.Project.BranchMode != "per-plan" || loaded.Config.Project.BaseBranch != "main" {
+		t.Errorf("omitted re-init clobbered branch settings: mode=%q base=%q",
+			loaded.Config.Project.BranchMode, loaded.Config.Project.BaseBranch)
+	}
+}

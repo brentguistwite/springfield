@@ -33,6 +33,8 @@ func NewInitCommand() *cobra.Command {
 	var modelsFlag string
 	var resetFlag bool
 	var trackedGitignoreFlag bool
+	var branchModeFlag string
+	var baseBranchFlag string
 	modelSuggester := newModelSuggester(exec.LookPath)
 
 	cmd := &cobra.Command{
@@ -42,6 +44,11 @@ func NewInitCommand() *cobra.Command {
 			dir, err := os.Getwd()
 			if err != nil {
 				return fmt.Errorf("resolve working directory: %w", err)
+			}
+
+			branchMode, err := validateBranchMode(branchModeFlag)
+			if err != nil {
+				return err
 			}
 
 			interactive := isTTY(int(os.Stdin.Fd()))
@@ -58,8 +65,10 @@ func NewInitCommand() *cobra.Command {
 			}
 
 			result, err := config.Init(dir, priority, config.InitOptions{
-				Reset:  resetFlag,
-				Models: models,
+				Reset:      resetFlag,
+				Models:     models,
+				BranchMode: branchMode,
+				BaseBranch: strings.TrimSpace(baseBranchFlag),
 			})
 			if err != nil {
 				return err
@@ -135,8 +144,27 @@ func NewInitCommand() *cobra.Command {
 	cmd.Flags().StringVar(&modelsFlag, "model", "", "Comma-separated per-agent model overrides (e.g. claude=claude-sonnet-4-6,codex=gpt-5-codex)")
 	cmd.Flags().BoolVar(&resetFlag, "reset", false, "Regenerate springfield.toml from the current --agents/--model selection, backing up the previous file. Discards manual edits and stale agent blocks; the execution config's primary tool is updated to match, and registered plans are preserved.")
 	cmd.Flags().BoolVar(&trackedGitignoreFlag, "tracked-gitignore", false, "Write Springfield ignore patterns to the tracked .gitignore instead of the default .git/info/exclude. Use in repos you own; the default keeps a repo's tracked .gitignore byte-unchanged.")
+	cmd.Flags().StringVar(&branchModeFlag, "branch-mode", "", "Default branch mode for multi-plan batches: consolidate (merge each plan into a shared base) or per-plan (one branch per plan). Written to [project] branch_mode.")
+	cmd.Flags().StringVar(&baseBranchFlag, "base-branch", "", "Default base branch each plan branch is cut from in per-plan mode. Written to [project] base_branch.")
 
 	return cmd
+}
+
+// validateBranchMode normalizes and validates the --branch-mode flag. Empty is
+// allowed (the key is omitted / left untouched). A non-empty value must be one
+// of the config.BranchMode constants; anything else is a hard error so the CLI
+// exits non-zero rather than persisting an unusable branch_mode.
+func validateBranchMode(raw string) (string, error) {
+	mode := strings.TrimSpace(raw)
+	switch mode {
+	case "", string(config.BranchModeConsolidate), string(config.BranchModePerPlan):
+		return mode, nil
+	default:
+		return "", fmt.Errorf(
+			"invalid --branch-mode %q: want %q or %q",
+			mode, config.BranchModeConsolidate, config.BranchModePerPlan,
+		)
+	}
 }
 
 // resolveInitSelections is the single decision point for how `springfield init`

@@ -492,3 +492,52 @@ func TestInitResetPrintsBackupPath(t *testing.T) {
 		t.Errorf("no backup file found in %s", dir)
 	}
 }
+
+// TestInitBranchModeFlagsWriteProjectKeys verifies --branch-mode and
+// --base-branch land in [project] of springfield.toml.
+func TestInitBranchModeFlagsWriteProjectKeys(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	output, err := runBinaryIn(t, bin, dir, "init",
+		"--agents", "claude",
+		"--branch-mode", "per-plan",
+		"--base-branch", "main",
+	)
+	if err != nil {
+		t.Fatalf("init failed: %v\n%s", err, output)
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, "springfield.toml"))
+	if err != nil {
+		t.Fatalf("read springfield.toml: %v", err)
+	}
+	toml := string(content)
+	if !strings.Contains(toml, `branch_mode = "per-plan"`) {
+		t.Errorf("expected branch_mode in config:\n%s", toml)
+	}
+	if !strings.Contains(toml, `base_branch = "main"`) {
+		t.Errorf("expected base_branch in config:\n%s", toml)
+	}
+}
+
+// TestInitInvalidBranchModeExitsNonZero verifies an out-of-range --branch-mode
+// aborts init with a clear message and a non-zero exit, leaving no config.
+func TestInitInvalidBranchModeExitsNonZero(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	output, err := runBinaryIn(t, bin, dir, "init",
+		"--agents", "claude",
+		"--branch-mode", "bogus",
+	)
+	if err == nil {
+		t.Fatalf("expected non-zero exit, output:\n%s", output)
+	}
+	if !strings.Contains(output, "invalid --branch-mode") {
+		t.Errorf("expected clear branch-mode error, got:\n%s", output)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "springfield.toml")); statErr == nil {
+		t.Error("invalid init should not have written springfield.toml")
+	}
+}
