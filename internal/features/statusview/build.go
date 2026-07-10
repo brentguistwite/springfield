@@ -274,6 +274,18 @@ func deriveActivity(ps *conductor.PlanState, live bool, plan *prd.PRD) *Activity
 	}
 
 	w := ps.Activity
+	// Contradiction-suppression backstop (Tier 2, guard c): a written Activity
+	// whose detail names a story that durable prd.json shows already PASSED is
+	// stale by construction — the runner moved past it without the write catching
+	// up (a missed clear, a crash mid-transition). NextEligibleStory only ever
+	// returns not-yet-passed stories, so an honest implementing-phase write can
+	// never name a passed story; when one does, drop the ENTIRE written overlay
+	// (its round belonged to the finished story too) and fall back to Tier-1
+	// derivation, which cannot go stale. Read-only: the persisted write is left
+	// untouched — the projection never mutates control-plane state.
+	if w != nil && plan != nil && storyPassed(*plan, w.Detail) {
+		w = nil
+	}
 	if story == "" && w == nil {
 		return nil
 	}
@@ -300,6 +312,22 @@ func deriveActivity(ps *conductor.PlanState, live bool, plan *prd.PRD) *Activity
 		av.UpdatedAt = w.UpdatedAt
 	}
 	return av
+}
+
+// storyPassed reports whether detail names a UserStory that durable prd.json
+// marks passed. An empty detail (the gates stamp no detail) or a free-form
+// phrase matching no story ID yields false, so the contradiction-suppression
+// backstop fires ONLY on a written detail that a passed story directly refutes.
+func storyPassed(p prd.PRD, detail string) bool {
+	if detail == "" {
+		return false
+	}
+	for _, s := range p.UserStories {
+		if s.ID == detail {
+			return s.Passes
+		}
+	}
+	return false
 }
 
 func deriveMerge(ps *conductor.PlanState) MergeView {

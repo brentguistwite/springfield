@@ -167,6 +167,68 @@ func TestActive_DerivedSilentWhenAllStoriesPassed(t *testing.T) {
 	}
 }
 
+// TestActive_SuppressesContradictoryWrite is the contradiction-suppression
+// backstop (US-007): a written Activity whose detail names a story that durable
+// prd.json shows already PASSED is stale by construction — the runner moved on
+// without the write catching up. The projection must drop that written overlay
+// (detail AND its fine counter, which belonged to the finished story) and fall
+// back to Tier-1 derivation, never surfacing the value durable truth contradicts.
+func TestActive_SuppressesContradictoryWrite(t *testing.T) {
+	p := prd.PRD{UserStories: []prd.UserStory{
+		{ID: "US-001", Priority: 1, Passes: true},  // durable truth: done
+		{ID: "US-002", Priority: 2, Passes: false}, // durable truth: current
+	}}
+	// Stale write: claims still implementing US-001 (round 5), which has passed.
+	stale := &conductor.PlanActivity{
+		Phase:     "implementing",
+		Detail:    "US-001",
+		Round:     5,
+		UpdatedAt: time.Date(2026, 7, 10, 8, 0, 0, 0, time.UTC),
+	}
+	started := time.Date(2026, 7, 10, 9, 0, 0, 0, time.UTC)
+	ps := &conductor.PlanState{Status: conductor.StatusRunning, Activity: stale, StartedAt: started}
+
+	v := statusview.Active(activityInputWithPRD(ps, true, &p))
+	got := v.Plans[0].Activity
+	if got == nil {
+		t.Fatal("suppression must fall back to derived Activity, not drop it entirely")
+	}
+	if got.Detail == "US-001" {
+		t.Fatalf("contradictory detail US-001 must be suppressed, got %q", got.Detail)
+	}
+	if got.Detail != "US-002" {
+		t.Fatalf("must fall back to derived current story US-002, got %q", got.Detail)
+	}
+	if got.Round == 5 {
+		t.Fatal("stale round 5 (belonged to passed US-001) must not carry over to the derived story")
+	}
+	if !got.UpdatedAt.Equal(started) {
+		t.Fatalf("derived fallback must anchor UpdatedAt to StartedAt, got %v", got.UpdatedAt)
+	}
+	// Suppression is read-only: it must not mutate the persisted stale write.
+	if ps.Activity != stale {
+		t.Fatal("suppression must not mutate PlanState.Activity")
+	}
+}
+
+// TestActive_HonestWriteNotSuppressed pins the boundary of the backstop: a write
+// whose detail names the CURRENT (not-yet-passed) story is consistent with
+// durable truth, so its fine counter must survive — suppression fires only on
+// contradiction, not on every written detail.
+func TestActive_HonestWriteNotSuppressed(t *testing.T) {
+	p := prd.PRD{UserStories: []prd.UserStory{
+		{ID: "US-001", Priority: 1, Passes: false},
+	}}
+	write := &conductor.PlanActivity{Phase: "implementing", Detail: "US-001", Round: 3, UpdatedAt: time.Now()}
+	ps := &conductor.PlanState{Status: conductor.StatusRunning, Activity: write}
+
+	v := statusview.Active(activityInputWithPRD(ps, true, &p))
+	got := v.Plans[0].Activity
+	if got == nil || got.Detail != "US-001" || got.Round != 3 {
+		t.Fatalf("honest write for the current story must survive, got %+v", got)
+	}
+}
+
 func hasNullActivity(raw []byte) bool {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &m); err != nil {
