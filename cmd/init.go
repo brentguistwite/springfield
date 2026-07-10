@@ -32,6 +32,7 @@ func NewInitCommand() *cobra.Command {
 	var agentsFlag string
 	var modelsFlag string
 	var resetFlag bool
+	var trackedGitignoreFlag bool
 	modelSuggester := newModelSuggester(exec.LookPath)
 
 	cmd := &cobra.Command{
@@ -102,10 +103,25 @@ func NewInitCommand() *cobra.Command {
 				return fmt.Errorf("sync execution config tool: %w", err)
 			}
 
-			if added, err := ensureSpringfieldGitignore(dir); err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to update .gitignore: %v\n", err)
-			} else if added {
-				fmt.Fprintln(cmd.OutOrStdout(), "Added Springfield patterns to .gitignore")
+			// Ignore setup. Default is team-repo-safe: patterns land in
+			// .git/info/exclude (untracked, per-clone), so a repo the operator
+			// does not own keeps its tracked .gitignore byte-unchanged.
+			// --tracked-gitignore opts into the legacy behavior of editing the
+			// tracked .gitignore, for repos the operator owns. Both paths are
+			// best-effort — a warning on failure never aborts init (e.g. the
+			// exclude writer skips when dir is not yet a git repo).
+			if trackedGitignoreFlag {
+				if added, err := ensureSpringfieldGitignore(dir); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to update .gitignore: %v\n", err)
+				} else if added {
+					fmt.Fprintln(cmd.OutOrStdout(), "Added Springfield patterns to .gitignore")
+				}
+			} else {
+				if added, err := config.EnsureSpringfieldExclude(dir); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to update .git/info/exclude: %v\n", err)
+				} else if added {
+					fmt.Fprintln(cmd.OutOrStdout(), "Added Springfield patterns to .git/info/exclude")
+				}
 			}
 
 			fmt.Fprintln(cmd.OutOrStdout())
@@ -118,6 +134,7 @@ func NewInitCommand() *cobra.Command {
 	cmd.Flags().StringVar(&agentsFlag, "agents", "", "Comma-separated agent priority list (e.g. claude,codex)")
 	cmd.Flags().StringVar(&modelsFlag, "model", "", "Comma-separated per-agent model overrides (e.g. claude=claude-sonnet-4-6,codex=gpt-5-codex)")
 	cmd.Flags().BoolVar(&resetFlag, "reset", false, "Regenerate springfield.toml from the current --agents/--model selection, backing up the previous file. Discards manual edits and stale agent blocks; the execution config's primary tool is updated to match, and registered plans are preserved.")
+	cmd.Flags().BoolVar(&trackedGitignoreFlag, "tracked-gitignore", false, "Write Springfield ignore patterns to the tracked .gitignore instead of the default .git/info/exclude. Use in repos you own; the default keeps a repo's tracked .gitignore byte-unchanged.")
 
 	return cmd
 }

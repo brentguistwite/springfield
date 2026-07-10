@@ -31,9 +31,9 @@ func TestEnsureSpringfieldExcludeCreatesFileInRepo(t *testing.T) {
 	dir := t.TempDir()
 	gitInit(t, dir)
 
-	added, err := ensureSpringfieldExclude(dir)
+	added, err := EnsureSpringfieldExclude(dir)
 	if err != nil {
-		t.Fatalf("ensureSpringfieldExclude: %v", err)
+		t.Fatalf("EnsureSpringfieldExclude: %v", err)
 	}
 	if !added {
 		t.Fatal("added = false, want true on first write")
@@ -60,7 +60,7 @@ func TestEnsureSpringfieldExcludeFromLinkedWorktree(t *testing.T) {
 	wt := filepath.Join(t.TempDir(), "wt")
 	runGit(t, main, "worktree", "add", "-b", "feat", wt)
 
-	added, err := ensureSpringfieldExclude(wt)
+	added, err := EnsureSpringfieldExclude(wt)
 	if err != nil {
 		t.Fatalf("ensureSpringfieldExclude from worktree: %v", err)
 	}
@@ -85,12 +85,12 @@ func TestEnsureSpringfieldExcludeIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	gitInit(t, dir)
 
-	if _, err := ensureSpringfieldExclude(dir); err != nil {
-		t.Fatalf("first ensureSpringfieldExclude: %v", err)
+	if _, err := EnsureSpringfieldExclude(dir); err != nil {
+		t.Fatalf("first EnsureSpringfieldExclude: %v", err)
 	}
-	added, err := ensureSpringfieldExclude(dir)
+	added, err := EnsureSpringfieldExclude(dir)
 	if err != nil {
-		t.Fatalf("second ensureSpringfieldExclude: %v", err)
+		t.Fatalf("second EnsureSpringfieldExclude: %v", err)
 	}
 	if added {
 		t.Fatal("added = true on second write, want false (idempotent)")
@@ -118,8 +118,8 @@ func TestEnsureSpringfieldExcludePreservesExistingNoTrailingNewline(t *testing.T
 		t.Fatal(err)
 	}
 
-	if _, err := ensureSpringfieldExclude(dir); err != nil {
-		t.Fatalf("ensureSpringfieldExclude: %v", err)
+	if _, err := EnsureSpringfieldExclude(dir); err != nil {
+		t.Fatalf("EnsureSpringfieldExclude: %v", err)
 	}
 
 	body := readExclude(t, filepath.Join(dir, ".git"))

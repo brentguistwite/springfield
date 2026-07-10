@@ -54,14 +54,18 @@ func gitCommonDir(dir string) (string, error) {
 	return filepath.Clean(common), nil
 }
 
-// ensureSpringfieldExclude writes the team-safe ignore block to
+// EnsureSpringfieldExclude writes the team-safe ignore block to
 // <git-common-dir>/info/exclude — git's untracked per-repo ignore file. Because
 // git never tracks info/exclude, ignoring Springfield's state costs a teammate
-// nothing and never touches a .gitignore the operator may not own. Idempotent:
-// keyed off springfieldExcludeMarker, a second call is a no-op returning
-// added=false. Creates info/ and the exclude file when absent, and inserts a
-// separating newline when an existing file lacks a trailing one.
-func ensureSpringfieldExclude(dir string) (added bool, err error) {
+// nothing and never touches a .gitignore the operator may not own. It is the
+// default ignore path for `springfield init`; the tracked-.gitignore writer is
+// opt-in behind --tracked-gitignore. Idempotent: keyed off
+// springfieldExcludeMarker, a second call is a no-op returning added=false.
+// Creates info/ and the exclude file when absent, and inserts a separating
+// newline when an existing file lacks a trailing one. Returns an error when dir
+// is not inside a git repo (git-common-dir resolution fails); callers treat that
+// as best-effort and warn+skip.
+func EnsureSpringfieldExclude(dir string) (added bool, err error) {
 	common, err := gitCommonDir(dir)
 	if err != nil {
 		return false, err

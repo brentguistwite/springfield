@@ -13,7 +13,7 @@ func TestInitGitignoreIncludesLocalToml(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 
-	if _, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude"); err != nil {
+	if _, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude", "--tracked-gitignore"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
