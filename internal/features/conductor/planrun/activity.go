@@ -32,6 +32,17 @@ func enterPhase(p *conductor.Project, planID, phase, detail string, round int, n
 	if ps == nil {
 		return nil
 	}
+	// An empty phase is the CLEAR signal (see clearActivity): drop the in-flight
+	// fine signal so a reader falls back to the derived coarse phase (Tier 1)
+	// rather than a stranded phase from a gate that has already returned. Nothing
+	// stamped means nothing to clear — stay silent and skip the write.
+	if phase == "" {
+		if ps.Activity == nil {
+			return nil
+		}
+		ps.Activity = nil
+		return p.SaveState()
+	}
 	stamp := time.Now
 	if now != nil {
 		stamp = now
@@ -43,4 +54,17 @@ func enterPhase(p *conductor.Project, planID, phase, detail string, round int, n
 		UpdatedAt: stamp(),
 	}
 	return p.SaveState()
+}
+
+// clearActivity drops a running plan's in-flight Activity so a status reader
+// falls back to the derived coarse phase instead of a fine phase stranded by a
+// gate that has already returned. It routes through enterPhase (the sole
+// PlanActivity writer, per the coverage-enforcement AST scan) with an empty
+// phase, so a gate can `defer clearActivity(...)` to guarantee its round is
+// cleared on EVERY exit — normal return, error, or panic unwinding. The write
+// error is intentionally dropped: a failed clear leaves the reader on a stale
+// fine phase for at most one status read, and there is no caller better placed
+// to react to it than the derived-truth fallback the projection already applies.
+func clearActivity(p *conductor.Project, planID string, now func() time.Time) {
+	_ = enterPhase(p, planID, "", "", 0, now)
 }

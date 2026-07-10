@@ -406,6 +406,9 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			pr = in.ControlRoot
 		}
 		gate := runReviewGate(reviewGateInput{
+			Project:           in.Project,
+			PlanID:            planID,
+			Now:               now,
 			Runner:            in.Runner,
 			Git:               in.Manager.Git,
 			ImplementerAgents: in.AgentIDs,

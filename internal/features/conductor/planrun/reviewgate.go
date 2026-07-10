@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"springfield/internal/core/agents"
 	"springfield/internal/core/config"
 	coreexec "springfield/internal/core/exec"
 	coreruntime "springfield/internal/core/runtime"
+	"springfield/internal/features/conductor"
 	"springfield/internal/features/conductor/planreview"
 	"springfield/internal/features/execution"
 	"springfield/internal/features/prd"
@@ -36,7 +38,16 @@ const (
 // reviewGateInput is everything the fix-loop needs. All dependencies (runner,
 // git) are injected so the gate is unit-testable with fakes.
 type reviewGateInput struct {
-	Ctx               context.Context
+	Ctx context.Context
+	// Project + PlanID + Now are the in-flight Activity plumbing: the gate
+	// stamps phase=reviewing with its round counter through enterPhase each
+	// round and defers a clear so leaving the gate (return/error/panic) never
+	// strands the reviewing phase. All three may be zero — a nil Project makes
+	// enterPhase a silent no-op, so a caller that does not wire progress (older
+	// tests) still runs the gate unchanged.
+	Project           *conductor.Project
+	PlanID            string
+	Now               func() time.Time
 	Runner            AgentRunner
 	Git               Git
 	ImplementerAgents []agents.ID
@@ -81,6 +92,13 @@ func runReviewGate(in reviewGateInput) reviewGateResult {
 		ctx = context.Background()
 	}
 
+	// Matched entry-stamp / exit-clear: every round stamps phase=reviewing (with
+	// its round counter) through enterPhase, and this deferred clear drops the
+	// fine signal on EVERY exit — pass/halt/errored return, or a panic unwinding
+	// through the loop — so the reviewing phase is never stranded after the gate
+	// hands control back. A reader then falls back to the derived coarse phase.
+	defer clearActivity(in.Project, in.PlanID, in.Now)
+
 	var criteria []string
 	for _, s := range in.PRD.UserStories {
 		criteria = append(criteria, s.AcceptanceCriteria...)
@@ -95,6 +113,11 @@ func runReviewGate(in reviewGateInput) reviewGateResult {
 		if err := ctx.Err(); err != nil {
 			return reviewGateResult{Outcome: reviewErrored, Err: err}
 		}
+		// Stamp the in-flight Activity BEFORE the reviewer runs so a concurrent
+		// status read observes phase=reviewing with this round. A save failure
+		// degrades to the derived coarse phase (Tier 1), never a lie, so it is a
+		// best-effort progress stamp and does not fail the gate.
+		_ = enterPhase(in.Project, in.PlanID, conductor.PhaseReviewing, "", round, in.Now)
 		// Warn if the worktree has uncommitted changes — the reviewer sees only
 		// the committed diff via baseRef...HEAD. The common trip-wire is a
 		// needs-human retry where the operator edited files but forgot to
