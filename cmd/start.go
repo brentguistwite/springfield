@@ -312,7 +312,7 @@ func NewStartCommand() *cobra.Command {
 				}
 				autoBranchOutcome = autobranch.OutcomeInterrupted
 				fmt.Fprintf(w, "Status: cost-capped\n")
-				fmt.Fprintf(w, "Spend: $%.2f (cap: $%.2f)\n", result.SpendUSD, costCap)
+				fmt.Fprintf(w, "Est. API cost: $%.2f (cap: $%.2f)\n", result.SpendUSD, costCap)
 				fmt.Fprintf(w, "Info: rerun with --cost-cap $Y to continue (Y > current spend) or remove claude from agent_priority to reduce spend\n")
 				return fmt.Errorf("batch %s halted by --cost-cap at $%.2f", b.ID, result.SpendUSD)
 			}
@@ -1525,7 +1525,7 @@ func runOnePlan(ctx context.Context, w io.Writer, project *conductor.Project, ro
 	if res.CostCapped {
 		fmt.Fprintf(w, "Plan: %s\n", res.PlanID)
 		fmt.Fprintf(w, "Status: cost-capped\n")
-		fmt.Fprintf(w, "Spend: $%.2f (cap: $%.2f)\n", res.SpendUSD, costCap)
+		fmt.Fprintf(w, "Est. API cost: $%.2f (cap: $%.2f)\n", res.SpendUSD, costCap)
 		fmt.Fprintf(w, "Info: rerun with --cost-cap $Y to continue (Y > current spend)\n")
 		// Persist run.CostCapped so the next \`springfield start\` triggers
 		// the resume guard. Without this, the operator could rerun without
