@@ -194,7 +194,7 @@ func buildPlan(id, title string, ps *conductor.PlanState, live bool, plan *prd.P
 		Review:      deriveReview(ps),
 		Merge:       deriveMerge(ps),
 		Integration: deriveIntegration(ps),
-		Activity:    deriveActivity(ps, live, plan),
+		Activity:    DeriveActivity(ps, live, plan),
 	}
 	if ps != nil {
 		pv.Branch = ps.Branch
@@ -243,9 +243,14 @@ func deriveVerify(ps *conductor.PlanState) VerifyView {
 	return vv
 }
 
-// deriveActivity projects the in-flight progress signal. It is surfaced ONLY
+// DeriveActivity projects the in-flight progress signal. It is surfaced ONLY
 // while the plan is running per ComposeStatus — a non-running plan yields nil
 // (explicit JSON null) so a stale phase from a prior run can never leak.
+//
+// Exported so the text status renderer (cmd/status.go) computes the in-flight
+// activity through the SAME projection the JSON view-model uses — like
+// ComposeStatus and ParallelInFlight, the two surfaces share one source of
+// truth and so cannot disagree about what a running plan is doing.
 //
 // Tier 1 (this story): the coarse phase is DERIVED from durable truth — the
 // plan's persisted prd.json passes pick the current story via the same
@@ -260,7 +265,7 @@ func deriveVerify(ps *conductor.PlanState) VerifyView {
 //
 // With neither a derivable current story nor a written Activity, it stays nil
 // (truthful silence) rather than inventing a phase.
-func deriveActivity(ps *conductor.PlanState, live bool, plan *prd.PRD) *ActivityView {
+func DeriveActivity(ps *conductor.PlanState, live bool, plan *prd.PRD) *ActivityView {
 	if ps == nil || ComposeStatus(ps, live) != StatusRunning {
 		return nil
 	}

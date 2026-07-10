@@ -150,8 +150,8 @@ func TestActive_IntegratedCountSplitsMergedAndRetained(t *testing.T) {
 
 func TestIdle_EnvelopeShape(t *testing.T) {
 	v := statusview.Idle()
-	if v.SchemaVersion != 1 {
-		t.Fatalf("schema_version = %d, want 1", v.SchemaVersion)
+	if v.SchemaVersion != 2 {
+		t.Fatalf("schema_version = %d, want 2", v.SchemaVersion)
 	}
 	if v.State != "idle" {
 		t.Fatalf("state = %q, want idle", v.State)
@@ -384,7 +384,7 @@ func TestActive_OnePlanProjection(t *testing.T) {
 	}
 	v := statusview.Active(in)
 
-	if v.State != "active" || v.SchemaVersion != 1 {
+	if v.State != "active" || v.SchemaVersion != 2 {
 		t.Fatalf("envelope = %s/%d", v.State, v.SchemaVersion)
 	}
 	if v.Batch == nil || v.Batch.Title != "Ship feature A" {
@@ -500,7 +500,7 @@ func TestActive_JSONShape(t *testing.T) {
 	}
 	// Contract keys that Flightdeck branches on must be present.
 	for _, key := range []string{
-		`"schema_version": 1`, `"state": "active"`, `"plans": [`,
+		`"schema_version": 2`, `"state": "active"`, `"plans": [`,
 		`"id": "p1"`, `"status": "pending"`, `"base_branch": ""`,
 		`"review": {`, `"verdict": null`, `"merge": {`, `"status": null`,
 		`"integration": {`, `"state": "clean"`,

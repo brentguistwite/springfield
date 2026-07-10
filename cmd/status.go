@@ -108,7 +108,7 @@ func NewStatusCommand() *cobra.Command {
 				}
 				return emitStatusJSON(cmd.OutOrStdout(), statusview.Active(in))
 			}
-			return printBatchStatus(cmd.OutOrStdout(), root, b, run, state, live)
+			return printBatchStatus(cmd.OutOrStdout(), root, b, run, state, live, loadPlanPRDs(root, units))
 		},
 	}
 
@@ -137,12 +137,12 @@ func loadPlanPRDs(root string, units []conductor.PlanUnit) map[string]prd.PRD {
 	return out
 }
 
-func printBatchStatus(w io.Writer, root string, b batch.Batch, run batch.Run, state *conductor.State, live bool) error {
+func printBatchStatus(w io.Writer, root string, b batch.Batch, run batch.Run, state *conductor.State, live bool, prds map[string]prd.PRD) error {
 	fmt.Fprintf(w, "Batch: %s\n", b.ID)
 	fmt.Fprintf(w, "Title: %s\n", b.Title)
 
 	if state != nil {
-		printProgressBlock(w, b, state, live)
+		printProgressBlock(w, b, state, live, prds)
 		printSpendLine(w, root, b.ID)
 	}
 
@@ -179,7 +179,13 @@ func printBatchStatus(w io.Writer, root string, b batch.Batch, run batch.Run, st
 // on a dead process is stalled in both, never "Next" in one and "stalled" in
 // the other). live reports whether a springfield process owns the control-plane
 // lock; the start-header caller passes live=true (the running start owns it).
-func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State, live bool) {
+//
+// prds carries each plan's persisted prd.json (keyed by plan ID) so the
+// per-running-plan in-flight activity line derives through the SAME
+// statusview.DeriveActivity projection the JSON view-model uses — the text and
+// JSON surfaces cannot disagree about what a running plan is doing. A nil/absent
+// entry simply yields no activity line (truthful silence).
+func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State, live bool, prds map[string]prd.PRD) {
 	p := batch.ComputeProgress(b, state)
 	fmt.Fprintf(w, "Plans: %d/%d integrated\n", p.DonePlans, p.TotalPlans)
 	if p.AllDone {
@@ -234,6 +240,24 @@ func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State, live
 			label = "parallel"
 		}
 		fmt.Fprintf(w, "Current: %s (%s)\n", strings.Join(running, ", "), label)
+		// In-flight activity, one line per running plan that has a derivable
+		// current-activity. Routed through statusview.DeriveActivity so the text
+		// line and the JSON `activity` card are the same projection — never a
+		// stale or divergent phase. A plan with no derivable activity (no PRD, no
+		// written stamp) prints no line rather than an invented one.
+		for _, id := range running {
+			var ps *conductor.PlanState
+			if state != nil {
+				ps = state.Plans[id]
+			}
+			var plan *prd.PRD
+			if p, ok := prds[id]; ok {
+				plan = &p
+			}
+			if av := statusview.DeriveActivity(ps, live, plan); av != nil {
+				fmt.Fprintf(w, "  %s: %s\n", id, formatActivity(av))
+			}
+		}
 	case len(stalled) > 0:
 		fmt.Fprintf(w, "Stalled: %s (no running springfield process — run \"springfield recover\")\n", strings.Join(stalled, ", "))
 	}
@@ -259,6 +283,24 @@ func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State, live
 	if len(pending) > 0 && (len(running) > 0 || !blocked) {
 		fmt.Fprintf(w, "Next: %s\n", pending[0])
 	}
+}
+
+// formatActivity renders an in-flight ActivityView as a compact one-liner for
+// the text status surface: the coarse phase, then the optional detail (the
+// current story / human phrase), then the optional fine round counter. It reads
+// the same structured fields a JSON consumer sees, so the two surfaces convey
+// identical content — e.g. "implementing US-001 (round 3)", "reviewing (round
+// 2)", or bare "merging". Round is shown only when positive (the gates omit it
+// until a round has begun).
+func formatActivity(av *statusview.ActivityView) string {
+	out := av.Phase
+	if av.Detail != "" {
+		out += " " + av.Detail
+	}
+	if av.Round > 0 {
+		out += fmt.Sprintf(" (round %d)", av.Round)
+	}
+	return out
 }
 
 // batchHasFailedPlan reports whether any plan in the batch is still in a

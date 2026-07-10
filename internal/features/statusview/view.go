@@ -9,7 +9,8 @@ import "time"
 
 // SchemaVersion is the contract version. Adding fields is a non-breaking
 // bump; removing/renaming requires an increment so consumers can branch.
-const SchemaVersion = 1
+// v2 added the per-plan in-flight [ActivityView] card (additive).
+const SchemaVersion = 2
 
 // Public board-status enum. A total projection of conductor.PlanStatus
 // composed with merge outcome.
