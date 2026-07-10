@@ -62,8 +62,8 @@ func TestPrintOrphanStatusOmitsSpend(t *testing.T) {
 		t.Errorf("expected cost-capped on orphan, got:\n%s", out)
 	}
 	// Orphan output must NOT include a $ figure for spend (evidence gone).
-	if strings.Contains(out, "Spend:") {
-		t.Errorf("orphan output should not contain Spend line, got:\n%s", out)
+	if strings.Contains(out, "Est. API cost:") {
+		t.Errorf("orphan output should not contain cost line, got:\n%s", out)
 	}
 }
 
@@ -101,7 +101,7 @@ func TestPrintBatchStatusSpendLineMultiAdapter(t *testing.T) {
 	if claudeIdx > codexIdx {
 		t.Errorf("adapters not alphabetized: claude at %d, codex at %d in: %s", claudeIdx, codexIdx, out)
 	}
-	if !strings.Contains(out, "Spend: $1.25") {
+	if !strings.Contains(out, "Est. API cost: $1.25") {
 		t.Errorf("expected combined total $1.25, got: %s", out)
 	}
 }
@@ -133,8 +133,8 @@ func TestPrintBatchStatusSpendLineRenders(t *testing.T) {
 	// state non-nil required to enter printSpendLine path.
 	_ = printBatchStatus(&buf, root, b, batch.Run{ActiveBatchID: "test-1"}, conductor.NewState(), true)
 	out := buf.String()
-	if !strings.Contains(out, "Spend:") {
-		t.Errorf("expected Spend: line, got:\n%s", out)
+	if !strings.Contains(out, "Est. API cost:") {
+		t.Errorf("expected Est. API cost: line, got:\n%s", out)
 	}
 	if !strings.Contains(out, "0.42") {
 		t.Errorf("expected dollar figure in spend, got:\n%s", out)

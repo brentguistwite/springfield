@@ -303,8 +303,8 @@ func Active(in ActiveInput) View {
 }
 
 // pricedAdapters drops adapters with no positive cost so the JSON per_adapter
-// breakdown matches the text "Spend:" line, which skips amount <= 0 entries
-// (cost.formatSpendLine). An unpriced adapter (e.g. gemini, CostUSD==0) is
+// breakdown matches the text "Est. API cost:" line, which skips amount <= 0
+// entries (formatSpendLine). An unpriced adapter (e.g. gemini, CostUSD==0) is
 // recorded as a zero entry by the rollup but carries no cost data; it is
 // surfaced via unpriced_runs, not as a $0.00 attribution. Returns nil when
 // nothing is priced, so omitempty drops the field entirely.

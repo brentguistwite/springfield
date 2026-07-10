@@ -263,10 +263,10 @@ func batchHasFailedPlan(b batch.Batch, state *conductor.State) bool {
 	return false
 }
 
-// printSpendLine emits a "Spend:" line summarizing per-adapter cost rolled
-// up from the live evidence directories. When ComputeRollup returns no
+// printSpendLine emits an "Est. API cost:" line summarizing per-adapter cost
+// rolled up from the live evidence directories. When ComputeRollup returns no
 // iterations (fresh batch, no cost.json files yet), the line is omitted
-// — there is nothing to display, not "Spend: $0.00".
+// — there is nothing to display, not "Est. API cost: $0.00".
 func printSpendLine(w io.Writer, root, batchID string) {
 	r, err := cost.ComputeRollup(root, batchID)
 	if err != nil || r.Iterations == 0 {
@@ -275,10 +275,11 @@ func printSpendLine(w io.Writer, root, batchID string) {
 	fmt.Fprintln(w, formatSpendLine(r))
 }
 
-// formatTotalSpendLine renders the end-of-batch "Total spend:" line shown
-// after Status: completed. Same structure as formatSpendLine but with the
-// "Total spend:" label and an unpriced hint that names gemini as the most
-// likely culprit (the only adapter without cost capture in v1).
+// formatTotalSpendLine renders the end-of-batch "Est. API-equivalent cost:"
+// line shown after Status: completed. Same structure as formatSpendLine but
+// with the batch-total label, an unpriced hint that names gemini as the most
+// likely culprit (the only adapter without cost capture in v1), and a trailing
+// note that subscription usage carries no per-run charge.
 func formatTotalSpendLine(r cost.Rollup) string {
 	adapters := make([]string, 0, len(r.PerAdapter))
 	for name, amount := range r.PerAdapter {
@@ -294,7 +295,7 @@ func formatTotalSpendLine(r cost.Rollup) string {
 		parts = append(parts, fmt.Sprintf("%s $%.2f", name, r.PerAdapter[name]))
 	}
 
-	out := fmt.Sprintf("Total spend: $%.2f", r.TotalUSD)
+	out := fmt.Sprintf("Est. API-equivalent cost: $%.2f", r.TotalUSD)
 	if len(parts) > 0 {
 		out += " (" + strings.Join(parts, ", ") + ")"
 	}
@@ -308,10 +309,14 @@ func formatTotalSpendLine(r cost.Rollup) string {
 		}
 		out += fmt.Sprintf(" (%d %s skipped — totals may under-count)", r.SkippedFiles, noun)
 	}
+	// This figure is what the tokens would cost at published API rates, not a
+	// bill. Phrased conditionally so it's honest for both cases: subscription
+	// users aren't charged for it; genuine API-billed users are.
+	out += " — this is the API-rate cost; you're not charged for it if you're on a Claude/Codex subscription"
 	return out
 }
 
-// formatSpendLine renders the Spend: line. Per-adapter breakdown is sorted
+// formatSpendLine renders the Est. API cost: line. Per-adapter breakdown is sorted
 // by adapter name for deterministic output. Adapters with zero cost are
 // omitted from the parenthetical. When the rollup includes unpriced runs,
 // "(N unpriced)" is appended. When the rollup encountered unreadable
@@ -332,7 +337,7 @@ func formatSpendLine(r cost.Rollup) string {
 		parts = append(parts, fmt.Sprintf("%s $%.2f", name, r.PerAdapter[name]))
 	}
 
-	out := fmt.Sprintf("Spend: $%.2f", r.TotalUSD)
+	out := fmt.Sprintf("Est. API cost: $%.2f", r.TotalUSD)
 	if len(parts) > 0 {
 		out += " (" + strings.Join(parts, ", ") + ")"
 	}
