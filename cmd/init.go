@@ -126,6 +126,18 @@ func NewInitCommand() *cobra.Command {
 					fmt.Fprintln(cmd.OutOrStdout(), "Added Springfield patterns to .gitignore")
 				}
 			} else {
+				// Default mode never edits a tracked .gitignore, but a
+				// pre-existing Springfield block there (older
+				// --tracked-gitignore init, or added by hand) now duplicates
+				// the patterns we write to info/exclude. Warn so the operator
+				// knows about the second, unmanaged source of truth — we still
+				// leave the tracked file byte-unchanged.
+				if trackedGitignoreHasSpringfieldBlock(dir) {
+					fmt.Fprintln(cmd.ErrOrStderr(),
+						"warning: tracked .gitignore already carries a Springfield block; leaving it unchanged "+
+							"(patterns written to .git/info/exclude). Remove the tracked block, or re-run with "+
+							"--tracked-gitignore if you own this repo.")
+				}
 				if added, err := config.EnsureSpringfieldExclude(dir); err != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to update .git/info/exclude: %v\n", err)
 				} else if added {
@@ -389,6 +401,32 @@ func ensureSpringfieldGitignore(dir string) (added bool, err error) {
 		return false, fmt.Errorf("write .gitignore: %w", err)
 	}
 	return true, nil
+}
+
+// trackedGitignoreHasSpringfieldBlock reports whether <dir>/.gitignore already
+// carries a Springfield-managed ignore pattern. Detection keys off the pattern
+// (.springfield) rather than the header comment so a hand-written block — or one
+// left behind by an older --tracked-gitignore init — is caught too. A missing or
+// unreadable .gitignore reports false: there is nothing to warn about.
+func trackedGitignoreHasSpringfieldBlock(dir string) bool {
+	data, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		stripped := strings.TrimSpace(line)
+		if idx := strings.Index(stripped, "#"); idx >= 0 {
+			stripped = strings.TrimSpace(stripped[:idx])
+		}
+		if stripped == "" {
+			continue
+		}
+		norm := normalizeGitignorePattern(stripped)
+		if norm == ".springfield" || strings.HasPrefix(norm, ".springfield/") {
+			return true
+		}
+	}
+	return false
 }
 
 // stripGitignoreLine removes lines whose normalized pattern matches target.
