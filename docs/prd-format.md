@@ -24,6 +24,7 @@ Full example with field-by-field commentary:
       "description": "Bootstrap the auth package and wire one login endpoint.",
       "context_md": "Project uses TypeScript + Bun. Follow existing test patterns in src/auth/__tests__.",
       "review": true,
+      "verify": {"command": "bun test", "enabled": true},
       "user_stories": [
         {
           "id": "US-001",
@@ -64,6 +65,7 @@ Field reference:
 | `plans[].description` | string | no | One-paragraph task summary passed to the agent prompt. |
 | `plans[].context_md` | string | no | Plan-specific context injected into the agent prompt. Project-wide guidance (root `AGENTS.md` / `CLAUDE.md` / `GEMINI.md`) is auto-loaded by the runner — do **not** duplicate it here. Max 256 KB (hard error). Warn if > 32 KB. |
 | `plans[].review` | boolean | no | Per-plan pre-merge review toggle. Omit to inherit the project default (`[review].enabled` in `springfield.local.toml`). `true` forces review on for this plan even when globally disabled; `false` suppresses it even when globally enabled. See [Per-plan review toggle](#per-plan-review-toggle). |
+| `plans[].verify` | object | no | Per-plan `{command, enabled}` override for the verify completion gate. Omit to inherit the global `[verify]` block in `springfield.toml`. A non-empty `command` replaces the global command; `enabled` (`true`/`false`) forces the gate on/off for this plan in either direction. See [Per-plan verify override](#per-plan-verify-override). |
 | `plans[].user_stories` | array | yes | Ordered list of stories. At least one required (hard error if empty). |
 | `user_stories[].id` | string | yes | Story identifier matching `^US-\d{3,}$` (hard error otherwise — runtime marker scanner only matches this shape). |
 | `user_stories[].title` | string | yes | One-line story title. |
@@ -126,6 +128,34 @@ The optional `plans[].review` field controls whether Springfield runs pre-merge 
 Per-plan values always win over the global default in both directions. The global review configuration lives in `springfield.local.toml` (git-ignored, per-operator) beside `springfield.toml`; a missing local file is equivalent to `[review] enabled = false`, so review is opt-in by default.
 
 When `omitempty` strips the field from `prd.json`, the runner re-reads it as the inherit case. Set `false` explicitly to lock review off for a plan regardless of how a teammate has the global flag set.
+
+### Per-plan verify override
+
+The verify gate requires a command (e.g. `go test ./...`) to exit 0 before a plan is honored complete. On a non-zero exit the runner drives a capped implementer fix loop, escalating to `needs-human` if the budget is exhausted. It runs **before** the review gate, so a reviewer still sees the diff (and can catch a gutted or `.skip`-ed test suite). The gate is opt-in: a project with no `[verify]` command configured keeps its prior marker-only completion behavior unchanged.
+
+**Global block (`springfield.toml`).** Unlike `[review]` (which lives in the git-ignored `springfield.local.toml` because it may reference personal skills), the verify command is team-shareable and belongs in the committed config:
+
+```toml
+[verify]
+enabled = true                 # opt-in master switch; default false
+command = "go test ./..."      # run via `sh -c` in the worktree root; must exit 0
+timeout = "20m"                # per-round wall-clock ceiling (Go duration); default 20m
+max_verify_iterations = 3      # fix-loop budget before needs-human; default 3
+```
+
+A missing `[verify]` block, or `enabled = true` with no `command`, leaves the gate inert.
+
+**Per-plan override (`plans[].verify`).** The envelope carries a `{command, enabled}` object; each field resolves independently and per-plan wins over the global block:
+
+| Field | Resolved behavior |
+|-------|-------------------|
+| `command` omitted / empty | Inherit the global `[verify].command`. |
+| `command` non-empty | Replace the global command for this plan only. |
+| `enabled` omitted | Inherit the global `[verify].enabled`. |
+| `enabled: true` | Force the gate on for this plan, even when globally disabled. |
+| `enabled: false` | Force the gate off for this plan, even when globally enabled — the escape hatch for a plan whose work legitimately can't pass the shared command yet. |
+
+`timeout` and `max_verify_iterations` are not per-plan overridable — they always resolve from the global block. When `omitempty` strips the `verify` object from `prd.json`, the runner re-reads it as the full inherit case.
 
 ### `context_md` scope
 

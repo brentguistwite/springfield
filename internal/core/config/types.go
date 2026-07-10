@@ -40,6 +40,10 @@ type Config struct {
 	Agents  AgentsConfig          `toml:"agents"`
 	Plans   map[string]PlanConfig `toml:"plans"`
 	Start   StartConfig           `toml:"start"`
+	// Verify is the [verify] completion-gate block. Zero value (Enabled=false)
+	// leaves the gate off, so marker-only completion behavior is unchanged for
+	// projects that omit it. See VerifyConfig and ResolveVerify.
+	Verify VerifyConfig `toml:"verify"`
 }
 
 // StartConfig holds settings for the start command.
