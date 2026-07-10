@@ -623,7 +623,7 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 			AgentIDs:             agentIDs,
 			ExecutionSettings:    loaded.Config.ExecutionSettings(),
 			ReviewConfig:         local.Review,
-		VerifyConfig:         loaded.Config.Verify,
+			VerifyConfig:         loaded.Config.Verify,
 			Runner:               runtimeAgentRunner{coreruntime.NewRunner(registry)},
 			Manager:              planrun.NewManager(),
 			OnEvent:              traceHandler,
