@@ -5,6 +5,8 @@
 // enum mapping.
 package statusview
 
+import "time"
+
 // SchemaVersion is the contract version. Adding fields is a non-breaking
 // bump; removing/renaming requires an increment so consumers can branch.
 const SchemaVersion = 1
@@ -80,6 +82,22 @@ type PlanView struct {
 	EvidencePath string          `json:"evidence_path"`
 	Merge        MergeView       `json:"merge"`
 	Integration  IntegrationView `json:"integration"`
+	// Activity is the in-flight progress card. It is explicit null for any plan
+	// that is not running — the contract degrades to silence rather than show a
+	// stale phase (see [ActivityView]).
+	Activity *ActivityView `json:"activity"`
+}
+
+// ActivityView is the in-flight progress card: what a running plan is doing
+// right now. It is null for any plan not in the running state — a stale phase
+// is worse than none, so the projection drops it off the running path. phase is
+// the coarse lifecycle stage (implementing / reviewing / verifying / merging);
+// detail is an optional human phrase; round is the per-phase fine counter.
+type ActivityView struct {
+	Phase     string    `json:"phase"`
+	Detail    string    `json:"detail,omitempty"`
+	Round     int       `json:"round,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // IntegrationView is a rollup of post-merge disposition so a consumer can

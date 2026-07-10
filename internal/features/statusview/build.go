@@ -185,6 +185,7 @@ func buildPlan(id, title string, ps *conductor.PlanState, live bool) PlanView {
 		Review:      deriveReview(ps),
 		Merge:       deriveMerge(ps),
 		Integration: deriveIntegration(ps),
+		Activity:    deriveActivity(ps, live),
 	}
 	if ps != nil {
 		pv.Branch = ps.Branch
@@ -231,6 +232,25 @@ func deriveVerify(ps *conductor.PlanState) VerifyView {
 		vv.Reason = &reason
 	}
 	return vv
+}
+
+// deriveActivity projects the in-flight progress signal. It is surfaced ONLY
+// while the plan is running per ComposeStatus — a non-running plan yields nil
+// (explicit JSON null) so a stale phase from a prior run can never leak. When
+// running with no stamped activity yet, it stays nil (truthful silence). The
+// coarse-phase derivation and fine counters are filled in by later stories;
+// this is the contract wiring.
+func deriveActivity(ps *conductor.PlanState, live bool) *ActivityView {
+	if ps == nil || ComposeStatus(ps, live) != StatusRunning || ps.Activity == nil {
+		return nil
+	}
+	a := ps.Activity
+	return &ActivityView{
+		Phase:     a.Phase,
+		Detail:    a.Detail,
+		Round:     a.Round,
+		UpdatedAt: a.UpdatedAt,
+	}
 }
 
 func deriveMerge(ps *conductor.PlanState) MergeView {
