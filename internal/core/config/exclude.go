@@ -19,9 +19,12 @@ const springfieldExcludeMarker = "# springfield: team-repo-safe ignore (git info
 // springfieldExcludeBlock is the team-safe ignore set written to info/exclude.
 // Unlike the tracked-.gitignore block it uses a plain `.springfield/` directory
 // ignore (no plans/ negation): in team-safe mode nothing under .springfield/ is
-// committed, so there is nothing to un-ignore.
+// committed, so there is nothing to un-ignore. It also covers springfield.toml
+// itself — in a repo the operator does not own the config file stays local-only,
+// so a team-safe init never leaves it as an untracked file.
 const springfieldExcludeBlock = springfieldExcludeMarker + `
 .springfield/
+springfield.toml
 springfield.local.toml
 `
 

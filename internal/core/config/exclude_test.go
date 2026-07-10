@@ -43,10 +43,34 @@ func TestEnsureSpringfieldExcludeCreatesFileInRepo(t *testing.T) {
 	if !strings.Contains(body, springfieldExcludeMarker) {
 		t.Fatalf("exclude missing marker; got:\n%s", body)
 	}
-	for _, pat := range []string{".springfield/", "springfield.local.toml"} {
+	for _, pat := range []string{".springfield/", "springfield.toml", "springfield.local.toml"} {
 		if !strings.Contains(body, pat) {
 			t.Fatalf("exclude missing pattern %q; got:\n%s", pat, body)
 		}
+	}
+}
+
+// TestEnsureSpringfieldExcludeYieldsCleanStatus is the US-003 acceptance pin:
+// after a team-safe init writes springfield.toml (plus .springfield/) and the
+// exclude block, `git status --porcelain` must be empty. If springfield.toml
+// were not covered by the team-safe ignore set, git would report it as an
+// untracked file — dirtying a repo the operator does not own and later tripping
+// preflight-dirty-source.
+func TestEnsureSpringfieldExcludeYieldsCleanStatus(t *testing.T) {
+	dir := t.TempDir()
+	gitInit(t, dir)
+
+	// Team-safe init writes springfield.toml and creates .springfield/.
+	if _, err := Init(dir, []string{"claude"}, InitOptions{}); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if _, err := EnsureSpringfieldExclude(dir); err != nil {
+		t.Fatalf("EnsureSpringfieldExclude: %v", err)
+	}
+
+	status := runGit(t, dir, "status", "--porcelain")
+	if strings.TrimSpace(status) != "" {
+		t.Fatalf("git status not clean after team-safe init; got:\n%s", status)
 	}
 }
 
