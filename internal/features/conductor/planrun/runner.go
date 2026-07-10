@@ -475,6 +475,15 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		_ = AppendProgress(progressPath, fmt.Sprintf("%s iteration %d start (story=%s)",
 			now().UTC().Format(time.RFC3339), iter, story.ID))
 
+		// Stamp the in-flight Activity BEFORE dispatching the agent so a
+		// concurrent status read observes phase=implementing with this
+		// iteration's story + round. A save failure degrades to the derived
+		// coarse phase (Tier 1), never a lie, so it warns rather than fails.
+		if err := enterPhase(in.Project, planID, conductor.PhaseImplementing, story.ID, iter, now); err != nil {
+			_ = AppendProgress(progressPath, fmt.Sprintf("%s WARN: activity stamp failed iter %d: %v",
+				now().UTC().Format(time.RFC3339), iter, err))
+		}
+
 		// Snapshot control-plane state before dispatching the agent.
 		if in.TamperGuard != nil {
 			if snapErr := in.TamperGuard.Snapshot(); snapErr != nil {

@@ -125,6 +125,18 @@ type PlanActivity struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// The coarse Activity phases. This is the authoritative vocabulary for
+// [PlanActivity.Phase], single-sourced here (the home of PlanActivity) so the
+// write side (the runner's enterPhase funnel) and the derive side (the status
+// projection) cannot disagree on a literal — an agreement the contradiction-
+// suppression backstop relies on.
+const (
+	PhaseImplementing = "implementing"
+	PhaseReviewing    = "reviewing"
+	PhaseVerifying    = "verifying"
+	PhaseMerging      = "merging"
+)
+
 // RecoveryAction is one durable record of a recovery operation performed on a plan.
 type RecoveryAction struct {
 	Action string    `json:"action"`

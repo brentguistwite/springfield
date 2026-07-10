@@ -14,7 +14,9 @@ import (
 // running plan is in while working stories, before it enters a gate. It is the
 // phase reported for the Tier-1 derived current story (the gate phases —
 // reviewing / verifying / merging — are stamped by later stories' writes).
-const phaseImplementing = "implementing"
+// Aliased to the single-sourced vocabulary in conductor so the derive side
+// (here) and the write side (the runner's enterPhase funnel) cannot drift.
+const phaseImplementing = conductor.PhaseImplementing
 
 // Idle is the view when no batch is active (the plan-registry case).
 func Idle() View {
