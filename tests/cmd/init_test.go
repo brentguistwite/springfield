@@ -521,6 +521,37 @@ func TestInitBranchModeFlagsWriteProjectKeys(t *testing.T) {
 	}
 }
 
+// TestInitTwiceBranchModeFlagsNotDuplicated is the flags half of the US-007
+// idempotency pin: re-running init with --branch-mode/--base-branch must leave
+// exactly one branch_mode and one base_branch key in [project]. Re-init loads
+// springfield.toml into a struct and re-marshals it, so duplicate keys are
+// structurally impossible today — this locks that "re-serialize, don't append"
+// contract at the binary boundary so a future string-append config writer can't
+// silently regress it.
+func TestInitTwiceBranchModeFlagsNotDuplicated(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	args := []string{"init", "--agents", "claude", "--branch-mode", "per-plan", "--base-branch", "main"}
+	if out, err := runBinaryIn(t, bin, dir, args...); err != nil {
+		t.Fatalf("first init: %v\n%s", err, out)
+	}
+	if out, err := runBinaryIn(t, bin, dir, args...); err != nil {
+		t.Fatalf("second init: %v\n%s", err, out)
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, "springfield.toml"))
+	if err != nil {
+		t.Fatalf("read springfield.toml: %v", err)
+	}
+	toml := string(content)
+	for _, key := range []string{"branch_mode =", "base_branch ="} {
+		if n := strings.Count(toml, key); n != 1 {
+			t.Errorf("key %q appears %d times after re-init, want exactly 1; config:\n%s", key, n, toml)
+		}
+	}
+}
+
 // TestInitInvalidBranchModeExitsNonZero verifies an out-of-range --branch-mode
 // aborts init with a clear message and a non-zero exit, leaving no config.
 func TestInitInvalidBranchModeExitsNonZero(t *testing.T) {
