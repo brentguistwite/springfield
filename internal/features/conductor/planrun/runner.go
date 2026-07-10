@@ -362,6 +362,9 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			}
 			vgate := runVerifyGate(verifyGateInput{
 				Ctx:               in.Ctx,
+				Project:           in.Project,
+				PlanID:            planID,
+				Now:               now,
 				Command:           vcmd,
 				Runner:            in.Runner,
 				ImplementerAgents: in.AgentIDs,

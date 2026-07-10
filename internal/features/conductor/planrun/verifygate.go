@@ -8,6 +8,7 @@ import (
 	"springfield/internal/core/agents"
 	coreexec "springfield/internal/core/exec"
 	coreruntime "springfield/internal/core/runtime"
+	"springfield/internal/features/conductor"
 	"springfield/internal/features/prd"
 	"springfield/internal/features/verify"
 )
@@ -35,7 +36,16 @@ const (
 // Timeout, and MaxIterations are the already-resolved effective values (see
 // config.ResolveVerify) — the gate does not re-derive defaults.
 type verifyGateInput struct {
-	Ctx               context.Context
+	Ctx context.Context
+	// Project + PlanID + Now are the in-flight Activity plumbing, mirroring the
+	// review gate: each round the gate stamps phase=verifying with its round
+	// counter through enterPhase and defers a clear so leaving the gate
+	// (return/error/panic) never strands the verifying phase. All three may be
+	// zero — a nil Project makes enterPhase a silent no-op, so a caller that does
+	// not wire progress (older tests) still runs the gate unchanged.
+	Project           *conductor.Project
+	PlanID            string
+	Now               func() time.Time
 	Command           verifyCommandFunc
 	Runner            AgentRunner
 	ImplementerAgents []agents.ID
@@ -83,6 +93,14 @@ func runVerifyGate(in verifyGateInput) verifyGateResult {
 		ctx = context.Background()
 	}
 
+	// Matched entry-stamp / exit-clear, identical to the review gate: every round
+	// stamps phase=verifying (with its round counter) through enterPhase, and this
+	// deferred clear drops the fine signal on EVERY exit — pass/needs-human/errored
+	// return, or a panic unwinding through the loop — so the verifying phase is
+	// never stranded after the gate hands control back. A reader then falls back to
+	// the derived coarse phase.
+	defer clearActivity(in.Project, in.PlanID, in.Now)
+
 	req := verify.Request{
 		Command: in.VerifyCommand,
 		Dir:     in.WorktreeRoot,
@@ -95,6 +113,12 @@ func runVerifyGate(in verifyGateInput) verifyGateResult {
 		if err := ctx.Err(); err != nil {
 			return verifyGateResult{Outcome: verifyErrored, Err: err}
 		}
+
+		// Stamp the in-flight Activity BEFORE the command runs so a concurrent
+		// status read observes phase=verifying with this round. A save failure
+		// degrades to the derived coarse phase (Tier 1), never a lie, so it is a
+		// best-effort progress stamp and does not fail the gate.
+		_ = enterPhase(in.Project, in.PlanID, conductor.PhaseVerifying, "", round, in.Now)
 
 		res := in.Command(ctx, req)
 		if _, wErr := verify.WriteEvidence(in.EvidenceDir, round, req, res); wErr != nil && in.OnEvent != nil {
