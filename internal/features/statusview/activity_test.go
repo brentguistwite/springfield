@@ -7,23 +7,32 @@ import (
 
 	"springfield/internal/features/batch"
 	"springfield/internal/features/conductor"
+	"springfield/internal/features/prd"
 	"springfield/internal/features/statusview"
 )
 
 func activityInput(ps *conductor.PlanState, live bool) statusview.ActiveInput {
+	return activityInputWithPRD(ps, live, nil)
+}
+
+func activityInputWithPRD(ps *conductor.PlanState, live bool, p *prd.PRD) statusview.ActiveInput {
 	b := batch.Batch{
 		ID:      "b",
 		Title:   "T",
 		PlanIDs: []string{"p1"},
 		Phases:  []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"p1"}}},
 	}
-	return statusview.ActiveInput{
+	in := statusview.ActiveInput{
 		Batch: b,
 		Run:   batch.Run{ActiveBatchID: "b"},
 		State: &conductor.State{Plans: map[string]*conductor.PlanState{"p1": ps}},
 		Units: []conductor.PlanUnit{{ID: "p1", Title: "Plan 1"}},
 		Live:  live,
 	}
+	if p != nil {
+		in.PRDs = map[string]prd.PRD{"p1": *p}
+	}
+	return in
 }
 
 // TestActive_ActivityPresentWhenRunning locks the running-plan projection: a
@@ -103,6 +112,58 @@ func TestActive_ActivityNullWhenStalled(t *testing.T) {
 	}
 	if got := v.Plans[0].Activity; got != nil {
 		t.Fatalf("stalled plan must project null Activity, got %+v", got)
+	}
+}
+
+// TestActive_DerivedCurrentStoryFromPRD is the Tier-1 guarantee: with ZERO writes
+// to PlanState.Activity, the projection derives the coarse phase's current story
+// straight from the persisted prd.json passes — and flipping a story's passes
+// moves the derived current story, proving it tracks durable truth (can't go
+// stale) rather than a written value.
+func TestActive_DerivedCurrentStoryFromPRD(t *testing.T) {
+	p := prd.PRD{UserStories: []prd.UserStory{
+		{ID: "US-001", Priority: 1, Passes: false},
+		{ID: "US-002", Priority: 2, Passes: false},
+	}}
+	ps := &conductor.PlanState{Status: conductor.StatusRunning}
+
+	v := statusview.Active(activityInputWithPRD(ps, true, &p))
+	got := v.Plans[0].Activity
+	if got == nil {
+		t.Fatal("derived Activity must be present for a running plan with a PRD")
+	}
+	if got.Phase != "implementing" {
+		t.Fatalf("derived coarse phase = %q, want implementing", got.Phase)
+	}
+	if got.Detail != "US-001" {
+		t.Fatalf("derived current story = %q, want US-001", got.Detail)
+	}
+	// ZERO writes: derivation must not mutate the persisted Activity.
+	if ps.Activity != nil {
+		t.Fatalf("derivation wrote to PlanState.Activity: %+v", ps.Activity)
+	}
+
+	// Flip the durable truth: US-001 now passes → current story moves to US-002.
+	p.UserStories[0].Passes = true
+	v = statusview.Active(activityInputWithPRD(ps, true, &p))
+	got = v.Plans[0].Activity
+	if got == nil || got.Detail != "US-002" {
+		t.Fatalf("after passing US-001, derived current story = %v, want US-002", got)
+	}
+	if ps.Activity != nil {
+		t.Fatalf("derivation wrote to PlanState.Activity: %+v", ps.Activity)
+	}
+}
+
+// TestActive_DerivedSilentWhenAllStoriesPassed keeps the projection truthful when
+// no story is eligible (all passed / blocked): with no written Activity, there is
+// no current story to derive, so Activity stays null rather than inventing one.
+func TestActive_DerivedSilentWhenAllStoriesPassed(t *testing.T) {
+	p := prd.PRD{UserStories: []prd.UserStory{{ID: "US-001", Passes: true}}}
+	ps := &conductor.PlanState{Status: conductor.StatusRunning}
+	v := statusview.Active(activityInputWithPRD(ps, true, &p))
+	if got := v.Plans[0].Activity; got != nil {
+		t.Fatalf("no eligible story + no write must project null Activity, got %+v", got)
 	}
 }
 

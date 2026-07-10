@@ -93,41 +93,16 @@ func DiagnosePlanWithPRD(project *Project, planID string, wt *WorktreeInspection
 	return d
 }
 
-// nextStoryID returns the ID of the next eligible story using the same
-// eligibility logic as planrun.NextStory, without importing planrun (which
-// would create a cycle). Priority sort: lower number = higher priority;
-// tiebreak lexicographically by ID.
+// nextStoryID returns the ID of the next eligible story. The eligibility rule is
+// single-sourced in prd.NextEligibleStory (shared with planrun.NextStory and the
+// status projection) so this diagnosis view cannot disagree with the runner about
+// which story is current.
 func nextStoryID(p prd.PRD) (string, bool) {
-	passed := make(map[string]bool, len(p.UserStories))
-	for _, s := range p.UserStories {
-		if s.Passes {
-			passed[s.ID] = true
-		}
-	}
-	var best *prd.UserStory
-	for i := range p.UserStories {
-		s := &p.UserStories[i]
-		if s.Passes {
-			continue
-		}
-		depsOK := true
-		for _, dep := range s.Deps {
-			if !passed[dep] {
-				depsOK = false
-				break
-			}
-		}
-		if !depsOK {
-			continue
-		}
-		if best == nil || s.Priority < best.Priority || (s.Priority == best.Priority && s.ID < best.ID) {
-			best = s
-		}
-	}
-	if best == nil {
+	s, ok := prd.NextEligibleStory(p)
+	if !ok {
 		return "", false
 	}
-	return best.ID, true
+	return s.ID, true
 }
 
 // DiagnosePlan builds a diagnosis for one plan. The optional worktree inspection

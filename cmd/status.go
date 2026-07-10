@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -15,6 +16,7 @@ import (
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/cost"
 	"springfield/internal/features/execution"
+	"springfield/internal/features/prd"
 	"springfield/internal/features/statusview"
 )
 
@@ -102,6 +104,7 @@ func NewStatusCommand() *cobra.Command {
 					HasRollup:  rollupErr == nil && rollup.Iterations > 0,
 					FatalError: effectiveFatalError,
 					Live:       live,
+					PRDs:       loadPlanPRDs(root, units),
 				}
 				return emitStatusJSON(cmd.OutOrStdout(), statusview.Active(in))
 			}
@@ -112,6 +115,26 @@ func NewStatusCommand() *cobra.Command {
 	cmd.Flags().StringVar(&dir, "dir", ".", "project root or nested path inside the Springfield project")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit machine-readable JSON (stable view-model for tooling)")
 	return cmd
+}
+
+// loadPlanPRDs reads each plan's persisted prd.json so the projection can derive
+// the in-flight coarse phase (the current story) from durable truth. It is
+// best-effort by design: a legacy .md plan-unit path or a missing/malformed
+// prd.json is simply skipped, so the plan gets no derived current story rather
+// than a fabricated one — the derivation degrades to silence, never a lie.
+func loadPlanPRDs(root string, units []conductor.PlanUnit) map[string]prd.PRD {
+	out := make(map[string]prd.PRD, len(units))
+	for _, u := range units {
+		if filepath.Base(u.Path) != "prd.json" {
+			continue
+		}
+		p, err := prd.ParseFile(filepath.Join(root, u.Path))
+		if err != nil {
+			continue
+		}
+		out[u.ID] = p
+	}
+	return out
 }
 
 func printBatchStatus(w io.Writer, root string, b batch.Batch, run batch.Run, state *conductor.State, live bool) error {
