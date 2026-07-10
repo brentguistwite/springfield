@@ -10,7 +10,15 @@ import (
 
 	"springfield/internal/features/conductor/planrun/prompts"
 	"springfield/internal/features/prd"
+	"springfield/internal/features/verify"
 )
+
+// verifyPromptTailBytes caps each captured stream embedded in a verify-fix
+// prompt. The evidence writer keeps a far larger tail on disk (256KB) because
+// disk is cheap; a prompt must stay small so the failure transcript does not
+// crowd out the agent's context. The actionable failure is at the END of a
+// verify transcript, so oversized streams are truncated from the front.
+const verifyPromptTailBytes = 8 * 1024
 
 // promptData is the template data shape shared by both header and footer
 // templates. Footer templates receive the same struct so operator overrides
@@ -144,6 +152,110 @@ func BuildReviewFixPrompt(plan prd.PRD, contextMD, projectGuidance, findings, pr
 	b.WriteString("\n\n")
 	b.WriteString(footer)
 	return b.String(), nil
+}
+
+// BuildVerifyFixPrompt builds the prompt for a verify fix-iteration. The verify
+// command exited non-zero (or timed out), so the same header/footer envelope as
+// a story prompt wraps a body that reports the command, its exit code, the
+// tail of its failure output, and the plan's acceptance criteria — then demands
+// a genuine fix and re-emission of the completion marker.
+//
+// It takes the same (Request, Result) pair the verify package pairs everywhere
+// (see verify.WriteEvidence) so the exit code and output are read from the real
+// round outcome, never re-derived at the call site. The no-test-weakening
+// instruction is load-bearing: the gate is only objective if the fix agent
+// cannot pass it by deleting, skipping, or gutting the failing tests.
+func BuildVerifyFixPrompt(plan prd.PRD, contextMD, projectGuidance, projectRoot string, req verify.Request, res verify.Result) (string, error) {
+	var criteria []string
+	for _, s := range plan.UserStories {
+		criteria = append(criteria, s.AcceptanceCriteria...)
+	}
+
+	data := promptData{
+		PlanID:             plan.ID,
+		PlanTitle:          plan.Title,
+		PlanDescription:    plan.Description,
+		AcceptanceCriteria: criteria,
+		ContextMD:          contextMD,
+		ProjectGuidance:    projectGuidance,
+	}
+	headerStr, err := loadTemplate(projectRoot, "header.tmpl", prompts.HeaderTmpl)
+	if err != nil {
+		return "", err
+	}
+	footerStr, err := loadTemplate(projectRoot, "footer.tmpl", prompts.FooterTmpl)
+	if err != nil {
+		return "", err
+	}
+	header, err := renderTemplate("header", headerStr, data)
+	if err != nil {
+		return "", fmt.Errorf("render header template: %w", err)
+	}
+	footer, err := renderTemplate("footer", footerStr, data)
+	if err != nil {
+		return "", fmt.Errorf("render footer template: %w", err)
+	}
+
+	// Describe the exit condition. A timeout reports ExitCode -1, which is
+	// meaningless on its own, so the timeout is named explicitly instead.
+	exitLine := fmt.Sprintf("Exit code: %d", res.ExitCode)
+	if res.TimedOut {
+		exitLine = fmt.Sprintf("The command TIMED OUT and was killed (exit code %d).", res.ExitCode)
+	}
+
+	var b strings.Builder
+	b.WriteString(header)
+	b.WriteString("\n\nThe verify command must exit 0 before this plan can be honored complete, but it FAILED. Diagnose and fix the ROOT CAUSE in the product or test code, COMMIT your fix (the next verify round runs against your committed tree), then re-emit <promise>COMPLETE</promise>.\n\n")
+	b.WriteString("Verify command: ")
+	b.WriteString(req.Command)
+	b.WriteString("\n")
+	b.WriteString(exitLine)
+	b.WriteString("\n\n")
+	if len(criteria) > 0 {
+		b.WriteString("This work must still satisfy every acceptance criterion:\n")
+		for _, c := range criteria {
+			b.WriteString("- ")
+			b.WriteString(c)
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("Failure output (tail):\n")
+	if out := verifyFailureOutput(res); out != "" {
+		b.WriteString(out)
+		if !strings.HasSuffix(out, "\n") {
+			b.WriteString("\n")
+		}
+	} else {
+		b.WriteString("(no output captured)\n")
+	}
+	b.WriteString("\nDo NOT weaken, skip, delete, or otherwise neuter tests to make the command pass — that defeats the gate and the reviewer will catch it. Make the tests genuinely pass by fixing the underlying defect.\n\n")
+	b.WriteString(footer)
+	return b.String(), nil
+}
+
+// verifyFailureOutput renders the tail of the round's stderr and stdout for the
+// fix prompt. Both streams are labelled and independently tail-truncated so the
+// actionable end of each is preserved without either crowding out the other.
+func verifyFailureOutput(res verify.Result) string {
+	var parts []string
+	if s := strings.TrimSpace(res.Stdout); s != "" {
+		parts = append(parts, "[stdout]\n"+promptTail(res.Stdout))
+	}
+	if s := strings.TrimSpace(res.Stderr); s != "" {
+		parts = append(parts, "[stderr]\n"+promptTail(res.Stderr))
+	}
+	return strings.Join(parts, "\n")
+}
+
+// promptTail keeps the last verifyPromptTailBytes of s, prefixing a notice when
+// the front was dropped so the agent knows the transcript is elided.
+func promptTail(s string) string {
+	if len(s) <= verifyPromptTailBytes {
+		return s
+	}
+	tail := s[len(s)-verifyPromptTailBytes:]
+	return fmt.Sprintf("[springfield: output truncated, showing last %d of %d bytes]\n%s", verifyPromptTailBytes, len(s), tail)
 }
 
 // loadTemplate returns the template string for name. Tries operator override
