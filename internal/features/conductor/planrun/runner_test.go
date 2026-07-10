@@ -839,7 +839,7 @@ func TestSinglePlanReviewHaltYieldsNeedsHuman(t *testing.T) {
 // first NextStory call), the runner MUST run the review gate at the
 // top-of-loop short-circuit, not merge unreviewed.
 //
-// Regression guard: a refactor that drops the finishWithReview() call inside
+// Regression guard: a refactor that drops the finishWithGates() call inside
 // the `if pickStatus == PickAllPassed { ... break }` arm at the top of the
 // loop would let the retry merge without re-review and silently break the
 // needs-human recovery path. Coverage proof: this test triggers ZERO story
@@ -902,7 +902,7 @@ func TestSinglePlanReviewGateFiresAtTopOfLoopOnAllPassed(t *testing.T) {
 // timeout, crash), the plan must surface as StatusFailed — NOT needs-human
 // (no halt verdict was emitted) and NOT completed. Without this integration
 // test a refactor that conflated reviewErrored with reviewNeedsHuman inside
-// finishWithReview would silently downgrade a failed reviewer into a
+// finishWithGates would silently downgrade a failed reviewer into a
 // human-recoverable state, hiding the operational signal.
 func TestSinglePlanReviewAgentErrorYieldsStatusFailed(t *testing.T) {
 	root := projectFixture(t, "alpha") // story already passed

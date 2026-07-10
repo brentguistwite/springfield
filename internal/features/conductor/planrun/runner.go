@@ -20,6 +20,7 @@ import (
 	"springfield/internal/features/cost"
 	"springfield/internal/features/execution"
 	"springfield/internal/features/prd"
+	"springfield/internal/features/verify"
 )
 
 // AgentRunner is the runtime boundary planrun depends on. The shared
@@ -97,6 +98,17 @@ type SinglePlanInput struct {
 	// Zero value (Enabled=false) disables review; the per-plan prd.PRD.Review
 	// flag can still override per config.ReviewEnabledForPlan.
 	ReviewConfig config.ReviewConfig
+	// VerifyConfig is the project-global [verify] block from springfield.toml.
+	// Zero value (Enabled=false) disables the verify gate, preserving the opt-in
+	// marker-only completion behavior. The per-plan prd.PRD.Verify override can
+	// still flip it on/off per config.VerifyEnabledForPlan. The verify gate runs
+	// BEFORE the review gate at every completion site (see finishWithGates).
+	VerifyConfig config.VerifyConfig
+	// VerifyCommand is the command boundary the verify gate dispatches. Nil
+	// defaults to verify.Run (spawns the real `sh -c` command). Production leaves
+	// this nil; tests inject a scripted stub so the gate is exercised without
+	// spawning a subprocess. Its signature IS verifyCommandFunc.
+	VerifyCommand func(ctx context.Context, req verify.Request) verify.Result
 	// Ctx, when non-nil, is the parent context for in-loop agent runs that
 	// participate in cooperative cancellation. The legacy story-iteration
 	// dispatch sites use context.Background (no cancellation surface); the
@@ -324,11 +336,67 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		costCapSpend      float64
 	)
 
-	// finishWithReview gates plan completion on the pre-merge review fix-loop.
-	// Called at BOTH completion sites (top-of-loop short-circuit AND post-COMPLETE
-	// check) so a needs-human retry that re-enters with all stories already passed
-	// re-reviews instead of merging unreviewed.
-	finishWithReview := func() {
+	// finishWithGates gates plan completion on TWO ordered gates: verify first,
+	// then review. Called at every completion site (top-of-loop short-circuit,
+	// post-COMPLETE check, and post-completion-crash) so a needs-human retry that
+	// re-enters with all stories already passed re-runs both gates instead of
+	// merging ungated.
+	//
+	// Ordering is load-bearing: the objective verify command (e.g. `go test`)
+	// runs before the subjective reviewer so a verify needs-human/errored verdict
+	// short-circuits before the reviewer ever sees the diff — and so that when
+	// verify DOES pass, the reviewer still sees the full diff and can catch a
+	// gutted or `.skip`-ed test suite that a green verify alone would miss.
+	finishWithGates := func() {
+		// Verify gate. Opt-in: an unconfigured (or per-plan-disabled) verify block
+		// leaves completion marker-only, unchanged from prior behavior.
+		if config.VerifyEnabledForPlan(in.VerifyConfig, currentPRD.Verify) {
+			rv := config.ResolveVerify(in.VerifyConfig, currentPRD.Verify)
+			vcmd := in.VerifyCommand
+			if vcmd == nil {
+				vcmd = verify.Run
+			}
+			vpr := in.ProjectRoot
+			if vpr == "" {
+				vpr = in.ControlRoot
+			}
+			vgate := runVerifyGate(verifyGateInput{
+				Ctx:               in.Ctx,
+				Command:           vcmd,
+				Runner:            in.Runner,
+				ImplementerAgents: in.AgentIDs,
+				ExecutionSettings: in.ExecutionSettings,
+				VerifyCommand:     rv.Command,
+				Timeout:           rv.Timeout,
+				MaxIterations:     rv.MaxIterations,
+				WorktreeRoot:      ctx.WorktreeRoot,
+				PRD:               currentPRD,
+				ContextMD:         string(contextMDBytes),
+				ProjectGuidance:   projectGuidance,
+				ProjectRoot:       vpr,
+				EvidenceDir:       evidenceDir,
+				OnEvent:           in.OnEvent,
+				TamperGuard:       in.TamperGuard,
+			})
+			switch vgate.Outcome {
+			case verifyPassed:
+				// Fall through to the review gate below.
+			case verifyNeedsHuman:
+				needsHuman = true
+				exitReason = "verify-needs-human"
+				if vgate.Reason != "" {
+					finalRunErr = fmt.Errorf("verify gate halted: %s (full evidence in verify-iter-*)", vgate.Reason)
+				} else {
+					finalRunErr = fmt.Errorf("verify gate halted (full evidence in verify-iter-*)")
+				}
+				return
+			case verifyErrored:
+				finalRunErr = vgate.Err
+				exitReason = "verify-errored"
+				return
+			}
+		}
+
 		if !config.ReviewEnabledForPlan(in.ReviewConfig, currentPRD.Review) {
 			completedNormally = true
 			return
@@ -381,7 +449,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			// resume/retry of already-complete work (e.g. a needs-human retry).
 			// Gate on review at this site too — otherwise the retry would merge
 			// unreviewed.
-			finishWithReview()
+			finishWithGates()
 			break
 		}
 		if pickStatus == PickBlocked {
@@ -594,7 +662,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			if workCompletedBeforeCrash(completeHonored, currentPRD, ctx.BaseHead, worktreeHead) {
 				_ = AppendProgress(progressPath, fmt.Sprintf("%s post-completion crash ignored (work complete before exit): %v",
 					now().UTC().Format(time.RFC3339), iterRunErr))
-				finishWithReview()
+				finishWithGates()
 				break
 			}
 			finalRunErr = iterRunErr
@@ -617,7 +685,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		}
 
 		if completeHonored {
-			finishWithReview()
+			finishWithGates()
 			break
 		}
 
