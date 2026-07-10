@@ -290,6 +290,35 @@ func TestPrintProgressBlock_SurfacesEveryStatus(t *testing.T) {
 	}
 }
 
+// TestPrintProgressBlock_SurfacesVerifyTerminalStates pins that plans halted at
+// the verify gate render in `springfield status` exactly like their review
+// counterparts: verify-needs-human (StatusNeedsHuman) under "Needs human:" and
+// verify-errored (StatusFailed) under "Failed:". These map to the shared
+// conductor status enum, so a verify halt must not fall through the text switch
+// any more than a review halt does.
+func TestPrintProgressBlock_SurfacesVerifyTerminalStates(t *testing.T) {
+	b := batch.Batch{
+		ID:      "b",
+		Title:   "T",
+		PlanIDs: []string{"01", "02"},
+		Phases:  []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"01", "02"}}},
+	}
+	state := &conductor.State{Plans: map[string]*conductor.PlanState{
+		"01": {Status: conductor.StatusNeedsHuman, ExitReason: "verify-needs-human", Error: "verify gate halted"},
+		"02": {Status: conductor.StatusFailed, ExitReason: "verify-errored", Error: "verify command runner failed"},
+	}}
+
+	var buf bytes.Buffer
+	printProgressBlock(&buf, b, state, false)
+	out := buf.String()
+
+	for _, want := range []string{"Needs human: 01", "Failed: 02"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q in progress block; got:\n%s", want, out)
+		}
+	}
+}
+
 // TestPrintProgressBlock_NextSuppressedWhenBlocked pins that "Next:" — a hint
 // about what runs next — only appears when the queue can actually advance: when
 // something is running, or when nothing is blocking. A blocked batch

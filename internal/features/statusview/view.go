@@ -73,6 +73,7 @@ type PlanView struct {
 	Branch       string          `json:"branch"`
 	BaseBranch   string          `json:"base_branch"`
 	BaseHead     string          `json:"base_head"`
+	Verify       VerifyView      `json:"verify"`
 	Review       ReviewView      `json:"review"`
 	Attempt      int             `json:"attempt"`
 	LastError    *string         `json:"last_error"`
@@ -94,6 +95,16 @@ type IntegrationView struct {
 // ReviewView is always present; verdict/reason are null unless the plan
 // halted at the pre-merge review gate.
 type ReviewView struct {
+	Verdict *string `json:"verdict"`
+	Reason  *string `json:"reason"`
+}
+
+// VerifyView is always present; verdict/reason are null unless the plan halted
+// at the objective verify gate (a failing verify command exhausted the fix
+// loop). It mirrors ReviewView so a --json consumer can tell a verify halt
+// (fix the failing command) from a review halt (address findings) rather than
+// inferring intent from last_error.
+type VerifyView struct {
 	Verdict *string `json:"verdict"`
 	Reason  *string `json:"reason"`
 }

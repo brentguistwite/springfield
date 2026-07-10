@@ -184,10 +184,17 @@ func availableActions(ps *PlanState, wt *WorktreeInspection) []RecoveryOption {
 		actions = append(actions, RecoveryOption{Action: "retry", Description: desc})
 
 	case StatusNeedsHuman:
-		actions = append(actions, RecoveryOption{
-			Action:      "retry",
-			Description: "Re-review: address the reviewer's findings (edit in the preserved worktree, or revise the plan), then reset to pending and re-run on next \"springfield start\" — the plan re-enters the pre-merge review gate (it does NOT skip review).",
-		})
+		// The remediation differs by which completion gate halted the plan: the
+		// objective verify gate points the operator at the failing command, while
+		// the subjective review gate points at the reviewer's findings. Both re-run
+		// the same "retry" action (status-keyed reset to pending); only the guidance
+		// changes so a plan that failed `go test` is not told to "address the
+		// reviewer's findings."
+		desc := "Re-review: address the reviewer's findings (edit in the preserved worktree, or revise the plan), then reset to pending and re-run on next \"springfield start\" — the plan re-enters the pre-merge review gate (it does NOT skip review)."
+		if ps.ExitReason == "verify-needs-human" {
+			desc = "Re-verify: fix the failing verify command (edit in the preserved worktree, or revise the plan), then reset to pending and re-run on next \"springfield start\" — the plan re-enters the verify gate (it does NOT skip verification)."
+		}
+		actions = append(actions, RecoveryOption{Action: "retry", Description: desc})
 
 	case StatusCompleted:
 		if ps.Merge == nil {

@@ -9,8 +9,9 @@ import (
 )
 
 // RecoverRetry resets a failed, interrupted, or needs-human plan to pending for
-// re-execution. A needs-human plan re-enters the pre-merge review gate on re-run
-// (its stories stay passed, so the runner hits the top-of-loop completion path).
+// re-execution. A needs-human plan re-enters the completion gates on re-run
+// (verify then review — its stories stay passed, so the runner hits the
+// top-of-loop completion path).
 // The recovery action is appended to the plan's history; the caller must persist
 // via SaveState.
 //

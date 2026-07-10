@@ -169,6 +169,10 @@ func deriveIntegration(ps *conductor.PlanState) IntegrationView {
 
 const reviewHaltExitReason = "review-needs-human"
 
+// verifyHaltExitReason is the ExitReason the runner records when a plan halts at
+// the verify gate (mirrors the "verify-needs-human" tag set in planrun.runner).
+const verifyHaltExitReason = "verify-needs-human"
+
 func buildPlan(id, title string, ps *conductor.PlanState, live bool) PlanView {
 	if title == "" {
 		title = id
@@ -177,6 +181,7 @@ func buildPlan(id, title string, ps *conductor.PlanState, live bool) PlanView {
 		ID:          id,
 		Title:       title,
 		Status:      ComposeStatus(ps, live),
+		Verify:      deriveVerify(ps),
 		Review:      deriveReview(ps),
 		Merge:       deriveMerge(ps),
 		Integration: deriveIntegration(ps),
@@ -209,6 +214,23 @@ func deriveReview(ps *conductor.PlanState) ReviewView {
 		rv.Reason = &reason
 	}
 	return rv
+}
+
+// deriveVerify mirrors deriveReview for the objective verify gate: it surfaces
+// the terminal halt only. Like review-errored, verify-errored is an infra
+// failure that surfaces via status "failed" + last_error, not a halt verdict,
+// so only verify-needs-human sets a verdict here.
+func deriveVerify(ps *conductor.PlanState) VerifyView {
+	if ps == nil || ps.ExitReason != verifyHaltExitReason {
+		return VerifyView{}
+	}
+	verdict := "halt"
+	vv := VerifyView{Verdict: &verdict}
+	if ps.Error != "" {
+		reason := ps.Error
+		vv.Reason = &reason
+	}
+	return vv
 }
 
 func deriveMerge(ps *conductor.PlanState) MergeView {
