@@ -11,7 +11,7 @@ func TestInitCreatesGitignoreWhenMissing(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 
-	output, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude")
+	output, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude", "--tracked-gitignore")
 	if err != nil {
 		t.Fatalf("init: %v\n%s", err, output)
 	}
@@ -43,7 +43,7 @@ func TestInitAppendsToExistingGitignore(t *testing.T) {
 		t.Fatalf("seed .gitignore: %v", err)
 	}
 
-	if _, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude"); err != nil {
+	if _, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude", "--tracked-gitignore"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 
@@ -61,11 +61,11 @@ func TestInitGitignoreIsIdempotent(t *testing.T) {
 	bin := buildBinary(t)
 	dir := t.TempDir()
 
-	if _, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude"); err != nil {
+	if _, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude", "--tracked-gitignore"); err != nil {
 		t.Fatalf("first init: %v", err)
 	}
 
-	output, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude")
+	output, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude", "--tracked-gitignore")
 	if err != nil {
 		t.Fatalf("second init: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestInitGitignoreReplacesOldBlanketIgnore(t *testing.T) {
 				t.Fatalf("seed .gitignore: %v", err)
 			}
 
-			output, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude")
+			output, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude", "--tracked-gitignore")
 			if err != nil {
 				t.Fatalf("init: %v", err)
 			}
@@ -121,7 +121,7 @@ func TestInitGitignoreRecognizesNewBlockAsIdempotent(t *testing.T) {
 		t.Fatalf("seed .gitignore: %v", err)
 	}
 
-	output, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude")
+	output, err := runBinaryIn(t, bin, dir, "init", "--agents", "claude", "--tracked-gitignore")
 	if err != nil {
 		t.Fatalf("init: %v", err)
 	}

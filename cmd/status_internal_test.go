@@ -7,10 +7,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"springfield/internal/core/lock"
 	"springfield/internal/features/batch"
 	"springfield/internal/features/conductor"
+	"springfield/internal/features/prd"
+	"springfield/internal/features/statusview"
 )
 
 func TestStatusNoConfigPointsAtRegistrationFlow(t *testing.T) {
@@ -198,7 +201,7 @@ func TestPrintProgressBlock_LiveVsStalled(t *testing.T) {
 
 	t.Run("live_serial_running", func(t *testing.T) {
 		var buf bytes.Buffer
-		printProgressBlock(&buf, serial, serialState, true)
+		printProgressBlock(&buf, serial, serialState, true, nil)
 		if !strings.Contains(buf.String(), "Current: 01 (running)") {
 			t.Fatalf("live serial: want Current: 01 (running), got:\n%s", buf.String())
 		}
@@ -206,7 +209,7 @@ func TestPrintProgressBlock_LiveVsStalled(t *testing.T) {
 
 	t.Run("dead_serial_stalled", func(t *testing.T) {
 		var buf bytes.Buffer
-		printProgressBlock(&buf, serial, serialState, false)
+		printProgressBlock(&buf, serial, serialState, false, nil)
 		if !strings.Contains(buf.String(), "Stalled: 01 (no running springfield process") {
 			t.Fatalf("dead serial: want Stalled line, got:\n%s", buf.String())
 		}
@@ -225,7 +228,7 @@ func TestPrintProgressBlock_LiveVsStalled(t *testing.T) {
 
 	t.Run("live_parallel", func(t *testing.T) {
 		var buf bytes.Buffer
-		printProgressBlock(&buf, parallel, parallelState, true)
+		printProgressBlock(&buf, parallel, parallelState, true, nil)
 		if !strings.Contains(buf.String(), "Current: 01, 02 (parallel)") {
 			t.Fatalf("live parallel: want Current: 01, 02 (parallel), got:\n%s", buf.String())
 		}
@@ -242,11 +245,82 @@ func TestPrintProgressBlock_LiveVsStalled(t *testing.T) {
 	}}
 	t.Run("live_parallel_running_plus_interrupted", func(t *testing.T) {
 		var buf bytes.Buffer
-		printProgressBlock(&buf, parallel, mixedState, true)
+		printProgressBlock(&buf, parallel, mixedState, true, nil)
 		if !strings.Contains(buf.String(), "Current: 01, 02 (parallel)") {
 			t.Fatalf("live mixed parallel: want Current: 01, 02 (parallel), got:\n%s", buf.String())
 		}
 	})
+}
+
+// TestPrintProgressBlock_RendersActivityThroughSharedProjection is the text↔JSON
+// activity-parity guard (US-008): the "Current:" block renders each running
+// plan's in-flight activity, and the rendered content comes from the SAME
+// statusview.DeriveActivity projection the JSON view-model uses — so the two
+// surfaces can never disagree about what a running plan is doing. It also pins
+// the truthful-silence path: a running plan with no derivable activity prints no
+// line rather than an invented phase.
+func TestPrintProgressBlock_RendersActivityThroughSharedProjection(t *testing.T) {
+	b := batch.Batch{
+		ID: "b", Title: "T", PlanIDs: []string{"01", "02"},
+		Phases: []batch.Phase{{Mode: batch.PhaseParallel, Plans: []string{"01", "02"}}},
+	}
+	state := &conductor.State{Plans: map[string]*conductor.PlanState{
+		// A written fine-counter stamp: reviewing, round 2.
+		"01": {Status: conductor.StatusRunning, Activity: &conductor.PlanActivity{
+			Phase: "reviewing", Detail: "US-007", Round: 2, UpdatedAt: time.Now(),
+		}},
+		// Running but unstamped and no PRD → no derivable activity → no line.
+		"02": {Status: conductor.StatusRunning},
+	}}
+
+	var buf bytes.Buffer
+	printProgressBlock(&buf, b, state, true, nil) // live → both running
+	out := buf.String()
+
+	if !strings.Contains(out, "Current: 01, 02 (parallel)") {
+		t.Fatalf("precondition: want both plans in the Current line, got:\n%s", out)
+	}
+	// Plan 01's stamped activity renders, formatted from the shared projection.
+	want := "  01: " + formatActivity(statusview.DeriveActivity(state.Plans["01"], true, nil))
+	if !strings.Contains(out, want) {
+		t.Fatalf("want activity line %q for plan 01, got:\n%s", want, out)
+	}
+	if !strings.Contains(out, "reviewing US-007 (round 2)") {
+		t.Fatalf("activity line must carry phase/detail/round, got:\n%s", out)
+	}
+	// Plan 02 has no derivable activity → truthful silence, no "02:" activity line.
+	if strings.Contains(out, "  02:") {
+		t.Fatalf("unstamped running plan must print no activity line, got:\n%s", out)
+	}
+}
+
+// TestPrintProgressBlock_ActivityDerivesCurrentStoryFromPRD pins that the text
+// activity line uses Tier-1 derivation from durable prd.json truth — with ZERO
+// written stamp, the current story surfaces via the same projection JSON uses.
+func TestPrintProgressBlock_ActivityDerivesCurrentStoryFromPRD(t *testing.T) {
+	b := batch.Batch{
+		ID: "b", Title: "T", PlanIDs: []string{"01"},
+		Phases: []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"01"}}},
+	}
+	state := &conductor.State{Plans: map[string]*conductor.PlanState{
+		"01": {Status: conductor.StatusRunning},
+	}}
+	prds := map[string]prd.PRD{"01": {UserStories: []prd.UserStory{
+		{ID: "US-001", Priority: 1, Passes: true},
+		{ID: "US-002", Priority: 2, Passes: false},
+	}}}
+
+	var buf bytes.Buffer
+	printProgressBlock(&buf, b, state, true, prds)
+	out := buf.String()
+
+	if !strings.Contains(out, "  01: implementing US-002") {
+		t.Fatalf("want derived current-story activity line, got:\n%s", out)
+	}
+	// Derivation must not mutate persisted state.
+	if state.Plans["01"].Activity != nil {
+		t.Fatalf("text derivation wrote to PlanState.Activity: %+v", state.Plans["01"].Activity)
+	}
 }
 
 // TestPrintProgressBlock_SurfacesEveryStatus locks in text↔JSON parity at the
@@ -271,7 +345,7 @@ func TestPrintProgressBlock_SurfacesEveryStatus(t *testing.T) {
 	}}
 
 	var buf bytes.Buffer
-	printProgressBlock(&buf, b, state, false)
+	printProgressBlock(&buf, b, state, false, nil)
 	out := buf.String()
 
 	for _, want := range []string{
@@ -287,6 +361,35 @@ func TestPrintProgressBlock_SurfacesEveryStatus(t *testing.T) {
 	// "Next:" hint is suppressed — nothing advances until the operator acts.
 	if strings.Contains(out, "Next:") {
 		t.Errorf("Next: must be suppressed when the batch is blocked; got:\n%s", out)
+	}
+}
+
+// TestPrintProgressBlock_SurfacesVerifyTerminalStates pins that plans halted at
+// the verify gate render in `springfield status` exactly like their review
+// counterparts: verify-needs-human (StatusNeedsHuman) under "Needs human:" and
+// verify-errored (StatusFailed) under "Failed:". These map to the shared
+// conductor status enum, so a verify halt must not fall through the text switch
+// any more than a review halt does.
+func TestPrintProgressBlock_SurfacesVerifyTerminalStates(t *testing.T) {
+	b := batch.Batch{
+		ID:      "b",
+		Title:   "T",
+		PlanIDs: []string{"01", "02"},
+		Phases:  []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"01", "02"}}},
+	}
+	state := &conductor.State{Plans: map[string]*conductor.PlanState{
+		"01": {Status: conductor.StatusNeedsHuman, ExitReason: "verify-needs-human", Error: "verify gate halted"},
+		"02": {Status: conductor.StatusFailed, ExitReason: "verify-errored", Error: "verify command runner failed"},
+	}}
+
+	var buf bytes.Buffer
+	printProgressBlock(&buf, b, state, false, nil)
+	out := buf.String()
+
+	for _, want := range []string{"Needs human: 01", "Failed: 02"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q in progress block; got:\n%s", want, out)
+		}
 	}
 }
 
@@ -310,7 +413,7 @@ func TestPrintProgressBlock_NextSuppressedWhenBlocked(t *testing.T) {
 			"02": {Status: conductor.StatusPending},
 		}, "01", "02")
 		var buf bytes.Buffer
-		printProgressBlock(&buf, b, st, true) // live → 01 running
+		printProgressBlock(&buf, b, st, true, nil) // live → 01 running
 		if !strings.Contains(buf.String(), "Next: 02") {
 			t.Fatalf("running batch must show Next: 02; got:\n%s", buf.String())
 		}
@@ -321,7 +424,7 @@ func TestPrintProgressBlock_NextSuppressedWhenBlocked(t *testing.T) {
 			"02": {Status: conductor.StatusPending},
 		}, "01", "02") // 01 has no state → pending
 		var buf bytes.Buffer
-		printProgressBlock(&buf, b, st, false)
+		printProgressBlock(&buf, b, st, false, nil)
 		if !strings.Contains(buf.String(), "Next: 01") {
 			t.Fatalf("unblocked all-pending batch must show Next: 01; got:\n%s", buf.String())
 		}
@@ -333,7 +436,7 @@ func TestPrintProgressBlock_NextSuppressedWhenBlocked(t *testing.T) {
 			"02": {Status: conductor.StatusPending},
 		}, "01", "02")
 		var buf bytes.Buffer
-		printProgressBlock(&buf, b, st, false)
+		printProgressBlock(&buf, b, st, false, nil)
 		if strings.Contains(buf.String(), "Next:") {
 			t.Fatalf("failed batch must suppress Next; got:\n%s", buf.String())
 		}
@@ -348,7 +451,7 @@ func TestPrintProgressBlock_NextSuppressedWhenBlocked(t *testing.T) {
 			"02": {Status: conductor.StatusPending},
 		}, "01", "02")
 		var buf bytes.Buffer
-		printProgressBlock(&buf, b, st, false)
+		printProgressBlock(&buf, b, st, false, nil)
 		if strings.Contains(buf.String(), "Next:") {
 			t.Fatalf("done-but-not-integrated batch must suppress Next; got:\n%s", buf.String())
 		}
@@ -373,7 +476,7 @@ func TestPrintProgressBlock_MergedCountedNotNamed(t *testing.T) {
 		"02": {Status: conductor.StatusPending},
 	}}
 	var buf bytes.Buffer
-	printProgressBlock(&buf, b, state, false)
+	printProgressBlock(&buf, b, state, false, nil)
 	out := buf.String()
 	if !strings.Contains(out, "Plans: 1/2 integrated") {
 		t.Fatalf("want Plans: 1/2 integrated; got:\n%s", out)

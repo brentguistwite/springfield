@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"springfield/internal/core/gitstatus"
 )
 
 // Git is the minimal git surface planmerge requires. The interface lets
@@ -106,28 +108,16 @@ func (g CLIGit) ResetHard(dir, sha string) error {
 	return err
 }
 
-// dirtyIgnoredPrefixes lists path prefixes whose presence in
-// `git status --porcelain` is Springfield's own bookkeeping rather than
-// user-visible dirt. Mirrors planrun.CLIGit so the resync gate uses the
-// same notion of "clean" as the slice-2 preflight.
-var dirtyIgnoredPrefixes = []string{".springfield/", ".worktrees/"}
-
-// IsDirty returns true when dir has uncommitted changes outside
-// Springfield-owned prefixes.
+// IsDirty returns true when dir has uncommitted changes outside the paths
+// Springfield owns. Classification of the porcelain output is delegated to
+// [gitstatus.Dirty] so the resync gate uses the same notion of "clean" as
+// the slice-2 preflight and autobranch.
 func (g CLIGit) IsDirty(dir string) (bool, error) {
 	out, err := g.run(dir, "status", "--porcelain")
 	if err != nil {
 		return false, err
 	}
-	if out == "" {
-		return false, nil
-	}
-	for _, line := range strings.Split(out, "\n") {
-		if !lineIsSpringfieldOwned(line) {
-			return true, nil
-		}
-	}
-	return false, nil
+	return gitstatus.Dirty(out), nil
 }
 
 // IsDirtyAgainst returns true when dir's tracked-file working tree or
@@ -150,24 +140,6 @@ func (g CLIGit) IsDirtyAgainst(dir, ref string) (bool, error) {
 		return false, fmt.Errorf("git diff --quiet %s: %w", ref, err)
 	}
 	return false, nil
-}
-
-func lineIsSpringfieldOwned(line string) bool {
-	if len(line) < 4 {
-		return false
-	}
-	rest := line[3:]
-	if idx := strings.Index(rest, " -> "); idx >= 0 {
-		rest = rest[idx+len(" -> "):]
-	}
-	rest = strings.TrimPrefix(rest, "\"")
-	rest = strings.TrimSuffix(rest, "\"")
-	for _, p := range dirtyIgnoredPrefixes {
-		if strings.HasPrefix(rest, p) {
-			return true
-		}
-	}
-	return false
 }
 
 // WorktreeAddDetached registers a new worktree at path with detached HEAD

@@ -100,7 +100,47 @@ type PlanState struct {
 	// plan. Each entry records what was done, why, and when, so the audit
 	// trail survives across status/start/recover invocations.
 	RecoveryHistory []RecoveryAction `json:"recovery_history,omitempty"`
+
+	// Activity is the in-flight progress signal (coarse phase + fine counter)
+	// for a running plan. nil until the plan enters a stamped phase; see
+	// [PlanActivity]. The status projection surfaces it ONLY while the plan is
+	// running so a stale value from a prior phase can never leak.
+	Activity *PlanActivity `json:"activity,omitempty"`
 }
+
+// PlanActivity is the in-flight, per-plan progress signal that answers "what is
+// this running plan doing right now". Phase is the coarse lifecycle stage
+// (implementing / reviewing / verifying / merging); Detail is an optional human
+// phrase; Round is a monotonic per-phase fine counter (story iteration, review
+// round, verify round); UpdatedAt stamps the last transition.
+//
+// HARD CONTRACT: this signal must never lie. It is meaningful only while the
+// plan is running — a stale value is worse than none, so the status projection
+// drops it for any non-running plan and degrades to silence when a phase has no
+// truthful detail.
+type PlanActivity struct {
+	Phase     string    `json:"phase"`
+	Detail    string    `json:"detail,omitempty"`
+	Round     int       `json:"round,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// The coarse Activity phases. This is the authoritative vocabulary for
+// [PlanActivity.Phase], single-sourced here (the home of PlanActivity) so the
+// write side (the runner's enterPhase funnel) and the derive side (the status
+// projection) cannot disagree on a literal — an agreement the contradiction-
+// suppression backstop relies on.
+const (
+	PhaseImplementing = "implementing"
+	PhaseReviewing    = "reviewing"
+	PhaseVerifying    = "verifying"
+	// PhaseMerging is RESERVED and NOT YET EMITTED: no site calls
+	// enterPhase(..., PhaseMerging, ...), so a consumer can never observe it in a
+	// live activity signal today. It is declared here to reserve the vocabulary
+	// for when the merge/integration path is instrumented; until then do not
+	// advertise it to consumers as a value that appears (see docs/status-json.md).
+	PhaseMerging = "merging"
+)
 
 // RecoveryAction is one durable record of a recovery operation performed on a plan.
 type RecoveryAction struct {

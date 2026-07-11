@@ -42,7 +42,10 @@ func (r Runtime) WriteJSON(path string, value any) error {
 	}
 
 	data = append(data, '\n')
-	if err := os.WriteFile(fullPath, data, 0o644); err != nil {
+	// Atomic temp+rename: enterPhase now rewrites state.json on every story /
+	// review / verify round, and status reads it locklessly — a plain truncating
+	// write would let a read land mid-write and see partial/empty JSON.
+	if err := writeFileAtomic(fullPath, data, 0o644); err != nil {
 		return fmt.Errorf("write runtime json %s: %w", fullPath, err)
 	}
 

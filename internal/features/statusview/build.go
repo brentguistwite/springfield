@@ -7,7 +7,16 @@ import (
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/conductor/planmerge"
 	"springfield/internal/features/cost"
+	"springfield/internal/features/prd"
 )
+
+// phaseImplementing is the coarse phase of the story loop — the default stage a
+// running plan is in while working stories, before it enters a gate. It is the
+// phase reported for the Tier-1 derived current story (the gate phases —
+// reviewing / verifying / merging — are stamped by later stories' writes).
+// Aliased to the single-sourced vocabulary in conductor so the derive side
+// (here) and the write side (the runner's enterPhase funnel) cannot drift.
+const phaseImplementing = conductor.PhaseImplementing
 
 // Idle is the view when no batch is active (the plan-registry case).
 func Idle() View {
@@ -169,7 +178,11 @@ func deriveIntegration(ps *conductor.PlanState) IntegrationView {
 
 const reviewHaltExitReason = "review-needs-human"
 
-func buildPlan(id, title string, ps *conductor.PlanState, live bool) PlanView {
+// verifyHaltExitReason is the ExitReason the runner records when a plan halts at
+// the verify gate (mirrors the "verify-needs-human" tag set in planrun.runner).
+const verifyHaltExitReason = "verify-needs-human"
+
+func buildPlan(id, title string, ps *conductor.PlanState, live bool, plan *prd.PRD) PlanView {
 	if title == "" {
 		title = id
 	}
@@ -177,9 +190,11 @@ func buildPlan(id, title string, ps *conductor.PlanState, live bool) PlanView {
 		ID:          id,
 		Title:       title,
 		Status:      ComposeStatus(ps, live),
+		Verify:      deriveVerify(ps),
 		Review:      deriveReview(ps),
 		Merge:       deriveMerge(ps),
 		Integration: deriveIntegration(ps),
+		Activity:    DeriveActivity(ps, live, plan),
 	}
 	if ps != nil {
 		pv.Branch = ps.Branch
@@ -209,6 +224,138 @@ func deriveReview(ps *conductor.PlanState) ReviewView {
 		rv.Reason = &reason
 	}
 	return rv
+}
+
+// deriveVerify mirrors deriveReview for the objective verify gate: it surfaces
+// the terminal halt only. Like review-errored, verify-errored is an infra
+// failure that surfaces via status "failed" + last_error, not a halt verdict,
+// so only verify-needs-human sets a verdict here.
+func deriveVerify(ps *conductor.PlanState) VerifyView {
+	if ps == nil || ps.ExitReason != verifyHaltExitReason {
+		return VerifyView{}
+	}
+	verdict := "halt"
+	vv := VerifyView{Verdict: &verdict}
+	if ps.Error != "" {
+		reason := ps.Error
+		vv.Reason = &reason
+	}
+	return vv
+}
+
+// DeriveActivity projects the in-flight progress signal. It is surfaced ONLY
+// while the plan is running per ComposeStatus — a non-running plan yields nil
+// (explicit JSON null) so a stale phase from a prior run can never leak.
+//
+// Exported so the text status renderer (cmd/status.go) computes the in-flight
+// activity through the SAME projection the JSON view-model uses — like
+// ComposeStatus and ParallelInFlight, the two surfaces share one source of
+// truth and so cannot disagree about what a running plan is doing.
+//
+// Tier 1 (this story): the coarse phase is DERIVED from durable truth — the
+// plan's persisted prd.json passes pick the current story via the same
+// eligibility rule the runner uses (prd.NextEligibleStory), so it tracks what
+// the runner actually works on and can never go stale. plan is nil when the
+// caller could not load the PRD (missing/malformed); derivation then degrades to
+// whatever was written.
+//
+// Tier 2 (later stories): fine counters (iteration / review round / verify
+// round) are WRITTEN to PlanState.Activity and overlaid on the derived base.
+// Until those land, a written phase/detail simply overrides the derived value.
+//
+// With neither a derivable current story nor a written Activity, it stays nil
+// (truthful silence) rather than inventing a phase.
+func DeriveActivity(ps *conductor.PlanState, live bool, plan *prd.PRD) *ActivityView {
+	if ps == nil || ComposeStatus(ps, live) != StatusRunning {
+		return nil
+	}
+
+	// Tier 1: derive the coarse phase's current story from durable prd.json truth.
+	var story string
+	if plan != nil {
+		if s, ok := prd.NextEligibleStory(*plan); ok {
+			story = s.ID
+		}
+	}
+
+	w := ps.Activity
+	// Contradiction-suppression backstop (Tier 2, guard c): a written Activity
+	// whose detail names a story that durable prd.json shows already PASSED is
+	// stale by construction — the runner finished that story but has not yet
+	// stamped the next in-progress signal (a missed clear, a crash mid-transition,
+	// or simply the gap AFTER story N passes and BEFORE story N+1 is dispatched).
+	// NextEligibleStory only ever returns not-yet-passed stories, so an honest
+	// implementing-phase write can never name a passed story; when one does, drop
+	// the ENTIRE written overlay (its round belonged to the finished story too).
+	// Read-only: the persisted write is left untouched — the projection never
+	// mutates control-plane state.
+	staleStamp := false
+	if w != nil && plan != nil && storyPassed(*plan, w.Detail) {
+		w = nil
+		staleStamp = true
+	}
+
+	// Transition gap: the stamp we just suppressed named a now-passed story and
+	// there is no newer in-progress signal. Deriving NextEligibleStory as the
+	// current story HERE would report the NEXT story as "implementing" when no
+	// dispatch has started — a lie the "degrade to silence, never lie" contract
+	// forbids. Fall back to the coarse running phase WITHOUT asserting a specific
+	// not-yet-started story, until a genuine in-progress stamp exists.
+	//
+	// But if NO next story is eligible (story == ""), the stale stamp named the
+	// LAST story and every story now passes: there is no story loop left to be in
+	// and no gate has stamped reviewing/verifying yet. Claiming "implementing"
+	// there is a stage label one step behind reality, so degrade further — project
+	// no activity (truthful silence) rather than assert a phase the plan has left.
+	if staleStamp {
+		if story == "" {
+			return nil
+		}
+		return &ActivityView{Phase: phaseImplementing, UpdatedAt: ps.StartedAt}
+	}
+
+	if story == "" && w == nil {
+		return nil
+	}
+
+	av := &ActivityView{}
+	if story != "" {
+		// The story loop's coarse phase; the current story is the durable detail.
+		// UpdatedAt anchors to StartedAt — the derivation has no transition of its
+		// own, and StartedAt is the honest "running since" for a live plan.
+		av.Phase = phaseImplementing
+		av.Detail = story
+		av.UpdatedAt = ps.StartedAt
+	}
+	if w != nil {
+		// Written state (US-001). Fine-counter overlay + contradiction suppression
+		// arrive in later stories; for now a written phase/detail wins when set.
+		if w.Phase != "" {
+			av.Phase = w.Phase
+		}
+		if w.Detail != "" {
+			av.Detail = w.Detail
+		}
+		av.Round = w.Round
+		av.UpdatedAt = w.UpdatedAt
+	}
+	return av
+}
+
+// storyPassed reports whether detail names a UserStory that durable prd.json
+// marks passed. An empty detail (the gates stamp no detail) or a free-form
+// phrase matching no story ID yields false, so the contradiction-suppression
+// backstop fires ONLY on a written detail that a passed story directly refutes.
+func storyPassed(p prd.PRD, detail string) bool {
+	if detail == "" {
+		return false
+	}
+	for _, s := range p.UserStories {
+		if s.ID == detail {
+			return s.Passes
+		}
+	}
+	return false
 }
 
 func deriveMerge(ps *conductor.PlanState) MergeView {
@@ -248,6 +395,11 @@ type ActiveInput struct {
 	// read-only. It gates running vs stalled: a started-but-non-terminal plan is
 	// running only when a live process exists, otherwise stalled.
 	Live bool
+	// PRDs holds each plan's persisted prd.json, keyed by plan ID, for deriving
+	// the in-flight coarse phase (the current story) from durable truth. The
+	// caller (cmd/status.go) reads each plan's prd.json best-effort; a plan absent
+	// from the map (missing/malformed PRD) simply gets no derived current story.
+	PRDs map[string]prd.PRD
 }
 
 // Active builds the view-model for a live batch. Plan order follows
@@ -264,7 +416,11 @@ func Active(in ActiveInput) View {
 		if in.State != nil {
 			ps = in.State.Plans[id]
 		}
-		plans = append(plans, buildPlan(id, titles[id], ps, in.Live))
+		var plan *prd.PRD
+		if p, ok := in.PRDs[id]; ok {
+			plan = &p
+		}
+		plans = append(plans, buildPlan(id, titles[id], ps, in.Live, plan))
 	}
 
 	v := View{

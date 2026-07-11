@@ -32,6 +32,29 @@ type PRD struct {
 	// batch.Compile, so it reaches the runner via prd.ParseFile. Resolved with
 	// config.ReviewEnabledForPlan.
 	Review *bool `json:"review,omitempty"`
+
+	// Verify is the per-plan override for the verify completion gate. nil means
+	// "inherit the project-global [verify] block". A non-nil override wins per
+	// field: an explicit Enabled flips the gate on/off for this plan even
+	// against the global default, and a non-empty Command replaces the global
+	// command. Authored in the BatchPRDEnvelope and marshaled verbatim into
+	// prd.json, reaching the runner via prd.ParseFile. Resolved with
+	// config.ResolveVerify / config.VerifyEnabledForPlan.
+	Verify *VerifyOverride `json:"verify,omitempty"`
+}
+
+// VerifyOverride is the per-plan {command, enabled} override on the PRD
+// envelope for the verify completion gate. It is pure data; the precedence
+// rules that fold it onto the global [verify] block live in config.ResolveVerify.
+type VerifyOverride struct {
+	// Command, when non-empty, replaces the global verify command for this plan.
+	// Empty inherits the global command.
+	Command string `json:"command,omitempty"`
+	// Enabled is tri-state via the pointer:
+	//   nil   → inherit the global [verify].enabled default
+	//   true  → force the gate on for this plan (even if globally disabled)
+	//   false → force the gate off for this plan (even if globally enabled)
+	Enabled *bool `json:"enabled,omitempty"`
 }
 
 // PhasePRD describes one execution phase inside a BatchPRDEnvelope.

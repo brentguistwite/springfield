@@ -8,6 +8,7 @@ import (
 
 	"springfield/internal/features/conductor/planrun"
 	"springfield/internal/features/prd"
+	"springfield/internal/features/verify"
 )
 
 func samplePRD() prd.PRD {
@@ -211,5 +212,74 @@ func TestBuildReviewFixPromptEmbedsFindingsAndCompleteMarker(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("review-fix prompt missing %q\n---\n%s", want, got)
 		}
+	}
+}
+
+func TestBuildVerifyFixPromptEmbedsCommandExitCodeOutputAndNoWeakenRule(t *testing.T) {
+	plan := prd.PRD{
+		ID:    "PLAN-7",
+		Title: "T",
+		UserStories: []prd.UserStory{
+			{ID: "US-1", AcceptanceCriteria: []string{"widget compiles cleanly"}},
+		},
+	}
+	req := verify.Request{Command: "go test ./..."}
+	res := verify.Result{
+		ExitCode: 2,
+		Stdout:   "ok pkg/a\n",
+		Stderr:   "--- FAIL: TestWidget\n    widget_test.go:42: boom\nFAIL\n",
+	}
+	got, err := planrun.BuildVerifyFixPrompt(plan, "", "", "", req, res)
+	if err != nil {
+		t.Fatalf("BuildVerifyFixPrompt: %v", err)
+	}
+	for _, want := range []string{
+		"go test ./...",               // the command
+		"2",                           // the exit code
+		"widget_test.go:42: boom",     // the failure output tail
+		"widget compiles cleanly",     // acceptance criteria
+		"<promise>COMPLETE</promise>", // re-emit marker
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("verify-fix prompt missing %q\n---\n%s", want, got)
+		}
+	}
+	// The gate is only meaningful if the fix agent cannot cheat by gutting the
+	// suite; the prompt must forbid weakening or removing tests.
+	lower := strings.ToLower(got)
+	if !strings.Contains(lower, "weaken") || !strings.Contains(lower, "test") {
+		t.Fatalf("verify-fix prompt missing no-test-weakening instruction\n---\n%s", got)
+	}
+}
+
+func TestBuildVerifyFixPromptTailTruncatesHugeOutput(t *testing.T) {
+	plan := prd.PRD{ID: "PLAN-8", Title: "T"}
+	// A stdout far larger than any sane prompt budget: the builder must keep the
+	// actionable tail, not blow the agent's context with the whole transcript.
+	huge := strings.Repeat("x", 4<<20) + "FINAL_FAILURE_LINE"
+	req := verify.Request{Command: "make verify"}
+	res := verify.Result{ExitCode: 1, Stdout: huge}
+	got, err := planrun.BuildVerifyFixPrompt(plan, "", "", "", req, res)
+	if err != nil {
+		t.Fatalf("BuildVerifyFixPrompt: %v", err)
+	}
+	if !strings.Contains(got, "FINAL_FAILURE_LINE") {
+		t.Fatalf("verify-fix prompt dropped the failure tail")
+	}
+	if len(got) > len(huge) {
+		t.Fatalf("verify-fix prompt embedded the whole %d-byte transcript (len=%d); expected truncation", len(huge), len(got))
+	}
+}
+
+func TestBuildVerifyFixPromptNotesTimeout(t *testing.T) {
+	plan := prd.PRD{ID: "PLAN-9", Title: "T"}
+	req := verify.Request{Command: "go test ./..."}
+	res := verify.Result{ExitCode: -1, TimedOut: true}
+	got, err := planrun.BuildVerifyFixPrompt(plan, "", "", "", req, res)
+	if err != nil {
+		t.Fatalf("BuildVerifyFixPrompt: %v", err)
+	}
+	if !strings.Contains(strings.ToLower(got), "timed out") {
+		t.Fatalf("verify-fix prompt should surface the timeout\n---\n%s", got)
 	}
 }

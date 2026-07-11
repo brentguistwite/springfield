@@ -1,8 +1,6 @@
 package planrun
 
 import (
-	"sort"
-
 	"springfield/internal/features/prd"
 )
 
@@ -28,54 +26,29 @@ const (
 //   - PickBlocked: some stories not passed but none have all deps satisfied
 //     (cycle / unsatisfiable graph). Caller must fail the plan.
 //
-// Eligibility: passes == false AND every dep has passes == true (within the
-// same plan). Among eligible, the highest-priority story (lower priority
-// number = higher priority) wins. Tiebreak: lexicographically smallest ID.
+// Eligibility (passes == false AND every dep passed; highest priority wins,
+// lexicographic ID tiebreak) is single-sourced in prd.NextEligibleStory so the
+// runner and the status projection cannot disagree about which story is current.
+// NextStory adds only the PickStatus taxonomy on top: it disambiguates the
+// no-eligible-story case into PickAllPassed (nothing left to do) vs PickBlocked
+// (work remains but an unsatisfiable graph stalls it).
 func NextStory(plan prd.PRD) (prd.UserStory, PickStatus) {
-	// Build a set of passed story IDs for dep checking.
-	passed := make(map[string]bool, len(plan.UserStories))
-	for _, s := range plan.UserStories {
-		if s.Passes {
-			passed[s.ID] = true
-		}
-	}
-
-	var eligible []prd.UserStory
 	anyPending := false
 	for _, s := range plan.UserStories {
-		if s.Passes {
-			continue
-		}
-		anyPending = true
-		depsOK := true
-		for _, dep := range s.Deps {
-			if !passed[dep] {
-				depsOK = false
-				break
-			}
-		}
-		if depsOK {
-			eligible = append(eligible, s)
+		if !s.Passes {
+			anyPending = true
+			break
 		}
 	}
-
 	if !anyPending {
 		// No unpassed stories — zero-story or all done.
 		return prd.UserStory{}, PickAllPassed
 	}
 
-	if len(eligible) == 0 {
+	story, ok := prd.NextEligibleStory(plan)
+	if !ok {
 		// Stories remain but none are eligible — blocked (cycle or unresolvable deps).
 		return prd.UserStory{}, PickBlocked
 	}
-
-	sort.Slice(eligible, func(i, j int) bool {
-		pi, pj := eligible[i].Priority, eligible[j].Priority
-		if pi != pj {
-			return pi < pj
-		}
-		return eligible[i].ID < eligible[j].ID
-	})
-
-	return eligible[0], PickReady
+	return story, PickReady
 }

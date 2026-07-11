@@ -11,7 +11,7 @@ Every response carries `schema_version` and a `state` discriminator
 
 | field | meaning |
 |-------|---------|
-| `schema_version` | contract version (currently `1`; additive changes bump it) |
+| `schema_version` | contract version (currently `2`; additive changes bump it — v2 added the per-plan `activity` card) |
 | `state` | `active`, `orphan` (batch.json missing), `idle` (no active batch and no archive), or `archived` (no active batch; the most-recently-archived batch is surfaced) |
 | `summary` | human-readable one-liner, always present |
 | `batch` | `{id, title}` or null. In the `orphan` state `title` is `""` (batch.json is gone, so the title is unrecoverable) — fall back to `id` for display |
@@ -62,7 +62,7 @@ are their empty/clean projections. A repo that has never archived a batch stays
 ## Per-plan card
 
 `id`, `title`, `status`, `branch`, `base_branch`, `base_head`, `review`,
-`attempt`, `last_error`, `evidence_path`, `merge`, `integration`.
+`attempt`, `last_error`, `evidence_path`, `merge`, `integration`, `activity`.
 
 - `status` (owned enum): `pending` | `running` | `stalled` | `needs-human` |
   `failed` | `done` | `merged` | `retained`.
@@ -99,6 +99,25 @@ are their empty/clean projections. A repo that has never archived a batch stays
       failure); cleanup may have run in memory. An audit-trail gap to verify,
       **not** an active cleanup failure — distinct remediation.
     - `source-sync-failed` — the source resync left the checkout phantom-dirty.
+- `activity`: `{phase, detail, round, updated_at}` in-flight progress card, or
+  **`null`** for any plan not in the `running` state. It is truthful by
+  construction — a stale phase is worse than none, so it is dropped off every
+  non-running path (including `stalled`) and stays `null` rather than surfacing a
+  value durable truth would contradict.
+  - `phase` (coarse lifecycle stage): `implementing` | `reviewing` | `verifying`.
+    It is a sub-field *under* the `running` status, not a new status enum value.
+    (`merging` is a RESERVED phase value: it is declared in the vocabulary but the
+    merge/integration path is not yet instrumented, so it is never emitted today —
+    do not rely on observing it.)
+  - `detail`: the current story ID (story loop) or an optional human phrase;
+    omitted when empty.
+  - `round`: per-phase fine counter (iteration / review round / verify round);
+    omitted when zero.
+  - `updated_at`: RFC-3339 timestamp of the activity.
+  - The coarse phase is derived from durable truth (persisted `prd.json` passes →
+    current story) so it cannot go stale; a written stamp that the durable state
+    contradicts is suppressed. The text `springfield status` surface renders the
+    same activity through the same projection, so the two cannot disagree.
 
 ### `flags` fields
 

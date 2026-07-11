@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"springfield/internal/core/gitstatus"
 )
 
 // Git is the minimal git surface planrun needs. The interface lets tests
@@ -59,49 +61,16 @@ func (g CLIGit) IsRepo(dir string) (bool, error) {
 	return out == "true", nil
 }
 
-// dirtyIgnoredPrefixes lists path prefixes whose presence in `git status`
-// output is Springfield's own bookkeeping, not user-visible dirt. The log
-// file `springfield start` writes lives under `.springfield/logs/`, and the
-// worktree base under `.worktrees/`, so neither must dirty the source
-// preflight even when the user has not added them to `.gitignore`.
-var dirtyIgnoredPrefixes = []string{".springfield/", ".worktrees/"}
-
+// IsDirty reports whether dir has uncommitted changes outside the paths
+// Springfield owns. Classification of the porcelain output is delegated to
+// [gitstatus.Dirty] so this gate, planmerge's resync gate, and autobranch
+// share one notion of "clean".
 func (g CLIGit) IsDirty(dir string) (bool, error) {
 	out, err := g.run(dir, "status", "--porcelain")
 	if err != nil {
 		return false, err
 	}
-	if out == "" {
-		return false, nil
-	}
-	for _, line := range strings.Split(out, "\n") {
-		if !lineIsSpringfieldOwned(line) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// lineIsSpringfieldOwned returns true when a `git status --porcelain` line
-// describes a path under one of the Springfield-owned prefixes. Porcelain
-// format is "XY <path>" (or "XY <orig> -> <new>" for renames); we strip the
-// status code and any rename arrow before checking the prefix.
-func lineIsSpringfieldOwned(line string) bool {
-	if len(line) < 4 {
-		return false
-	}
-	rest := line[3:]
-	if idx := strings.Index(rest, " -> "); idx >= 0 {
-		rest = rest[idx+len(" -> "):]
-	}
-	rest = strings.TrimPrefix(rest, "\"")
-	rest = strings.TrimSuffix(rest, "\"")
-	for _, p := range dirtyIgnoredPrefixes {
-		if strings.HasPrefix(rest, p) {
-			return true
-		}
-	}
-	return false
+	return gitstatus.Dirty(out), nil
 }
 
 func (g CLIGit) ResolveRef(dir, ref string) (string, error) {

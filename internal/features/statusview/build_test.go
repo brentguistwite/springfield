@@ -150,8 +150,8 @@ func TestActive_IntegratedCountSplitsMergedAndRetained(t *testing.T) {
 
 func TestIdle_EnvelopeShape(t *testing.T) {
 	v := statusview.Idle()
-	if v.SchemaVersion != 1 {
-		t.Fatalf("schema_version = %d, want 1", v.SchemaVersion)
+	if v.SchemaVersion != 2 {
+		t.Fatalf("schema_version = %d, want 2", v.SchemaVersion)
 	}
 	if v.State != "idle" {
 		t.Fatalf("state = %q, want idle", v.State)
@@ -281,6 +281,57 @@ func TestBuildPlan_HaltAndBase(t *testing.T) {
 	}
 }
 
+// TestBuildPlan_VerifyHalt pins JSON parity between the verify and review gates:
+// a plan that halted at the verify gate surfaces a verify block with verdict
+// "halt" and the gate error as reason, mirroring deriveReview. Without this a
+// --json consumer could see status:"needs-human" but no signal distinguishing a
+// verify halt (fix the failing command) from a review halt (address findings).
+func TestBuildPlan_VerifyHalt(t *testing.T) {
+	ps := &conductor.PlanState{
+		Status:     conductor.StatusNeedsHuman,
+		ExitReason: "verify-needs-human",
+		Error:      "verify gate halted: go test ./... failed after 3 iterations (full evidence in verify-iter-*)",
+	}
+	pv := statusview.BuildPlanForTest("feat-a", "Add feature A", ps, false)
+
+	if pv.Status != statusview.StatusNeedsHuman {
+		t.Fatalf("status = %q, want needs-human", pv.Status)
+	}
+	if pv.Verify.Verdict == nil || *pv.Verify.Verdict != "halt" {
+		t.Fatal("halt verdict must be set from verify-needs-human ExitReason")
+	}
+	if pv.Verify.Reason == nil || *pv.Verify.Reason != ps.Error {
+		t.Fatal("verify reason must come from PlanState.Error")
+	}
+	// A verify halt is not a review halt: the review block stays null.
+	if pv.Review.Verdict != nil {
+		t.Fatal("verify halt must not populate the review block")
+	}
+}
+
+// TestBuildPlan_VerifyErroredNoBlock pins that verify-errored (an infra failure,
+// StatusFailed) does NOT set a verify halt verdict — it surfaces via status
+// "failed" + last_error, exactly as review-errored does (deriveReview only fires
+// on review-needs-human, never review-errored).
+func TestBuildPlan_VerifyErroredNoBlock(t *testing.T) {
+	ps := &conductor.PlanState{
+		Status:     conductor.StatusFailed,
+		ExitReason: "verify-errored",
+		Error:      "verify command runner failed: fork/exec: permission denied",
+	}
+	pv := statusview.BuildPlanForTest("feat-a", "A", ps, false)
+
+	if pv.Status != statusview.StatusFailed {
+		t.Fatalf("status = %q, want failed", pv.Status)
+	}
+	if pv.Verify.Verdict != nil {
+		t.Fatal("verify-errored is an infra failure, not a halt — verdict must be null")
+	}
+	if pv.LastError == nil || *pv.LastError != ps.Error {
+		t.Fatal("verify-errored detail must surface via last_error")
+	}
+}
+
 func TestBuildPlan_TitleFallsBackToID(t *testing.T) {
 	pv := statusview.BuildPlanForTest("feat-a", "", &conductor.PlanState{Status: conductor.StatusPending}, true)
 	if pv.Title != "feat-a" {
@@ -333,7 +384,7 @@ func TestActive_OnePlanProjection(t *testing.T) {
 	}
 	v := statusview.Active(in)
 
-	if v.State != "active" || v.SchemaVersion != 1 {
+	if v.State != "active" || v.SchemaVersion != 2 {
 		t.Fatalf("envelope = %s/%d", v.State, v.SchemaVersion)
 	}
 	if v.Batch == nil || v.Batch.Title != "Ship feature A" {
@@ -449,7 +500,7 @@ func TestActive_JSONShape(t *testing.T) {
 	}
 	// Contract keys that Flightdeck branches on must be present.
 	for _, key := range []string{
-		`"schema_version": 1`, `"state": "active"`, `"plans": [`,
+		`"schema_version": 2`, `"state": "active"`, `"plans": [`,
 		`"id": "p1"`, `"status": "pending"`, `"base_branch": ""`,
 		`"review": {`, `"verdict": null`, `"merge": {`, `"status": null`,
 		`"integration": {`, `"state": "clean"`,

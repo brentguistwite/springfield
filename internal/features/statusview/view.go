@@ -5,9 +5,12 @@
 // enum mapping.
 package statusview
 
+import "time"
+
 // SchemaVersion is the contract version. Adding fields is a non-breaking
 // bump; removing/renaming requires an increment so consumers can branch.
-const SchemaVersion = 1
+// v2 added the per-plan in-flight [ActivityView] card (additive).
+const SchemaVersion = 2
 
 // Public board-status enum. A total projection of conductor.PlanStatus
 // composed with merge outcome.
@@ -73,12 +76,29 @@ type PlanView struct {
 	Branch       string          `json:"branch"`
 	BaseBranch   string          `json:"base_branch"`
 	BaseHead     string          `json:"base_head"`
+	Verify       VerifyView      `json:"verify"`
 	Review       ReviewView      `json:"review"`
 	Attempt      int             `json:"attempt"`
 	LastError    *string         `json:"last_error"`
 	EvidencePath string          `json:"evidence_path"`
 	Merge        MergeView       `json:"merge"`
 	Integration  IntegrationView `json:"integration"`
+	// Activity is the in-flight progress card. It is explicit null for any plan
+	// that is not running — the contract degrades to silence rather than show a
+	// stale phase (see [ActivityView]).
+	Activity *ActivityView `json:"activity"`
+}
+
+// ActivityView is the in-flight progress card: what a running plan is doing
+// right now. It is null for any plan not in the running state — a stale phase
+// is worse than none, so the projection drops it off the running path. phase is
+// the coarse lifecycle stage (implementing / reviewing / verifying / merging);
+// detail is an optional human phrase; round is the per-phase fine counter.
+type ActivityView struct {
+	Phase     string    `json:"phase"`
+	Detail    string    `json:"detail,omitempty"`
+	Round     int       `json:"round,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // IntegrationView is a rollup of post-merge disposition so a consumer can
@@ -94,6 +114,16 @@ type IntegrationView struct {
 // ReviewView is always present; verdict/reason are null unless the plan
 // halted at the pre-merge review gate.
 type ReviewView struct {
+	Verdict *string `json:"verdict"`
+	Reason  *string `json:"reason"`
+}
+
+// VerifyView is always present; verdict/reason are null unless the plan halted
+// at the objective verify gate (a failing verify command exhausted the fix
+// loop). It mirrors ReviewView so a --json consumer can tell a verify halt
+// (fix the failing command) from a review halt (address findings) rather than
+// inferring intent from last_error.
+type VerifyView struct {
 	Verdict *string `json:"verdict"`
 	Reason  *string `json:"reason"`
 }

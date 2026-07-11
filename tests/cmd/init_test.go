@@ -492,3 +492,83 @@ func TestInitResetPrintsBackupPath(t *testing.T) {
 		t.Errorf("no backup file found in %s", dir)
 	}
 }
+
+// TestInitBranchModeFlagsWriteProjectKeys verifies --branch-mode and
+// --base-branch land in [project] of springfield.toml.
+func TestInitBranchModeFlagsWriteProjectKeys(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	output, err := runBinaryIn(t, bin, dir, "init",
+		"--agents", "claude",
+		"--branch-mode", "per-plan",
+		"--base-branch", "main",
+	)
+	if err != nil {
+		t.Fatalf("init failed: %v\n%s", err, output)
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, "springfield.toml"))
+	if err != nil {
+		t.Fatalf("read springfield.toml: %v", err)
+	}
+	toml := string(content)
+	if !strings.Contains(toml, `branch_mode = "per-plan"`) {
+		t.Errorf("expected branch_mode in config:\n%s", toml)
+	}
+	if !strings.Contains(toml, `base_branch = "main"`) {
+		t.Errorf("expected base_branch in config:\n%s", toml)
+	}
+}
+
+// TestInitTwiceBranchModeFlagsNotDuplicated is the flags half of the US-007
+// idempotency pin: re-running init with --branch-mode/--base-branch must leave
+// exactly one branch_mode and one base_branch key in [project]. Re-init loads
+// springfield.toml into a struct and re-marshals it, so duplicate keys are
+// structurally impossible today — this locks that "re-serialize, don't append"
+// contract at the binary boundary so a future string-append config writer can't
+// silently regress it.
+func TestInitTwiceBranchModeFlagsNotDuplicated(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	args := []string{"init", "--agents", "claude", "--branch-mode", "per-plan", "--base-branch", "main"}
+	if out, err := runBinaryIn(t, bin, dir, args...); err != nil {
+		t.Fatalf("first init: %v\n%s", err, out)
+	}
+	if out, err := runBinaryIn(t, bin, dir, args...); err != nil {
+		t.Fatalf("second init: %v\n%s", err, out)
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, "springfield.toml"))
+	if err != nil {
+		t.Fatalf("read springfield.toml: %v", err)
+	}
+	toml := string(content)
+	for _, key := range []string{"branch_mode =", "base_branch ="} {
+		if n := strings.Count(toml, key); n != 1 {
+			t.Errorf("key %q appears %d times after re-init, want exactly 1; config:\n%s", key, n, toml)
+		}
+	}
+}
+
+// TestInitInvalidBranchModeExitsNonZero verifies an out-of-range --branch-mode
+// aborts init with a clear message and a non-zero exit, leaving no config.
+func TestInitInvalidBranchModeExitsNonZero(t *testing.T) {
+	bin := buildBinary(t)
+	dir := t.TempDir()
+
+	output, err := runBinaryIn(t, bin, dir, "init",
+		"--agents", "claude",
+		"--branch-mode", "bogus",
+	)
+	if err == nil {
+		t.Fatalf("expected non-zero exit, output:\n%s", output)
+	}
+	if !strings.Contains(output, "invalid --branch-mode") {
+		t.Errorf("expected clear branch-mode error, got:\n%s", output)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "springfield.toml")); statErr == nil {
+		t.Error("invalid init should not have written springfield.toml")
+	}
+}

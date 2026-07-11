@@ -3,7 +3,7 @@ package statusview
 import "springfield/internal/features/conductor"
 
 func BuildPlanForTest(id, title string, ps *conductor.PlanState, live bool) PlanView {
-	return buildPlan(id, title, ps, live)
+	return buildPlan(id, title, ps, live, nil)
 }
 
 // DeriveIntegrationForTest exposes deriveIntegration to the external test package.
