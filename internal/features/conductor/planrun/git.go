@@ -134,16 +134,11 @@ func (g CLIGit) Diff(dir, baseRef string) (string, error) {
 	return g.run(dir, "diff", baseRef+"...HEAD")
 }
 
-// SwitchCreate creates branch from current HEAD and switches the repo to it.
-// Used by the auto-branch flow in cmd/start so the operator never lands on
-// the protected base when running a batch.
-func (g CLIGit) SwitchCreate(dir, branch string) error {
-	_, err := g.run(dir, "switch", "-c", branch)
-	return err
-}
-
-// Switch checks out an existing branch in dir.
-func (g CLIGit) Switch(dir, branch string) error {
-	_, err := g.run(dir, "switch", branch)
+// CreateBranch creates branch at startPoint without switching the worktree
+// (`git branch <branch> <startPoint>`). Used by the auto-branch flow in
+// cmd/start so the operator keeps working on their original branch while the
+// batch accumulates merges onto the auto-branch ref.
+func (g CLIGit) CreateBranch(dir, branch, startPoint string) error {
+	_, err := g.run(dir, "branch", branch, startPoint)
 	return err
 }

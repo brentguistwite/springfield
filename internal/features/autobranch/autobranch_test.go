@@ -8,6 +8,19 @@ import (
 	"testing"
 )
 
+func TestBaseForBatchUsesAutoBranchWhenActive(t *testing.T) {
+	got := BaseForBatch("main", &Activation{BranchName: "springfield/batch-abc"})
+	if got != "springfield/batch-abc" {
+		t.Fatalf("active auto-branch must become the base, got %q", got)
+	}
+}
+
+func TestBaseForBatchFallsBackToResolvedBase(t *testing.T) {
+	if got := BaseForBatch("feat/x", nil); got != "feat/x" {
+		t.Fatalf("nil activation must leave the resolved base unchanged, got %q", got)
+	}
+}
+
 func TestResolveBranchNameValid(t *testing.T) {
 	got, err := ResolveBranchName("springfield/batch-{id}", "abc123", nil)
 	if err != nil {
@@ -90,17 +103,18 @@ func TestResolveBranchNameBranchExistsError(t *testing.T) {
 	}
 }
 
-// fakeGit is a scripted Git implementation for Activate/Restore tests.
+// fakeGit is a scripted Git implementation for Activate/Restore tests. It
+// records branch creates and never mutates `current`, mirroring the real
+// behavior: auto-branching creates a ref without switching the worktree.
 type fakeGit struct {
-	current      string
-	dirty        bool
-	currentErr   error
-	dirtyErr     error
-	existing     map[string]bool
-	switchedTo   []string
-	switchCreate []string
-	switchErr    error
-	createErr    error
+	current    string
+	dirty      bool
+	currentErr error
+	dirtyErr   error
+	existing   map[string]bool
+	// created records (branch, startPoint) pairs passed to CreateBranch.
+	created   [][2]string
+	createErr error
 }
 
 func (f *fakeGit) CurrentBranch(string) (string, error) {
@@ -115,25 +129,15 @@ func (f *fakeGit) IsDirty(string) (bool, error) {
 	return f.dirty, f.dirtyErr
 }
 
-func (f *fakeGit) SwitchCreate(_, b string) error {
+func (f *fakeGit) CreateBranch(_, branch, startPoint string) error {
 	if f.createErr != nil {
 		return f.createErr
 	}
-	f.switchCreate = append(f.switchCreate, b)
-	f.current = b
+	f.created = append(f.created, [2]string{branch, startPoint})
 	if f.existing == nil {
 		f.existing = map[string]bool{}
 	}
-	f.existing[b] = true
-	return nil
-}
-
-func (f *fakeGit) Switch(_, b string) error {
-	if f.switchErr != nil {
-		return f.switchErr
-	}
-	f.switchedTo = append(f.switchedTo, b)
-	f.current = b
+	f.existing[branch] = true
 	return nil
 }
 
@@ -147,7 +151,7 @@ func TestActivateNotProtected(t *testing.T) {
 	if a != nil {
 		t.Fatalf("expected no-op, got %+v", a)
 	}
-	if len(g.switchCreate) != 0 {
+	if len(g.created) != 0 {
 		t.Fatalf("must not switch when not on protected base")
 	}
 }
@@ -183,11 +187,15 @@ func TestActivateProtectedHappyPath(t *testing.T) {
 	if a.Reason != "created" {
 		t.Fatalf("Reason=%q", a.Reason)
 	}
-	if len(g.switchCreate) != 1 || g.switchCreate[0] != "springfield/batch-abc" {
-		t.Fatalf("switchCreate=%v", g.switchCreate)
+	if len(g.created) != 1 || g.created[0] != [2]string{"springfield/batch-abc", "main"} {
+		t.Fatalf("expected branch created from main without switching, got created=%v", g.created)
+	}
+	// The core guarantee: the worktree never switches off the operator's branch.
+	if g.current != "main" {
+		t.Fatalf("main worktree must stay on main, got %q", g.current)
 	}
 	out := buf.String()
-	for _, want := range []string{"auto-cut branch springfield/batch-abc", "all slice work will merge here", "switching back to main"} {
+	for _, want := range []string{"auto-cut branch springfield/batch-abc", "slice work merges here; you stay on main"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -204,7 +212,7 @@ func TestActivateDirtyTreeBlocked(t *testing.T) {
 	if !strings.Contains(err.Error(), "uncommitted") {
 		t.Fatalf("error: %v", err)
 	}
-	if len(g.switchCreate) != 0 {
+	if len(g.created) != 0 {
 		t.Fatalf("must not switch when dirty")
 	}
 }
@@ -243,18 +251,21 @@ func TestActivateResumeAlreadyOnAutoBranch(t *testing.T) {
 	if a == nil || a.Reason != "resumed" {
 		t.Fatalf("Activation=%+v", a)
 	}
-	if len(g.switchCreate) != 0 {
+	if len(g.created) != 0 {
 		t.Fatalf("resume must not create branch again")
 	}
-	if len(g.switchedTo) != 0 {
-		t.Fatalf("resume must not switch when already on auto-branch")
+	if len(g.created) != 0 {
+		t.Fatalf("resume must not create a branch")
 	}
 	if !strings.Contains(buf.String(), "auto-branch resume") {
 		t.Fatalf("missing resume log:\n%s", buf.String())
 	}
 }
 
-func TestActivateResumeFromOriginalSwitchesBack(t *testing.T) {
+// Resume must be a pure no-op on the worktree: the main worktree was never
+// switched off the original branch, so there is nothing to create or switch.
+// It only re-derives the Activation so the base is re-threaded.
+func TestActivateResumeDoesNotTouchWorktree(t *testing.T) {
 	g := &fakeGit{current: "main"}
 	var buf bytes.Buffer
 	a, err := Activate(Input{
@@ -273,15 +284,23 @@ func TestActivateResumeFromOriginalSwitchesBack(t *testing.T) {
 	if a == nil || a.Reason != "resumed" {
 		t.Fatalf("Activation=%+v", a)
 	}
-	if len(g.switchedTo) != 1 || g.switchedTo[0] != "springfield/batch-abc" {
-		t.Fatalf("expected switch to auto-branch on resume, got %v", g.switchedTo)
+	if a.OriginalBranch != "main" || a.BranchName != "springfield/batch-abc" {
+		t.Fatalf("resume must re-derive original/branch, got %+v", a)
+	}
+	if len(g.created) != 0 {
+		t.Fatalf("resume must not create a branch, got %v", g.created)
+	}
+	if g.current != "main" {
+		t.Fatalf("resume must leave the worktree on main, got %q", g.current)
 	}
 }
 
-func TestActivateResumeDirtyBlocked(t *testing.T) {
+// A dirty working tree no longer blocks resume: resume performs no git ops, so
+// there is no switch that uncommitted changes could corrupt.
+func TestActivateResumeIgnoresDirtyTree(t *testing.T) {
 	g := &fakeGit{current: "main", dirty: true}
 	var buf bytes.Buffer
-	_, err := Activate(Input{
+	a, err := Activate(Input{
 		Git:                 g,
 		Dir:                 "/r",
 		BatchID:             "abc",
@@ -291,8 +310,11 @@ func TestActivateResumeDirtyBlocked(t *testing.T) {
 		PriorOriginalBranch: "main",
 		PriorAutoBranchName: "springfield/batch-abc",
 	}, &buf)
-	if err == nil || !strings.Contains(err.Error(), "uncommitted") {
-		t.Fatalf("expected dirty refusal on resume, got %v", err)
+	if err != nil {
+		t.Fatalf("resume must succeed regardless of dirty tree, got %v", err)
+	}
+	if a == nil || a.Reason != "resumed" {
+		t.Fatalf("Activation=%+v", a)
 	}
 }
 
@@ -310,7 +332,7 @@ func TestActivateBeforePersistCreateFires(t *testing.T) {
 			persisted.branch = b
 			persisted.called++
 			// hook must fire BEFORE switch
-			if len(g.switchCreate) != 0 {
+			if len(g.created) != 0 {
 				t.Errorf("hook fired after switch")
 			}
 			return nil
@@ -325,7 +347,7 @@ func TestActivateBeforePersistCreateFires(t *testing.T) {
 	if persisted.original != "main" || persisted.branch != "springfield/batch-abc" {
 		t.Fatalf("hook args: %+v", persisted)
 	}
-	if len(g.switchCreate) != 1 {
+	if len(g.created) != 1 {
 		t.Fatalf("switch must run after hook")
 	}
 }
@@ -342,7 +364,7 @@ func TestActivateBeforePersistCreateAbortsBeforeSwitch(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "disk full") {
 		t.Fatalf("expected wrapped persist err, got %v", err)
 	}
-	if len(g.switchCreate) != 0 {
+	if len(g.created) != 0 {
 		t.Fatalf("switch must not fire when persist fails")
 	}
 }
@@ -369,42 +391,37 @@ func TestActivateBeforePersistCreateNotCalledOnResume(t *testing.T) {
 	}
 }
 
-func TestActivateSwitchCreateError(t *testing.T) {
+func TestActivateCreateBranchError(t *testing.T) {
 	g := &fakeGit{current: "main", createErr: errors.New("permission denied")}
 	var buf bytes.Buffer
 	_, err := Activate(Input{Git: g, Dir: "/r", BatchID: "abc", Pattern: "springfield/batch-{id}", Enabled: true}, &buf)
 	if err == nil || !strings.Contains(err.Error(), "permission denied") {
-		t.Fatalf("expected wrapped switch error, got %v", err)
+		t.Fatalf("expected wrapped create-branch error, got %v", err)
 	}
 }
 
 func TestRestoreSuccess(t *testing.T) {
-	g := &fakeGit{current: "springfield/batch-abc"}
 	a := &Activation{OriginalBranch: "main", BranchName: "springfield/batch-abc"}
 	var buf bytes.Buffer
-	if err := Restore(g, "/r", a, OutcomeSuccess, &buf); err != nil {
-		t.Fatalf("err: %v", err)
-	}
-	if g.switchedTo[0] != "main" {
-		t.Fatalf("switchedTo=%v", g.switchedTo)
-	}
+	Restore(a, OutcomeSuccess, &buf)
 	out := buf.String()
-	for _, want := range []string{"batch complete on springfield/batch-abc", "switched back to main", "git push -u origin springfield/batch-abc"} {
+	for _, want := range []string{"batch complete on springfield/batch-abc (you are on main)", "git push -u origin springfield/batch-abc"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
 	}
+	// Restore must not claim a switch happened — the worktree never moved.
+	if strings.Contains(out, "switched back") {
+		t.Errorf("Restore must not claim a switch-back:\n%s", out)
+	}
 }
 
 func TestRestoreFailure(t *testing.T) {
-	g := &fakeGit{current: "springfield/batch-abc"}
 	a := &Activation{OriginalBranch: "main", BranchName: "springfield/batch-abc"}
 	var buf bytes.Buffer
-	if err := Restore(g, "/r", a, OutcomeFailed, &buf); err != nil {
-		t.Fatalf("err: %v", err)
-	}
+	Restore(a, OutcomeFailed, &buf)
 	out := buf.String()
-	for _, want := range []string{"batch failed on springfield/batch-abc", "preserved for inspection", "git switch springfield/batch-abc"} {
+	for _, want := range []string{"batch failed on springfield/batch-abc (you are on main)", "preserved for inspection", "git switch springfield/batch-abc"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in output:\n%s", want, out)
 		}
@@ -412,12 +429,9 @@ func TestRestoreFailure(t *testing.T) {
 }
 
 func TestRestoreInterrupted(t *testing.T) {
-	g := &fakeGit{current: "springfield/batch-abc"}
 	a := &Activation{OriginalBranch: "main", BranchName: "springfield/batch-abc"}
 	var buf bytes.Buffer
-	if err := Restore(g, "/r", a, OutcomeInterrupted, &buf); err != nil {
-		t.Fatalf("err: %v", err)
-	}
+	Restore(a, OutcomeInterrupted, &buf)
 	out := buf.String()
 	for _, want := range []string{"interrupted on springfield/batch-abc", "rerun \"springfield start\" to resume"} {
 		if !strings.Contains(out, want) {
@@ -426,22 +440,11 @@ func TestRestoreInterrupted(t *testing.T) {
 	}
 }
 
-func TestRestoreSwitchBackFails(t *testing.T) {
-	g := &fakeGit{current: "springfield/batch-abc", switchErr: errors.New("dirty index")}
-	a := &Activation{OriginalBranch: "main", BranchName: "springfield/batch-abc"}
-	var buf bytes.Buffer
-	err := Restore(g, "/r", a, OutcomeSuccess, &buf)
-	if err == nil {
-		t.Fatal("expected error when switch back fails")
-	}
-	if !strings.Contains(buf.String(), "failed to switch back") {
-		t.Fatalf("missing remediation msg:\n%s", buf.String())
-	}
-}
-
 func TestRestoreNilActivation(t *testing.T) {
-	if err := Restore(&fakeGit{}, "/r", nil, OutcomeSuccess, &bytes.Buffer{}); err != nil {
-		t.Fatalf("nil activation must be no-op, got %v", err)
+	var buf bytes.Buffer
+	Restore(nil, OutcomeSuccess, &buf)
+	if buf.Len() != 0 {
+		t.Fatalf("nil activation must be a no-op, got output:\n%s", buf.String())
 	}
 }
 

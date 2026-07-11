@@ -49,9 +49,8 @@ func TestAutoBranchHappyPathOnProtectedBase(t *testing.T) {
 
 	wantSnippets := []string{
 		"auto-cut branch springfield/batch-batch-auto-1 from main",
-		"all slice work will merge here",
-		"switching back to main on finish",
-		"batch complete on springfield/batch-batch-auto-1",
+		"slice work merges here; you stay on main",
+		"batch complete on springfield/batch-batch-auto-1 (you are on main)",
 		"git push -u origin springfield/batch-batch-auto-1",
 	}
 	for _, want := range wantSnippets {
@@ -60,8 +59,13 @@ func TestAutoBranchHappyPathOnProtectedBase(t *testing.T) {
 		}
 	}
 
+	// The checkout must never have left main — the auto-branch is created as a
+	// bare ref, not switched onto. HEAD still points at main's tip.
 	if got := strings.TrimSpace(gitOut(t, dir, "branch", "--show-current")); got != "main" {
-		t.Fatalf("expected back on main, got %q", got)
+		t.Fatalf("expected still on main, got %q", got)
+	}
+	if got := strings.TrimSpace(gitOut(t, dir, "rev-parse", "main")); got != strings.TrimSpace(gitOut(t, dir, "rev-parse", "springfield/batch-batch-auto-1")) {
+		t.Fatalf("auto-branch must be cut from main's tip (no divergence when batch is empty)")
 	}
 	branches := gitOut(t, dir, "branch", "--list", "springfield/batch-batch-auto-1")
 	if strings.TrimSpace(branches) == "" {

@@ -197,7 +197,7 @@ Notes:
 - Primary install is two pieces: the CLI via Homebrew (or tarball/source on non-mac) and the plugin via the Claude or Codex marketplace — see [Install](#install).
 - `springfield install` is an additive local-host sync (writes slash-command/skill helpers into `~/.claude/` and `~/.agents/`); use it when the plugin install flow isn't available, or as a fallback.
 - Re-running `init` preserves existing config, only filling in missing recommended defaults and agent priority. Use `springfield init --reset` when `springfield.toml` has drifted (stale agent blocks, manual edits you want gone): it backs up the current `springfield.toml` and regenerates it from your `--agents`/`--model` selection. `--reset` rewrites `springfield.toml` and updates the execution config's primary tool to match your new agent priority; your registered plans are preserved.
-- `auto_branch = true` (default) auto-cuts a feature branch (`springfield/batch-<id>`) when you run `springfield start` from `main` or `master`, switches to it for the run, and switches you back when the batch finishes. See [Recommended Workflow](#recommended-workflow). Override the name with `auto_branch_pattern = "feat/{id}"` (only `{id}` is supported). Set `auto_branch = false` to disable.
+- `auto_branch = true` (default) auto-cuts a feature branch (`springfield/batch-<id>`) as a bare ref when you run `springfield start` from `main` or `master` and lands the batch on it — without switching your worktree, so you stay on `main` for the whole run. See [Recommended Workflow](#recommended-workflow). Override the name with `auto_branch_pattern = "feat/{id}"` (only `{id}` is supported). Set `auto_branch = false` to disable.
 - `allow_protected_base = false` (default) refuses to ff-merge plan results into `main` or `master`. Only consulted when `auto_branch = false` (otherwise the auto-cut feature branch becomes the base and the guard does not apply).
 - `branch_mode = "consolidate"` (default) merges every plan in a batch onto one shared base (one PR for the batch). Set `branch_mode = "per-plan"` to instead leave one standalone `springfield/<plan>` branch per plan (one PR per ticket) — nothing merges into the base. Override per-run with `springfield start --per-plan-branches`. See [Per-plan branches](#per-plan-branches).
 - `base_branch = "develop"` sets the base each per-plan branch is cut from (per-plan mode only). Precedence: `--base` flag > `base_branch` > the current branch. Unattended controllers should set this so the current-branch fallback stays a deliberate, manual-only choice.
@@ -261,7 +261,7 @@ When that warning is active, silence it per-operator with `SPRINGFIELD_SUPPRESS_
 
 Springfield runs each plan in an isolated git worktree, then ff-merges the result back into a base branch on your **local** clone. Nothing is pushed and no PR is opened — that step is yours.
 
-The base branch defaults to whatever you have checked out when `springfield start` runs. Because most teams gate `main` and `master` behind PR review, Springfield's default behavior is to **auto-cut a feature branch for you** when you start from one of them, run the batch on that branch, and switch you back to where you started when the batch finishes.
+The base branch defaults to whatever you have checked out when `springfield start` runs. Because most teams gate `main` and `master` behind PR review, Springfield's default behavior is to **auto-cut a feature branch for you** when you start from one of them and land the batch on that branch. Your worktree never leaves the branch you started on — the auto-branch is created as a bare ref and the merges are published to it directly, so you can keep working on `main` while the batch runs.
 
 ```bash
 git switch main                     # any starting point is fine
@@ -269,13 +269,12 @@ springfield plan --prd payload.json
 springfield start
 # Springfield prints:
 #   auto-cut branch springfield/batch-<id> from main
-#     → all slice work will merge here
-#     → switching back to main on finish (push + PR by hand)
+#     → slice work merges here; you stay on main
+#     → push + open PR by hand when the batch finishes
 #
-# ... batch runs ...
+# ... batch runs (you stay on main the whole time) ...
 #
-#   batch complete on springfield/batch-<id>
-#   switched back to main
+#   batch complete on springfield/batch-<id> (you are on main)
 #   push + open PR:
 #     git push -u origin springfield/batch-<id>
 #     gh pr create
