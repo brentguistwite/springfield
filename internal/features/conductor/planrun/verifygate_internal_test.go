@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -214,6 +215,53 @@ func TestVerifyGateCancelledContextErrorsBeforeCommand(t *testing.T) {
 	}
 	if cmd.calls != 0 {
 		t.Fatalf("cancel guard must fire before any command run; got %d", cmd.calls)
+	}
+}
+
+func TestVerifyGateCancelledMidCommandErrorsBeforeFix(t *testing.T) {
+	// A context cancelled WHILE the command runs (the caller aborted, e.g. SIGINT)
+	// must NOT be treated as a fixable failed round: the gate must surface
+	// verifyErrored (propagating ctx.Err) and never dispatch a fix agent against
+	// the already-cancelled context — the misclassification that would persist a
+	// false verify-needs-human diagnosis for a user abort.
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := 0
+	cmd := func(_ context.Context, _ verify.Request) verify.Result {
+		calls++
+		cancel() // caller aborts mid-command
+		// The killed command reports as cancelled (mirrors verify.Run's Result).
+		return verify.Result{ExitCode: -1, Cancelled: true}
+	}
+	agent := &seqRunner{} // must never be called
+	in := vgInput(t, cmd, agent, 3)
+	in.Ctx = ctx
+	got := runVerifyGate(in)
+	if got.Outcome != verifyErrored {
+		t.Fatalf("outcome = %v, want verifyErrored (mid-command cancel is an abort, not a fixable round)", got.Outcome)
+	}
+	if !errors.Is(got.Err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", got.Err)
+	}
+	if agent.calls != 0 {
+		t.Fatalf("a cancelled context must NOT dispatch a fix agent; got %d calls", agent.calls)
+	}
+	if calls != 1 {
+		t.Fatalf("expected exactly 1 command call before the cancel guard fired, got %d", calls)
+	}
+}
+
+func TestVerifyGateLastRoundTimeoutNamesTimeoutInReason(t *testing.T) {
+	// max=1: a single round that TIMES OUT exhausts the budget without the
+	// two-in-a-row early escalation firing. The exhaustion reason must mention the
+	// timeout so it is not silently generic (unlike the early-escalation path).
+	cmd := &seqCmd{results: []verify.Result{{ExitCode: -1, TimedOut: true}}}
+	agent := &seqRunner{} // budget is 1, no fix iteration
+	got := runVerifyGate(vgInput(t, cmd.run, agent, 1))
+	if got.Outcome != verifyNeedsHuman {
+		t.Fatalf("outcome = %v, want verifyNeedsHuman", got.Outcome)
+	}
+	if !strings.Contains(got.Reason, "last round timed out") {
+		t.Fatalf("reason = %q, want it to mention the last-round timeout", got.Reason)
 	}
 }
 

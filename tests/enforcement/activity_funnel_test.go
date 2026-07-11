@@ -75,8 +75,12 @@ func activityWriteViolations(fset *token.FileSet, f *ast.File, label string) []s
 	for _, decl := range f.Decls {
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
-			if d.Name.Name == activityWriterFunc {
-				// The sole sanctioned writer: its body is exempt by definition.
+			if d.Name.Name == activityWriterFunc && d.Recv == nil {
+				// The sole sanctioned writer: the free FUNCTION enterPhase is exempt
+				// by definition. A METHOD named enterPhase (d.Recv != nil) on some
+				// other type is NOT the funnel and must still be scanned — otherwise
+				// a same-named method could stamp Activity directly and bypass the
+				// guard silently.
 				continue
 			}
 			if d.Body != nil {
@@ -114,6 +118,7 @@ func isPlanActivityType(expr ast.Expr) bool {
 func TestEnterPhaseIsSoleActivityWriter(t *testing.T) {
 	fset := token.NewFileSet()
 	var violations []string
+	var enterPhaseDecls []string
 	for _, pkg := range activityWritePkgs {
 		entries, err := os.ReadDir(pkg)
 		if err != nil {
@@ -129,11 +134,23 @@ func TestEnterPhaseIsSoleActivityWriter(t *testing.T) {
 				t.Fatalf("parse %s: %v", path, err)
 			}
 			violations = append(violations, activityWriteViolations(fset, f, path)...)
+			for _, decl := range f.Decls {
+				if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == activityWriterFunc && fn.Recv == nil {
+					enterPhaseDecls = append(enterPhaseDecls, fmt.Sprintf("%s:%d", path, fset.Position(fn.Pos()).Line))
+				}
+			}
 		}
 	}
 	if len(violations) > 0 {
 		t.Errorf("PlanActivity written outside %s() — every phase-execution site must funnel through it (route the stamp via %s so it persists and cannot strand a stale phase):\n  %s",
 			activityWriterFunc, activityWriterFunc, strings.Join(violations, "\n  "))
+	}
+	// The exemption above is keyed on the NAME enterPhase; if that free function
+	// disappeared the whole guard would pass vacuously, and if a second one
+	// appeared the funnel would no longer be single-writer. Pin it to exactly one.
+	if len(enterPhaseDecls) != 1 {
+		t.Errorf("expected exactly ONE free-function %s() declaration across %v, found %d: %v — the single-writer funnel and its exemption depend on there being exactly one",
+			activityWriterFunc, activityWritePkgs, len(enterPhaseDecls), enterPhaseDecls)
 	}
 }
 

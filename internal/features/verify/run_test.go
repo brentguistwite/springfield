@@ -122,6 +122,35 @@ func TestRun_TimeoutKillsProcessGroup(t *testing.T) {
 	}
 }
 
+func TestRun_ContextCancelledMidCommand(t *testing.T) {
+	// A context cancelled WHILE the command runs must be reported distinctly from
+	// an ordinary failed command: Cancelled=true, TimedOut=false, Err=nil (a
+	// cancel is neither a timeout nor a launch failure). This is what lets the
+	// gate tell a user abort apart from a fixable failed round.
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	res := verify.Run(ctx, verify.Request{Command: "sleep 3"})
+	elapsed := time.Since(start)
+
+	if !res.Cancelled {
+		t.Fatalf("Cancelled = false, want true for a mid-command context cancel")
+	}
+	if res.TimedOut {
+		t.Fatalf("TimedOut = true, want false (this was a cancel, not a timeout)")
+	}
+	if res.Err != nil {
+		t.Fatalf("Err = %v, want nil (a cancel is not a launch failure)", res.Err)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("Run took %v; cancel should have killed the command near 100ms", elapsed)
+	}
+}
+
 func TestRun_LaunchErrorOnMissingDir(t *testing.T) {
 	// A non-existent working directory can't be entered: surfaced as Err (a
 	// launch failure), distinct from a command that ran and exited non-zero.

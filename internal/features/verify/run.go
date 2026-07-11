@@ -30,6 +30,11 @@ type Result struct {
 	Stderr string
 	// TimedOut is true when Timeout elapsed and the process group was killed.
 	TimedOut bool
+	// Cancelled is true when the caller's context (e.g. a SIGINT-driven abort)
+	// fired and the process group was killed as a result — NOT a timeout. It
+	// distinguishes a user/caller abort from an ordinary non-zero exit so the
+	// gate does not misclassify an abort as a fixable failed round.
+	Cancelled bool
 	// Duration is the wall-clock time the command ran.
 	Duration time.Duration
 	// Err is non-nil only when the command could not be launched (e.g. the
@@ -73,7 +78,7 @@ func Run(ctx context.Context, req Request) Result {
 		timeoutCh = t.C
 	}
 
-	var timedOut bool
+	var timedOut, cancelled bool
 	select {
 	case <-waitDone:
 	case <-timeoutCh:
@@ -81,6 +86,7 @@ func Run(ctx context.Context, req Request) Result {
 		killGroup(proc)
 		<-waitDone
 	case <-ctx.Done():
+		cancelled = true
 		killGroup(proc)
 		<-waitDone
 	}
@@ -91,10 +97,11 @@ func Run(ctx context.Context, req Request) Result {
 		exitCode = proc.ProcessState.ExitCode()
 	}
 	return Result{
-		ExitCode: exitCode,
-		Stdout:   stdout.String(),
-		Stderr:   stderr.String(),
-		TimedOut: timedOut,
-		Duration: dur,
+		ExitCode:  exitCode,
+		Stdout:    stdout.String(),
+		Stderr:    stderr.String(),
+		TimedOut:  timedOut,
+		Cancelled: cancelled,
+		Duration:  dur,
 	}
 }

@@ -134,7 +134,12 @@ const (
 	PhaseImplementing = "implementing"
 	PhaseReviewing    = "reviewing"
 	PhaseVerifying    = "verifying"
-	PhaseMerging      = "merging"
+	// PhaseMerging is RESERVED and NOT YET EMITTED: no site calls
+	// enterPhase(..., PhaseMerging, ...), so a consumer can never observe it in a
+	// live activity signal today. It is declared here to reserve the vocabulary
+	// for when the merge/integration path is instrumented; until then do not
+	// advertise it to consumers as a value that appears (see docs/status-json.md).
+	PhaseMerging = "merging"
 )
 
 // RecoveryAction is one durable record of a recovery operation performed on a plan.

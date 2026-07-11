@@ -138,6 +138,19 @@ func runVerifyGate(in verifyGateInput) verifyGateResult {
 			return verifyGateResult{Outcome: verifyPassed}
 		}
 
+		// Caller/context abort (e.g. SIGINT) killed the command mid-run: the
+		// non-zero exit is the KILL, not a fixable failure. Dispatching a fix here
+		// would run an implementer against an already-cancelled context and could
+		// persist a false verify-needs-human diagnosis for what was a user abort.
+		// Surface it as errored BEFORE the fix-loop, propagating ctx.Err.
+		if res.Cancelled || ctx.Err() != nil {
+			err := ctx.Err()
+			if err == nil {
+				err = context.Canceled
+			}
+			return verifyGateResult{Outcome: verifyErrored, Err: err}
+		}
+
 		// Failed round. Track consecutive timeouts so a suite that hangs twice in
 		// a row escalates early instead of burning the whole budget.
 		if res.TimedOut {
@@ -153,9 +166,16 @@ func runVerifyGate(in verifyGateInput) verifyGateResult {
 		}
 
 		if round >= max {
+			reason := fmt.Sprintf("verify command still failing after %d iterations (%q)", max, in.VerifyCommand)
+			if res.TimedOut {
+				// The final budgeted round timed out (without the two-in-a-row early
+				// escalation firing). Name the timeout so the exhaustion reason is not
+				// silently generic — the operator needs to know the suite hung.
+				reason += " (last round timed out)"
+			}
 			return verifyGateResult{
 				Outcome: verifyNeedsHuman,
-				Reason:  fmt.Sprintf("verify command still failing after %d iterations (%q)", max, in.VerifyCommand),
+				Reason:  reason,
 			}
 		}
 

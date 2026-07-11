@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"text/template"
+	"unicode/utf8"
 
 	"springfield/internal/features/conductor/planrun/prompts"
 	"springfield/internal/features/prd"
@@ -255,6 +256,12 @@ func promptTail(s string) string {
 		return s
 	}
 	tail := s[len(s)-verifyPromptTailBytes:]
+	// The raw byte cut can split a multi-byte rune, leaving invalid UTF-8 as
+	// leading continuation bytes. Advance to the next rune boundary so the
+	// verify-fix prompt embeds only valid UTF-8.
+	for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
+		tail = tail[1:]
+	}
 	return fmt.Sprintf("[springfield: output truncated, showing last %d of %d bytes]\n%s", verifyPromptTailBytes, len(s), tail)
 }
 

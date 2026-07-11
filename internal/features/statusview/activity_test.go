@@ -168,15 +168,19 @@ func TestActive_DerivedSilentWhenAllStoriesPassed(t *testing.T) {
 }
 
 // TestActive_SuppressesContradictoryWrite is the contradiction-suppression
-// backstop (US-007): a written Activity whose detail names a story that durable
-// prd.json shows already PASSED is stale by construction — the runner moved on
-// without the write catching up. The projection must drop that written overlay
-// (detail AND its fine counter, which belonged to the finished story) and fall
-// back to Tier-1 derivation, never surfacing the value durable truth contradicts.
+// backstop (US-007) AND its transition-window correction: a written Activity
+// whose detail names a story that durable prd.json shows already PASSED is stale
+// by construction — the runner finished it but has not yet stamped the next
+// in-progress signal. That is the GAP after story N passes and before story N+1
+// is dispatched. The projection must drop the stale overlay (detail AND its fine
+// counter) but must NOT then derive NextEligibleStory as the current story:
+// reporting the next story as "implementing" before any dispatch has started is a
+// lie. It degrades to the coarse running phase WITHOUT naming a not-yet-started
+// story until a genuine in-progress signal exists.
 func TestActive_SuppressesContradictoryWrite(t *testing.T) {
 	p := prd.PRD{UserStories: []prd.UserStory{
 		{ID: "US-001", Priority: 1, Passes: true},  // durable truth: done
-		{ID: "US-002", Priority: 2, Passes: false}, // durable truth: current
+		{ID: "US-002", Priority: 2, Passes: false}, // NOT yet dispatched
 	}}
 	// Stale write: claims still implementing US-001 (round 5), which has passed.
 	stale := &conductor.PlanActivity{
@@ -191,19 +195,25 @@ func TestActive_SuppressesContradictoryWrite(t *testing.T) {
 	v := statusview.Active(activityInputWithPRD(ps, true, &p))
 	got := v.Plans[0].Activity
 	if got == nil {
-		t.Fatal("suppression must fall back to derived Activity, not drop it entirely")
+		t.Fatal("suppression must fall back to the coarse running phase, not drop it entirely")
 	}
 	if got.Detail == "US-001" {
 		t.Fatalf("contradictory detail US-001 must be suppressed, got %q", got.Detail)
 	}
-	if got.Detail != "US-002" {
-		t.Fatalf("must fall back to derived current story US-002, got %q", got.Detail)
+	if got.Detail == "US-002" {
+		t.Fatal("transition gap must NOT claim the next story US-002 is being implemented")
+	}
+	if got.Detail != "" {
+		t.Fatalf("transition gap must assert no specific story detail, got %q", got.Detail)
+	}
+	if got.Phase != "implementing" {
+		t.Fatalf("must fall back to the coarse implementing phase, got %q", got.Phase)
 	}
 	if got.Round == 5 {
-		t.Fatal("stale round 5 (belonged to passed US-001) must not carry over to the derived story")
+		t.Fatal("stale round 5 (belonged to passed US-001) must not carry over")
 	}
 	if !got.UpdatedAt.Equal(started) {
-		t.Fatalf("derived fallback must anchor UpdatedAt to StartedAt, got %v", got.UpdatedAt)
+		t.Fatalf("coarse fallback must anchor UpdatedAt to StartedAt, got %v", got.UpdatedAt)
 	}
 	// Suppression is read-only: it must not mutate the persisted stale write.
 	if ps.Activity != stale {

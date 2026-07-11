@@ -281,16 +281,30 @@ func DeriveActivity(ps *conductor.PlanState, live bool, plan *prd.PRD) *Activity
 	w := ps.Activity
 	// Contradiction-suppression backstop (Tier 2, guard c): a written Activity
 	// whose detail names a story that durable prd.json shows already PASSED is
-	// stale by construction — the runner moved past it without the write catching
-	// up (a missed clear, a crash mid-transition). NextEligibleStory only ever
-	// returns not-yet-passed stories, so an honest implementing-phase write can
-	// never name a passed story; when one does, drop the ENTIRE written overlay
-	// (its round belonged to the finished story too) and fall back to Tier-1
-	// derivation, which cannot go stale. Read-only: the persisted write is left
-	// untouched — the projection never mutates control-plane state.
+	// stale by construction — the runner finished that story but has not yet
+	// stamped the next in-progress signal (a missed clear, a crash mid-transition,
+	// or simply the gap AFTER story N passes and BEFORE story N+1 is dispatched).
+	// NextEligibleStory only ever returns not-yet-passed stories, so an honest
+	// implementing-phase write can never name a passed story; when one does, drop
+	// the ENTIRE written overlay (its round belonged to the finished story too).
+	// Read-only: the persisted write is left untouched — the projection never
+	// mutates control-plane state.
+	staleStamp := false
 	if w != nil && plan != nil && storyPassed(*plan, w.Detail) {
 		w = nil
+		staleStamp = true
 	}
+
+	// Transition gap: the stamp we just suppressed named a now-passed story and
+	// there is no newer in-progress signal. Deriving NextEligibleStory as the
+	// current story HERE would report the NEXT story as "implementing" when no
+	// dispatch has started — a lie the "degrade to silence, never lie" contract
+	// forbids. Fall back to the coarse running phase WITHOUT asserting a specific
+	// not-yet-started story, until a genuine in-progress stamp exists.
+	if staleStamp {
+		return &ActivityView{Phase: phaseImplementing, UpdatedAt: ps.StartedAt}
+	}
+
 	if story == "" && w == nil {
 		return nil
 	}

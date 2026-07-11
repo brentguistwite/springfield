@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"springfield/internal/features/verify"
 )
@@ -148,5 +149,31 @@ func TestWriteEvidence_TailTruncatesStreams(t *testing.T) {
 	}
 	if !strings.Contains(s, "truncated") {
 		t.Fatalf("stdout.txt lacks a truncation notice: %q...", s[:64])
+	}
+}
+
+// TestWriteEvidence_TruncationKeepsValidUTF8 proves the front-truncation advances
+// to a rune boundary: a payload of multi-byte runes cut at an arbitrary byte
+// offset must never leave a partial leading rune (invalid UTF-8) in the persisted
+// evidence.
+func TestWriteEvidence_TruncationKeepsValidUTF8(t *testing.T) {
+	root := t.TempDir()
+	// "世" is 3 bytes (E4 B8 96). A stream of them padded so the 256KiB cut lands
+	// mid-rune for at least one offset; repeating a 3-byte rune over a 256Ki (not
+	// divisible by 3) window guarantees the byte cut splits a rune.
+	big := strings.Repeat("世", 300*1024) // ~900KiB, well over the 256KiB tail
+	req := verify.Request{Command: "noisy", Dir: "/work/tree"}
+	res := verify.Result{ExitCode: 1, Stdout: big}
+
+	dir, err := verify.WriteEvidence(root, 1, req, res)
+	if err != nil {
+		t.Fatalf("WriteEvidence: %v", err)
+	}
+	out, err := os.ReadFile(filepath.Join(dir, "stdout.txt"))
+	if err != nil {
+		t.Fatalf("read stdout.txt: %v", err)
+	}
+	if !utf8.Valid(out) {
+		t.Fatal("truncated evidence contains invalid UTF-8 — the byte cut split a rune")
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"unicode/utf8"
 )
 
 // streamTailLimitBytes caps each captured stream persisted to disk. Verify
@@ -71,6 +72,12 @@ func tailTruncate(s string) []byte {
 		return []byte(s)
 	}
 	tail := s[len(s)-streamTailLimitBytes:]
+	// The raw byte cut can land inside a multi-byte rune, leaving invalid UTF-8
+	// as leading continuation bytes. Advance to the next rune boundary so the
+	// persisted evidence is always valid UTF-8.
+	for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
+		tail = tail[1:]
+	}
 	notice := fmt.Sprintf("[springfield: output truncated, showing last %d of %d bytes]\n", streamTailLimitBytes, len(s))
 	return []byte(notice + tail)
 }

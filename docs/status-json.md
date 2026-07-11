@@ -104,9 +104,11 @@ are their empty/clean projections. A repo that has never archived a batch stays
   construction — a stale phase is worse than none, so it is dropped off every
   non-running path (including `stalled`) and stays `null` rather than surfacing a
   value durable truth would contradict.
-  - `phase` (coarse lifecycle stage): `implementing` | `reviewing` | `verifying`
-    | `merging`. It is a sub-field *under* the `running` status, not a new status
-    enum value.
+  - `phase` (coarse lifecycle stage): `implementing` | `reviewing` | `verifying`.
+    It is a sub-field *under* the `running` status, not a new status enum value.
+    (`merging` is a RESERVED phase value: it is declared in the vocabulary but the
+    merge/integration path is not yet instrumented, so it is never emitted today —
+    do not rely on observing it.)
   - `detail`: the current story ID (story loop) or an optional human phrase;
     omitted when empty.
   - `round`: per-phase fine counter (iteration / review round / verify round);

@@ -183,7 +183,10 @@ func NewStartCommand() *cobra.Command {
 			if project, projectErr := conductor.LoadProjectRaw(root); projectErr == nil {
 				// The start-header prints while this start process owns the
 				// control-plane lock, so in-flight plans are genuinely running.
-				printProgressBlock(w, b, project.State, true, nil)
+				// Pass the loaded plan PRDs (same helper cmd/status.go uses) so the
+				// per-plan in-flight activity lines appear here too, not just in
+				// `springfield status`.
+				printProgressBlock(w, b, project.State, true, loadPlanPRDs(root, project.Config.PlanUnits))
 				batchHasProgress = anyPlanStarted(b, project.State)
 			} else {
 				fmt.Fprintf(cmd.ErrOrStderr(), "[warn] could not load project state: %v; progress rollup will be limited.\n", projectErr)
