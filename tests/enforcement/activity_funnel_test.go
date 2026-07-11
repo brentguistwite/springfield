@@ -23,11 +23,15 @@ import (
 const activityWriterFunc = "enterPhase"
 
 // activityWritePkgs are the source dirs where a running plan executes phases and
-// could therefore stamp PlanActivity: the runner + its gates (planrun) and the
-// type's home (conductor). The status projection (statusview) only READS the
-// signal and is intentionally out of scope — it never mutates PlanState.
+// could therefore stamp PlanActivity: the runner + its gates (planrun), the merge
+// path (planmerge — PhaseMerging is RESERVED for future merge-path instrumentation
+// that would naturally land here), and the type's home (conductor). The status
+// projection (statusview) only READS the signal and is intentionally out of scope
+// — it never mutates PlanState. planreview does not reference PlanState at all, so
+// it cannot stamp Activity and is omitted; add it here the moment that changes.
 var activityWritePkgs = []string{
 	"../../internal/features/conductor/planrun",
+	"../../internal/features/conductor/planmerge",
 	"../../internal/features/conductor",
 }
 
@@ -173,6 +177,17 @@ func runVerifyGate(ps *conductor.PlanState) {
 func stamp(ps *conductor.PlanState) {
 	*ps = conductor.PlanState{Activity: nil}
 	_ = conductor.PlanActivity{Phase: "reviewing"}
+}
+`,
+		// The exact scenario the d.Recv == nil exemption targets: a METHOD named
+		// enterPhase (non-nil receiver) on some other type is NOT the sanctioned
+		// free-function funnel and must still be flagged when it stamps Activity.
+		"method-named-enterPhase": `package planrun
+
+type someGate struct{}
+
+func (g *someGate) enterPhase(ps *conductor.PlanState) {
+	ps.Activity = &conductor.PlanActivity{Phase: "verifying", Round: 2}
 }
 `,
 	}

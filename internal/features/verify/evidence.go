@@ -25,6 +25,11 @@ type verifyMeta struct {
 	ExitCode   int    `json:"exit_code"`
 	DurationMS int64  `json:"duration_ms"`
 	TimedOut   bool   `json:"timed_out"`
+	// Cancelled records a context-cancel (SIGINT-driven abort) kill so the
+	// on-disk evidence stays distinguishable from an ordinary non-timeout
+	// failed round — without it the Result.Cancelled signal is lost forensically
+	// and a cancelled round reads as a plain failure.
+	Cancelled bool `json:"cancelled"`
 }
 
 // WriteEvidence writes purpose-built verify evidence for one round into
@@ -47,6 +52,7 @@ func WriteEvidence(evidenceDir string, round int, req Request, res Result) (stri
 		ExitCode:   res.ExitCode,
 		DurationMS: res.Duration.Milliseconds(),
 		TimedOut:   res.TimedOut,
+		Cancelled:  res.Cancelled,
 	}
 	metaBytes, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {

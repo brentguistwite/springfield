@@ -301,7 +301,16 @@ func DeriveActivity(ps *conductor.PlanState, live bool, plan *prd.PRD) *Activity
 	// dispatch has started — a lie the "degrade to silence, never lie" contract
 	// forbids. Fall back to the coarse running phase WITHOUT asserting a specific
 	// not-yet-started story, until a genuine in-progress stamp exists.
+	//
+	// But if NO next story is eligible (story == ""), the stale stamp named the
+	// LAST story and every story now passes: there is no story loop left to be in
+	// and no gate has stamped reviewing/verifying yet. Claiming "implementing"
+	// there is a stage label one step behind reality, so degrade further — project
+	// no activity (truthful silence) rather than assert a phase the plan has left.
 	if staleStamp {
+		if story == "" {
+			return nil
+		}
 		return &ActivityView{Phase: phaseImplementing, UpdatedAt: ps.StartedAt}
 	}
 

@@ -301,6 +301,65 @@ func TestVerifyGateErroredYieldsStatusFailed(t *testing.T) {
 	}
 }
 
+// TestVerifyGateCancelledYieldsVerifyErrored closes the gap the round-1 commit
+// claims ("returns verify-errored on cancel"): when the verify command is killed
+// by a caller/context abort (Result.Cancelled) rather than exiting non-zero, the
+// gate must surface verifyErrored — NOT verify-needs-human — so a user abort is
+// never persisted as a fixable failed round. The terminal plan is StatusFailed
+// with ExitReason "verify-errored", and review is skipped.
+func TestVerifyGateCancelledYieldsVerifyErrored(t *testing.T) {
+	root := projectFixture(t, "alpha") // story already passed → top-of-loop verify
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+	g := newFakeGit()
+	runner := &queuedAgentRunner{}
+
+	// Verify command is killed by a caller abort: Cancelled=true, ExitCode=-1
+	// (the kill), TimedOut=false. This is NOT an ordinary failed round.
+	cancelled := func(_ context.Context, _ verify.Request) verify.Result {
+		return verify.Result{ExitCode: -1, Cancelled: true}
+	}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:       project,
+		ControlRoot:   root,
+		WorktreeBase:  ".worktrees",
+		AgentIDs:      []agents.ID{agents.AgentClaude},
+		Runner:        runner,
+		Manager:       &planrun.Manager{Git: g},
+		ReviewConfig:  config.ReviewConfig{Enabled: true},
+		VerifyConfig:  verifyEnabled(),
+		VerifyCommand: cancelled,
+	})
+
+	if res.Status != conductor.StatusFailed {
+		t.Fatalf("Status = %v, want StatusFailed (a cancel is verify-errored, not human-recoverable)", res.Status)
+	}
+	if res.Err == nil {
+		t.Fatal("Err must be non-nil when verify is cancelled")
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("expected ZERO agent calls (no fix, review skipped on cancel), got %d", len(runner.calls))
+	}
+
+	reloaded, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("re-LoadProject: %v", err)
+	}
+	st := reloaded.State.Plans["alpha"]
+	if st == nil {
+		t.Fatal("no persisted state for alpha")
+	}
+	if st.Status != conductor.StatusFailed {
+		t.Fatalf("persisted Status = %v, want StatusFailed", st.Status)
+	}
+	if st.ExitReason != "verify-errored" {
+		t.Fatalf("ExitReason = %q, want verify-errored (NOT verify-needs-human) on cancel", st.ExitReason)
+	}
+}
+
 // TestVerifyDisabledLeavesMarkerOnlyCompletion pins the US-008 opt-in regression
 // guard: an unconfigured plan (no [verify] config, no per-plan verify override,
 // AND no review) completes purely on markers, exactly as before the verify gate

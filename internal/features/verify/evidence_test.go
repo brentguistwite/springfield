@@ -117,6 +117,31 @@ func TestWriteEvidence_RecordsTimedOut(t *testing.T) {
 	}
 }
 
+// TestWriteEvidence_RecordsCancelled pins the cancel distinction on disk: a
+// context-cancelled round (Result.Cancelled) must survive to verify.json as
+// cancelled:true so a caller-abort is forensically distinguishable from an
+// ordinary non-timeout failed round.
+func TestWriteEvidence_RecordsCancelled(t *testing.T) {
+	root := t.TempDir()
+	req := verify.Request{Command: "go test ./...", Dir: "/work/tree"}
+	// A cancelled round: killed by the caller's context, so ExitCode is -1,
+	// TimedOut is false, and Cancelled is true.
+	res := verify.Result{ExitCode: -1, Cancelled: true, Duration: 3 * time.Second}
+
+	dir, err := verify.WriteEvidence(root, 1, req, res)
+	if err != nil {
+		t.Fatalf("WriteEvidence: %v", err)
+	}
+
+	meta := readVerifyMeta(t, dir)
+	if meta["cancelled"] != true {
+		t.Fatalf("cancelled = %v, want true (a cancelled round must be distinguishable on disk)", meta["cancelled"])
+	}
+	if meta["timed_out"] != false {
+		t.Fatalf("timed_out = %v, want false (a cancel is NOT a timeout)", meta["timed_out"])
+	}
+}
+
 // TestWriteEvidence_TailTruncatesStreams proves oversized output is truncated
 // from the FRONT (the tail is kept) so the failing test's final lines — where
 // the actionable error lives — survive, and a notice marks the elision.

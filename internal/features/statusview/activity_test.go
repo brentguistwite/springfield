@@ -221,6 +221,37 @@ func TestActive_SuppressesContradictoryWrite(t *testing.T) {
 	}
 }
 
+// TestActive_SuppressedStaleWriteAllStoriesPassedDegradesToSilence pins the
+// transition-gap sub-case where the stale stamp named the LAST story and every
+// story now passes: there is no next eligible story, so the projection must not
+// claim "implementing" (a stage label one step behind reality) — it degrades to
+// null Activity per the "degrade to silence, never lie" contract until a gate
+// stamps a genuine reviewing/verifying signal.
+func TestActive_SuppressedStaleWriteAllStoriesPassedDegradesToSilence(t *testing.T) {
+	p := prd.PRD{UserStories: []prd.UserStory{
+		{ID: "US-001", Priority: 1, Passes: true}, // the only story, now done
+	}}
+	// Stale write: claims still implementing US-001, which has passed. No story
+	// remains eligible after suppression.
+	stale := &conductor.PlanActivity{
+		Phase:     "implementing",
+		Detail:    "US-001",
+		Round:     4,
+		UpdatedAt: time.Date(2026, 7, 10, 8, 0, 0, 0, time.UTC),
+	}
+	started := time.Date(2026, 7, 10, 9, 0, 0, 0, time.UTC)
+	ps := &conductor.PlanState{Status: conductor.StatusRunning, Activity: stale, StartedAt: started}
+
+	v := statusview.Active(activityInputWithPRD(ps, true, &p))
+	if got := v.Plans[0].Activity; got != nil {
+		t.Fatalf("all-stories-passed transition gap must degrade to null Activity, not assert implementing; got %+v", got)
+	}
+	// Suppression is read-only: it must not mutate the persisted stale write.
+	if ps.Activity != stale {
+		t.Fatal("suppression must not mutate PlanState.Activity")
+	}
+}
+
 // TestActive_HonestWriteNotSuppressed pins the boundary of the backstop: a write
 // whose detail names the CURRENT (not-yet-passed) story is consistent with
 // durable truth, so its fine counter must survive — suppression fires only on
