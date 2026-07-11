@@ -259,6 +259,14 @@ func NewStartCommand() *cobra.Command {
 				return fmt.Errorf("auto-branch: %w", abErr)
 			}
 
+			// When auto-branching is active, the auto-branch IS the batch base:
+			// thread it explicitly so consolidate-mode slices base off it and
+			// merges publish to its ref via update-ref. This is what keeps the
+			// main worktree on the operator's original branch — without it the
+			// base would fall back to the current branch, forcing an in-place
+			// switch. No-op in per-plan mode (activation is nil there).
+			batchBase = autobranch.BaseForBatch(batchBase, activation)
+
 			// Stamp the branch mode + base ONCE, AFTER auto-branch's clean-tree
 			// check has passed (a pre-Activate run.json write would read as a dirty
 			// working tree in a repo that tracks .springfield/). On resume
@@ -272,15 +280,15 @@ func NewStartCommand() *cobra.Command {
 				}
 			}
 
-			// Defer Restore so a panic in runBatch / archive / clear cannot
-			// strand the operator on the auto-branch with no message. The
-			// outcome closure is updated below before each known exit so the
-			// close-out block matches the actual result.
+			// Defer Restore so a panic in runBatch / archive / clear still
+			// prints the auto-branch close-out (push/PR/inspect hint). Restore
+			// performs no git ops — the main worktree never left the operator's
+			// branch — so this is purely the closing message. The outcome
+			// closure is updated below before each known exit so the message
+			// matches the actual result.
 			autoBranchOutcome := autobranch.OutcomeFailed
 			defer func() {
-				if rerr := autobranch.Restore(git, root, activation, autoBranchOutcome, w); rerr != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "warning: %v\n", rerr)
-				}
+				autobranch.Restore(activation, autoBranchOutcome, w)
 			}()
 
 			if !noKeepAwake && loaded.Config.KeepAwakeEnabled() {

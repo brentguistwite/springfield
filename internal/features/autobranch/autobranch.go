@@ -6,14 +6,18 @@
 //   - [ResolveBranchName] is a pure function that renders the configured
 //     pattern, validates placeholders, and resolves collisions by appending
 //     a numeric suffix.
-//   - [Activate] / [Restore] orchestrate the branch creation and the
-//     post-batch switch-back. The caller injects a Git implementation so
-//     tests do not shell out.
+//   - [Activate] creates the feature branch as a bare ref (never switching
+//     the main worktree onto it) and [Restore] prints the post-batch
+//     close-out message. [BaseForBatch] threads the auto-branch to the runner
+//     as the batch base. The caller injects a Git implementation so tests do
+//     not shell out.
 //
-// Auto-branching only fires on a fresh run: when [Input].PriorBranch matches
-// the rendered name (i.e. the operator is already on a Springfield-cut
-// auto-branch from a prior interrupted run), [Activate] is a no-op so a
-// resumed batch keeps writing to the same branch.
+// The main worktree stays on the operator's original branch for the whole
+// batch: slices base off the auto-branch ref and the merge phase publishes to
+// it via `git update-ref`, so the operator can keep working on their branch
+// while the batch runs. On resume ([Input].AlreadyAutoBranch), [Activate] does
+// no git work at all — it just re-derives the Activation so the base is
+// re-threaded onto the same auto-branch.
 package autobranch
 
 import (
@@ -25,12 +29,18 @@ import (
 
 // Git is the minimal git surface autobranch needs. Mirrors the planrun.Git
 // shape so the same CLIGit implementation can satisfy both.
+//
+// There is deliberately no checkout method: auto-branching creates the
+// feature branch as a bare ref via CreateBranch and never switches the main
+// worktree onto it, so the operator keeps working on their original branch
+// while the batch accumulates merges onto the auto-branch ref.
 type Git interface {
 	CurrentBranch(dir string) (string, error)
 	BranchExists(dir, branch string) (bool, error)
 	IsDirty(dir string) (bool, error)
-	SwitchCreate(dir, branch string) error
-	Switch(dir, branch string) error
+	// CreateBranch creates branch at startPoint without switching the
+	// worktree (`git branch <branch> <startPoint>`).
+	CreateBranch(dir, branch, startPoint string) error
 }
 
 // MaxCollisionAttempts caps how many numeric suffixes [ResolveBranchName]
@@ -90,6 +100,20 @@ func ResolveBranchName(pattern, batchID string, branchExists func(string) (bool,
 	return "", fmt.Errorf("auto-branch name %q and suffixes through %d already exist; clean up old auto-branches or set auto_branch_pattern", base, MaxCollisionAttempts)
 }
 
+// BaseForBatch returns the branch the batch should base its slice worktrees
+// off and merge into. When an auto-branch is active, that branch IS the base:
+// threading it explicitly lets slices target the ref and the merge phase
+// publish via `git update-ref` without the main worktree ever switching onto
+// it (which is what would otherwise strand the operator off their branch for
+// the whole run). With no activation the caller's already-resolved base is
+// used unchanged.
+func BaseForBatch(resolvedBase string, a *Activation) string {
+	if a != nil {
+		return a.BranchName
+	}
+	return resolvedBase
+}
+
 // Input collects the data Activate needs.
 type Input struct {
 	Git Git
@@ -144,15 +168,16 @@ func IsProtectedBase(ref string) bool {
 	return ref == "main" || ref == "master"
 }
 
-// Activate evaluates whether to auto-cut a branch and performs the switch.
+// Activate evaluates whether to auto-cut a branch and, if so, creates it as a
+// bare ref without switching the main worktree.
 //
 // Returns (nil, nil) when:
 //   - in.Enabled is false, or
 //   - the current branch is not in the protected list.
 //
-// Returns an error when the working tree is dirty (the operator must
-// commit or stash first), when ResolveBranchName fails, or when git switch
-// fails.
+// Returns an error when the working tree is dirty (the operator must commit or
+// stash first so the auto-branch is cut from a clean snapshot), when
+// ResolveBranchName fails, or when the branch create fails.
 func Activate(in Input, out io.Writer) (*Activation, error) {
 	if in.Git == nil {
 		return nil, fmt.Errorf("autobranch.Activate: Git is required")
@@ -165,23 +190,13 @@ func Activate(in Input, out io.Writer) (*Activation, error) {
 		if in.PriorOriginalBranch == "" || in.PriorAutoBranchName == "" {
 			return nil, fmt.Errorf("autobranch.Activate: AlreadyAutoBranch requires PriorOriginalBranch and PriorAutoBranchName")
 		}
-		current, err := in.Git.CurrentBranch(in.Dir)
-		if err != nil {
-			return nil, fmt.Errorf("resolve current branch: %w", err)
-		}
-		if current != in.PriorAutoBranchName {
-			dirty, derr := in.Git.IsDirty(in.Dir)
-			if derr != nil {
-				return nil, fmt.Errorf("check working tree before resume switch: %w", derr)
-			}
-			if dirty {
-				return nil, fmt.Errorf("working tree on %q has uncommitted changes; commit or stash before resuming so the switch back to %q is safe", current, in.PriorAutoBranchName)
-			}
-			if err := in.Git.Switch(in.Dir, in.PriorAutoBranchName); err != nil {
-				return nil, fmt.Errorf("switch to auto-branch %s for resume: %w", in.PriorAutoBranchName, err)
-			}
-		}
-		fmt.Fprintf(out, "auto-branch resume: continuing on %s (will switch back to %s on finish)\n",
+		// No git side effects on resume: the main worktree was never switched
+		// off PriorOriginalBranch, so there is nothing to switch onto. The
+		// auto-branch ref already holds prior merges; re-threading it as the
+		// batch base (via BaseForBatch) resumes accumulation onto it. If the
+		// ref was deleted, the manager's base-ref preflight rejects it with a
+		// clear error, so no existence check is needed here.
+		fmt.Fprintf(out, "auto-branch resume: slice work continues on %s; you stay on %s\n",
 			in.PriorAutoBranchName, in.PriorOriginalBranch)
 		return &Activation{
 			OriginalBranch: in.PriorOriginalBranch,
@@ -223,13 +238,13 @@ func Activate(in Input, out io.Writer) (*Activation, error) {
 		}
 	}
 
-	if err := in.Git.SwitchCreate(in.Dir, name); err != nil {
-		return nil, fmt.Errorf("git switch -c %s: %w", name, err)
+	if err := in.Git.CreateBranch(in.Dir, name, current); err != nil {
+		return nil, fmt.Errorf("git branch %s %s: %w", name, current, err)
 	}
 
 	fmt.Fprintf(out, "auto-cut branch %s from %s\n", name, current)
-	fmt.Fprintf(out, "  → all slice work will merge here\n")
-	fmt.Fprintf(out, "  → switching back to %s on finish (push + PR by hand)\n", current)
+	fmt.Fprintf(out, "  → slice work merges here; you stay on %s\n", current)
+	fmt.Fprintf(out, "  → push + open PR by hand when the batch finishes\n")
 
 	return &Activation{
 		OriginalBranch: current,
@@ -255,37 +270,24 @@ const (
 	OutcomeInterrupted
 )
 
-// Restore switches back to the original branch and prints the close-out
-// message keyed on outcome.
-//
-// When the switch itself fails, the operator is left on the auto-branch and
-// Restore returns the switch error so the caller can surface it.
-func Restore(g Git, dir string, a *Activation, outcome Outcome, out io.Writer) error {
+// Restore prints the close-out message keyed on outcome. It performs no git
+// operations: the main worktree was never switched off OriginalBranch, so the
+// operator is already there and the auto-branch simply holds the batch's work
+// as a ref. The message points them at that branch for push/PR/inspection.
+func Restore(a *Activation, outcome Outcome, out io.Writer) {
 	if a == nil {
-		return nil
-	}
-	if g == nil {
-		return fmt.Errorf("autobranch.Restore: Git is required")
-	}
-	if err := g.Switch(dir, a.OriginalBranch); err != nil {
-		fmt.Fprintf(out, "auto-branch: failed to switch back to %s; you are still on %s\n", a.OriginalBranch, a.BranchName)
-		fmt.Fprintf(out, "  remediation: resolve any uncommitted changes, then run: git switch %s\n", a.OriginalBranch)
-		return fmt.Errorf("switch back to %s: %w", a.OriginalBranch, err)
+		return
 	}
 	switch outcome {
 	case OutcomeSuccess:
-		fmt.Fprintf(out, "batch complete on %s\n", a.BranchName)
-		fmt.Fprintf(out, "switched back to %s\n", a.OriginalBranch)
+		fmt.Fprintf(out, "batch complete on %s (you are on %s)\n", a.BranchName, a.OriginalBranch)
 		fmt.Fprintf(out, "push + open PR:\n")
 		fmt.Fprintf(out, "  git push -u origin %s\n", a.BranchName)
 		fmt.Fprintf(out, "  gh pr create\n")
 	case OutcomeFailed:
-		fmt.Fprintf(out, "batch failed on %s\n", a.BranchName)
-		fmt.Fprintf(out, "switched back to %s; auto-branch preserved for inspection:\n", a.OriginalBranch)
+		fmt.Fprintf(out, "batch failed on %s (you are on %s); auto-branch preserved for inspection:\n", a.BranchName, a.OriginalBranch)
 		fmt.Fprintf(out, "  git switch %s\n", a.BranchName)
 	case OutcomeInterrupted:
-		fmt.Fprintf(out, "batch interrupted on %s\n", a.BranchName)
-		fmt.Fprintf(out, "switched back to %s; rerun \"springfield start\" to resume on %s\n", a.OriginalBranch, a.BranchName)
+		fmt.Fprintf(out, "batch interrupted on %s (you are on %s); rerun \"springfield start\" to resume on %s\n", a.BranchName, a.OriginalBranch, a.BranchName)
 	}
-	return nil
 }
