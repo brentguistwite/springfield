@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.25.0](https://github.com/brentguistwite/springfield/compare/v0.24.0...v0.25.0) (2026-07-11)
+
+
+### Features
+
+* team-safe init, verify-command completion gate, and status activity contract ([#96](https://github.com/brentguistwite/springfield/issues/96)) ([53e9e4e](https://github.com/brentguistwite/springfield/commit/53e9e4eed25db828745673f4468a3186b921903d))
+
+
+### Bug Fixes
+
+* label cost output as API-equivalent, not spend ([#94](https://github.com/brentguistwite/springfield/issues/94)) ([35d00ed](https://github.com/brentguistwite/springfield/commit/35d00ed51973c17219e2a12f10fc2bc6ed7de67c))
+
 ## [0.24.0](https://github.com/brentguistwite/springfield/compare/v0.23.0...v0.24.0) (2026-07-02)
 
 
