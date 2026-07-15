@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.1](https://github.com/brentguistwite/springfield/compare/v0.25.0...v0.25.1) (2026-07-11)
+
+
+### Bug Fixes
+
+* auto-branch as bare ref, never switch the main worktree ([#97](https://github.com/brentguistwite/springfield/issues/97)) ([7de3784](https://github.com/brentguistwite/springfield/commit/7de37848691cb50c67da25a282d0a4e71ddb68d4))
+
 ## [0.25.0](https://github.com/brentguistwite/springfield/compare/v0.24.0...v0.25.0) (2026-07-11)
 
 
