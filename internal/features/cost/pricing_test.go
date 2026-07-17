@@ -64,13 +64,13 @@ func TestCompute_CaseInsensitive(t *testing.T) {
 }
 
 func TestCompute_CodexPair(t *testing.T) {
-	// Codex gpt-5.4: $1.25/Mtok input, $10/Mtok output.
-	// 200_000 input + 100_000 output = $0.25 + $1.00 = $1.25.
+	// Codex gpt-5.4: $2.50/Mtok input, $15/Mtok output.
+	// 200_000 input + 100_000 output = $0.50 + $1.50 = $2.00.
 	got, ok := cost.Compute("codex", "gpt-5.4", 200_000, 100_000)
 	if !ok {
 		t.Fatal("expected gpt-5.4 to be priced")
 	}
-	want := 1.25
+	want := 2.00
 	if math.Abs(got-want) > 1e-9 {
 		t.Fatalf("Compute(codex,gpt-5.4) = %v, want %v", got, want)
 	}

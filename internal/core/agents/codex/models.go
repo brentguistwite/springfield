@@ -1,9 +1,9 @@
 package codex
 
 var suggestedModels = []string{
+	"gpt-5.5",
 	"gpt-5.4",
-	"gpt-5-codex",
-	"o3",
+	"gpt-5.4-mini",
 }
 
 // SuggestedModels returns a curated, non-exhaustive set of Codex CLI model

@@ -179,7 +179,7 @@ permission_mode = "bypassPermissions"
 
 # Opt in to Codex by adding "codex" to agent_priority; scaffold below.
 # [agents.codex]
-# model = "gpt-5-codex"
+# model = "gpt-5.4"
 # sandbox_mode = "danger-full-access"
 # approval_policy = "never"
 

@@ -18,9 +18,9 @@ func TestExtractCost_TopLevelUsage(t *testing.T) {
 		evt(`{"type":"task.completed","usage":{"input_tokens":1000000,"output_tokens":200000}}`),
 	}
 	got := codex.ExtractCost(events, "gpt-5.4", time.Now())
-	// gpt-5.4: 1.25/Mtok input + 10/Mtok output
-	// 1_000_000*1.25/1e6 + 200_000*10/1e6 = 1.25 + 2.00 = 3.25
-	want := 3.25
+	// gpt-5.4: 2.50/Mtok input + 15/Mtok output
+	// 1_000_000*2.50/1e6 + 200_000*15/1e6 = 2.50 + 3.00 = 5.50
+	want := 5.50
 	if math.Abs(got.CostUSD-want) > 1e-9 {
 		t.Errorf("cost_usd=%v want %v", got.CostUSD, want)
 	}
