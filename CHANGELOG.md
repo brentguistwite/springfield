@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.2](https://github.com/brentguistwite/springfield/compare/v0.25.1...v0.25.2) (2026-07-17)
+
+
+### Bug Fixes
+
+* refresh suggested models and correct API-equivalent pricing ([d124ce9](https://github.com/brentguistwite/springfield/commit/d124ce91d27afce2135e594bcc9954687ad2cc7f))
+
 ## [0.25.1](https://github.com/brentguistwite/springfield/compare/v0.25.0...v0.25.1) (2026-07-11)
 
 
