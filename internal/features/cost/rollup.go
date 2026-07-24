@@ -61,7 +61,9 @@ func ComputeRollup(root, batchID string) (Rollup, error) {
 			// skipped "entry" which may represent N missed files. The
 			// surfaced count is therefore a lower bound — operators should
 			// investigate any non-zero SkippedFiles, not assume it's exact.
-			r.SkippedFiles++
+			if countWalkErrAsSkipped(path, err) {
+				r.SkippedFiles++
+			}
 			if d != nil && d.IsDir() {
 				return fs.SkipDir
 			}
@@ -100,4 +102,18 @@ func ComputeRollup(root, batchID string) (Rollup, error) {
 		return r, walkErr
 	}
 	return r, nil
+}
+
+// countWalkErrAsSkipped reports whether a WalkDir entry error should inflate
+// SkippedFiles (and so trip the operator-facing under-count warning). An
+// entry that vanished between readdir and stat (ErrNotExist) is normal churn
+// when sibling plans run concurrently — their atomic temp+rename writes and
+// dir creation race the walk harmlessly — UNLESS the vanished entry was a
+// cost.json itself, which is a genuine potential under-count. Every other
+// error keeps counting: the file may exist but be unreadable.
+func countWalkErrAsSkipped(path string, err error) bool {
+	if !errors.Is(err, fs.ErrNotExist) {
+		return true
+	}
+	return filepath.Base(path) == "cost.json"
 }
