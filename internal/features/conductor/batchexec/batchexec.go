@@ -72,6 +72,11 @@ type Input struct {
 	// checkpoints (run.json active_plan_ids).
 	OnDispatch func(planID string)
 	OnSettle   func(planID string)
+	// OnPhaseStart, when non-nil, fires from the scheduling goroutine before
+	// a phase's first dispatch (skipped for phases with nothing left to run).
+	// parallel reports whether this phase will actually dispatch
+	// concurrently; maxInFlight is the effective cap for the phase.
+	OnPhaseStart func(index int, phase batch.Phase, parallel bool, maxInFlight int)
 }
 
 // Result is the batch-level outcome of Execute.
@@ -91,8 +96,8 @@ type Result struct {
 // error (halting the batch at the current phase), a cost-cap pause, or
 // ctx.Err() when cancelled.
 func Execute(ctx context.Context, in Input) (Result, error) {
-	for _, phase := range in.Batch.Phases {
-		res, err, stop := runPhase(ctx, phase, in)
+	for i, phase := range in.Batch.Phases {
+		res, err, stop := runPhase(ctx, i, phase, in)
 		if stop {
 			return res, err
 		}
@@ -108,7 +113,7 @@ type planSettle struct {
 
 // runPhase drives one phase to completion. stop=true means the batch must
 // not advance to the next phase (error, pause, clean stop, or cancellation).
-func runPhase(ctx context.Context, phase batch.Phase, in Input) (Result, error, bool) {
+func runPhase(ctx context.Context, index int, phase batch.Phase, in Input) (Result, error, bool) {
 	parallelActive := phase.Mode == batch.PhaseParallel && in.Parallelize && in.MaxParallel > 1
 	maxInFlight := 1
 	if parallelActive {
@@ -123,6 +128,9 @@ func runPhase(ctx context.Context, phase batch.Phase, in Input) (Result, error, 
 		if !in.Runner.IsTerminal(id) {
 			pending = append(pending, id)
 		}
+	}
+	if len(pending) > 0 && in.OnPhaseStart != nil {
+		in.OnPhaseStart(index, phase, parallelActive, maxInFlight)
 	}
 
 	var (

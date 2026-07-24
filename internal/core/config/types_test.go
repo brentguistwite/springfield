@@ -253,3 +253,46 @@ base_branch = "develop"
 		t.Fatalf("base_branch from toml got %q, want develop", got)
 	}
 }
+
+func TestMaxParallelOmittedDefaults(t *testing.T) {
+	var c Config
+	if got := c.MaxParallel(); got != DefaultMaxParallel {
+		t.Fatalf("omitted max_parallel got %d, want %d", got, DefaultMaxParallel)
+	}
+}
+
+func TestMaxParallelExplicitPositiveKept(t *testing.T) {
+	n := 5
+	c := Config{Project: ProjectConfig{MaxParallel: &n}}
+	if got := c.MaxParallel(); got != 5 {
+		t.Fatalf("explicit positive got %d, want 5", got)
+	}
+}
+
+func TestMaxParallelBelowOneClampsToSequential(t *testing.T) {
+	for _, v := range []int{0, -3} {
+		n := v
+		c := Config{Project: ProjectConfig{MaxParallel: &n}}
+		if got := c.MaxParallel(); got != 1 {
+			t.Fatalf("max_parallel=%d must clamp to 1 (sequential), got %d", v, got)
+		}
+	}
+}
+
+func TestLoadMaxParallelFromTOML(t *testing.T) {
+	dir := t.TempDir()
+	content := `[project]
+agent_priority = ["claude"]
+max_parallel = 2
+`
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(content), 0o644); err != nil {
+		t.Fatalf("write toml: %v", err)
+	}
+	loaded, err := LoadFrom(dir)
+	if err != nil {
+		t.Fatalf("LoadFrom: %v", err)
+	}
+	if got := loaded.Config.MaxParallel(); got != 2 {
+		t.Fatalf("toml max_parallel got %d, want 2", got)
+	}
+}

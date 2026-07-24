@@ -68,6 +68,7 @@ func NewStartCommand() *cobra.Command {
 	var noKeepAwake bool
 	var costCap float64
 	var perPlanFlag bool
+	var maxParallelFlag int
 	var baseFlag string
 
 	cmd := &cobra.Command{
@@ -303,7 +304,11 @@ func NewStartCommand() *cobra.Command {
 				}
 			}
 
-			result, execErr := runBatch(root, run, b, w, logPath, costCap, perPlan, batchBase)
+			maxParallel := loaded.Config.MaxParallel()
+			if maxParallelFlag > 0 {
+				maxParallel = maxParallelFlag
+			}
+			result, execErr := runBatch(root, run, b, w, logPath, costCap, perPlan, batchBase, maxParallel)
 
 			// Interrupted by signal: leave batch state intact so the user can
 			// rerun "springfield start" to resume. Do NOT archive as completed.
@@ -399,6 +404,7 @@ func NewStartCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&noKeepAwake, "no-keep-awake", false, "disable sleep prevention for this run")
 	cmd.Flags().Float64Var(&costCap, "cost-cap", 0, "Abort the batch when total spend reaches this many USD (0 = no cap). Cap-aborted batches are resumable: rerun with a higher --cost-cap to continue.")
 	cmd.Flags().BoolVar(&perPlanFlag, "per-plan-branches", false, "Leave one standalone springfield/<plan> branch per plan (one PR per ticket) instead of consolidating onto a shared base. Overrides [project] branch_mode for this run. Mode is fixed at first start and is NOT flippable on resume.")
+	cmd.Flags().IntVar(&maxParallelFlag, "max-parallel", 0, "Cap on concurrently running plans within a parallel-mode phase (per-plan-branches mode only; consolidate batches always run sequentially). Overrides [project] max_parallel for this run; 1 disables concurrency; 0/omitted uses the configured value (default 3).")
 	cmd.Flags().StringVar(&baseFlag, "base", "", "Base branch each per-plan branch is cut from (per-plan mode only). Precedence: --base > [project] base_branch > current branch. A re-passed --base on resume re-bases only not-yet-run plans.")
 	return cmd
 }
@@ -520,17 +526,17 @@ type BatchRunResult struct {
 	SpendUSD float64
 }
 
-func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string, costCap float64, perPlan bool, batchBase string) (BatchRunResult, error) {
+func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string, costCap float64, perPlan bool, batchBase string, maxParallel int) (BatchRunResult, error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return runBatchWithContext(ctx, root, run, b, progress, logPath, costCap, perPlan, batchBase)
+	return runBatchWithContext(ctx, root, run, b, progress, logPath, costCap, perPlan, batchBase, maxParallel)
 }
 
 // runBatchWithContext is the testable core of runBatch. ctx controls interrupt
 // detection: when ctx is cancelled mid-loop (or on entry) the function returns
 // context.Canceled so the caller can distinguish a user interrupt (preserve
 // batch state) from normal completion (archive + clear run.json).
-func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string, costCap float64, perPlan bool, batchBase string) (BatchRunResult, error) {
+func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string, costCap float64, perPlan bool, batchBase string, maxParallel int) (BatchRunResult, error) {
 	// Check for pre-cancellation before any setup so tests and real signal
 	// handlers both get the same early-exit path.
 	if ctx.Err() != nil {
@@ -613,7 +619,44 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 		costCap:          costCap,
 		batchID:          b.ID,
 	}
-	execRes, execErr := batchexec.Execute(ctx, batchexec.Input{Batch: b, Runner: runner})
+	// Runtime cursor checkpoints: keep run.json's active_plan_ids truthful
+	// while plans are in flight. Both callbacks fire only from the scheduler
+	// goroutine, so run.json keeps exactly one writer. Best-effort writes —
+	// the durable execution record is state.json, not the cursor.
+	active := make([]string, 0, maxParallel)
+	checkpoint := func() {
+		run.ActivePlanIDs = append([]string(nil), active...)
+		run.LastCheckpoint = time.Now()
+		_ = batch.WriteRun(root, run)
+	}
+	execRes, execErr := batchexec.Execute(ctx, batchexec.Input{
+		Batch:  b,
+		Runner: runner,
+		// Concurrency is scoped to per-plan-branches mode: consolidate-mode
+		// merges are ff-only onto a moving head and structurally require
+		// sequential execution.
+		Parallelize: perPlan,
+		MaxParallel: maxParallel,
+		OnDispatch: func(planID string) {
+			active = append(active, planID)
+			checkpoint()
+		},
+		OnSettle: func(planID string) {
+			for i, id := range active {
+				if id == planID {
+					active = append(active[:i], active[i+1:]...)
+					break
+				}
+			}
+			checkpoint()
+		},
+		OnPhaseStart: func(index int, phase batch.Phase, parallel bool, cap int) {
+			if parallel {
+				fmt.Fprintf(progress, "Phase %d/%d (parallel): up to %d of %d plans concurrently\n",
+					index+1, len(b.Phases), cap, len(phase.Plans))
+			}
+		},
+	})
 	switch {
 	case execRes.Cancelled:
 		// Interrupted by signal or context cancel. Return the context error so

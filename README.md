@@ -201,6 +201,7 @@ Notes:
 - `allow_protected_base = false` (default) refuses to ff-merge plan results into `main` or `master`. Only consulted when `auto_branch = false` (otherwise the auto-cut feature branch becomes the base and the guard does not apply).
 - `branch_mode = "consolidate"` (default) merges every plan in a batch onto one shared base (one PR for the batch). Set `branch_mode = "per-plan"` to instead leave one standalone `springfield/<plan>` branch per plan (one PR per ticket) — nothing merges into the base. Override per-run with `springfield start --per-plan-branches`. See [Per-plan branches](#per-plan-branches).
 - `base_branch = "develop"` sets the base each per-plan branch is cut from (per-plan mode only). Precedence: `--base` flag > `base_branch` > the current branch. Unattended controllers should set this so the current-branch fallback stays a deliberate, manual-only choice.
+- `max_parallel = 3` caps how many plans of a parallel-mode phase run concurrently (per-plan mode only — see [Parallel plan execution](#parallel-plan-execution)). Override per-run with `springfield start --max-parallel N`; `1` disables concurrency.
 - Runtime state under `.springfield/` is local project state and should not be committed. `springfield.local.toml` (per-operator review overrides) is also git-ignored by `springfield init`.
 
 ### `agent_priority` semantics
@@ -336,6 +337,15 @@ gh pr create --base develop --head springfield/<plan-a>
 The mode is fixed when the batch first starts and is **not** flippable on resume — a re-passed `--per-plan-branches` (or its absence) cannot flip a batch already underway, since that would merge the front half and retain the back half. A re-passed `--base` on resume only re-bases plans that have not run yet.
 
 **Controller / dashboard guidance:** always set `base_branch` so the current-branch fallback never silently picks an unexpected base in an unattended run. After a batch completes, `springfield status --json` reports the archived batch (`state: "archived"`) with one card per ticket — branch, base, and durable evidence path — so a controller can read back each ticket's result and branch even though the run cursor has been cleared.
+
+### Parallel plan execution
+
+In per-plan-branches mode, phases the plan compiler marked `"parallel"` actually run their plans **concurrently** — each plan gets its own worktree, branch, and agent, all cut from the same base, so independent tickets stop waiting on each other. Progress lines from concurrent plans are prefixed `[<plan-id>]`; the agent trace records a `plan` field per event.
+
+- The cap is `[project] max_parallel` (default 3), overridable per run with `--max-parallel N`. `1` disables concurrency entirely.
+- Consolidate-mode batches always execute sequentially, even for parallel phases — ff-only merges onto a moving base structurally require it.
+- Serial phases are barriers: a phase must fully finish before the next starts. If one plan in a parallel phase fails, its siblings run to completion, then the batch halts at the phase barrier and reports every failed plan for `springfield recover`.
+- Keep `max_parallel` conservative: concurrent plans multiply agent-limit pressure, and two test suites sharing ports/containers/databases will collide. Only mark phases parallel when the plans are genuinely disjoint.
 
 ## Critical Concepts
 

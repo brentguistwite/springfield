@@ -105,7 +105,7 @@ func TestRunBatchWithContextCancelledReturnsContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel before calling
 
-	_, err := runBatchWithContext(ctx, root, run, b, io.Discard, "", 0, false, "")
+	_, err := runBatchWithContext(ctx, root, run, b, io.Discard, "", 0, false, "", 1)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
@@ -262,7 +262,7 @@ func TestRunBatchWithContextMissingExecutionConfigFails(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	result, err := runBatchWithContext(ctx, root, run, b, io.Discard, "", 0, false, "")
+	result, err := runBatchWithContext(ctx, root, run, b, io.Discard, "", 0, false, "", 1)
 	if err == nil {
 		t.Fatal("expected error when execution config is missing, got nil")
 	}
@@ -310,7 +310,7 @@ func TestRunBatchWithContextMalformedLocalTOMLFails(t *testing.T) {
 		Phases:  []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"plan-a"}}},
 	}
 
-	_, err := runBatchWithContext(context.Background(), root, run, b, io.Discard, "", 0, false, "")
+	_, err := runBatchWithContext(context.Background(), root, run, b, io.Discard, "", 0, false, "", 1)
 	if err == nil {
 		t.Fatal("expected error from malformed local toml, got nil")
 	}
@@ -318,4 +318,3 @@ func TestRunBatchWithContextMalformedLocalTOMLFails(t *testing.T) {
 		t.Errorf("error %q missing wrap prefix \"load springfield.local.toml\"", err.Error())
 	}
 }
-
