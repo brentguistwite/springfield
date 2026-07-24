@@ -392,41 +392,56 @@ func TestBatchPlanRunnerProgressWriterSelection(t *testing.T) {
 	}
 }
 
-// TestBatchPlanRunnerTamperGuardConcurrentExcludesRunJSON: in a parallel
-// phase the scheduler's runCursor legitimately rewrites run.json on every
-// sibling dispatch/settle while this plan's agent runs, so the per-plan
-// tamper guard must NOT byte-compare run.json for concurrent dispatches —
-// otherwise every parallel plan deterministically false-trips "run.json
-// changed" and Restore clobbers the live cursor. The plan-dir tree check
-// stays; sequential dispatches keep full run.json protection.
-func TestBatchPlanRunnerTamperGuardConcurrentExcludesRunJSON(t *testing.T) {
+// TestBatchPlanRunnerTamperGuardConcurrentIsolation: while a concurrent
+// plan's agent runs, the scheduler legitimately rewrites run.json (cursor
+// checkpoints on sibling dispatch/settle) and sibling plans legitimately
+// write their own control-plane files (progress.md appends, prd.json
+// story-pass rewrites) in the shared .springfield/plans tree. The per-plan
+// guard for a concurrent dispatch must therefore watch ONLY the plan's own
+// subtree and skip run.json — otherwise every parallel plan deterministically
+// false-trips tamper detection and Restore reverts sibling state. Sequential
+// dispatches keep the full whole-tree + run.json guard.
+func TestBatchPlanRunnerTamperGuardConcurrentIsolation(t *testing.T) {
 	root := t.TempDir()
-	planDir := filepath.Join(root, ".springfield", "plans")
-	if err := os.MkdirAll(planDir, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
+	alphaDir := filepath.Join(root, ".springfield", "plans", "alpha")
+	betaDir := filepath.Join(root, ".springfield", "plans", "beta")
+	for _, d := range []string{alphaDir, betaDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
 	}
 	run := batch.Run{ActiveBatchID: "b1"}
 	if err := batch.WriteRun(root, run); err != nil {
 		t.Fatalf("WriteRun: %v", err)
 	}
-	r := &batchPlanRunner{root: root}
+	r := &batchPlanRunner{
+		root: root,
+		project: &conductor.Project{Config: &conductor.Config{PlanUnits: []conductor.PlanUnit{
+			{ID: "alpha", Path: ".springfield/plans/alpha/prd.json", Order: 1},
+			{ID: "beta", Path: ".springfield/plans/beta/prd.json", Order: 2},
+		}}},
+	}
 	cursor := &runCursor{root: root, run: &run}
 
-	g := r.tamperGuard(batchexec.RunInfo{Concurrent: true})
+	g := r.tamperGuard("alpha", batchexec.RunInfo{Concurrent: true})
 	if err := g.Snapshot(); err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	// Sibling dispatch checkpoint lands mid-window: legitimate, not tamper.
-	cursor.dispatch("sibling")
+	// Scheduler checkpoint + sibling control-plane writes land mid-window:
+	// legitimate, not tamper.
+	cursor.dispatch("beta")
+	if err := os.WriteFile(filepath.Join(betaDir, "progress.md"), []byte("iteration 1 start\n"), 0o644); err != nil {
+		t.Fatalf("write sibling progress: %v", err)
+	}
 	reason, err := g.Detect()
 	if err != nil {
 		t.Fatalf("Detect: %v", err)
 	}
 	if reason != "" {
-		t.Fatalf("concurrent guard flagged scheduler checkpoint as tamper: %q", reason)
+		t.Fatalf("concurrent guard flagged legitimate sibling/scheduler writes as tamper: %q", reason)
 	}
-	// Plan-dir tampering is still caught.
-	if err := os.WriteFile(filepath.Join(planDir, "evil.txt"), []byte("x"), 0o644); err != nil {
+	// Tampering with the plan's OWN subtree is still caught.
+	if err := os.WriteFile(filepath.Join(alphaDir, "evil.txt"), []byte("x"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	reason, err = g.Detect()
@@ -434,18 +449,25 @@ func TestBatchPlanRunnerTamperGuardConcurrentExcludesRunJSON(t *testing.T) {
 		t.Fatalf("Detect: %v", err)
 	}
 	if reason == "" {
-		t.Fatal("concurrent guard must still detect plan-dir tampering")
+		t.Fatal("concurrent guard must still detect tampering in the plan's own dir")
 	}
-	if err := os.Remove(filepath.Join(planDir, "evil.txt")); err != nil {
-		t.Fatalf("cleanup: %v", err)
+	// Restore must only touch the plan's own subtree — sibling state survives.
+	if err := g.Restore(); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(alphaDir, "evil.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("Restore did not remove tampered file from own dir: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(betaDir, "progress.md")); err != nil {
+		t.Errorf("Restore reverted sibling state: %v", err)
 	}
 
-	// Sequential dispatch keeps the full run.json guard.
-	g2 := r.tamperGuard(batchexec.RunInfo{Concurrent: false})
+	// Sequential dispatch keeps the full whole-tree + run.json guard.
+	g2 := r.tamperGuard("alpha", batchexec.RunInfo{Concurrent: false})
 	if err := g2.Snapshot(); err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	cursor.settle("sibling")
+	cursor.settle("beta")
 	reason, err = g2.Detect()
 	if err != nil {
 		t.Fatalf("Detect: %v", err)

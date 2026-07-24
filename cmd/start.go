@@ -754,22 +754,27 @@ func (r *batchPlanRunner) planProgress(planID string, info batchexec.RunInfo) (i
 }
 
 // tamperGuard builds the per-dispatch control-plane guard. Concurrent
-// dispatches exclude run.json from it (empty controlRoot disables that
-// check): the scheduler legitimately rewrites the cursor on every sibling
-// dispatch/settle inside this plan's agent window, so byte-comparing it
-// would deterministically false-trip tamper detection — and Restore would
-// clobber the live cursor with a stale snapshot. run.json is the
-// best-effort cursor, not the durable record; the plan-dir tree check
-// stays either way, and sequential dispatches keep full protection.
-func (r *batchPlanRunner) tamperGuard(info batchexec.RunInfo) *planDirTamperGuard {
-	controlRoot := r.root
-	if info.Concurrent {
-		controlRoot = ""
+// dispatches watch ONLY the plan's own subtree and skip run.json (empty
+// controlRoot disables that check): during this plan's agent window the
+// scheduler legitimately rewrites the cursor on every sibling
+// dispatch/settle, and concurrently running siblings legitimately write
+// their own progress.md/prd.json under the shared plans tree — a whole-tree
+// byte-compare would deterministically false-trip tamper detection, and
+// Restore would revert sibling state and clobber the live cursor with a
+// stale snapshot. Scoping the guard per plan keeps detection meaningful
+// (each plan's dir is watched by exactly the guard whose agent window it
+// must stay stable in); sequential dispatches keep the historical
+// whole-tree + run.json protection.
+func (r *batchPlanRunner) tamperGuard(planID string, info batchexec.RunInfo) *planDirTamperGuard {
+	plansRoot := filepath.Join(r.root, ".springfield", "plans")
+	if !info.Concurrent {
+		return &planDirTamperGuard{planDir: plansRoot, controlRoot: r.root}
 	}
-	return &planDirTamperGuard{
-		planDir:     filepath.Join(r.root, ".springfield", "plans"),
-		controlRoot: controlRoot,
+	planDir := filepath.Join(plansRoot, planID)
+	if unit, ok := r.project.PlanUnitByID(planID); ok {
+		planDir = filepath.Dir(filepath.Join(r.root, filepath.FromSlash(unit.Path)))
 	}
+	return &planDirTamperGuard{planDir: planDir}
 }
 
 func (r *batchPlanRunner) RunPlan(ctx context.Context, planID string, info batchexec.RunInfo) batchexec.Outcome {
@@ -811,7 +816,7 @@ func (r *batchPlanRunner) RunPlan(ctx context.Context, planID string, info batch
 		TargetPlanID:         planID,
 		EnforceProtectedBase: r.enforceProtected,
 		BatchBaseRef:         r.batchBase,
-		TamperGuard:          r.tamperGuard(info),
+		TamperGuard:          r.tamperGuard(planID, info),
 		Ctx:                  ctx,
 		MaxTurnsPerIteration: r.loaded.Config.MaxTurnsPerIteration(),
 		MinFreeDiskBytes:     r.loaded.Config.MinFreeDiskBytes(),
