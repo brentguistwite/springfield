@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.0](https://github.com/brentguistwite/springfield/compare/v0.25.2...v0.26.0) (2026-07-24)
+
+
+### Features
+
+* parallel plan execution in per-plan-branches mode ([#100](https://github.com/brentguistwite/springfield/issues/100)) ([12bf8bf](https://github.com/brentguistwite/springfield/commit/12bf8bfbb15cf3e420b7374f92fa7d51a33020cf))
+
 ## [0.25.2](https://github.com/brentguistwite/springfield/compare/v0.25.1...v0.25.2) (2026-07-17)
 
 
