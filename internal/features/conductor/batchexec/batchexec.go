@@ -82,7 +82,8 @@ type Input struct {
 // Result is the batch-level outcome of Execute.
 type Result struct {
 	// CostCapped mirrors Outcome.CostCapped at the batch level: the run is
-	// paused, not failed.
+	// paused, not failed. It may coexist with a non-nil error when a sibling
+	// plan failed while the phase drained after the cap fired.
 	CostCapped bool
 	SpendUSD   float64
 	// Cancelled reports the batch stopped because ctx was cancelled (the
@@ -191,13 +192,18 @@ func runPhase(ctx context.Context, index int, phase batch.Phase, in Input) (Resu
 		}
 	}
 
+	// A cost-cap pause and a plan failure can coexist in one parallel phase
+	// (cap fires, then a draining sibling fails). Neither signal may eclipse
+	// the other: the error drives the failure report, while CostCapped/spend
+	// must survive for the resume flow.
+	res := Result{CostCapped: costCapped, SpendUSD: spendUSD}
 	switch {
 	case len(errs) == 1:
-		return Result{}, errs[0], true
+		return res, errs[0], true
 	case len(errs) > 1:
-		return Result{}, errors.Join(errs...), true
+		return res, errors.Join(errs...), true
 	case costCapped:
-		return Result{CostCapped: true, SpendUSD: spendUSD}, nil, true
+		return res, nil, true
 	case noEligible:
 		return Result{}, nil, true
 	case ctx.Err() != nil:

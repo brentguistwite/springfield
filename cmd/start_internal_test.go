@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"springfield/internal/features/batch"
 	"springfield/internal/features/conductor"
+	"springfield/internal/features/conductor/batchexec"
 )
 
 // TestBatchPlanRunnerIsTerminal verifies the batchexec terminal contract at
@@ -316,5 +318,82 @@ func TestRunBatchWithContextMalformedLocalTOMLFails(t *testing.T) {
 	}
 	if !bytes.Contains([]byte(err.Error()), []byte("load springfield.local.toml")) {
 		t.Errorf("error %q missing wrap prefix \"load springfield.local.toml\"", err.Error())
+	}
+}
+
+// TestRunCursorTracksActivePlanIDs locks down the dispatch/settle bookkeeping
+// behind run.json's active_plan_ids: every transition is checkpointed, settle
+// removes exactly the settled plan, and an unknown id is a no-op.
+func TestRunCursorTracksActivePlanIDs(t *testing.T) {
+	root := t.TempDir()
+	run := batch.Run{ActiveBatchID: "b1"}
+	c := &runCursor{root: root, run: &run}
+
+	assertActive := func(want ...string) {
+		t.Helper()
+		got, ok, err := batch.ReadRun(root)
+		if err != nil || !ok {
+			t.Fatalf("ReadRun: ok=%v err=%v", ok, err)
+		}
+		if len(got.ActivePlanIDs) != len(want) {
+			t.Fatalf("ActivePlanIDs = %v, want %v", got.ActivePlanIDs, want)
+		}
+		for i := range want {
+			if got.ActivePlanIDs[i] != want[i] {
+				t.Fatalf("ActivePlanIDs = %v, want %v", got.ActivePlanIDs, want)
+			}
+		}
+	}
+
+	c.dispatch("alpha")
+	c.dispatch("beta")
+	assertActive("alpha", "beta")
+
+	c.settle("alpha")
+	assertActive("beta")
+
+	// Settling an id that is not in flight must not corrupt the list.
+	c.settle("ghost")
+	assertActive("beta")
+
+	c.settle("beta")
+	assertActive()
+}
+
+// TestBatchPlanRunnerProgressWriterSelection verifies the phase-static writer
+// choice in RunPlan's glue: concurrent dispatch prefixes every line (including
+// a flushed trailing partial) through the shared writer; sequential dispatch
+// writes through untouched.
+func TestBatchPlanRunnerProgressWriterSelection(t *testing.T) {
+	var buf bytes.Buffer
+	r := &batchPlanRunner{progress: &buf, progressShared: &syncLineWriter{w: &buf}}
+
+	w, flush := r.planProgress("alpha", batchexec.RunInfo{Concurrent: true})
+	fmt.Fprintf(w, "hello\npartial")
+	flush()
+	if got := buf.String(); got != "[alpha] hello\n[alpha] partial\n" {
+		t.Fatalf("concurrent output = %q, want prefixed lines", got)
+	}
+
+	buf.Reset()
+	w, flush = r.planProgress("alpha", batchexec.RunInfo{Concurrent: false})
+	fmt.Fprintf(w, "hello\n")
+	flush()
+	if got := buf.String(); got != "hello\n" {
+		t.Fatalf("sequential output = %q, want raw passthrough", got)
+	}
+}
+
+// TestResolveMaxParallelFlagPrecedence: --max-parallel > 0 overrides the
+// configured value; 0 (flag omitted) falls back to config.
+func TestResolveMaxParallelFlagPrecedence(t *testing.T) {
+	if got := resolveMaxParallel(0, 3); got != 3 {
+		t.Errorf("flag 0: got %d, want configured 3", got)
+	}
+	if got := resolveMaxParallel(2, 3); got != 2 {
+		t.Errorf("flag 2: got %d, want flag override 2", got)
+	}
+	if got := resolveMaxParallel(1, 3); got != 1 {
+		t.Errorf("flag 1: got %d, want 1 (concurrency disabled)", got)
 	}
 }

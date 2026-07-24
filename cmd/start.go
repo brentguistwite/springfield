@@ -304,10 +304,7 @@ func NewStartCommand() *cobra.Command {
 				}
 			}
 
-			maxParallel := loaded.Config.MaxParallel()
-			if maxParallelFlag > 0 {
-				maxParallel = maxParallelFlag
-			}
+			maxParallel := resolveMaxParallel(maxParallelFlag, loaded.Config.MaxParallel())
 			result, execErr := runBatch(root, run, b, w, logPath, costCap, perPlan, batchBase, maxParallel)
 
 			// Interrupted by signal: leave batch state intact so the user can
@@ -331,6 +328,13 @@ func NewStartCommand() *cobra.Command {
 				autoBranchOutcome = autobranch.OutcomeInterrupted
 				fmt.Fprintf(w, "Status: cost-capped\n")
 				fmt.Fprintf(w, "Est. API cost: $%.2f (cap: $%.2f)\n", result.SpendUSD, costCap)
+				// A sibling plan can fail while a parallel phase drains after
+				// the cap fires: the pause wins control flow (resume works),
+				// but the failure must not be swallowed — the failed plan's
+				// state is persisted for "springfield recover".
+				if result.Error != "" {
+					fmt.Fprintf(w, "Error: %s\n", result.Error)
+				}
 				fmt.Fprintf(w, "Info: rerun with --cost-cap $Y to continue (Y > current spend) or remove claude from agent_priority to reduce spend\n")
 				return fmt.Errorf("batch %s halted by --cost-cap at $%.2f", b.ID, result.SpendUSD)
 			}
@@ -621,14 +625,8 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 	}
 	// Runtime cursor checkpoints: keep run.json's active_plan_ids truthful
 	// while plans are in flight. Both callbacks fire only from the scheduler
-	// goroutine, so run.json keeps exactly one writer. Best-effort writes —
-	// the durable execution record is state.json, not the cursor.
-	active := make([]string, 0, maxParallel)
-	checkpoint := func() {
-		run.ActivePlanIDs = append([]string(nil), active...)
-		run.LastCheckpoint = time.Now()
-		_ = batch.WriteRun(root, run)
-	}
+	// goroutine, so run.json keeps exactly one writer.
+	cursor := &runCursor{root: root, run: &run}
 	execRes, execErr := batchexec.Execute(ctx, batchexec.Input{
 		Batch:  b,
 		Runner: runner,
@@ -637,19 +635,8 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 		// sequential execution.
 		Parallelize: perPlan,
 		MaxParallel: maxParallel,
-		OnDispatch: func(planID string) {
-			active = append(active, planID)
-			checkpoint()
-		},
-		OnSettle: func(planID string) {
-			for i, id := range active {
-				if id == planID {
-					active = append(active[:i], active[i+1:]...)
-					break
-				}
-			}
-			checkpoint()
-		},
+		OnDispatch:  cursor.dispatch,
+		OnSettle:    cursor.settle,
 		OnPhaseStart: func(index int, phase batch.Phase, parallel bool, cap int) {
 			if parallel {
 				fmt.Fprintf(progress, "Phase %d/%d (parallel): up to %d of %d plans concurrently\n",
@@ -664,11 +651,56 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 		// for the user to rerun springfield start to resume.
 		return BatchRunResult{}, execErr
 	case execErr != nil:
-		return BatchRunResult{Error: execErr.Error()}, execErr
+		// A cost-cap pause can coexist with a plan failure (cap fired, then a
+		// draining sibling failed). Carry the cap signal through so the caller
+		// persists the pause state and surfaces the spend alongside the error.
+		return BatchRunResult{Error: execErr.Error(), CostCapped: execRes.CostCapped, SpendUSD: execRes.SpendUSD}, execErr
 	case execRes.CostCapped:
 		return BatchRunResult{CostCapped: true, SpendUSD: execRes.SpendUSD}, nil
 	}
 	return BatchRunResult{}, nil
+}
+
+// resolveMaxParallel applies --max-parallel flag precedence: a positive flag
+// value overrides the configured [project] max_parallel; 0 (flag omitted)
+// falls back to it.
+func resolveMaxParallel(flagValue, configured int) int {
+	if flagValue > 0 {
+		return flagValue
+	}
+	return configured
+}
+
+// runCursor keeps run.json's active_plan_ids truthful while plans are in
+// flight. Its methods are invoked only from the batchexec scheduler goroutine
+// (the OnDispatch/OnSettle contract), so run.json keeps exactly one writer.
+// Writes are best-effort — the durable execution record is state.json, not
+// the cursor.
+type runCursor struct {
+	root   string
+	run    *batch.Run
+	active []string
+}
+
+func (c *runCursor) dispatch(planID string) {
+	c.active = append(c.active, planID)
+	c.checkpoint()
+}
+
+func (c *runCursor) settle(planID string) {
+	for i, id := range c.active {
+		if id == planID {
+			c.active = append(c.active[:i], c.active[i+1:]...)
+			break
+		}
+	}
+	c.checkpoint()
+}
+
+func (c *runCursor) checkpoint() {
+	c.run.ActivePlanIDs = append([]string(nil), c.active...)
+	c.run.LastCheckpoint = time.Now()
+	_ = batch.WriteRun(c.root, *c.run)
 }
 
 // batchPlanRunner adapts the plan execution + integration pipeline to
@@ -699,16 +731,22 @@ func (r *batchPlanRunner) IsTerminal(planID string) bool {
 	return ok && st.IsIntegrated()
 }
 
-func (r *batchPlanRunner) RunPlan(ctx context.Context, planID string, info batchexec.RunInfo) batchexec.Outcome {
-	// Concurrent plans get a phase-stable per-plan prefix on every progress
-	// line; sequential execution writes through untouched (byte-identical
-	// output to the pre-parallelism loop).
-	progress := r.progress
-	if info.Concurrent {
-		pw := newPrefixWriter(r.progressShared, planID)
-		defer pw.Flush()
-		progress = pw
+// planProgress picks the progress writer for one dispatch: concurrent plans
+// get a phase-stable per-plan prefix on every line through the shared
+// line-atomic writer; sequential execution writes through untouched
+// (byte-identical output to the pre-parallelism loop). The returned flush
+// must be called when the plan settles to emit any trailing partial line.
+func (r *batchPlanRunner) planProgress(planID string, info batchexec.RunInfo) (io.Writer, func()) {
+	if !info.Concurrent {
+		return r.progress, func() {}
 	}
+	pw := newPrefixWriter(r.progressShared, planID)
+	return pw, pw.Flush
+}
+
+func (r *batchPlanRunner) RunPlan(ctx context.Context, planID string, info batchexec.RunInfo) batchexec.Outcome {
+	progress, flush := r.planProgress(planID, info)
+	defer flush()
 	var onEvent coreexec.EventHandler
 	if r.traceFor != nil {
 		onEvent = r.traceFor(planID)

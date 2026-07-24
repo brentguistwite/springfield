@@ -255,6 +255,31 @@ func TestCostCapStopsDispatchImmediatelyAndDrains(t *testing.T) {
 	}
 }
 
+func TestCostCapCoexistsWithSiblingFailure(t *testing.T) {
+	r := newBlockingRunner("p1", "p2")
+	boom := errors.New("p2 boom")
+	done := runExecute(batchexec.Input{
+		Batch:       parallelBatch(batch.PhaseParallel, []string{"p1", "p2"}),
+		Runner:      r,
+		Parallelize: true,
+		MaxParallel: 2,
+	})
+	r.waitStarted(t, "p1")
+	r.waitStarted(t, "p2")
+	// Cap fires on p1, then the draining sibling p2 fails: neither signal may
+	// eclipse the other — the caller needs the error for the failure report
+	// AND the cap pause (with spend) for the resume flow.
+	r.release["p1"] <- batchexec.Outcome{CostCapped: true, SpendUSD: 7}
+	r.release["p2"] <- batchexec.Outcome{Err: boom}
+	out := waitExecute(t, done)
+	if !errors.Is(out.err, boom) {
+		t.Fatalf("err = %v, want %v", out.err, boom)
+	}
+	if !out.res.CostCapped || out.res.SpendUSD != 7 {
+		t.Fatalf("res = %+v, want CostCapped with spend 7 alongside the error", out.res)
+	}
+}
+
 func TestParallelPhaseRunsSequentiallyWhenParallelizeDisabled(t *testing.T) {
 	r := newBlockingRunner("p1", "p2")
 	done := runExecute(batchexec.Input{
