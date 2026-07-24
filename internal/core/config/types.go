@@ -113,6 +113,13 @@ type ProjectConfig struct {
 	// whose per-worktree install (node_modules) dwarfs the default floor.
 	// Resolve the byte value via MinFreeDiskBytes().
 	MinFreeDisk string `toml:"min_free_disk,omitempty"`
+	// MaxParallel caps how many plans of a parallel-mode phase run
+	// concurrently. Only applies in per-plan-branches mode; consolidate-mode
+	// batches always execute sequentially. Pointer so an omitted key
+	// (nil → DefaultMaxParallel) is distinguishable from an explicit value.
+	// Values ≤ 1 disable concurrency. Override per run with
+	// `springfield start --max-parallel`. Resolve via MaxParallel().
+	MaxParallel *int `toml:"max_parallel,omitempty"`
 }
 
 // DefaultMaxTurnsPerIteration is the per-iteration agent-turn ceiling applied
@@ -122,6 +129,28 @@ const DefaultMaxTurnsPerIteration = 40
 // DefaultAutoBranchPattern is the branch-name template used when the project
 // does not configure auto_branch_pattern.
 const DefaultAutoBranchPattern = "springfield/batch-{id}"
+
+// DefaultMaxParallel is the concurrent-plan cap applied when [project]
+// max_parallel is omitted from springfield.toml. Deliberately conservative:
+// concurrent plans multiply agent limit pressure and can collide on shared
+// test resources (ports, containers); raise it once the repo tolerates it.
+const DefaultMaxParallel = 3
+
+// MaxParallel resolves the effective concurrent-plan cap:
+//
+//   - omitted (nil)     → [DefaultMaxParallel] (3)
+//   - explicit ≤ 1      → 1 (sequential everywhere)
+//   - explicit positive → n
+func (c Config) MaxParallel() int {
+	v := c.Project.MaxParallel
+	if v == nil {
+		return DefaultMaxParallel
+	}
+	if *v <= 1 {
+		return 1
+	}
+	return *v
+}
 
 // AutoBranchEnabled reports whether auto-branching is active. Default true:
 // only an explicit auto_branch = false in springfield.toml disables it.

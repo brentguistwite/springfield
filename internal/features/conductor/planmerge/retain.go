@@ -64,8 +64,11 @@ func Retain(in RetainInput) IntegrateResult {
 	if in.Git == nil {
 		in.Git = CLIGit{}
 	}
-	state, ok := in.Project.State.Plans[in.PlanID]
-	if !ok || state == nil {
+	// Retain runs concurrently across plans in a parallel phase; all state
+	// access goes through the locked Project API (detached read + closure
+	// write) and the shared-repo worktree removal takes the git lock.
+	state, ok := in.Project.ReadPlan(in.PlanID)
+	if !ok {
 		return IntegrateResult{PlanID: in.PlanID, Err: fmt.Errorf("no plan state recorded for %q", in.PlanID), Reason: ReasonStateMissing}
 	}
 	if state.Branch == "" || state.WorktreePath == "" {
@@ -102,11 +105,19 @@ func Retain(in RetainInput) IntegrateResult {
 	// already-absent worktree as a successful removal.
 	if _, statErr := os.Stat(state.WorktreePath); errors.Is(statErr, fs.ErrNotExist) {
 		progress(in.Progress, "retain %s: execution worktree already removed\n", in.PlanID)
-	} else if err := in.Git.WorktreeRemoveForce(in.ControlRoot, state.WorktreePath); err != nil {
-		execCleanup.Status = conductor.CleanupFailed
-		execCleanup.Error = err.Error()
-		cleanup.Status = conductor.CleanupFailed
-		progress(in.Progress, "retain %s: execution worktree removal failed (branch preserved): %v\n", in.PlanID, err)
+	} else {
+		// `git worktree remove` mutates shared .git metadata — serialize
+		// against concurrent worktree add/remove from sibling plans.
+		var removeErr error
+		conductor.WithGitLock(func() {
+			removeErr = in.Git.WorktreeRemoveForce(in.ControlRoot, state.WorktreePath)
+		})
+		if removeErr != nil {
+			execCleanup.Status = conductor.CleanupFailed
+			execCleanup.Error = removeErr.Error()
+			cleanup.Status = conductor.CleanupFailed
+			progress(in.Progress, "retain %s: execution worktree removal failed (branch preserved): %v\n", in.PlanID, removeErr)
+		}
 	}
 	cleanup.ExecutionWorktree = execCleanup
 
@@ -117,8 +128,10 @@ func Retain(in RetainInput) IntegrateResult {
 		TargetRef:   state.BaseRef,
 		AttemptedAt: now(),
 	}
-	state.Merge = merge
-	state.Cleanup = cleanup
+	in.Project.UpdatePlan(in.PlanID, func(ps *conductor.PlanState) {
+		ps.Merge = merge
+		ps.Cleanup = cleanup
+	})
 
 	if err := in.Project.SaveState(); err != nil {
 		return IntegrateResult{

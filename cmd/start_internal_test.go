@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,99 +12,66 @@ import (
 
 	"springfield/internal/features/batch"
 	"springfield/internal/features/conductor"
+	"springfield/internal/features/conductor/batchexec"
 )
 
-// TestBatchNextPlanIDSkipsNonBatchPlans verifies that batchNextPlanID returns
-// the first non-integrated plan in the batch's phase order, ignoring plans that
-// are not part of this batch (the core of bug #1: non-batch plans in the global
-// schedule previously caused runBatch to exit prematurely).
-func TestBatchNextPlanIDSkipsNonBatchPlans(t *testing.T) {
-	b := batch.Batch{
-		ID: "test-batch",
-		Phases: []batch.Phase{
-			{Mode: batch.PhaseSerial, Plans: []string{"plan-a"}},
-			{Mode: batch.PhaseSerial, Plans: []string{"plan-b"}},
-		},
-		PlanIDs: []string{"plan-a", "plan-b"},
-	}
-
-	// State: plan-a and plan-b are both not yet integrated.
-	// The global conductor state also has "plan-x" (not in this batch) as
-	// integrated — this should not affect batch dispatch.
-	state := &conductor.State{
-		Plans: map[string]*conductor.PlanState{
-			"plan-x": {
-				Status:  conductor.StatusCompleted,
-				Merge:   &conductor.MergeOutcome{Status: conductor.MergeSucceeded},
-				Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupSucceeded},
+// TestBatchPlanRunnerIsTerminal verifies the batchexec terminal contract at
+// the adapter boundary: only a FULLY INTEGRATED plan (merge succeeded +
+// cleanup succeeded) is terminal. In particular StatusCompleted alone is NOT
+// terminal — such a plan must still be dispatched so RunPlan can drive the
+// integration-only re-entry path (a crash between execution and integration
+// would otherwise orphan the plan).
+func TestBatchPlanRunnerIsTerminal(t *testing.T) {
+	project := &conductor.Project{
+		State: &conductor.State{
+			Plans: map[string]*conductor.PlanState{
+				"integrated": {
+					Status:  conductor.StatusCompleted,
+					Merge:   &conductor.MergeOutcome{Status: conductor.MergeSucceeded},
+					Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupSucceeded},
+				},
+				// Completed with NO merge record: IsIntegrated treats this
+				// as integrated (legacy/no-merge-ledger semantics) — same as
+				// the old batchNextPlanID predicate.
+				"completed-no-merge-record": {
+					Status: conductor.StatusCompleted,
+				},
+				// Completed but integration incomplete (merge pending): the
+				// crash-between-execution-and-integration re-entry case.
+				"completed-not-integrated": {
+					Status: conductor.StatusCompleted,
+					Merge:  &conductor.MergeOutcome{Status: conductor.MergePending},
+				},
+				// Merge succeeded but cleanup never durably recorded.
+				"completed-cleanup-missing": {
+					Status: conductor.StatusCompleted,
+					Merge:  &conductor.MergeOutcome{Status: conductor.MergeSucceeded},
+				},
+				"running": {
+					Status: conductor.StatusRunning,
+				},
 			},
 		},
 	}
+	r := &batchPlanRunner{project: project}
 
-	got := batchNextPlanID(b, state)
-	if got != "plan-a" {
-		t.Errorf("batchNextPlanID: want plan-a (first non-integrated batch plan), got %q", got)
+	if !r.IsTerminal("integrated") {
+		t.Errorf("integrated plan must be terminal")
 	}
-}
-
-// TestBatchNextPlanIDAdvancesPhase verifies that once the first phase's plans
-// are integrated, batchNextPlanID returns a plan from the next phase.
-func TestBatchNextPlanIDAdvancesPhase(t *testing.T) {
-	b := batch.Batch{
-		ID: "test-batch",
-		Phases: []batch.Phase{
-			{Mode: batch.PhaseSerial, Plans: []string{"plan-a"}},
-			{Mode: batch.PhaseSerial, Plans: []string{"plan-b"}},
-		},
-		PlanIDs: []string{"plan-a", "plan-b"},
+	if !r.IsTerminal("completed-no-merge-record") {
+		t.Errorf("completed plan with no merge record is integrated (legacy semantics) — must be terminal")
 	}
-
-	// plan-a is integrated; plan-b is not.
-	state := &conductor.State{
-		Plans: map[string]*conductor.PlanState{
-			"plan-a": {
-				Status:  conductor.StatusCompleted,
-				Merge:   &conductor.MergeOutcome{Status: conductor.MergeSucceeded},
-				Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupSucceeded},
-			},
-		},
+	if r.IsTerminal("completed-not-integrated") {
+		t.Errorf("completed-but-not-integrated plan must NOT be terminal (needs integration re-entry)")
 	}
-
-	got := batchNextPlanID(b, state)
-	if got != "plan-b" {
-		t.Errorf("batchNextPlanID: want plan-b after plan-a integrated, got %q", got)
+	if r.IsTerminal("completed-cleanup-missing") {
+		t.Errorf("merge-succeeded-but-cleanup-unrecorded plan must NOT be terminal")
 	}
-}
-
-// TestBatchNextPlanIDAllIntegratedReturnsEmpty verifies that when every batch
-// plan is integrated, batchNextPlanID returns "" to signal completion.
-func TestBatchNextPlanIDAllIntegratedReturnsEmpty(t *testing.T) {
-	b := batch.Batch{
-		ID: "test-batch",
-		Phases: []batch.Phase{
-			{Mode: batch.PhaseSerial, Plans: []string{"plan-a", "plan-b"}},
-		},
-		PlanIDs: []string{"plan-a", "plan-b"},
+	if r.IsTerminal("running") {
+		t.Errorf("running plan must not be terminal")
 	}
-
-	state := &conductor.State{
-		Plans: map[string]*conductor.PlanState{
-			"plan-a": {
-				Status:  conductor.StatusCompleted,
-				Merge:   &conductor.MergeOutcome{Status: conductor.MergeSucceeded},
-				Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupSucceeded},
-			},
-			"plan-b": {
-				Status:  conductor.StatusCompleted,
-				Merge:   &conductor.MergeOutcome{Status: conductor.MergeSucceeded},
-				Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupSucceeded},
-			},
-		},
-	}
-
-	got := batchNextPlanID(b, state)
-	if got != "" {
-		t.Errorf("batchNextPlanID: want empty when all integrated, got %q", got)
+	if r.IsTerminal("unknown") {
+		t.Errorf("unknown plan must not be terminal")
 	}
 }
 
@@ -139,7 +107,7 @@ func TestRunBatchWithContextCancelledReturnsContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel before calling
 
-	_, err := runBatchWithContext(ctx, root, run, b, io.Discard, "", 0, false, "")
+	_, err := runBatchWithContext(ctx, root, &run, b, io.Discard, "", 0, false, "", 1)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
@@ -296,7 +264,7 @@ func TestRunBatchWithContextMissingExecutionConfigFails(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	result, err := runBatchWithContext(ctx, root, run, b, io.Discard, "", 0, false, "")
+	result, err := runBatchWithContext(ctx, root, &run, b, io.Discard, "", 0, false, "", 1)
 	if err == nil {
 		t.Fatal("expected error when execution config is missing, got nil")
 	}
@@ -344,7 +312,7 @@ func TestRunBatchWithContextMalformedLocalTOMLFails(t *testing.T) {
 		Phases:  []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"plan-a"}}},
 	}
 
-	_, err := runBatchWithContext(context.Background(), root, run, b, io.Discard, "", 0, false, "")
+	_, err := runBatchWithContext(context.Background(), root, &run, b, io.Discard, "", 0, false, "", 1)
 	if err == nil {
 		t.Fatal("expected error from malformed local toml, got nil")
 	}
@@ -353,33 +321,177 @@ func TestRunBatchWithContextMalformedLocalTOMLFails(t *testing.T) {
 	}
 }
 
-// TestBatchNextPlanIDPhaseBlocksUntilComplete verifies serial phase semantics:
-// if the first phase has a non-integrated plan, the second phase's plans are
-// not dispatched even if the second phase plans exist.
-func TestBatchNextPlanIDPhaseBlocksUntilComplete(t *testing.T) {
-	b := batch.Batch{
-		ID: "test-batch",
-		Phases: []batch.Phase{
-			{Mode: batch.PhaseSerial, Plans: []string{"plan-a", "plan-c"}},
-			{Mode: batch.PhaseSerial, Plans: []string{"plan-b"}},
-		},
-		PlanIDs: []string{"plan-a", "plan-b", "plan-c"},
+// TestRunCursorTracksActivePlanIDs locks down the dispatch/settle bookkeeping
+// behind run.json's active_plan_ids: every transition is checkpointed, settle
+// removes exactly the settled plan, and an unknown id is a no-op.
+func TestRunCursorTracksActivePlanIDs(t *testing.T) {
+	root := t.TempDir()
+	run := batch.Run{ActiveBatchID: "b1"}
+	c := &runCursor{root: root, run: &run}
+
+	assertActive := func(want ...string) {
+		t.Helper()
+		got, ok, err := batch.ReadRun(root)
+		if err != nil || !ok {
+			t.Fatalf("ReadRun: ok=%v err=%v", ok, err)
+		}
+		if len(got.ActivePlanIDs) != len(want) {
+			t.Fatalf("ActivePlanIDs = %v, want %v", got.ActivePlanIDs, want)
+		}
+		for i := range want {
+			if got.ActivePlanIDs[i] != want[i] {
+				t.Fatalf("ActivePlanIDs = %v, want %v", got.ActivePlanIDs, want)
+			}
+		}
 	}
 
-	// plan-a integrated, plan-c not integrated yet — phase 0 not complete.
-	state := &conductor.State{
-		Plans: map[string]*conductor.PlanState{
-			"plan-a": {
-				Status:  conductor.StatusCompleted,
-				Merge:   &conductor.MergeOutcome{Status: conductor.MergeSucceeded},
-				Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupSucceeded},
-			},
-		},
+	c.dispatch("alpha")
+	c.dispatch("beta")
+	assertActive("alpha", "beta")
+
+	c.settle("alpha")
+	assertActive("beta")
+
+	// Settling an id that is not in flight must not corrupt the list.
+	c.settle("ghost")
+	assertActive("beta")
+
+	c.settle("beta")
+	assertActive()
+
+	// The cursor shares the caller's Run object (pointer), so the drained
+	// state is what the caller re-persists on its post-run write paths
+	// (cost-cap/failure) — a stale copy here would resurrect pre-dispatch
+	// active_plan_ids in run.json.
+	if len(run.ActivePlanIDs) != 0 {
+		t.Errorf("caller-visible Run not drained: ActivePlanIDs = %v", run.ActivePlanIDs)
+	}
+}
+
+// TestBatchPlanRunnerProgressWriterSelection verifies the phase-static writer
+// choice in RunPlan's glue: concurrent dispatch prefixes every line (including
+// a flushed trailing partial) through the shared writer; sequential dispatch
+// writes through untouched.
+func TestBatchPlanRunnerProgressWriterSelection(t *testing.T) {
+	var buf bytes.Buffer
+	r := &batchPlanRunner{progress: &buf, progressShared: &syncLineWriter{w: &buf}}
+
+	w, flush := r.planProgress("alpha", batchexec.RunInfo{Concurrent: true})
+	fmt.Fprintf(w, "hello\npartial")
+	flush()
+	if got := buf.String(); got != "[alpha] hello\n[alpha] partial\n" {
+		t.Fatalf("concurrent output = %q, want prefixed lines", got)
 	}
 
-	got := batchNextPlanID(b, state)
-	// Should return plan-c (next non-integrated in phase 0), not plan-b (phase 1).
-	if got != "plan-c" {
-		t.Errorf("batchNextPlanID: want plan-c (phase 0 not complete), got %q", got)
+	buf.Reset()
+	w, flush = r.planProgress("alpha", batchexec.RunInfo{Concurrent: false})
+	fmt.Fprintf(w, "hello\n")
+	flush()
+	if got := buf.String(); got != "hello\n" {
+		t.Fatalf("sequential output = %q, want raw passthrough", got)
+	}
+}
+
+// TestBatchPlanRunnerTamperGuardConcurrentIsolation: while a concurrent
+// plan's agent runs, the scheduler legitimately rewrites run.json (cursor
+// checkpoints on sibling dispatch/settle) and sibling plans legitimately
+// write their own control-plane files (progress.md appends, prd.json
+// story-pass rewrites) in the shared .springfield/plans tree. The per-plan
+// guard for a concurrent dispatch must therefore watch ONLY the plan's own
+// subtree and skip run.json — otherwise every parallel plan deterministically
+// false-trips tamper detection and Restore reverts sibling state. Sequential
+// dispatches keep the full whole-tree + run.json guard.
+func TestBatchPlanRunnerTamperGuardConcurrentIsolation(t *testing.T) {
+	root := t.TempDir()
+	alphaDir := filepath.Join(root, ".springfield", "plans", "alpha")
+	betaDir := filepath.Join(root, ".springfield", "plans", "beta")
+	for _, d := range []string{alphaDir, betaDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+	run := batch.Run{ActiveBatchID: "b1"}
+	if err := batch.WriteRun(root, run); err != nil {
+		t.Fatalf("WriteRun: %v", err)
+	}
+	r := &batchPlanRunner{
+		root: root,
+		project: &conductor.Project{Config: &conductor.Config{PlanUnits: []conductor.PlanUnit{
+			{ID: "alpha", Path: ".springfield/plans/alpha/prd.json", Order: 1},
+			{ID: "beta", Path: ".springfield/plans/beta/prd.json", Order: 2},
+		}}},
+	}
+	cursor := &runCursor{root: root, run: &run}
+
+	g := r.tamperGuard("alpha", batchexec.RunInfo{Concurrent: true})
+	if err := g.Snapshot(); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	// Scheduler checkpoint + sibling control-plane writes land mid-window:
+	// legitimate, not tamper.
+	cursor.dispatch("beta")
+	if err := os.WriteFile(filepath.Join(betaDir, "progress.md"), []byte("iteration 1 start\n"), 0o644); err != nil {
+		t.Fatalf("write sibling progress: %v", err)
+	}
+	reason, err := g.Detect()
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if reason != "" {
+		t.Fatalf("concurrent guard flagged legitimate sibling/scheduler writes as tamper: %q", reason)
+	}
+	// Tampering with the plan's OWN subtree is still caught.
+	if err := os.WriteFile(filepath.Join(alphaDir, "evil.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	reason, err = g.Detect()
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if reason == "" {
+		t.Fatal("concurrent guard must still detect tampering in the plan's own dir")
+	}
+	// Restore must only touch the plan's own subtree — sibling state survives.
+	if err := g.Restore(); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(alphaDir, "evil.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("Restore did not remove tampered file from own dir: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(betaDir, "progress.md")); err != nil {
+		t.Errorf("Restore reverted sibling state: %v", err)
+	}
+
+	// Sequential dispatch keeps the full whole-tree + run.json guard.
+	g2 := r.tamperGuard("alpha", batchexec.RunInfo{Concurrent: false})
+	if err := g2.Snapshot(); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	cursor.settle("beta")
+	reason, err = g2.Detect()
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if reason == "" {
+		t.Fatal("sequential guard must detect run.json changes")
+	}
+}
+
+// TestResolveMaxParallelFlagPrecedence: --max-parallel > 0 overrides the
+// configured value; 0 (flag omitted) falls back to config.
+func TestResolveMaxParallelFlagPrecedence(t *testing.T) {
+	if got := resolveMaxParallel(0, 3); got != 3 {
+		t.Errorf("flag 0: got %d, want configured 3", got)
+	}
+	if got := resolveMaxParallel(2, 3); got != 2 {
+		t.Errorf("flag 2: got %d, want flag override 2", got)
+	}
+	if got := resolveMaxParallel(1, 3); got != 1 {
+		t.Errorf("flag 1: got %d, want 1 (concurrency disabled)", got)
+	}
+	// Negative values are an explicit override, clamped to sequential — the
+	// same semantics the config resolver gives max_parallel <= 1.
+	if got := resolveMaxParallel(-1, 3); got != 1 {
+		t.Errorf("flag -1: got %d, want 1 (clamped to sequential)", got)
 	}
 }

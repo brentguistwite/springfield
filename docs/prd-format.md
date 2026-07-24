@@ -57,7 +57,7 @@ Field reference:
 | `title` | string | yes | Human-readable batch title. |
 | `source` | string | yes | Verbatim plan markdown that originated this batch. Stored as `source.md` for audit. |
 | `phases` | array | yes | Execution ordering. At least one phase required. |
-| `phases[].mode` | string | yes | `"serial"` (only supported value today). |
+| `phases[].mode` | string | yes | `"serial"` or `"parallel"`. Serial phases run their plans one at a time in declared order. Parallel phases declare the plans independent; in per-plan-branches mode they actually execute concurrently (up to `[project] max_parallel`, default 3) — in consolidate mode they still run sequentially, since consolidate merges require a stable base. Only mark a phase parallel when its plans touch disjoint files and share no test resources (ports, containers, databases). |
 | `phases[].plans` | []string | yes | Ordered list of plan IDs to run in this phase. Must reference IDs present in `plans`. |
 | `plans` | array | yes | One entry per atomic work unit. |
 | `plans[].id` | string | yes | Slug: `^[a-z0-9][a-z0-9-]*$`. Must be unique within the envelope. |

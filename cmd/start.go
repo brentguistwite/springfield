@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -32,6 +33,7 @@ import (
 	"springfield/internal/features/autobranch"
 	"springfield/internal/features/batch"
 	"springfield/internal/features/conductor"
+	"springfield/internal/features/conductor/batchexec"
 	"springfield/internal/features/conductor/planmerge"
 	"springfield/internal/features/conductor/planrun"
 	"springfield/internal/features/cost"
@@ -66,6 +68,7 @@ func NewStartCommand() *cobra.Command {
 	var noKeepAwake bool
 	var costCap float64
 	var perPlanFlag bool
+	var maxParallelFlag int
 	var baseFlag string
 
 	cmd := &cobra.Command{
@@ -301,7 +304,8 @@ func NewStartCommand() *cobra.Command {
 				}
 			}
 
-			result, execErr := runBatch(root, run, b, w, logPath, costCap, perPlan, batchBase)
+			maxParallel := resolveMaxParallel(maxParallelFlag, loaded.Config.MaxParallel())
+			result, execErr := runBatch(root, &run, b, w, logPath, costCap, perPlan, batchBase, maxParallel)
 
 			// Interrupted by signal: leave batch state intact so the user can
 			// rerun "springfield start" to resume. Do NOT archive as completed.
@@ -324,6 +328,13 @@ func NewStartCommand() *cobra.Command {
 				autoBranchOutcome = autobranch.OutcomeInterrupted
 				fmt.Fprintf(w, "Status: cost-capped\n")
 				fmt.Fprintf(w, "Est. API cost: $%.2f (cap: $%.2f)\n", result.SpendUSD, costCap)
+				// A sibling plan can fail while a parallel phase drains after
+				// the cap fires: the pause wins control flow (resume works),
+				// but the failure must not be swallowed — the failed plan's
+				// state is persisted for "springfield recover".
+				if result.Error != "" {
+					fmt.Fprintf(w, "Error: %s\n", result.Error)
+				}
 				fmt.Fprintf(w, "Info: rerun with --cost-cap $Y to continue (Y > current spend) or remove claude from agent_priority to reduce spend\n")
 				return fmt.Errorf("batch %s halted by --cost-cap at $%.2f", b.ID, result.SpendUSD)
 			}
@@ -397,6 +408,7 @@ func NewStartCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&noKeepAwake, "no-keep-awake", false, "disable sleep prevention for this run")
 	cmd.Flags().Float64Var(&costCap, "cost-cap", 0, "Abort the batch when total spend reaches this many USD (0 = no cap). Cap-aborted batches are resumable: rerun with a higher --cost-cap to continue.")
 	cmd.Flags().BoolVar(&perPlanFlag, "per-plan-branches", false, "Leave one standalone springfield/<plan> branch per plan (one PR per ticket) instead of consolidating onto a shared base. Overrides [project] branch_mode for this run. Mode is fixed at first start and is NOT flippable on resume.")
+	cmd.Flags().IntVar(&maxParallelFlag, "max-parallel", 0, "Cap on concurrently running plans within a parallel-mode phase (per-plan-branches mode only; consolidate batches always run sequentially). Overrides [project] max_parallel for this run; 1 (or any lower non-zero value) disables concurrency; 0/omitted uses the configured value (default 3).")
 	cmd.Flags().StringVar(&baseFlag, "base", "", "Base branch each per-plan branch is cut from (per-plan mode only). Precedence: --base > [project] base_branch > current branch. A re-passed --base on resume re-bases only not-yet-run plans.")
 	return cmd
 }
@@ -518,17 +530,21 @@ type BatchRunResult struct {
 	SpendUSD float64
 }
 
-func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string, costCap float64, perPlan bool, batchBase string) (BatchRunResult, error) {
+func runBatch(root string, run *batch.Run, b batch.Batch, progress io.Writer, logPath string, costCap float64, perPlan bool, batchBase string, maxParallel int) (BatchRunResult, error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return runBatchWithContext(ctx, root, run, b, progress, logPath, costCap, perPlan, batchBase)
+	return runBatchWithContext(ctx, root, run, b, progress, logPath, costCap, perPlan, batchBase, maxParallel)
 }
 
 // runBatchWithContext is the testable core of runBatch. ctx controls interrupt
 // detection: when ctx is cancelled mid-loop (or on entry) the function returns
 // context.Canceled so the caller can distinguish a user interrupt (preserve
 // batch state) from normal completion (archive + clear run.json).
-func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string, costCap float64, perPlan bool, batchBase string) (BatchRunResult, error) {
+// run is a pointer so the cursor's dispatch/settle checkpoints (ActivePlanIDs,
+// LastCheckpoint) stay visible to the caller: RunE re-writes run.json on the
+// cost-cap and failure paths after this returns, and a stale by-value copy
+// would silently resurrect pre-dispatch active_plan_ids there.
+func runBatchWithContext(ctx context.Context, root string, run *batch.Run, b batch.Batch, progress io.Writer, logPath string, costCap float64, perPlan bool, batchBase string, maxParallel int) (BatchRunResult, error) {
 	// Check for pre-cancellation before any setup so tests and real signal
 	// handlers both get the same early-exit path.
 	if ctx.Err() != nil {
@@ -594,94 +610,251 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 	// has nothing to refuse — suppress it (mirrors auto-branch suppression).
 	enforceProtected := !loaded.Config.Project.AllowProtectedBase && !perPlan
 
-	for {
-		if ctx.Err() != nil {
-			// Interrupted by signal or context cancel. Return context.Canceled so
-			// the caller does NOT archive as completed — batch state stays intact
-			// for the user to rerun springfield start to resume.
-			return BatchRunResult{}, ctx.Err()
-		}
-
-		// Iterate the batch's own phases in order to find the next plan to
-		// dispatch. This avoids the prior bug where schedule.NextPlans() could
-		// return a non-batch plan first, causing the batch loop to exit
-		// prematurely before any batch plans had run.
-		planID := batchNextPlanID(b, project.State)
-		if planID == "" {
-			break
-		}
-
-		// Re-entry: a plan that already finished execution (Status=Completed)
-		// but is not yet integrated — a crash between execution and integration,
-		// or a prior integration whose cleanup failed (e.g. a transient
-		// `git worktree remove` failure) — must NOT be re-dispatched through
-		// SinglePlan, which would reject it with preflight-already-completed and
-		// deadlock the batch. Drive only the integration/cleanup step instead.
-		if st := project.State.Plans[planID]; st != nil && st.Status == conductor.StatusCompleted {
-			fmt.Fprintf(progress, "Plan: %s\n", planID)
-			fmt.Fprintf(progress, "Status: resuming integration\n")
-			if halt, err := integratePlan(perPlan, project, root, worktreeBase, planID, progress); halt != nil {
-				return *halt, err
+	runner := &batchPlanRunner{
+		project:          project,
+		root:             root,
+		worktreeBase:     worktreeBase,
+		perPlan:          perPlan,
+		progress:         progress,
+		progressShared:   &syncLineWriter{w: progress},
+		agentIDs:         agentIDs,
+		loaded:           loaded,
+		local:            local,
+		registry:         registry,
+		traceFor:         traceHandler,
+		enforceProtected: enforceProtected,
+		batchBase:        batchBase,
+		costCap:          costCap,
+		batchID:          b.ID,
+	}
+	// Runtime cursor checkpoints: keep run.json's active_plan_ids truthful
+	// while plans are in flight. Both callbacks fire only from the scheduler
+	// goroutine, so run.json keeps exactly one writer.
+	cursor := &runCursor{root: root, run: run}
+	execRes, execErr := batchexec.Execute(ctx, batchexec.Input{
+		Batch:  b,
+		Runner: runner,
+		// Concurrency is scoped to per-plan-branches mode: consolidate-mode
+		// merges are ff-only onto a moving head and structurally require
+		// sequential execution.
+		Parallelize: perPlan,
+		MaxParallel: maxParallel,
+		OnDispatch:  cursor.dispatch,
+		OnSettle:    cursor.settle,
+		OnPhaseStart: func(index int, phase batch.Phase, parallel bool, cap int) {
+			if parallel {
+				fmt.Fprintf(progress, "Phase %d/%d (parallel): up to %d of %d plans concurrently\n",
+					index+1, len(b.Phases), cap, len(phase.Plans))
 			}
-			continue
-		}
-
-		res := planrun.SinglePlan(planrun.SinglePlanInput{
-			Project:              project,
-			ControlRoot:          root,
-			ProjectRoot:          root,
-			WorktreeBase:         worktreeBase,
-			AgentIDs:             agentIDs,
-			ExecutionSettings:    loaded.Config.ExecutionSettings(),
-			ReviewConfig:         local.Review,
-			VerifyConfig:         loaded.Config.Verify,
-			Runner:               runtimeAgentRunner{coreruntime.NewRunner(registry)},
-			Manager:              planrun.NewManager(),
-			OnEvent:              traceHandler,
-			Progress:             progress,
-			TargetPlanID:         planID,
-			EnforceProtectedBase: enforceProtected,
-			BatchBaseRef:         batchBase,
-			TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(root, ".springfield", "plans"), controlRoot: root},
-			Ctx:                  ctx,
-			MaxTurnsPerIteration: loaded.Config.MaxTurnsPerIteration(),
-			MinFreeDiskBytes:     loaded.Config.MinFreeDiskBytes(),
-			CostCapUSD:           costCap,
-			BatchID:              b.ID,
-		})
-		if res.Reason == "no-eligible-plan" {
-			// The target plan is not registered in the conductor schedule —
-			// either not yet registered or already terminal. Stop the batch.
-			break
-		}
-		// Cost-cap fired inside the plan's iteration loop. Surface the pause
-		// to the caller WITHOUT marking the batch as failed.
-		if res.CostCapped {
-			fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
-			fmt.Fprintf(progress, "Status: cost-capped (%s)\n", res.Reason)
-			return BatchRunResult{CostCapped: true, SpendUSD: res.SpendUSD}, nil
-		}
-		if res.Err != nil {
-			fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
-			if res.Status == conductor.StatusNeedsHuman {
-				fmt.Fprintf(progress, "Status: needs human review (%s)\n", res.Reason)
-			} else {
-				fmt.Fprintf(progress, "Status: failed (%s)\n", res.Reason)
-			}
-			fmt.Fprintf(progress, "Error: %s\n", res.Err.Error())
-			return BatchRunResult{Error: res.Err.Error()}, res.Err
-		}
-		fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
-		fmt.Fprintf(progress, "Status: completed\n")
-		if res.EvidencePath != "" {
-			fmt.Fprintf(progress, "Evidence: %s\n", res.EvidencePath)
-		}
-
-		if halt, err := integratePlan(perPlan, project, root, worktreeBase, res.PlanID, progress); halt != nil {
-			return *halt, err
-		}
+		},
+	})
+	switch {
+	case execRes.Cancelled:
+		// Interrupted by signal or context cancel. Return the context error so
+		// the caller does NOT archive as completed — batch state stays intact
+		// for the user to rerun springfield start to resume.
+		return BatchRunResult{}, execErr
+	case execErr != nil:
+		// A cost-cap pause can coexist with a plan failure (cap fired, then a
+		// draining sibling failed). Carry the cap signal through so the caller
+		// persists the pause state and surfaces the spend alongside the error.
+		return BatchRunResult{Error: execErr.Error(), CostCapped: execRes.CostCapped, SpendUSD: execRes.SpendUSD}, execErr
+	case execRes.CostCapped:
+		return BatchRunResult{CostCapped: true, SpendUSD: execRes.SpendUSD}, nil
 	}
 	return BatchRunResult{}, nil
+}
+
+// resolveMaxParallel applies --max-parallel flag precedence: any non-zero
+// flag value overrides the configured [project] max_parallel, with values
+// below 1 clamping to 1 (sequential) — the same semantics the config
+// resolver gives max_parallel. 0 (flag omitted) falls back to the
+// configured value.
+func resolveMaxParallel(flagValue, configured int) int {
+	if flagValue == 0 {
+		return configured
+	}
+	if flagValue < 1 {
+		return 1
+	}
+	return flagValue
+}
+
+// runCursor keeps run.json's active_plan_ids truthful while plans are in
+// flight. Its methods are invoked only from the batchexec scheduler goroutine
+// (the OnDispatch/OnSettle contract), so run.json keeps exactly one writer.
+// Writes are best-effort — the durable execution record is state.json, not
+// the cursor.
+type runCursor struct {
+	root   string
+	run    *batch.Run
+	active []string
+}
+
+func (c *runCursor) dispatch(planID string) {
+	c.active = append(c.active, planID)
+	c.checkpoint()
+}
+
+func (c *runCursor) settle(planID string) {
+	for i, id := range c.active {
+		if id == planID {
+			c.active = append(c.active[:i], c.active[i+1:]...)
+			break
+		}
+	}
+	c.checkpoint()
+}
+
+func (c *runCursor) checkpoint() {
+	c.run.ActivePlanIDs = append([]string(nil), c.active...)
+	c.run.LastCheckpoint = time.Now()
+	_ = batch.WriteRun(c.root, *c.run)
+}
+
+// batchPlanRunner adapts the plan execution + integration pipeline to
+// batchexec.PlanRunner. It owns everything batchexec deliberately doesn't
+// know about: agents, config, git integration, and progress reporting.
+type batchPlanRunner struct {
+	project          *conductor.Project
+	root             string
+	worktreeBase     string
+	perPlan          bool
+	progress         io.Writer
+	progressShared   *syncLineWriter
+	agentIDs         []agents.ID
+	loaded           config.Loaded
+	local            config.LocalConfig
+	registry         agents.Registry
+	traceFor         func(planID string) coreexec.EventHandler
+	enforceProtected bool
+	batchBase        string
+	costCap          float64
+	batchID          string
+}
+
+// IsTerminal reports a FULLY INTEGRATED plan (batchexec's terminal contract).
+// StatusCompleted alone is NOT terminal — see the re-entry branch in RunPlan.
+func (r *batchPlanRunner) IsTerminal(planID string) bool {
+	st, ok := r.project.ReadPlan(planID)
+	return ok && st.IsIntegrated()
+}
+
+// planProgress picks the progress writer for one dispatch: concurrent plans
+// get a phase-stable per-plan prefix on every line through the shared
+// line-atomic writer; sequential execution writes through untouched
+// (byte-identical output to the pre-parallelism loop). The returned flush
+// must be called when the plan settles to emit any trailing partial line.
+func (r *batchPlanRunner) planProgress(planID string, info batchexec.RunInfo) (io.Writer, func()) {
+	if !info.Concurrent {
+		return r.progress, func() {}
+	}
+	pw := newPrefixWriter(r.progressShared, planID)
+	return pw, pw.Flush
+}
+
+// tamperGuard builds the per-dispatch control-plane guard. Concurrent
+// dispatches watch ONLY the plan's own subtree and skip run.json (empty
+// controlRoot disables that check): during this plan's agent window the
+// scheduler legitimately rewrites the cursor on every sibling
+// dispatch/settle, and concurrently running siblings legitimately write
+// their own progress.md/prd.json under the shared plans tree — a whole-tree
+// byte-compare would deterministically false-trip tamper detection, and
+// Restore would revert sibling state and clobber the live cursor with a
+// stale snapshot. Scoping the guard per plan keeps detection meaningful
+// (each plan's dir is watched by exactly the guard whose agent window it
+// must stay stable in); sequential dispatches keep the historical
+// whole-tree + run.json protection.
+func (r *batchPlanRunner) tamperGuard(planID string, info batchexec.RunInfo) *planDirTamperGuard {
+	plansRoot := filepath.Join(r.root, ".springfield", "plans")
+	if !info.Concurrent {
+		return &planDirTamperGuard{planDir: plansRoot, controlRoot: r.root}
+	}
+	planDir := filepath.Join(plansRoot, planID)
+	if unit, ok := r.project.PlanUnitByID(planID); ok {
+		planDir = filepath.Dir(filepath.Join(r.root, filepath.FromSlash(unit.Path)))
+	}
+	return &planDirTamperGuard{planDir: planDir}
+}
+
+func (r *batchPlanRunner) RunPlan(ctx context.Context, planID string, info batchexec.RunInfo) batchexec.Outcome {
+	progress, flush := r.planProgress(planID, info)
+	defer flush()
+	var onEvent coreexec.EventHandler
+	if r.traceFor != nil {
+		onEvent = r.traceFor(planID)
+	}
+
+	// Re-entry: a plan that already finished execution (Status=Completed)
+	// but is not yet integrated — a crash between execution and integration,
+	// or a prior integration whose cleanup failed (e.g. a transient
+	// `git worktree remove` failure) — must NOT be re-dispatched through
+	// SinglePlan, which would reject it with preflight-already-completed and
+	// deadlock the batch. Drive only the integration/cleanup step instead.
+	if st, ok := r.project.ReadPlan(planID); ok && st.Status == conductor.StatusCompleted {
+		fmt.Fprintf(progress, "Plan: %s\n", planID)
+		fmt.Fprintf(progress, "Status: resuming integration\n")
+		if halt, err := integratePlan(r.perPlan, r.project, r.root, r.worktreeBase, planID, progress); halt != nil {
+			return batchexec.Outcome{Err: err}
+		}
+		return batchexec.Outcome{}
+	}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:              r.project,
+		ControlRoot:          r.root,
+		ProjectRoot:          r.root,
+		WorktreeBase:         r.worktreeBase,
+		AgentIDs:             r.agentIDs,
+		ExecutionSettings:    r.loaded.Config.ExecutionSettings(),
+		ReviewConfig:         r.local.Review,
+		VerifyConfig:         r.loaded.Config.Verify,
+		Runner:               runtimeAgentRunner{coreruntime.NewRunner(r.registry)},
+		Manager:              planrun.NewManager(),
+		OnEvent:              onEvent,
+		Progress:             progress,
+		TargetPlanID:         planID,
+		EnforceProtectedBase: r.enforceProtected,
+		BatchBaseRef:         r.batchBase,
+		TamperGuard:          r.tamperGuard(planID, info),
+		Ctx:                  ctx,
+		MaxTurnsPerIteration: r.loaded.Config.MaxTurnsPerIteration(),
+		MinFreeDiskBytes:     r.loaded.Config.MinFreeDiskBytes(),
+		CostCapUSD:           r.costCap,
+		BatchID:              r.batchID,
+	})
+	if res.Reason == "no-eligible-plan" {
+		// The target plan is not registered in the conductor schedule —
+		// either not yet registered or already terminal. Stop the batch.
+		return batchexec.Outcome{NoEligiblePlan: true}
+	}
+	// Cost-cap fired inside the plan's iteration loop. Surface the pause
+	// to the caller WITHOUT marking the batch as failed.
+	if res.CostCapped {
+		fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
+		fmt.Fprintf(progress, "Status: cost-capped (%s)\n", res.Reason)
+		return batchexec.Outcome{CostCapped: true, SpendUSD: res.SpendUSD}
+	}
+	if res.Err != nil {
+		fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
+		if res.Status == conductor.StatusNeedsHuman {
+			fmt.Fprintf(progress, "Status: needs human review (%s)\n", res.Reason)
+		} else {
+			fmt.Fprintf(progress, "Status: failed (%s)\n", res.Reason)
+		}
+		fmt.Fprintf(progress, "Error: %s\n", res.Err.Error())
+		return batchexec.Outcome{Err: res.Err}
+	}
+	fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
+	fmt.Fprintf(progress, "Status: completed\n")
+	if res.EvidencePath != "" {
+		fmt.Fprintf(progress, "Evidence: %s\n", res.EvidencePath)
+	}
+
+	if halt, err := integratePlan(r.perPlan, r.project, r.root, r.worktreeBase, res.PlanID, progress); halt != nil {
+		return batchexec.Outcome{Err: err}
+	}
+	return batchexec.Outcome{}
 }
 
 // anyPlanStarted reports whether any plan in the batch has a recorded state
@@ -759,44 +932,6 @@ func integratePlan(perPlan bool, project *conductor.Project, root, worktreeBase,
 		return &BatchRunResult{Error: e.Error()}, e
 	}
 	return nil, nil
-}
-
-// batchNextPlanID returns the ID of the first non-integrated plan in the
-// batch's phase order, or "" when every batch plan is integrated (done).
-//
-// This replaces the prior approach of filtering schedule.NextPlans() by
-// batch membership. That approach was broken: NextPlans() returns plans from
-// the GLOBAL conductor schedule in phase order. If a non-batch plan appears
-// first (earlier Order) in the global schedule and is not yet integrated, it
-// would be skipped by the batchPlanSet filter — leaving planID empty and
-// causing runBatch to exit prematurely even though batch plans still needed
-// to run.
-//
-// By iterating b.Phases directly, batch dispatch is independent of the global
-// schedule order. Phase semantics are preserved: all plans in phase N must be
-// integrated before any plan in phase N+1 is dispatched.
-func batchNextPlanID(b batch.Batch, state *conductor.State) string {
-	for _, phase := range b.Phases {
-		// Check if this phase is fully integrated.
-		phaseComplete := true
-		for _, id := range phase.Plans {
-			if ps := state.Plans[id]; ps == nil || !ps.IsIntegrated() {
-				phaseComplete = false
-				break
-			}
-		}
-		if phaseComplete {
-			// All plans in this phase integrated; advance to next phase.
-			continue
-		}
-		// This phase has non-integrated plans. Return the first one.
-		for _, id := range phase.Plans {
-			if ps := state.Plans[id]; ps == nil || !ps.IsIntegrated() {
-				return id
-			}
-		}
-	}
-	return "" // all phases integrated
 }
 
 // controlPlaneSnapshot captures every Springfield-owned file under
@@ -1312,7 +1447,7 @@ func writeTamperBlobs(root string, ctx tamperForensicsContext, pre, post []byte)
 // appends events as JSON lines and a closer. On open failure returns nil
 // handler (events discarded) and a noop closer — trace is best-effort
 // diagnostic, not load-bearing.
-func openAgentTrace(root, batchID string) (coreexec.EventHandler, func()) {
+func openAgentTrace(root, batchID string) (func(planID string) coreexec.EventHandler, func()) {
 	logsDir := filepath.Join(root, ".springfield", "logs")
 	if err := os.MkdirAll(logsDir, 0o755); err != nil {
 		return nil, func() {}
@@ -1324,18 +1459,27 @@ func openAgentTrace(root, batchID string) (coreexec.EventHandler, func()) {
 		return nil, func() {}
 	}
 	closer := func() { _ = f.Close() }
-	handler := func(e coreexec.Event) {
-		data, err := json.Marshal(map[string]any{
-			"type": string(e.Type),
-			"time": e.Time.UTC().Format(time.RFC3339Nano),
-			"data": e.Data,
-		})
-		if err != nil {
-			return
+	// One append mutex for the whole file: concurrently-running plans each
+	// get their own handler (stamping their plan ID onto every event) but
+	// share the serialized append so JSONL lines never interleave.
+	var mu sync.Mutex
+	handlerFor := func(planID string) coreexec.EventHandler {
+		return func(e coreexec.Event) {
+			data, err := json.Marshal(map[string]any{
+				"type": string(e.Type),
+				"time": e.Time.UTC().Format(time.RFC3339Nano),
+				"data": e.Data,
+				"plan": planID,
+			})
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			_, _ = f.Write(append(data, '\n'))
 		}
-		_, _ = f.Write(append(data, '\n'))
 	}
-	return handler, closer
+	return handlerFor, closer
 }
 
 // tryRunSinglePlanUnit handles the parity-2 single-plan worktree flow when no
