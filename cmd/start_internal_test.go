@@ -107,7 +107,7 @@ func TestRunBatchWithContextCancelledReturnsContextCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel before calling
 
-	_, err := runBatchWithContext(ctx, root, run, b, io.Discard, "", 0, false, "", 1)
+	_, err := runBatchWithContext(ctx, root, &run, b, io.Discard, "", 0, false, "", 1)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
@@ -264,7 +264,7 @@ func TestRunBatchWithContextMissingExecutionConfigFails(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	result, err := runBatchWithContext(ctx, root, run, b, io.Discard, "", 0, false, "", 1)
+	result, err := runBatchWithContext(ctx, root, &run, b, io.Discard, "", 0, false, "", 1)
 	if err == nil {
 		t.Fatal("expected error when execution config is missing, got nil")
 	}
@@ -312,7 +312,7 @@ func TestRunBatchWithContextMalformedLocalTOMLFails(t *testing.T) {
 		Phases:  []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"plan-a"}}},
 	}
 
-	_, err := runBatchWithContext(context.Background(), root, run, b, io.Discard, "", 0, false, "", 1)
+	_, err := runBatchWithContext(context.Background(), root, &run, b, io.Discard, "", 0, false, "", 1)
 	if err == nil {
 		t.Fatal("expected error from malformed local toml, got nil")
 	}
@@ -358,6 +358,14 @@ func TestRunCursorTracksActivePlanIDs(t *testing.T) {
 
 	c.settle("beta")
 	assertActive()
+
+	// The cursor shares the caller's Run object (pointer), so the drained
+	// state is what the caller re-persists on its post-run write paths
+	// (cost-cap/failure) — a stale copy here would resurrect pre-dispatch
+	// active_plan_ids in run.json.
+	if len(run.ActivePlanIDs) != 0 {
+		t.Errorf("caller-visible Run not drained: ActivePlanIDs = %v", run.ActivePlanIDs)
+	}
 }
 
 // TestBatchPlanRunnerProgressWriterSelection verifies the phase-static writer
@@ -384,6 +392,69 @@ func TestBatchPlanRunnerProgressWriterSelection(t *testing.T) {
 	}
 }
 
+// TestBatchPlanRunnerTamperGuardConcurrentExcludesRunJSON: in a parallel
+// phase the scheduler's runCursor legitimately rewrites run.json on every
+// sibling dispatch/settle while this plan's agent runs, so the per-plan
+// tamper guard must NOT byte-compare run.json for concurrent dispatches —
+// otherwise every parallel plan deterministically false-trips "run.json
+// changed" and Restore clobbers the live cursor. The plan-dir tree check
+// stays; sequential dispatches keep full run.json protection.
+func TestBatchPlanRunnerTamperGuardConcurrentExcludesRunJSON(t *testing.T) {
+	root := t.TempDir()
+	planDir := filepath.Join(root, ".springfield", "plans")
+	if err := os.MkdirAll(planDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	run := batch.Run{ActiveBatchID: "b1"}
+	if err := batch.WriteRun(root, run); err != nil {
+		t.Fatalf("WriteRun: %v", err)
+	}
+	r := &batchPlanRunner{root: root}
+	cursor := &runCursor{root: root, run: &run}
+
+	g := r.tamperGuard(batchexec.RunInfo{Concurrent: true})
+	if err := g.Snapshot(); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	// Sibling dispatch checkpoint lands mid-window: legitimate, not tamper.
+	cursor.dispatch("sibling")
+	reason, err := g.Detect()
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if reason != "" {
+		t.Fatalf("concurrent guard flagged scheduler checkpoint as tamper: %q", reason)
+	}
+	// Plan-dir tampering is still caught.
+	if err := os.WriteFile(filepath.Join(planDir, "evil.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	reason, err = g.Detect()
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if reason == "" {
+		t.Fatal("concurrent guard must still detect plan-dir tampering")
+	}
+	if err := os.Remove(filepath.Join(planDir, "evil.txt")); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+
+	// Sequential dispatch keeps the full run.json guard.
+	g2 := r.tamperGuard(batchexec.RunInfo{Concurrent: false})
+	if err := g2.Snapshot(); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	cursor.settle("sibling")
+	reason, err = g2.Detect()
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	if reason == "" {
+		t.Fatal("sequential guard must detect run.json changes")
+	}
+}
+
 // TestResolveMaxParallelFlagPrecedence: --max-parallel > 0 overrides the
 // configured value; 0 (flag omitted) falls back to config.
 func TestResolveMaxParallelFlagPrecedence(t *testing.T) {
@@ -395,5 +466,10 @@ func TestResolveMaxParallelFlagPrecedence(t *testing.T) {
 	}
 	if got := resolveMaxParallel(1, 3); got != 1 {
 		t.Errorf("flag 1: got %d, want 1 (concurrency disabled)", got)
+	}
+	// Negative values are an explicit override, clamped to sequential — the
+	// same semantics the config resolver gives max_parallel <= 1.
+	if got := resolveMaxParallel(-1, 3); got != 1 {
+		t.Errorf("flag -1: got %d, want 1 (clamped to sequential)", got)
 	}
 }

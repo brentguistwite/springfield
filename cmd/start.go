@@ -305,7 +305,7 @@ func NewStartCommand() *cobra.Command {
 			}
 
 			maxParallel := resolveMaxParallel(maxParallelFlag, loaded.Config.MaxParallel())
-			result, execErr := runBatch(root, run, b, w, logPath, costCap, perPlan, batchBase, maxParallel)
+			result, execErr := runBatch(root, &run, b, w, logPath, costCap, perPlan, batchBase, maxParallel)
 
 			// Interrupted by signal: leave batch state intact so the user can
 			// rerun "springfield start" to resume. Do NOT archive as completed.
@@ -408,7 +408,7 @@ func NewStartCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&noKeepAwake, "no-keep-awake", false, "disable sleep prevention for this run")
 	cmd.Flags().Float64Var(&costCap, "cost-cap", 0, "Abort the batch when total spend reaches this many USD (0 = no cap). Cap-aborted batches are resumable: rerun with a higher --cost-cap to continue.")
 	cmd.Flags().BoolVar(&perPlanFlag, "per-plan-branches", false, "Leave one standalone springfield/<plan> branch per plan (one PR per ticket) instead of consolidating onto a shared base. Overrides [project] branch_mode for this run. Mode is fixed at first start and is NOT flippable on resume.")
-	cmd.Flags().IntVar(&maxParallelFlag, "max-parallel", 0, "Cap on concurrently running plans within a parallel-mode phase (per-plan-branches mode only; consolidate batches always run sequentially). Overrides [project] max_parallel for this run; 1 disables concurrency; 0/omitted uses the configured value (default 3).")
+	cmd.Flags().IntVar(&maxParallelFlag, "max-parallel", 0, "Cap on concurrently running plans within a parallel-mode phase (per-plan-branches mode only; consolidate batches always run sequentially). Overrides [project] max_parallel for this run; 1 (or any lower non-zero value) disables concurrency; 0/omitted uses the configured value (default 3).")
 	cmd.Flags().StringVar(&baseFlag, "base", "", "Base branch each per-plan branch is cut from (per-plan mode only). Precedence: --base > [project] base_branch > current branch. A re-passed --base on resume re-bases only not-yet-run plans.")
 	return cmd
 }
@@ -530,7 +530,7 @@ type BatchRunResult struct {
 	SpendUSD float64
 }
 
-func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string, costCap float64, perPlan bool, batchBase string, maxParallel int) (BatchRunResult, error) {
+func runBatch(root string, run *batch.Run, b batch.Batch, progress io.Writer, logPath string, costCap float64, perPlan bool, batchBase string, maxParallel int) (BatchRunResult, error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return runBatchWithContext(ctx, root, run, b, progress, logPath, costCap, perPlan, batchBase, maxParallel)
@@ -540,7 +540,11 @@ func runBatch(root string, run batch.Run, b batch.Batch, progress io.Writer, log
 // detection: when ctx is cancelled mid-loop (or on entry) the function returns
 // context.Canceled so the caller can distinguish a user interrupt (preserve
 // batch state) from normal completion (archive + clear run.json).
-func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batch.Batch, progress io.Writer, logPath string, costCap float64, perPlan bool, batchBase string, maxParallel int) (BatchRunResult, error) {
+// run is a pointer so the cursor's dispatch/settle checkpoints (ActivePlanIDs,
+// LastCheckpoint) stay visible to the caller: RunE re-writes run.json on the
+// cost-cap and failure paths after this returns, and a stale by-value copy
+// would silently resurrect pre-dispatch active_plan_ids there.
+func runBatchWithContext(ctx context.Context, root string, run *batch.Run, b batch.Batch, progress io.Writer, logPath string, costCap float64, perPlan bool, batchBase string, maxParallel int) (BatchRunResult, error) {
 	// Check for pre-cancellation before any setup so tests and real signal
 	// handlers both get the same early-exit path.
 	if ctx.Err() != nil {
@@ -626,7 +630,7 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 	// Runtime cursor checkpoints: keep run.json's active_plan_ids truthful
 	// while plans are in flight. Both callbacks fire only from the scheduler
 	// goroutine, so run.json keeps exactly one writer.
-	cursor := &runCursor{root: root, run: &run}
+	cursor := &runCursor{root: root, run: run}
 	execRes, execErr := batchexec.Execute(ctx, batchexec.Input{
 		Batch:  b,
 		Runner: runner,
@@ -661,14 +665,19 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 	return BatchRunResult{}, nil
 }
 
-// resolveMaxParallel applies --max-parallel flag precedence: a positive flag
-// value overrides the configured [project] max_parallel; 0 (flag omitted)
-// falls back to it.
+// resolveMaxParallel applies --max-parallel flag precedence: any non-zero
+// flag value overrides the configured [project] max_parallel, with values
+// below 1 clamping to 1 (sequential) — the same semantics the config
+// resolver gives max_parallel. 0 (flag omitted) falls back to the
+// configured value.
 func resolveMaxParallel(flagValue, configured int) int {
-	if flagValue > 0 {
-		return flagValue
+	if flagValue == 0 {
+		return configured
 	}
-	return configured
+	if flagValue < 1 {
+		return 1
+	}
+	return flagValue
 }
 
 // runCursor keeps run.json's active_plan_ids truthful while plans are in
@@ -744,6 +753,25 @@ func (r *batchPlanRunner) planProgress(planID string, info batchexec.RunInfo) (i
 	return pw, pw.Flush
 }
 
+// tamperGuard builds the per-dispatch control-plane guard. Concurrent
+// dispatches exclude run.json from it (empty controlRoot disables that
+// check): the scheduler legitimately rewrites the cursor on every sibling
+// dispatch/settle inside this plan's agent window, so byte-comparing it
+// would deterministically false-trip tamper detection — and Restore would
+// clobber the live cursor with a stale snapshot. run.json is the
+// best-effort cursor, not the durable record; the plan-dir tree check
+// stays either way, and sequential dispatches keep full protection.
+func (r *batchPlanRunner) tamperGuard(info batchexec.RunInfo) *planDirTamperGuard {
+	controlRoot := r.root
+	if info.Concurrent {
+		controlRoot = ""
+	}
+	return &planDirTamperGuard{
+		planDir:     filepath.Join(r.root, ".springfield", "plans"),
+		controlRoot: controlRoot,
+	}
+}
+
 func (r *batchPlanRunner) RunPlan(ctx context.Context, planID string, info batchexec.RunInfo) batchexec.Outcome {
 	progress, flush := r.planProgress(planID, info)
 	defer flush()
@@ -783,7 +811,7 @@ func (r *batchPlanRunner) RunPlan(ctx context.Context, planID string, info batch
 		TargetPlanID:         planID,
 		EnforceProtectedBase: r.enforceProtected,
 		BatchBaseRef:         r.batchBase,
-		TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(r.root, ".springfield", "plans"), controlRoot: r.root},
+		TamperGuard:          r.tamperGuard(info),
 		Ctx:                  ctx,
 		MaxTurnsPerIteration: r.loaded.Config.MaxTurnsPerIteration(),
 		MinFreeDiskBytes:     r.loaded.Config.MinFreeDiskBytes(),
