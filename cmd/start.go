@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -601,11 +602,12 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 		worktreeBase:     worktreeBase,
 		perPlan:          perPlan,
 		progress:         progress,
+		progressShared:   &syncLineWriter{w: progress},
 		agentIDs:         agentIDs,
 		loaded:           loaded,
 		local:            local,
 		registry:         registry,
-		traceHandler:     traceHandler,
+		traceFor:         traceHandler,
 		enforceProtected: enforceProtected,
 		batchBase:        batchBase,
 		costCap:          costCap,
@@ -635,11 +637,12 @@ type batchPlanRunner struct {
 	worktreeBase     string
 	perPlan          bool
 	progress         io.Writer
+	progressShared   *syncLineWriter
 	agentIDs         []agents.ID
 	loaded           config.Loaded
 	local            config.LocalConfig
 	registry         agents.Registry
-	traceHandler     coreexec.EventHandler
+	traceFor         func(planID string) coreexec.EventHandler
 	enforceProtected bool
 	batchBase        string
 	costCap          float64
@@ -649,21 +652,35 @@ type batchPlanRunner struct {
 // IsTerminal reports a FULLY INTEGRATED plan (batchexec's terminal contract).
 // StatusCompleted alone is NOT terminal — see the re-entry branch in RunPlan.
 func (r *batchPlanRunner) IsTerminal(planID string) bool {
-	st := r.project.State.Plans[planID]
-	return st != nil && st.IsIntegrated()
+	st, ok := r.project.ReadPlan(planID)
+	return ok && st.IsIntegrated()
 }
 
-func (r *batchPlanRunner) RunPlan(ctx context.Context, planID string) batchexec.Outcome {
+func (r *batchPlanRunner) RunPlan(ctx context.Context, planID string, info batchexec.RunInfo) batchexec.Outcome {
+	// Concurrent plans get a phase-stable per-plan prefix on every progress
+	// line; sequential execution writes through untouched (byte-identical
+	// output to the pre-parallelism loop).
+	progress := r.progress
+	if info.Concurrent {
+		pw := newPrefixWriter(r.progressShared, planID)
+		defer pw.Flush()
+		progress = pw
+	}
+	var onEvent coreexec.EventHandler
+	if r.traceFor != nil {
+		onEvent = r.traceFor(planID)
+	}
+
 	// Re-entry: a plan that already finished execution (Status=Completed)
 	// but is not yet integrated — a crash between execution and integration,
 	// or a prior integration whose cleanup failed (e.g. a transient
 	// `git worktree remove` failure) — must NOT be re-dispatched through
 	// SinglePlan, which would reject it with preflight-already-completed and
 	// deadlock the batch. Drive only the integration/cleanup step instead.
-	if st := r.project.State.Plans[planID]; st != nil && st.Status == conductor.StatusCompleted {
-		fmt.Fprintf(r.progress, "Plan: %s\n", planID)
-		fmt.Fprintf(r.progress, "Status: resuming integration\n")
-		if halt, err := integratePlan(r.perPlan, r.project, r.root, r.worktreeBase, planID, r.progress); halt != nil {
+	if st, ok := r.project.ReadPlan(planID); ok && st.Status == conductor.StatusCompleted {
+		fmt.Fprintf(progress, "Plan: %s\n", planID)
+		fmt.Fprintf(progress, "Status: resuming integration\n")
+		if halt, err := integratePlan(r.perPlan, r.project, r.root, r.worktreeBase, planID, progress); halt != nil {
 			return batchexec.Outcome{Err: err}
 		}
 		return batchexec.Outcome{}
@@ -680,8 +697,8 @@ func (r *batchPlanRunner) RunPlan(ctx context.Context, planID string) batchexec.
 		VerifyConfig:         r.loaded.Config.Verify,
 		Runner:               runtimeAgentRunner{coreruntime.NewRunner(r.registry)},
 		Manager:              planrun.NewManager(),
-		OnEvent:              r.traceHandler,
-		Progress:             r.progress,
+		OnEvent:              onEvent,
+		Progress:             progress,
 		TargetPlanID:         planID,
 		EnforceProtectedBase: r.enforceProtected,
 		BatchBaseRef:         r.batchBase,
@@ -700,27 +717,27 @@ func (r *batchPlanRunner) RunPlan(ctx context.Context, planID string) batchexec.
 	// Cost-cap fired inside the plan's iteration loop. Surface the pause
 	// to the caller WITHOUT marking the batch as failed.
 	if res.CostCapped {
-		fmt.Fprintf(r.progress, "Plan: %s\n", res.PlanID)
-		fmt.Fprintf(r.progress, "Status: cost-capped (%s)\n", res.Reason)
+		fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
+		fmt.Fprintf(progress, "Status: cost-capped (%s)\n", res.Reason)
 		return batchexec.Outcome{CostCapped: true, SpendUSD: res.SpendUSD}
 	}
 	if res.Err != nil {
-		fmt.Fprintf(r.progress, "Plan: %s\n", res.PlanID)
+		fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
 		if res.Status == conductor.StatusNeedsHuman {
-			fmt.Fprintf(r.progress, "Status: needs human review (%s)\n", res.Reason)
+			fmt.Fprintf(progress, "Status: needs human review (%s)\n", res.Reason)
 		} else {
-			fmt.Fprintf(r.progress, "Status: failed (%s)\n", res.Reason)
+			fmt.Fprintf(progress, "Status: failed (%s)\n", res.Reason)
 		}
-		fmt.Fprintf(r.progress, "Error: %s\n", res.Err.Error())
+		fmt.Fprintf(progress, "Error: %s\n", res.Err.Error())
 		return batchexec.Outcome{Err: res.Err}
 	}
-	fmt.Fprintf(r.progress, "Plan: %s\n", res.PlanID)
-	fmt.Fprintf(r.progress, "Status: completed\n")
+	fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
+	fmt.Fprintf(progress, "Status: completed\n")
 	if res.EvidencePath != "" {
-		fmt.Fprintf(r.progress, "Evidence: %s\n", res.EvidencePath)
+		fmt.Fprintf(progress, "Evidence: %s\n", res.EvidencePath)
 	}
 
-	if halt, err := integratePlan(r.perPlan, r.project, r.root, r.worktreeBase, res.PlanID, r.progress); halt != nil {
+	if halt, err := integratePlan(r.perPlan, r.project, r.root, r.worktreeBase, res.PlanID, progress); halt != nil {
 		return batchexec.Outcome{Err: err}
 	}
 	return batchexec.Outcome{}
@@ -1316,7 +1333,7 @@ func writeTamperBlobs(root string, ctx tamperForensicsContext, pre, post []byte)
 // appends events as JSON lines and a closer. On open failure returns nil
 // handler (events discarded) and a noop closer — trace is best-effort
 // diagnostic, not load-bearing.
-func openAgentTrace(root, batchID string) (coreexec.EventHandler, func()) {
+func openAgentTrace(root, batchID string) (func(planID string) coreexec.EventHandler, func()) {
 	logsDir := filepath.Join(root, ".springfield", "logs")
 	if err := os.MkdirAll(logsDir, 0o755); err != nil {
 		return nil, func() {}
@@ -1328,18 +1345,27 @@ func openAgentTrace(root, batchID string) (coreexec.EventHandler, func()) {
 		return nil, func() {}
 	}
 	closer := func() { _ = f.Close() }
-	handler := func(e coreexec.Event) {
-		data, err := json.Marshal(map[string]any{
-			"type": string(e.Type),
-			"time": e.Time.UTC().Format(time.RFC3339Nano),
-			"data": e.Data,
-		})
-		if err != nil {
-			return
+	// One append mutex for the whole file: concurrently-running plans each
+	// get their own handler (stamping their plan ID onto every event) but
+	// share the serialized append so JSONL lines never interleave.
+	var mu sync.Mutex
+	handlerFor := func(planID string) coreexec.EventHandler {
+		return func(e coreexec.Event) {
+			data, err := json.Marshal(map[string]any{
+				"type": string(e.Type),
+				"time": e.Time.UTC().Format(time.RFC3339Nano),
+				"data": e.Data,
+				"plan": planID,
+			})
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			_, _ = f.Write(append(data, '\n'))
 		}
-		_, _ = f.Write(append(data, '\n'))
 	}
-	return handler, closer
+	return handlerFor, closer
 }
 
 // tryRunSinglePlanUnit handles the parity-2 single-plan worktree flow when no

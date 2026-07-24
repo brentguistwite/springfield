@@ -22,7 +22,7 @@ func newFakeRunner() *fakeRunner {
 	return &fakeRunner{outcomes: map[string]batchexec.Outcome{}, terminal: map[string]bool{}}
 }
 
-func (f *fakeRunner) RunPlan(_ context.Context, planID string) batchexec.Outcome {
+func (f *fakeRunner) RunPlan(_ context.Context, planID string, _ batchexec.RunInfo) batchexec.Outcome {
 	f.dispatched = append(f.dispatched, planID)
 	out := f.outcomes[planID]
 	if out.Err == nil && !out.CostCapped && !out.NoEligiblePlan {
@@ -138,9 +138,9 @@ type cancellingRunner struct {
 	cancel context.CancelFunc
 }
 
-func (c *cancellingRunner) RunPlan(ctx context.Context, planID string) batchexec.Outcome {
+func (c *cancellingRunner) RunPlan(ctx context.Context, planID string, info batchexec.RunInfo) batchexec.Outcome {
 	c.cancel()
-	return c.fakeRunner.RunPlan(ctx, planID)
+	return c.fakeRunner.RunPlan(ctx, planID, info)
 }
 
 func TestExecuteStopsDispatchAfterMidRunCancel(t *testing.T) {

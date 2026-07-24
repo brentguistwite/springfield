@@ -204,7 +204,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			}
 		}
 		// Reject targets that are already in a terminal state.
-		if ps := in.Project.State.Plans[in.TargetPlanID]; ps != nil &&
+		if ps, ok := in.Project.ReadPlan(in.TargetPlanID); ok &&
 			(ps.Status == conductor.StatusCompleted || ps.Status == conductor.StatusFailed) &&
 			ps.IsIntegrated() {
 			return SinglePlanResult{
@@ -228,56 +228,85 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 
 	progress(in.Progress, "plan %s: preflight\n", planID)
 
-	prior := in.Project.State.Plans[planID]
-	decision, err := in.Manager.Prepare(PrepareInput{
-		ControlRoot:          in.ControlRoot,
-		WorktreeBase:         in.WorktreeBase,
-		Unit:                 unit,
-		PriorState:           prior,
-		AllStates:            in.Project.State.Plans,
-		EnforceProtectedBase: in.EnforceProtectedBase,
-		MinFreeDiskBytes:     in.MinFreeDiskBytes,
-		BatchBaseRef:         in.BatchBaseRef,
-	})
-	if err != nil {
-		tag := "preflight-error"
-		if pe := AsPreflight(err); pe != nil {
-			tag = pe.Tag
-		}
-		recordPreflightFailure(in.Project, planID, tag, err.Error(), now())
-		_ = in.Project.SaveState()
-		return SinglePlanResult{PlanID: planID, Reason: tag, Err: err}
+	// Preflight prepare, worktree creation, and running-state publication run
+	// as one atomic section under the process-wide git lock: `git worktree
+	// add` mutates shared .git metadata, and the worktree-path decision must
+	// be atomic with the state write that reserves it, or two concurrently
+	// dispatched plans could claim the same path.
+	var (
+		decision   PrepareDecision
+		startState *conductor.PlanState
+	)
+	if early := func() *SinglePlanResult {
+		var earlyRes *SinglePlanResult
+		conductor.WithGitLock(func() {
+			var prior *conductor.PlanState
+			if ps, ok := in.Project.ReadPlan(planID); ok {
+				prior = &ps
+			}
+			var err error
+			decision, err = in.Manager.Prepare(PrepareInput{
+				ControlRoot:          in.ControlRoot,
+				WorktreeBase:         in.WorktreeBase,
+				Unit:                 unit,
+				PriorState:           prior,
+				AllStates:            in.Project.PlansSnapshot(),
+				EnforceProtectedBase: in.EnforceProtectedBase,
+				MinFreeDiskBytes:     in.MinFreeDiskBytes,
+				BatchBaseRef:         in.BatchBaseRef,
+			})
+			if err != nil {
+				tag := "preflight-error"
+				if pe := AsPreflight(err); pe != nil {
+					tag = pe.Tag
+				}
+				recordPreflightFailure(in.Project, planID, tag, err.Error(), now())
+				_ = in.Project.SaveState()
+				earlyRes = &SinglePlanResult{PlanID: planID, Reason: tag, Err: err}
+				return
+			}
+
+			ctx := decision.Context
+			if !decision.Reuse {
+				progress(in.Progress, "plan %s: creating worktree at %s (branch %s, base %s)\n",
+					planID, ctx.WorktreeRoot, ctx.Branch, ctx.BaseRef)
+				if err := in.Manager.CreateWorktree(ctx); err != nil {
+					recordPreflightFailure(in.Project, planID, "worktree-create-failed", err.Error(), now())
+					_ = in.Project.SaveState()
+					earlyRes = &SinglePlanResult{PlanID: planID, Reason: "worktree-create-failed", Context: ctx, Err: err}
+					return
+				}
+			} else {
+				progress(in.Progress, "plan %s: reusing worktree at %s (%s)\n", planID, ctx.WorktreeRoot, decision.Reason)
+			}
+
+			// Mark running with truthful worktree metadata before dispatch so a
+			// crash leaves an honest state file (both PRD and legacy paths).
+			startState = &conductor.PlanState{
+				Status:       conductor.StatusRunning,
+				Attempts:     attemptsOf(prior) + 1,
+				StartedAt:    now(),
+				WorktreePath: ctx.WorktreeRoot,
+				Branch:       ctx.Branch,
+				BaseRef:      ctx.BaseRef,
+				BaseHead:     ctx.BaseHead,
+				InputDigest:  decision.InputDigest,
+				ExitReason:   "",
+				// Preserve previously-known agent/evidence pointers across attempts.
+				Agent:        agentOf(prior),
+				EvidencePath: evidenceOf(prior),
+			}
+			in.Project.UpdatePlan(planID, func(ps *conductor.PlanState) { *ps = *startState })
+			if err := in.Project.SaveState(); err != nil {
+				earlyRes = &SinglePlanResult{PlanID: planID, Reason: "save-state-failed", Context: ctx, Err: err}
+			}
+		})
+		return earlyRes
+	}(); early != nil {
+		return *early
 	}
 
 	ctx := decision.Context
-	if !decision.Reuse {
-		progress(in.Progress, "plan %s: creating worktree at %s (branch %s, base %s)\n",
-			planID, ctx.WorktreeRoot, ctx.Branch, ctx.BaseRef)
-		if err := in.Manager.CreateWorktree(ctx); err != nil {
-			recordPreflightFailure(in.Project, planID, "worktree-create-failed", err.Error(), now())
-			_ = in.Project.SaveState()
-			return SinglePlanResult{PlanID: planID, Reason: "worktree-create-failed", Context: ctx, Err: err}
-		}
-	} else {
-		progress(in.Progress, "plan %s: reusing worktree at %s (%s)\n", planID, ctx.WorktreeRoot, decision.Reason)
-	}
-
-	// Mark running with truthful worktree metadata before dispatch so a
-	// crash leaves an honest state file.
-	startState := &conductor.PlanState{
-		Status:       conductor.StatusRunning,
-		Attempts:     attemptsOf(prior) + 1,
-		StartedAt:    now(),
-		WorktreePath: ctx.WorktreeRoot,
-		Branch:       ctx.Branch,
-		BaseRef:      ctx.BaseRef,
-		BaseHead:     ctx.BaseHead,
-		InputDigest:  decision.InputDigest,
-		ExitReason:   "",
-		// Preserve previously-known agent/evidence pointers across attempts.
-		Agent:        agentOf(prior),
-		EvidencePath: evidenceOf(prior),
-	}
 
 	// Detect PRD vs legacy plan by path suffix. PRD plans have prd.json paths;
 	// legacy plans are .md files registered before Phase 3.
@@ -286,12 +315,6 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 
 	if !isPRDPlan {
 		return singlePlanLegacy(in, planID, unit, ctx, decision, startState, now)
-	}
-
-	// PRD plan path: save running state before dispatching the iteration loop.
-	in.Project.State.Plans[planID] = startState
-	if err := in.Project.SaveState(); err != nil {
-		return SinglePlanResult{PlanID: planID, Reason: "save-state-failed", Context: ctx, Err: err}
 	}
 
 	// Derive plan-level paths. prdPath is the sole writer for story pass state.
@@ -799,7 +822,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			endState.PlanHead = planHead
 		}
 	}
-	in.Project.State.Plans[planID] = endState
+	in.Project.UpdatePlan(planID, func(ps *conductor.PlanState) { *ps = *endState })
 	saveErr := in.Project.SaveState()
 
 	resultReason := decision.Reason
@@ -873,12 +896,8 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 		progress(in.Progress, "plan %s: WARNING max_turns_per_iteration=%d configured but plan is legacy .md format; turn-cap circuit-breaker is PRD-only and will NOT apply to this plan\n", planID, in.MaxTurnsPerIteration)
 	}
 
-	// Write running state before dispatch (same as PRD path).
-	in.Project.State.Plans[planID] = startState
-	if err := in.Project.SaveState(); err != nil {
-		return SinglePlanResult{PlanID: planID, Reason: "save-state-failed", Context: ctx, Err: err}
-	}
-
+	// Running state was already published by SinglePlan under the git lock,
+	// atomically with the worktree-path reservation (same as the PRD path).
 	prompt, err := buildPrompt(in.ControlRoot, unit)
 	if err != nil {
 		recordPreflightFailure(in.Project, planID, "prompt-build-failed", err.Error(), now())
@@ -1015,7 +1034,7 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 			endState.PlanHead = planHead
 		}
 	}
-	in.Project.State.Plans[planID] = endState
+	in.Project.UpdatePlan(planID, func(ps *conductor.PlanState) { *ps = *endState })
 	saveErr := in.Project.SaveState()
 
 	resultReason := decision.Reason
@@ -1227,15 +1246,15 @@ func loadProjectGuidance(controlRoot string) string {
 }
 
 func recordPreflightFailure(p *conductor.Project, planID, tag, msg string, now time.Time) {
-	prior := p.State.Plans[planID]
+	prior, hasPrior := p.ReadPlan(planID)
 	st := &conductor.PlanState{
 		Status:     conductor.StatusFailed,
 		Error:      msg,
-		Attempts:   attemptsOf(prior),
 		ExitReason: tag,
 		EndedAt:    now,
 	}
-	if prior != nil {
+	if hasPrior {
+		st.Attempts = prior.Attempts
 		st.Agent = prior.Agent
 		st.EvidencePath = prior.EvidencePath
 		st.WorktreePath = prior.WorktreePath
@@ -1245,7 +1264,7 @@ func recordPreflightFailure(p *conductor.Project, planID, tag, msg string, now t
 		st.InputDigest = prior.InputDigest
 		st.StartedAt = prior.StartedAt
 	}
-	p.State.Plans[planID] = st
+	p.UpdatePlan(planID, func(ps *conductor.PlanState) { *ps = *st })
 }
 
 func attemptsOf(s *conductor.PlanState) int {

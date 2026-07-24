@@ -90,6 +90,11 @@ func Integrate(in IntegrateInput) IntegrateResult {
 	if in.Git == nil {
 		in.Git = CLIGit{}
 	}
+	// Integrate runs ONLY in consolidate mode, which executes strictly
+	// sequentially (parallel dispatch is per-plan-branches mode → Retain).
+	// Direct State access is therefore safe here; if consolidate mode ever
+	// parallelizes, this function must convert to the locked Project API
+	// (ReadPlan/UpdatePlan) like Retain did.
 	state, ok := in.Project.State.Plans[in.PlanID]
 	if !ok || state == nil {
 		return IntegrateResult{PlanID: in.PlanID, Err: fmt.Errorf("no plan state recorded for %q", in.PlanID), Reason: ReasonStateMissing}

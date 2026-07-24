@@ -28,8 +28,8 @@ func enterPhase(p *conductor.Project, planID, phase, detail string, round int, n
 	if p == nil {
 		return nil
 	}
-	ps := p.State.Plans[planID]
-	if ps == nil {
+	ps, ok := p.ReadPlan(planID)
+	if !ok {
 		return nil
 	}
 	// An empty phase is the CLEAR signal (see clearActivity): drop the in-flight
@@ -40,19 +40,24 @@ func enterPhase(p *conductor.Project, planID, phase, detail string, round int, n
 		if ps.Activity == nil {
 			return nil
 		}
-		ps.Activity = nil
+		p.UpdatePlan(planID, func(st *conductor.PlanState) {
+			st.Activity = nil
+		})
 		return p.SaveState()
 	}
 	stamp := time.Now
 	if now != nil {
 		stamp = now
 	}
-	ps.Activity = &conductor.PlanActivity{
+	activity := &conductor.PlanActivity{
 		Phase:     phase,
 		Detail:    detail,
 		Round:     round,
 		UpdatedAt: stamp(),
 	}
+	p.UpdatePlan(planID, func(st *conductor.PlanState) {
+		st.Activity = activity
+	})
 	return p.SaveState()
 }
 

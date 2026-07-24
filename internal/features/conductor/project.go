@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"springfield/internal/storage"
@@ -15,10 +16,56 @@ const (
 )
 
 // Project owns conductor config and state for one Springfield project.
+//
+// Concurrency: parallel plan execution mutates State from multiple
+// goroutines. All access to State.Plans on a concurrently-executed path MUST
+// go through the locked API (UpdatePlan / ReadPlan / PlansSnapshot / the
+// Plan* accessors / SaveState) — a bare map read races with any entry
+// insertion, and a bare field write races with SaveState's marshal.
+// Sequential-only paths (status, recover, plan compilation — separate
+// processes, one goroutine) may keep touching State directly.
 type Project struct {
 	runtime storage.Runtime
-	Config  *Config
-	State   *State
+	// mu guards State.Plans (map + entry fields) and marshal-during-save.
+	mu     sync.Mutex
+	Config *Config
+	State  *State
+}
+
+// UpdatePlan runs fn on the named plan's state under the project lock,
+// creating a pending entry if none exists. This is the only way
+// concurrently-executed code may mutate PlanState fields.
+func (p *Project) UpdatePlan(name string, fn func(*PlanState)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	fn(p.ensurePlanLocked(name))
+}
+
+// ReadPlan returns a detached copy of the named plan's state. The copy is
+// safe to read and mutate without holding the lock; changes do not write
+// back (use UpdatePlan for that).
+func (p *Project) ReadPlan(name string) (PlanState, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if plan, ok := p.State.Plans[name]; ok {
+		return *plan, true
+	}
+	return PlanState{}, false
+}
+
+// PlansSnapshot returns a detached copy of the whole plan-state map (entries
+// are copied, not aliased). Concurrently-executed code that needs a
+// cross-plan view (e.g. worktree collision checks) reads the snapshot
+// instead of the live map.
+func (p *Project) PlansSnapshot() map[string]*PlanState {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	snap := make(map[string]*PlanState, len(p.State.Plans))
+	for name, plan := range p.State.Plans {
+		cp := *plan
+		snap[name] = &cp
+	}
+	return snap
 }
 
 // LoadProject resolves the Springfield project root from startDir, then loads
@@ -77,8 +124,11 @@ func (p *Project) SaveConfigUnchecked() error {
 	return p.runtime.WriteJSON(configPath, p.Config)
 }
 
-// SaveState persists conductor state.
+// SaveState persists conductor state. The marshal runs under the project
+// lock so it never observes a concurrent PlanState mutation mid-write.
 func (p *Project) SaveState() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	return p.runtime.WriteJSON(statePath, p.State)
 }
 
@@ -89,7 +139,7 @@ func (p *Project) AllPlans() []string {
 
 // PlanStatus returns the current status for name, defaulting to pending.
 func (p *Project) PlanStatus(name string) PlanStatus {
-	if plan, ok := p.State.Plans[name]; ok {
+	if plan, ok := p.ReadPlan(name); ok {
 		return plan.Status
 	}
 
@@ -98,7 +148,7 @@ func (p *Project) PlanStatus(name string) PlanStatus {
 
 // PlanError returns the current error for name, if any.
 func (p *Project) PlanError(name string) string {
-	if plan, ok := p.State.Plans[name]; ok {
+	if plan, ok := p.ReadPlan(name); ok {
 		return plan.Error
 	}
 
@@ -107,7 +157,7 @@ func (p *Project) PlanError(name string) string {
 
 // PlanAgent returns the agent used for name, if any.
 func (p *Project) PlanAgent(name string) string {
-	if plan, ok := p.State.Plans[name]; ok {
+	if plan, ok := p.ReadPlan(name); ok {
 		return plan.Agent
 	}
 	return ""
@@ -115,7 +165,7 @@ func (p *Project) PlanAgent(name string) string {
 
 // PlanEvidencePath returns the evidence path for name, if any.
 func (p *Project) PlanEvidencePath(name string) string {
-	if plan, ok := p.State.Plans[name]; ok {
+	if plan, ok := p.ReadPlan(name); ok {
 		return plan.EvidencePath
 	}
 	return ""
@@ -123,13 +173,15 @@ func (p *Project) PlanEvidencePath(name string) string {
 
 // PlanAttempts returns the attempt count for name.
 func (p *Project) PlanAttempts(name string) int {
-	if plan, ok := p.State.Plans[name]; ok {
+	if plan, ok := p.ReadPlan(name); ok {
 		return plan.Attempts
 	}
 	return 0
 }
 
-func (p *Project) ensurePlan(name string) *PlanState {
+// ensurePlanLocked returns the named entry, creating a pending one if
+// missing. Callers must hold p.mu.
+func (p *Project) ensurePlanLocked(name string) *PlanState {
 	if plan, ok := p.State.Plans[name]; ok {
 		return plan
 	}
@@ -141,32 +193,35 @@ func (p *Project) ensurePlan(name string) *PlanState {
 
 // MarkRunning records running status for name.
 func (p *Project) MarkRunning(name string) {
-	plan := p.ensurePlan(name)
-	plan.Status = StatusRunning
-	plan.Error = ""
-	plan.StartedAt = time.Now()
-	plan.EndedAt = time.Time{}
-	plan.Attempts++
+	p.UpdatePlan(name, func(plan *PlanState) {
+		plan.Status = StatusRunning
+		plan.Error = ""
+		plan.StartedAt = time.Now()
+		plan.EndedAt = time.Time{}
+		plan.Attempts++
+	})
 }
 
 // MarkCompleted records completed status, agent, evidence path, and end time for name.
 func (p *Project) MarkCompleted(name, agent, evidencePath string) {
-	plan := p.ensurePlan(name)
-	plan.Status = StatusCompleted
-	plan.Error = ""
-	plan.Agent = agent
-	plan.EvidencePath = evidencePath
-	plan.EndedAt = time.Now()
+	p.UpdatePlan(name, func(plan *PlanState) {
+		plan.Status = StatusCompleted
+		plan.Error = ""
+		plan.Agent = agent
+		plan.EvidencePath = evidencePath
+		plan.EndedAt = time.Now()
+	})
 }
 
 // MarkFailed records failed status, reason, agent, evidence path, and end time for name.
 func (p *Project) MarkFailed(name, reason, agent, evidencePath string) {
-	plan := p.ensurePlan(name)
-	plan.Status = StatusFailed
-	plan.Error = reason
-	plan.Agent = agent
-	plan.EvidencePath = evidencePath
-	plan.EndedAt = time.Now()
+	p.UpdatePlan(name, func(plan *PlanState) {
+		plan.Status = StatusFailed
+		plan.Error = reason
+		plan.Agent = agent
+		plan.EvidencePath = evidencePath
+		plan.EndedAt = time.Now()
+	})
 }
 
 // ResetState clears execution progress and starts fresh.
