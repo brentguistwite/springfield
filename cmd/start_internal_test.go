@@ -13,97 +13,63 @@ import (
 	"springfield/internal/features/conductor"
 )
 
-// TestBatchNextPlanIDSkipsNonBatchPlans verifies that batchNextPlanID returns
-// the first non-integrated plan in the batch's phase order, ignoring plans that
-// are not part of this batch (the core of bug #1: non-batch plans in the global
-// schedule previously caused runBatch to exit prematurely).
-func TestBatchNextPlanIDSkipsNonBatchPlans(t *testing.T) {
-	b := batch.Batch{
-		ID: "test-batch",
-		Phases: []batch.Phase{
-			{Mode: batch.PhaseSerial, Plans: []string{"plan-a"}},
-			{Mode: batch.PhaseSerial, Plans: []string{"plan-b"}},
-		},
-		PlanIDs: []string{"plan-a", "plan-b"},
-	}
-
-	// State: plan-a and plan-b are both not yet integrated.
-	// The global conductor state also has "plan-x" (not in this batch) as
-	// integrated — this should not affect batch dispatch.
-	state := &conductor.State{
-		Plans: map[string]*conductor.PlanState{
-			"plan-x": {
-				Status:  conductor.StatusCompleted,
-				Merge:   &conductor.MergeOutcome{Status: conductor.MergeSucceeded},
-				Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupSucceeded},
+// TestBatchPlanRunnerIsTerminal verifies the batchexec terminal contract at
+// the adapter boundary: only a FULLY INTEGRATED plan (merge succeeded +
+// cleanup succeeded) is terminal. In particular StatusCompleted alone is NOT
+// terminal — such a plan must still be dispatched so RunPlan can drive the
+// integration-only re-entry path (a crash between execution and integration
+// would otherwise orphan the plan).
+func TestBatchPlanRunnerIsTerminal(t *testing.T) {
+	project := &conductor.Project{
+		State: &conductor.State{
+			Plans: map[string]*conductor.PlanState{
+				"integrated": {
+					Status:  conductor.StatusCompleted,
+					Merge:   &conductor.MergeOutcome{Status: conductor.MergeSucceeded},
+					Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupSucceeded},
+				},
+				// Completed with NO merge record: IsIntegrated treats this
+				// as integrated (legacy/no-merge-ledger semantics) — same as
+				// the old batchNextPlanID predicate.
+				"completed-no-merge-record": {
+					Status: conductor.StatusCompleted,
+				},
+				// Completed but integration incomplete (merge pending): the
+				// crash-between-execution-and-integration re-entry case.
+				"completed-not-integrated": {
+					Status: conductor.StatusCompleted,
+					Merge:  &conductor.MergeOutcome{Status: conductor.MergePending},
+				},
+				// Merge succeeded but cleanup never durably recorded.
+				"completed-cleanup-missing": {
+					Status: conductor.StatusCompleted,
+					Merge:  &conductor.MergeOutcome{Status: conductor.MergeSucceeded},
+				},
+				"running": {
+					Status: conductor.StatusRunning,
+				},
 			},
 		},
 	}
+	r := &batchPlanRunner{project: project}
 
-	got := batchNextPlanID(b, state)
-	if got != "plan-a" {
-		t.Errorf("batchNextPlanID: want plan-a (first non-integrated batch plan), got %q", got)
+	if !r.IsTerminal("integrated") {
+		t.Errorf("integrated plan must be terminal")
 	}
-}
-
-// TestBatchNextPlanIDAdvancesPhase verifies that once the first phase's plans
-// are integrated, batchNextPlanID returns a plan from the next phase.
-func TestBatchNextPlanIDAdvancesPhase(t *testing.T) {
-	b := batch.Batch{
-		ID: "test-batch",
-		Phases: []batch.Phase{
-			{Mode: batch.PhaseSerial, Plans: []string{"plan-a"}},
-			{Mode: batch.PhaseSerial, Plans: []string{"plan-b"}},
-		},
-		PlanIDs: []string{"plan-a", "plan-b"},
+	if !r.IsTerminal("completed-no-merge-record") {
+		t.Errorf("completed plan with no merge record is integrated (legacy semantics) — must be terminal")
 	}
-
-	// plan-a is integrated; plan-b is not.
-	state := &conductor.State{
-		Plans: map[string]*conductor.PlanState{
-			"plan-a": {
-				Status:  conductor.StatusCompleted,
-				Merge:   &conductor.MergeOutcome{Status: conductor.MergeSucceeded},
-				Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupSucceeded},
-			},
-		},
+	if r.IsTerminal("completed-not-integrated") {
+		t.Errorf("completed-but-not-integrated plan must NOT be terminal (needs integration re-entry)")
 	}
-
-	got := batchNextPlanID(b, state)
-	if got != "plan-b" {
-		t.Errorf("batchNextPlanID: want plan-b after plan-a integrated, got %q", got)
+	if r.IsTerminal("completed-cleanup-missing") {
+		t.Errorf("merge-succeeded-but-cleanup-unrecorded plan must NOT be terminal")
 	}
-}
-
-// TestBatchNextPlanIDAllIntegratedReturnsEmpty verifies that when every batch
-// plan is integrated, batchNextPlanID returns "" to signal completion.
-func TestBatchNextPlanIDAllIntegratedReturnsEmpty(t *testing.T) {
-	b := batch.Batch{
-		ID: "test-batch",
-		Phases: []batch.Phase{
-			{Mode: batch.PhaseSerial, Plans: []string{"plan-a", "plan-b"}},
-		},
-		PlanIDs: []string{"plan-a", "plan-b"},
+	if r.IsTerminal("running") {
+		t.Errorf("running plan must not be terminal")
 	}
-
-	state := &conductor.State{
-		Plans: map[string]*conductor.PlanState{
-			"plan-a": {
-				Status:  conductor.StatusCompleted,
-				Merge:   &conductor.MergeOutcome{Status: conductor.MergeSucceeded},
-				Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupSucceeded},
-			},
-			"plan-b": {
-				Status:  conductor.StatusCompleted,
-				Merge:   &conductor.MergeOutcome{Status: conductor.MergeSucceeded},
-				Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupSucceeded},
-			},
-		},
-	}
-
-	got := batchNextPlanID(b, state)
-	if got != "" {
-		t.Errorf("batchNextPlanID: want empty when all integrated, got %q", got)
+	if r.IsTerminal("unknown") {
+		t.Errorf("unknown plan must not be terminal")
 	}
 }
 
@@ -353,33 +319,3 @@ func TestRunBatchWithContextMalformedLocalTOMLFails(t *testing.T) {
 	}
 }
 
-// TestBatchNextPlanIDPhaseBlocksUntilComplete verifies serial phase semantics:
-// if the first phase has a non-integrated plan, the second phase's plans are
-// not dispatched even if the second phase plans exist.
-func TestBatchNextPlanIDPhaseBlocksUntilComplete(t *testing.T) {
-	b := batch.Batch{
-		ID: "test-batch",
-		Phases: []batch.Phase{
-			{Mode: batch.PhaseSerial, Plans: []string{"plan-a", "plan-c"}},
-			{Mode: batch.PhaseSerial, Plans: []string{"plan-b"}},
-		},
-		PlanIDs: []string{"plan-a", "plan-b", "plan-c"},
-	}
-
-	// plan-a integrated, plan-c not integrated yet — phase 0 not complete.
-	state := &conductor.State{
-		Plans: map[string]*conductor.PlanState{
-			"plan-a": {
-				Status:  conductor.StatusCompleted,
-				Merge:   &conductor.MergeOutcome{Status: conductor.MergeSucceeded},
-				Cleanup: &conductor.CleanupOutcome{Status: conductor.CleanupSucceeded},
-			},
-		},
-	}
-
-	got := batchNextPlanID(b, state)
-	// Should return plan-c (next non-integrated in phase 0), not plan-b (phase 1).
-	if got != "plan-c" {
-		t.Errorf("batchNextPlanID: want plan-c (phase 0 not complete), got %q", got)
-	}
-}

@@ -32,6 +32,7 @@ import (
 	"springfield/internal/features/autobranch"
 	"springfield/internal/features/batch"
 	"springfield/internal/features/conductor"
+	"springfield/internal/features/conductor/batchexec"
 	"springfield/internal/features/conductor/planmerge"
 	"springfield/internal/features/conductor/planrun"
 	"springfield/internal/features/cost"
@@ -594,94 +595,135 @@ func runBatchWithContext(ctx context.Context, root string, run batch.Run, b batc
 	// has nothing to refuse — suppress it (mirrors auto-branch suppression).
 	enforceProtected := !loaded.Config.Project.AllowProtectedBase && !perPlan
 
-	for {
-		if ctx.Err() != nil {
-			// Interrupted by signal or context cancel. Return context.Canceled so
-			// the caller does NOT archive as completed — batch state stays intact
-			// for the user to rerun springfield start to resume.
-			return BatchRunResult{}, ctx.Err()
-		}
-
-		// Iterate the batch's own phases in order to find the next plan to
-		// dispatch. This avoids the prior bug where schedule.NextPlans() could
-		// return a non-batch plan first, causing the batch loop to exit
-		// prematurely before any batch plans had run.
-		planID := batchNextPlanID(b, project.State)
-		if planID == "" {
-			break
-		}
-
-		// Re-entry: a plan that already finished execution (Status=Completed)
-		// but is not yet integrated — a crash between execution and integration,
-		// or a prior integration whose cleanup failed (e.g. a transient
-		// `git worktree remove` failure) — must NOT be re-dispatched through
-		// SinglePlan, which would reject it with preflight-already-completed and
-		// deadlock the batch. Drive only the integration/cleanup step instead.
-		if st := project.State.Plans[planID]; st != nil && st.Status == conductor.StatusCompleted {
-			fmt.Fprintf(progress, "Plan: %s\n", planID)
-			fmt.Fprintf(progress, "Status: resuming integration\n")
-			if halt, err := integratePlan(perPlan, project, root, worktreeBase, planID, progress); halt != nil {
-				return *halt, err
-			}
-			continue
-		}
-
-		res := planrun.SinglePlan(planrun.SinglePlanInput{
-			Project:              project,
-			ControlRoot:          root,
-			ProjectRoot:          root,
-			WorktreeBase:         worktreeBase,
-			AgentIDs:             agentIDs,
-			ExecutionSettings:    loaded.Config.ExecutionSettings(),
-			ReviewConfig:         local.Review,
-			VerifyConfig:         loaded.Config.Verify,
-			Runner:               runtimeAgentRunner{coreruntime.NewRunner(registry)},
-			Manager:              planrun.NewManager(),
-			OnEvent:              traceHandler,
-			Progress:             progress,
-			TargetPlanID:         planID,
-			EnforceProtectedBase: enforceProtected,
-			BatchBaseRef:         batchBase,
-			TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(root, ".springfield", "plans"), controlRoot: root},
-			Ctx:                  ctx,
-			MaxTurnsPerIteration: loaded.Config.MaxTurnsPerIteration(),
-			MinFreeDiskBytes:     loaded.Config.MinFreeDiskBytes(),
-			CostCapUSD:           costCap,
-			BatchID:              b.ID,
-		})
-		if res.Reason == "no-eligible-plan" {
-			// The target plan is not registered in the conductor schedule —
-			// either not yet registered or already terminal. Stop the batch.
-			break
-		}
-		// Cost-cap fired inside the plan's iteration loop. Surface the pause
-		// to the caller WITHOUT marking the batch as failed.
-		if res.CostCapped {
-			fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
-			fmt.Fprintf(progress, "Status: cost-capped (%s)\n", res.Reason)
-			return BatchRunResult{CostCapped: true, SpendUSD: res.SpendUSD}, nil
-		}
-		if res.Err != nil {
-			fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
-			if res.Status == conductor.StatusNeedsHuman {
-				fmt.Fprintf(progress, "Status: needs human review (%s)\n", res.Reason)
-			} else {
-				fmt.Fprintf(progress, "Status: failed (%s)\n", res.Reason)
-			}
-			fmt.Fprintf(progress, "Error: %s\n", res.Err.Error())
-			return BatchRunResult{Error: res.Err.Error()}, res.Err
-		}
-		fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
-		fmt.Fprintf(progress, "Status: completed\n")
-		if res.EvidencePath != "" {
-			fmt.Fprintf(progress, "Evidence: %s\n", res.EvidencePath)
-		}
-
-		if halt, err := integratePlan(perPlan, project, root, worktreeBase, res.PlanID, progress); halt != nil {
-			return *halt, err
-		}
+	runner := &batchPlanRunner{
+		project:          project,
+		root:             root,
+		worktreeBase:     worktreeBase,
+		perPlan:          perPlan,
+		progress:         progress,
+		agentIDs:         agentIDs,
+		loaded:           loaded,
+		local:            local,
+		registry:         registry,
+		traceHandler:     traceHandler,
+		enforceProtected: enforceProtected,
+		batchBase:        batchBase,
+		costCap:          costCap,
+		batchID:          b.ID,
+	}
+	execRes, execErr := batchexec.Execute(ctx, batchexec.Input{Batch: b, Runner: runner})
+	switch {
+	case execRes.Cancelled:
+		// Interrupted by signal or context cancel. Return the context error so
+		// the caller does NOT archive as completed — batch state stays intact
+		// for the user to rerun springfield start to resume.
+		return BatchRunResult{}, execErr
+	case execErr != nil:
+		return BatchRunResult{Error: execErr.Error()}, execErr
+	case execRes.CostCapped:
+		return BatchRunResult{CostCapped: true, SpendUSD: execRes.SpendUSD}, nil
 	}
 	return BatchRunResult{}, nil
+}
+
+// batchPlanRunner adapts the plan execution + integration pipeline to
+// batchexec.PlanRunner. It owns everything batchexec deliberately doesn't
+// know about: agents, config, git integration, and progress reporting.
+type batchPlanRunner struct {
+	project          *conductor.Project
+	root             string
+	worktreeBase     string
+	perPlan          bool
+	progress         io.Writer
+	agentIDs         []agents.ID
+	loaded           config.Loaded
+	local            config.LocalConfig
+	registry         agents.Registry
+	traceHandler     coreexec.EventHandler
+	enforceProtected bool
+	batchBase        string
+	costCap          float64
+	batchID          string
+}
+
+// IsTerminal reports a FULLY INTEGRATED plan (batchexec's terminal contract).
+// StatusCompleted alone is NOT terminal — see the re-entry branch in RunPlan.
+func (r *batchPlanRunner) IsTerminal(planID string) bool {
+	st := r.project.State.Plans[planID]
+	return st != nil && st.IsIntegrated()
+}
+
+func (r *batchPlanRunner) RunPlan(ctx context.Context, planID string) batchexec.Outcome {
+	// Re-entry: a plan that already finished execution (Status=Completed)
+	// but is not yet integrated — a crash between execution and integration,
+	// or a prior integration whose cleanup failed (e.g. a transient
+	// `git worktree remove` failure) — must NOT be re-dispatched through
+	// SinglePlan, which would reject it with preflight-already-completed and
+	// deadlock the batch. Drive only the integration/cleanup step instead.
+	if st := r.project.State.Plans[planID]; st != nil && st.Status == conductor.StatusCompleted {
+		fmt.Fprintf(r.progress, "Plan: %s\n", planID)
+		fmt.Fprintf(r.progress, "Status: resuming integration\n")
+		if halt, err := integratePlan(r.perPlan, r.project, r.root, r.worktreeBase, planID, r.progress); halt != nil {
+			return batchexec.Outcome{Err: err}
+		}
+		return batchexec.Outcome{}
+	}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:              r.project,
+		ControlRoot:          r.root,
+		ProjectRoot:          r.root,
+		WorktreeBase:         r.worktreeBase,
+		AgentIDs:             r.agentIDs,
+		ExecutionSettings:    r.loaded.Config.ExecutionSettings(),
+		ReviewConfig:         r.local.Review,
+		VerifyConfig:         r.loaded.Config.Verify,
+		Runner:               runtimeAgentRunner{coreruntime.NewRunner(r.registry)},
+		Manager:              planrun.NewManager(),
+		OnEvent:              r.traceHandler,
+		Progress:             r.progress,
+		TargetPlanID:         planID,
+		EnforceProtectedBase: r.enforceProtected,
+		BatchBaseRef:         r.batchBase,
+		TamperGuard:          &planDirTamperGuard{planDir: filepath.Join(r.root, ".springfield", "plans"), controlRoot: r.root},
+		Ctx:                  ctx,
+		MaxTurnsPerIteration: r.loaded.Config.MaxTurnsPerIteration(),
+		MinFreeDiskBytes:     r.loaded.Config.MinFreeDiskBytes(),
+		CostCapUSD:           r.costCap,
+		BatchID:              r.batchID,
+	})
+	if res.Reason == "no-eligible-plan" {
+		// The target plan is not registered in the conductor schedule —
+		// either not yet registered or already terminal. Stop the batch.
+		return batchexec.Outcome{NoEligiblePlan: true}
+	}
+	// Cost-cap fired inside the plan's iteration loop. Surface the pause
+	// to the caller WITHOUT marking the batch as failed.
+	if res.CostCapped {
+		fmt.Fprintf(r.progress, "Plan: %s\n", res.PlanID)
+		fmt.Fprintf(r.progress, "Status: cost-capped (%s)\n", res.Reason)
+		return batchexec.Outcome{CostCapped: true, SpendUSD: res.SpendUSD}
+	}
+	if res.Err != nil {
+		fmt.Fprintf(r.progress, "Plan: %s\n", res.PlanID)
+		if res.Status == conductor.StatusNeedsHuman {
+			fmt.Fprintf(r.progress, "Status: needs human review (%s)\n", res.Reason)
+		} else {
+			fmt.Fprintf(r.progress, "Status: failed (%s)\n", res.Reason)
+		}
+		fmt.Fprintf(r.progress, "Error: %s\n", res.Err.Error())
+		return batchexec.Outcome{Err: res.Err}
+	}
+	fmt.Fprintf(r.progress, "Plan: %s\n", res.PlanID)
+	fmt.Fprintf(r.progress, "Status: completed\n")
+	if res.EvidencePath != "" {
+		fmt.Fprintf(r.progress, "Evidence: %s\n", res.EvidencePath)
+	}
+
+	if halt, err := integratePlan(r.perPlan, r.project, r.root, r.worktreeBase, res.PlanID, r.progress); halt != nil {
+		return batchexec.Outcome{Err: err}
+	}
+	return batchexec.Outcome{}
 }
 
 // anyPlanStarted reports whether any plan in the batch has a recorded state
@@ -759,44 +801,6 @@ func integratePlan(perPlan bool, project *conductor.Project, root, worktreeBase,
 		return &BatchRunResult{Error: e.Error()}, e
 	}
 	return nil, nil
-}
-
-// batchNextPlanID returns the ID of the first non-integrated plan in the
-// batch's phase order, or "" when every batch plan is integrated (done).
-//
-// This replaces the prior approach of filtering schedule.NextPlans() by
-// batch membership. That approach was broken: NextPlans() returns plans from
-// the GLOBAL conductor schedule in phase order. If a non-batch plan appears
-// first (earlier Order) in the global schedule and is not yet integrated, it
-// would be skipped by the batchPlanSet filter — leaving planID empty and
-// causing runBatch to exit prematurely even though batch plans still needed
-// to run.
-//
-// By iterating b.Phases directly, batch dispatch is independent of the global
-// schedule order. Phase semantics are preserved: all plans in phase N must be
-// integrated before any plan in phase N+1 is dispatched.
-func batchNextPlanID(b batch.Batch, state *conductor.State) string {
-	for _, phase := range b.Phases {
-		// Check if this phase is fully integrated.
-		phaseComplete := true
-		for _, id := range phase.Plans {
-			if ps := state.Plans[id]; ps == nil || !ps.IsIntegrated() {
-				phaseComplete = false
-				break
-			}
-		}
-		if phaseComplete {
-			// All plans in this phase integrated; advance to next phase.
-			continue
-		}
-		// This phase has non-integrated plans. Return the first one.
-		for _, id := range phase.Plans {
-			if ps := state.Plans[id]; ps == nil || !ps.IsIntegrated() {
-				return id
-			}
-		}
-	}
-	return "" // all phases integrated
 }
 
 // controlPlaneSnapshot captures every Springfield-owned file under
