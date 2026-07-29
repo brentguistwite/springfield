@@ -20,6 +20,67 @@ func TestCompute_KnownPair(t *testing.T) {
 	}
 }
 
+func TestLookupRate_ClaudeTiers(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		model   string
+		wantIn  float64
+		wantOut float64
+	}{
+		{"fable alias", "fable", 10.00, 50.00},
+		{"opus alias", "opus", 5.00, 25.00},
+		{"sonnet alias", "sonnet", 3.00, 15.00},
+		{"haiku alias", "haiku", 1.00, 5.00},
+
+		{"pinned fable", "claude-fable-5", 10.00, 50.00},
+		{"pinned opus", "claude-opus-5", 5.00, 25.00},
+		{"pinned sonnet", "claude-sonnet-5", 3.00, 15.00},
+		{"dated haiku", "claude-haiku-4-5-20251001", 1.00, 5.00},
+
+		// Models that do not exist yet. These are the cases that decide whether
+		// shipping a new Claude model needs a Springfield release: the family
+		// prefix has to carry them without anyone adding a row.
+		{"unreleased opus", "claude-opus-99", 5.00, 25.00},
+		{"unreleased sonnet", "claude-sonnet-12-3-20990101", 3.00, 15.00},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := cost.LookupRate("claude", tc.model)
+			if !ok {
+				t.Fatalf("LookupRate(claude, %q) unpriced", tc.model)
+			}
+			if got.InputUSDPerMtok != tc.wantIn || got.OutputUSDPerMtok != tc.wantOut {
+				t.Fatalf("LookupRate(claude, %q) = %v/%v, want %v/%v",
+					tc.model, got.InputUSDPerMtok, got.OutputUSDPerMtok, tc.wantIn, tc.wantOut)
+			}
+		})
+	}
+}
+
+// An unrecognized tier must stay unpriced rather than guess. A wrong number is
+// worse than a flagged UnpricedRun, which the operator can see and act on.
+func TestLookupRate_UnknownClaudeTierUnpriced(t *testing.T) {
+	for _, model := range []string{
+		"claude-quantum-1", // plausible-looking but unknown tier
+		"claude",           // bare vendor name, no tier
+		"opusplan",         // real CLI alias Springfield deliberately does not offer
+	} {
+		if _, ok := cost.LookupRate("claude", model); ok {
+			t.Errorf("LookupRate(claude, %q) priced; want unpriced", model)
+		}
+	}
+}
+
+// The family fallback is claude-only: codex model ids carry no tier prefix, so
+// an unknown one must not inherit a rate from a similarly-named sibling.
+func TestLookupRate_CodexUnaffectedByFamilyFallback(t *testing.T) {
+	if _, ok := cost.LookupRate("codex", "gpt-5.4"); !ok {
+		t.Error("LookupRate(codex, gpt-5.4) unpriced; want exact-row hit")
+	}
+	if _, ok := cost.LookupRate("codex", "gpt-5.9"); ok {
+		t.Error("LookupRate(codex, gpt-5.9) priced; want unpriced")
+	}
+}
+
 func TestCompute_UnknownAdapter(t *testing.T) {
 	got, ok := cost.Compute("gemini", "gemini-2.5", 1_000_000, 1_000_000)
 	if ok {
