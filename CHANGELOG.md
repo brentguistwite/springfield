@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.0](https://github.com/brentguistwite/springfield/compare/v0.26.0...v0.27.0) (2026-07-29)
+
+
+### Features
+
+* **claude:** tier-alias models, family pricing, resolved-model capture ([#102](https://github.com/brentguistwite/springfield/issues/102)) ([743e593](https://github.com/brentguistwite/springfield/commit/743e593a62ddb14263332c0b6a105ee359de1543))
+
 ## [0.26.0](https://github.com/brentguistwite/springfield/compare/v0.25.2...v0.26.0) (2026-07-24)
 
 
