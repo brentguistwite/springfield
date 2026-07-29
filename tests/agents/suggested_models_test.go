@@ -9,6 +9,7 @@ import (
 	"springfield/internal/core/agents/claude"
 	"springfield/internal/core/agents/codex"
 	"springfield/internal/core/agents/gemini"
+	"springfield/internal/features/cost"
 )
 
 func TestAdaptersImplementModelProvider(t *testing.T) {
@@ -67,6 +68,33 @@ func TestGeminiSuggestedModelsCurated2Point5Family(t *testing.T) {
 
 	if containsString(models, "gemini-2.0-flash-exp") {
 		t.Fatalf("SuggestedModels() still contains stale model %q; got %v", "gemini-2.0-flash-exp", models)
+	}
+}
+
+// The picker offers tier aliases only. Version-pinned ids would need a release
+// every time Anthropic ships a model; operators who want one pass it to
+// --model, which does not validate the model string.
+func TestClaudeSuggestedModelsAreTierAliasesOnly(t *testing.T) {
+	got := claude.SuggestedModels()
+	want := []string{"fable", "opus", "sonnet", "haiku"}
+
+	if len(got) != len(want) {
+		t.Fatalf("SuggestedModels() = %v, want exactly %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("SuggestedModels() = %v, want %v", got, want)
+		}
+	}
+}
+
+// Anything the picker offers must resolve to a rate, or its runs land in
+// Rollup.UnpricedRuns on the iterations where the CLI reports no total_cost_usd.
+func TestClaudeSuggestedModelsArePriced(t *testing.T) {
+	for _, model := range claude.SuggestedModels() {
+		if _, ok := cost.LookupRate("claude", model); !ok {
+			t.Errorf("suggested model %q has no pricing row", model)
+		}
 	}
 }
 

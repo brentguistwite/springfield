@@ -49,16 +49,9 @@ type Capture struct {
 
 // pricingTable maps adapter ID → model ID → rate. Model IDs are matched
 // case-insensitively; callers pass the adapter's reported model string.
+// Claude has no rows here: claudeTiers prices the whole vendor by family. Add
+// one only for a model whose rate differs from its tier.
 var pricingTable = map[string]map[string]Rate{
-	"claude": {
-		// Claude 4.x / 5 family (current). Opus 4.x is $5/$25; Sonnet is
-		// $3/$15; Haiku 4.5 is $1/$5.
-		"claude-opus-4-8":           {InputUSDPerMtok: 5.00, OutputUSDPerMtok: 25.00},
-		"claude-opus-4-7":           {InputUSDPerMtok: 5.00, OutputUSDPerMtok: 25.00},
-		"claude-sonnet-5":           {InputUSDPerMtok: 3.00, OutputUSDPerMtok: 15.00},
-		"claude-sonnet-4-6":         {InputUSDPerMtok: 3.00, OutputUSDPerMtok: 15.00},
-		"claude-haiku-4-5-20251001": {InputUSDPerMtok: 1.00, OutputUSDPerMtok: 5.00},
-	},
 	"codex": {
 		// OpenAI Codex / GPT-5.x family, per the public pricing page.
 		"gpt-5.5":      {InputUSDPerMtok: 5.00, OutputUSDPerMtok: 30.00},
@@ -67,18 +60,57 @@ var pricingTable = map[string]map[string]Rate{
 	},
 }
 
+// claudeTiers prices a Claude model from its tier rather than an exact id, so
+// a newly released model is priced on day one without a Springfield change.
+// Each entry matches the bare CLI alias ("opus") and every versioned id in that
+// family ("claude-opus-5", "claude-opus-4-8", ...).
+//
+// This is a fallback in two senses. An exact pricingTable row wins over it, and
+// the whole table is only consulted when the claude CLI reports no
+// total_cost_usd on its result event — which in practice means runs that died
+// before finishing. A tier that reprices across generations (Opus 3 was $15/$75
+// before the 4.x line landed at $5/$25) needs the old ids added as exact rows.
+var claudeTiers = []struct {
+	tier string
+	rate Rate
+}{
+	{"fable", Rate{InputUSDPerMtok: 10.00, OutputUSDPerMtok: 50.00}},
+	{"opus", Rate{InputUSDPerMtok: 5.00, OutputUSDPerMtok: 25.00}},
+	{"sonnet", Rate{InputUSDPerMtok: 3.00, OutputUSDPerMtok: 15.00}},
+	{"haiku", Rate{InputUSDPerMtok: 1.00, OutputUSDPerMtok: 5.00}},
+}
+
+// lookupClaudeTier resolves model against the tier table. It matches the bare
+// alias exactly and versioned ids on the "claude-<tier>-" prefix; the trailing
+// hyphen keeps a hypothetical "claude-opusplan-x" out of the opus tier.
+func lookupClaudeTier(model string) (Rate, bool) {
+	for _, t := range claudeTiers {
+		if model == t.tier || strings.HasPrefix(model, "claude-"+t.tier+"-") {
+			return t.rate, true
+		}
+	}
+	return Rate{}, false
+}
+
 // LookupRate returns the Rate for the given adapter/model and reports whether
-// a row exists. Unknown pairs return zero Rate and ok=false.
+// one is known. Unknown pairs return zero Rate and ok=false.
+//
+// Claude falls back to tier pricing when no exact row matches, so an id for a
+// model that shipped after this build still prices correctly. Other adapters
+// are exact-match only — their ids carry no tier to infer from.
 func LookupRate(adapter, model string) (Rate, bool) {
-	adapterTable, ok := pricingTable[strings.ToLower(strings.TrimSpace(adapter))]
-	if !ok {
-		return Rate{}, false
+	adapterID := strings.ToLower(strings.TrimSpace(adapter))
+	modelID := strings.ToLower(strings.TrimSpace(model))
+
+	// Indexing a missing adapter yields a nil map, and indexing that is a miss
+	// rather than a panic — so an adapter priced purely by tier needs no entry.
+	if rate, ok := pricingTable[adapterID][modelID]; ok {
+		return rate, true
 	}
-	rate, ok := adapterTable[strings.ToLower(strings.TrimSpace(model))]
-	if !ok {
-		return Rate{}, false
+	if adapterID == "claude" {
+		return lookupClaudeTier(modelID)
 	}
-	return rate, true
+	return Rate{}, false
 }
 
 // Compute returns the USD cost of an iteration that used inTok input tokens

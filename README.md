@@ -174,7 +174,11 @@ Project-level agent execution settings live in `springfield.toml`. Example:
 agent_priority = ["claude"]
 
 [agents.claude]
-model = "claude-sonnet-4-6"
+# Tier alias ("fable", "opus", "sonnet", "haiku") tracks the latest model in
+# that tier, so new releases need no config change. Any exact id also works
+# (e.g. "claude-sonnet-5") — pin one when a new release changing agent
+# behavior mid-batch would be worse than running a slightly stale model.
+model = "sonnet"
 permission_mode = "bypassPermissions"
 
 # Opt in to Codex by adding "codex" to agent_priority; scaffold below.

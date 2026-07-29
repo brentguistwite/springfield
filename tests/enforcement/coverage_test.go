@@ -86,6 +86,7 @@ var coveredParsers = map[string]bool{
 	"AssistantText":     true, // transcript_decoder_test + above (claude+codex captures)
 	"ScanReviewVerdict": true, // transcript_decoder_test + above (decoded real text)
 	"ScanMarkers":       true, // above (real implementer-story-pass transcript)
+	"ExtractCost":       true, // cost_resolved_model_test (real implementer-story-pass transcript)
 }
 
 // exemptParsersByPkg is checked BEFORE the bare-name maps, keyed by
@@ -112,7 +113,6 @@ var exemptParsers = map[string]string{
 	"Cooldown":               "capture-pending: parses the rate-limit reset timestamp from a real rate-limit transcript (cannot force on demand); structured needles unit-tested",
 	"parseCooldown":          "internal helper of Cooldown — same capture-pending rate-limit transcript",
 	"collectLines":           "stdout line-collection helper for cooldown parsing; no transport-semantic parsing of its own",
-	"ExtractCost":            "capture-pending: parses usage/cost from result events; cost-capture coverage is out of scope for the gate-hardening effort",
 	"extractCost":            "capture-pending: planrun cost rollup; same as ExtractCost",
 	"writeReviewEvidence":    "persists reviewer events to the evidence dir — no semantic parsing of the transport",
 }

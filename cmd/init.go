@@ -153,7 +153,7 @@ func NewInitCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&agentsFlag, "agents", "", "Comma-separated agent priority list (e.g. claude,codex)")
-	cmd.Flags().StringVar(&modelsFlag, "model", "", "Comma-separated per-agent model overrides (e.g. claude=claude-sonnet-4-6,codex=gpt-5.4)")
+	cmd.Flags().StringVar(&modelsFlag, "model", "", "Comma-separated per-agent model overrides (e.g. claude=claude-sonnet-5,codex=gpt-5.4)")
 	cmd.Flags().BoolVar(&resetFlag, "reset", false, "Regenerate springfield.toml from the current --agents/--model selection, backing up the previous file. Discards manual edits and stale agent blocks; the execution config's primary tool is updated to match, and registered plans are preserved.")
 	cmd.Flags().BoolVar(&trackedGitignoreFlag, "tracked-gitignore", false, "Write Springfield ignore patterns to the tracked .gitignore instead of the default .git/info/exclude. Use in repos you own; the default keeps a repo's tracked .gitignore byte-unchanged.")
 	cmd.Flags().StringVar(&branchModeFlag, "branch-mode", "", "Default branch mode for multi-plan batches: consolidate (merge each plan into a shared base) or per-plan (one branch per plan). Written to [project] branch_mode.")
