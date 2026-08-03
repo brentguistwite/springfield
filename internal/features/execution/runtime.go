@@ -392,13 +392,27 @@ func executionPrompt(root string, work Work, workstream Workstream) (string, err
 
 // readProjectGuidance reads AGENTS.md, CLAUDE.md, GEMINI.md from root in that
 // priority order, capped at maxGuidanceFileBytes each. Missing files (ENOENT)
-// are silently skipped. Any other read error fails loudly — silently dropping
-// guardrail instructions would let the subagent run unconstrained.
+// are silently skipped. Candidates that resolve to an already-included file
+// (repos commonly symlink CLAUDE.md -> AGENTS.md) are skipped so the same
+// content is not embedded twice. Any other read error fails loudly — silently
+// dropping guardrail instructions would let the subagent run unconstrained.
 func readProjectGuidance(root string) (string, error) {
 	files := []string{"AGENTS.md", "CLAUDE.md", "GEMINI.md"}
+	seen := make(map[string]bool, len(files))
 	var b strings.Builder
 	for _, name := range files {
-		f, err := os.Open(filepath.Join(root, name))
+		resolved, err := filepath.EvalSymlinks(filepath.Join(root, name))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("read project guidance %s: %w", name, err)
+		}
+		if seen[resolved] {
+			continue
+		}
+		seen[resolved] = true
+		f, err := os.Open(resolved)
 		if os.IsNotExist(err) {
 			continue
 		}

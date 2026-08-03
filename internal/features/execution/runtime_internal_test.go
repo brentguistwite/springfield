@@ -298,6 +298,50 @@ func TestExecutionPromptOmitsMissingProjectFiles(t *testing.T) {
 	}
 }
 
+func TestReadProjectGuidanceSkipsSymlinkDuplicates(t *testing.T) {
+	root := t.TempDir()
+	content := "# Guidance\nreal rules here\n"
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write AGENTS.md: %v", err)
+	}
+	// Repos commonly symlink CLAUDE.md -> AGENTS.md; the same bytes must not be
+	// embedded twice.
+	if err := os.Symlink("AGENTS.md", filepath.Join(root, "CLAUDE.md")); err != nil {
+		t.Fatalf("symlink CLAUDE.md: %v", err)
+	}
+	got, err := readProjectGuidance(root)
+	if err != nil {
+		t.Fatalf("readProjectGuidance: %v", err)
+	}
+	if n := strings.Count(got, "real rules here"); n != 1 {
+		t.Fatalf("guidance content included %d times, want 1:\n%s", n, got)
+	}
+	if strings.Contains(got, "## CLAUDE.md") {
+		t.Fatalf("symlink duplicate CLAUDE.md was included:\n%s", got)
+	}
+}
+
+func TestReadProjectGuidanceKeepsDistinctFilesWithSameNames(t *testing.T) {
+	root := t.TempDir()
+	// Dedupe keys on resolved path, not on filename or content: two real files
+	// stay two sections.
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("agents-content"), 0o644); err != nil {
+		t.Fatalf("write AGENTS.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "CLAUDE.md"), []byte("claude-content"), 0o644); err != nil {
+		t.Fatalf("write CLAUDE.md: %v", err)
+	}
+	got, err := readProjectGuidance(root)
+	if err != nil {
+		t.Fatalf("readProjectGuidance: %v", err)
+	}
+	for _, want := range []string{"## AGENTS.md", "agents-content", "## CLAUDE.md", "claude-content"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected guidance to contain %q, got:\n%s", want, got)
+		}
+	}
+}
+
 func TestExecutionPromptContainsAntiRecursionContract(t *testing.T) {
 	work := Work{
 		ID:    "batch-01",
