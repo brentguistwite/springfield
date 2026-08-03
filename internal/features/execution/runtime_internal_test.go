@@ -366,6 +366,24 @@ func TestExecutionPromptContainsAntiRecursionContract(t *testing.T) {
 	}
 }
 
+func TestExecutionPromptContractRequiresAnchorFidelity(t *testing.T) {
+	work := Work{
+		ID:    "batch-01",
+		Split: "single",
+		Title: "Batch title",
+		Workstreams: []Workstream{
+			{Name: "01", Title: "Slice title"},
+		},
+	}
+	prompt, err := executionPrompt("", work, work.Workstreams[0])
+	if err != nil {
+		t.Fatalf("executionPrompt: %v", err)
+	}
+	if !strings.Contains(prompt, "mirror that anchor's shape verbatim") {
+		t.Fatalf("contract missing anchor-fidelity line:\n%s", prompt)
+	}
+}
+
 func TestExecutionPromptIncludesBatchRequestBody(t *testing.T) {
 	work := Work{
 		ID:          "batch-01",
