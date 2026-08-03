@@ -383,6 +383,7 @@ func executionPrompt(root string, work Work, workstream Workstream) (string, err
 	}
 	b.WriteString("\n# Contract\n")
 	b.WriteString("- Implement the slice end-to-end: code, tests, commit when green.\n")
+	b.WriteString("- When an acceptance criterion cites a pattern anchor (a file or file:line), mirror that anchor's shape verbatim — do not substitute a DRY-er or cleverer composition, even when one exists. Deviation from a cited anchor requires the plan to say so, not your judgment.\n")
 	b.WriteString("- Do NOT invoke `Skill(springfield:*)` — those are user-facing surfaces, not for you.\n")
 	b.WriteString("- Do NOT run `springfield start`, `springfield plan`, `springfield recover` from Bash. You are already inside a springfield-managed run.\n")
 	b.WriteString("- Do NOT read, write, edit, or delete files under `.springfield/` — that is springfield's control plane.\n")
