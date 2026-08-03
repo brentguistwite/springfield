@@ -300,6 +300,35 @@ func TestPlanSkillHandHoldsDefinitionOfDone(t *testing.T) {
 	}
 }
 
+// TestPlanAuthoringSkillsForbidZeroPrecedentArtifacts pins the planner
+// constraint into both plan-authoring skills: a criterion may not order an
+// artifact class with no in-repo precedent, and an un-runnable criterion
+// (stag/prod verification, human eyes) must become an operator-deferred
+// context_md note rather than a checked-in proxy artifact. A dogfood batch
+// transmuted "measure link coverage on stag" into a JSON fixture corpus with
+// zero repo precedent; the executor and three review rounds then hardened the
+// invention instead of questioning it.
+func TestPlanAuthoringSkillsForbidZeroPrecedentArtifacts(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"plan", "plan-from-issue"} {
+		skill, err := Render(name)
+		if err != nil {
+			t.Fatalf("Render(%s): %v", name, err)
+		}
+		command, err := RenderCommand(name)
+		if err != nil {
+			t.Fatalf("RenderCommand(%s): %v", name, err)
+		}
+
+		for label, content := range map[string]string{"skill": skill.Content, "command": command.Content} {
+			if !strings.Contains(content, "Constraint — no zero-precedent artifacts") {
+				t.Errorf("%s %s missing zero-precedent-artifacts constraint", name, label)
+			}
+		}
+	}
+}
+
 func TestRenderCommand_Plan(t *testing.T) {
 	t.Parallel()
 

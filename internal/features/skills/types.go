@@ -243,6 +243,10 @@ Schema notes:
 > - Allowed: `+"`\"Document the off-target marker rule in docs/prd-format.md under the 'Stop Conditions' section\"`"+`
 > - Forbidden: `+"`\"Document the off-target marker rule in the review docs\"`"+` and `+"`\"note this in the relevant section\"`"+` — no file path, so the agent has nothing concrete to target.
 
+> **Constraint — no zero-precedent artifacts; un-runnable criteria become operator-deferred notes.**
+> An acceptance criterion that orders a file of a kind/location with no existing sibling in the repo (a new directory pattern, checked-in data/fixture files, a novel test-artifact class) MUST cite an in-repo precedent path for that artifact class — or must not be written. When the underlying goal cannot be verified inside the run (needs a deployed environment, human eyes, or production data), do NOT invent a checked-in proxy artifact: record it in `+"`context_md`"+` as an explicit "operator step — outside this plan's automated gate" line instead, and keep the runnable criteria to what the repo has precedent for.
+> Rationale: a dogfood batch transmuted "measure link coverage on stag" into a checked-in JSON fixture corpus + README under `+"`src/`"+` — zero repo precedent — because every criterion had to be machine-checkable. The executor and three review rounds then hardened the invention instead of questioning it. Anchor to precedent; defer what can't run.
+
 Use `+"`--replace`"+` or `+"`--append`"+` if an active batch exists (per Step 2).
 
 Keep Springfield as the only user-facing surface.
@@ -342,6 +346,8 @@ How criteria are actually used — be honest, don't oversell:
 - They sharpen the agent and reviewer prompts. They are NOT a deterministic done-gate.
 - The runner re-runs a plan until the agent self-emits `+"`<story-pass>US-NNN</story-pass>`"+` or it hits the iteration cap (default 50). That marker — the agent's own judgment — gates completion, not the criteria.
 - The optional pre-merge review (next step) is the only independent check that the work meets the criteria.
+
+**Constraint — no zero-precedent artifacts.** When an extracted criterion names a human or deployed-environment step ("verified on stag", "reported in the PR", "spot-check prod"), carry it into `+"`context_md`"+` as an explicit operator-deferred note — never elaborate it into a runnable proxy criterion that orders artifacts with no existing sibling in the repo (checked-in data/fixture files, new directory patterns, novel test-artifact classes). A criterion that orders a genuinely new artifact class must cite an in-repo precedent path or be deferred to the operator.
 
 ## Step 7 — Offer pre-merge review
 

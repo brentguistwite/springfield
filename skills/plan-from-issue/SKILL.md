@@ -134,6 +134,8 @@ How criteria are actually used — be honest, don't oversell:
 - The runner re-runs a plan until the agent self-emits `<story-pass>US-NNN</story-pass>` or it hits the iteration cap (default 50). That marker — the agent's own judgment — gates completion, not the criteria.
 - The optional pre-merge review (next step) is the only independent check that the work meets the criteria.
 
+**Constraint — no zero-precedent artifacts.** When an extracted criterion names a human or deployed-environment step ("verified on stag", "reported in the PR", "spot-check prod"), carry it into `context_md` as an explicit operator-deferred note — never elaborate it into a runnable proxy criterion that orders artifacts with no existing sibling in the repo (checked-in data/fixture files, new directory patterns, novel test-artifact classes). A criterion that orders a genuinely new artifact class must cite an in-repo precedent path or be deferred to the operator.
+
 ## Step 7 — Offer pre-merge review
 
 Ask, as its own question: **"Enable independent pre-merge review for this batch?"**
