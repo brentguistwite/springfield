@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.28.0](https://github.com/brentguistwite/springfield/compare/v0.27.0...v0.28.0) (2026-08-04)
+
+
+### Features
+
+* **execution:** contract line pinning executors to cited pattern anchors ([b7fe14b](https://github.com/brentguistwite/springfield/commit/b7fe14b2336395742debe37b87738a01c5afea00))
+* **skills:** planner constraint — no zero-precedent artifacts, defer un-runnable criteria ([4f3aff7](https://github.com/brentguistwite/springfield/commit/4f3aff77be78ddc7c4711fc7549b267c6460bb4f))
+
+
+### Bug Fixes
+
+* **execution:** skip symlink-duplicate guidance files ([73a72a8](https://github.com/brentguistwite/springfield/commit/73a72a82674eeeced9e2c6c3036a2840ed26f793))
+
 ## [0.27.0](https://github.com/brentguistwite/springfield/compare/v0.26.0...v0.27.0) (2026-07-29)
 
 
