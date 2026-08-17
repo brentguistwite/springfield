@@ -224,6 +224,13 @@ Schema notes:
 > - Allowed: `"Document the off-target marker rule in docs/prd-format.md under the 'Stop Conditions' section"`
 > - Forbidden: `"Document the off-target marker rule in the review docs"` and `"note this in the relevant section"` — no file path, so the agent has nothing concrete to target.
 
+> **Constraint — values added to a validated/enumerated set must cover their generated variants.**
+> When a story adds a value to a validated or enumerated input set (a sort field, an enum, a config-registered value), its `acceptance_criteria` MUST exercise every variant the system generates from that value (negated forms, empty, invalid) end-to-end through the consuming code path — not only the happy value. Find the generator (the function, enum, or config that expands or validates the set), enumerate what it emits, and give each emitted variant either a handled path with a test or an explicit out-of-scope line in the plan.
+> Rationale: a batch added a validated sort value whose auto-generated negated variant (`-` prefix) had no handler in the consuming switch — a real bug the tests could not catch, because the criteria enumerated only the happy value and the plan never mentioned the generator.
+
+> **Constraint — mirroring a sibling requires naming the anchor and checking its generator.**
+> When a plan directs the implementer to mirror an existing sibling or pattern, the plan MUST name the anchor file as a `path/to/file` (add a `:line` anchor when pointing at a section) AND must require checking the pattern's generator (enum, config, codegen) for emitted variants the mirrored instances do not handle. Mirroring instances without checking the generator copies the sibling's latent flaws into the new code.
+
 If an active batch exists (per Step 4), only rebuild it after the user **positively confirms it was created this session and never started by any session**: write the user-confirmed **combined** set (existing + new issues) with `springfield plan --replace --prd -`. On any doubt — started, unsure, or unknown provenance — stop and send the user through the `springfield:recover` skill first (`springfield status` cannot prove a batch is safe to discard). Never use `--append` for plan-from-issue ingest.
 
 ## Tracker profiles
