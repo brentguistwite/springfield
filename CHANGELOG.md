@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.29.0](https://github.com/brentguistwite/springfield/compare/v0.28.0...v0.29.0) (2026-08-17)
+
+
+### Features
+
+* **skills:** planner constraints — validated-set variant coverage + mirror-anchor generator check ([#106](https://github.com/brentguistwite/springfield/issues/106)) ([9d1527d](https://github.com/brentguistwite/springfield/commit/9d1527de803f97c789a025cee6865064ae39e1ca))
+
 ## [0.28.0](https://github.com/brentguistwite/springfield/compare/v0.27.0...v0.28.0) (2026-08-04)
 
 
