@@ -564,12 +564,18 @@ type BatchRunResult struct {
 	// through Error, so the failure-reporting path is unchanged.
 	NeedsHuman bool
 	// Started is true once batch execution actually began (batchexec.Execute was
-	// entered). It gates the terminal-state notification: a pre-execution
-	// startup/load failure (bad config, no agents, missing exec config, a
-	// malformed local file) bubbles out of runBatch with Error set but is NOT a
-	// batch outcome the operator walked away from — it fired instantly while they
-	// watched, so notifying "batch failed" would be a false positive. Only an
-	// error (or completion) that survives to this flag reflects a batch that ran.
+	// entered). It gates the terminal-state notification. Two distinct
+	// Started==false paths exist, and BOTH must stay silent:
+	//   - Pre-execution FAILURE: a startup/load error (bad config, no agents,
+	//     missing exec config, a malformed local file) bubbles out of runBatch
+	//     with Error set. Notifying "batch failed" would be a false positive —
+	//     the operator saw it synchronously; nothing ran.
+	//   - Vacuous COMPLETION: an empty batch (no conductor project, no plan IDs)
+	//     returns cleanly with no Error. It reaches the RunE completion branch
+	//     and archives as "completed", but nothing executed, so a "batch
+	//     complete" alert for a zero-plan no-op would be equally noisy.
+	// Only an error (or completion) that survives to this flag as true reflects
+	// a batch that actually ran and is worth announcing.
 	Started bool
 }
 
@@ -597,8 +603,11 @@ func buildNotifier(cmd *cobra.Command, rootDir string) notify.Notifier {
 // (never nil): callers pass notify.Nop when notifications are unconfigured.
 //
 // A result whose batch never entered execution (result.Started == false) is
-// dropped: a pre-execution startup/load failure is reported synchronously to
-// the watching operator and must not masquerade as a batch-failed notification.
+// dropped. This covers BOTH Started==false paths: a pre-execution startup/load
+// failure (reported synchronously; must not masquerade as a batch-failed
+// notification) AND a vacuous completion of an empty batch (no plans ran, so
+// the "completed" branch below would otherwise emit a Complete alert for a
+// zero-plan no-op). Nothing executed in either case, so nothing is announced.
 func notifyBatchOutcome(n notify.Notifier, batchID string, result BatchRunResult) {
 	if !result.Started {
 		return
@@ -694,6 +703,10 @@ func runBatchWithContext(ctx context.Context, root string, run *batch.Run, b bat
 			return BatchRunResult{Error: e.Error()}, e
 		}
 		// No conductor project and no plans: vacuous completion is fine.
+		// Started stays false intentionally — this is the sole clean-completion
+		// path that never entered batchexec, so the RunE completion branch
+		// archives it as "completed" but notifyBatchOutcome drops it (a Complete
+		// alert for a zero-plan no-op batch would be noise). See BatchRunResult.Started.
 		return BatchRunResult{}, nil
 	}
 	// If the project loaded but its plan registry is empty while the batch has

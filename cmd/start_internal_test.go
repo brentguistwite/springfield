@@ -61,7 +61,6 @@ func TestNotifyFailureLeavesBatchOutcomeUnchanged(t *testing.T) {
 // Started is false so no future field addition reopens the path.
 func TestNotifyBatchOutcomeSkipsPreExecutionFailure(t *testing.T) {
 	notStarted := []BatchRunResult{
-		{},                                  // vacuous / never ran
 		{Error: "load springfield.toml: x"}, // config load failure
 		{Error: "agent_priority is empty"},  // no agents configured
 		{Error: "execution config is missing"},
@@ -72,6 +71,23 @@ func TestNotifyBatchOutcomeSkipsPreExecutionFailure(t *testing.T) {
 		if len(fake.events) != 0 {
 			t.Fatalf("pre-execution result %+v fired %d notifications, want 0: %+v", r, len(fake.events), fake.events)
 		}
+	}
+}
+
+// TestNotifyBatchOutcomeSkipsVacuousCompletion pins the OTHER Started==false
+// path — the one the reviewer flagged as a semantic fork. An empty batch (no
+// conductor project, no plan IDs) returns cleanly from runBatch with no Error
+// and Started false; it then flows through RunE's completion branch and archives
+// as "completed". That successful, non-failure result must still fire NO
+// notification: nothing executed, so a Complete desktop alert for a zero-plan
+// no-op would be noise. This is distinct from a pre-execution failure (no Error
+// here) and locks the intent so a future reader does not "fix" the empty-batch
+// path into emitting Complete.
+func TestNotifyBatchOutcomeSkipsVacuousCompletion(t *testing.T) {
+	fake := &fakeNotifier{}
+	notifyBatchOutcome(fake, "batch-1", BatchRunResult{}) // clean completion, never ran
+	if len(fake.events) != 0 {
+		t.Fatalf("vacuous completion fired %d notifications, want 0: %+v", len(fake.events), fake.events)
 	}
 }
 
