@@ -95,11 +95,20 @@ func TestPlanSurfacesRequireExplicitFilePaths(t *testing.T) {
 // docs/prd-format.md phases table). The top-level docs once framed the whole
 // batch as "sequential", which drifted from the shipped batchexec parallel
 // path. Guard README.md, AGENTS.md, and docs/index.html (hand-authored, not
-// generated) so the stale one-liner can't creep back into any top-level surface.
+// generated) so the stale framing can't creep back into any top-level surface.
 //
 // CLAUDE.md is a symlink to AGENTS.md, so guarding AGENTS.md covers both.
 // Asserted across every surface so a partial rewrite is also caught — same
 // pattern as the tests above.
+//
+// The ban list matches the *class* of stale framing, not one literal phrase:
+// the first round of this test scanned only for "sequential batch" and sailed
+// past three user-visible spots on the landing page ("Sequential batches" card
+// heading, "runs them sequentially", and a FAQ answering "No" to whether it
+// runs in parallel). Each banned phrase asserts the *whole batch* is
+// sequential, so it must never appear — but a legitimate, qualified mention of
+// consolidate mode running sequentially (e.g. "consolidate mode stays
+// sequential") uses none of these substrings and is deliberately allowed.
 func TestNoSequentialBatchFraming(t *testing.T) {
 	root := repoRoot(t)
 	surfaces := []string{
@@ -108,14 +117,25 @@ func TestNoSequentialBatchFraming(t *testing.T) {
 		filepath.Join(root, "docs", "index.html"),
 	}
 
+	staleFraming := []string{
+		"sequential batch",         // original one-liner (README/AGENTS mission)
+		"Sequential batches",       // landing-page card heading
+		"runs them sequentially",   // landing-page "how it works" lead
+		"runs <b>sequentially</b>", // landing-page FAQ answer
+	}
+
 	for _, path := range surfaces {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
 		}
-		if strings.Contains(string(data), "sequential batch") {
-			t.Errorf("%s contains stale \"sequential batch\" framing; the shipped model is phase-ordered "+
-				"(parallel phases concurrent in per-plan-branches mode, only consolidate mode sequential)", path)
+		content := string(data)
+		for _, phrase := range staleFraming {
+			if strings.Contains(content, phrase) {
+				t.Errorf("%s contains stale %q framing; the shipped model is phase-ordered "+
+					"(parallel phases concurrent in per-plan-branches mode, only consolidate mode sequential)",
+					path, phrase)
+			}
 		}
 	}
 }
