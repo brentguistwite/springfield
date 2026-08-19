@@ -20,8 +20,10 @@
 //
 // MarkComplete/IsComplete/ClearComplete manage a completion marker under the
 // same directory — the durable proof that a setup run EXITED ZERO. The marker is
-// keyed on the command that earned it, so the runner gates a reuse resume on
-// both worktree existence AND command identity: a worktree whose setup crashed
-// midway, OR whose [setup] command changed since it last succeeded, re-runs
-// setup instead of dispatching an agent into a half-built (or stale) tree.
+// keyed on the command AND the injected setup env that earned it, so the runner
+// gates a reuse resume on both worktree existence AND command+env identity: a
+// worktree whose setup crashed midway, whose [setup] command changed, OR whose
+// injected env changed (e.g. a moved [ports] base shifting SPRINGFIELD_PORT)
+// since it last succeeded re-runs setup instead of dispatching an agent into a
+// half-built (or stale) tree.
 package worktreesetup

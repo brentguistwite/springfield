@@ -19,7 +19,7 @@ func TestCompletionMarkerRoundTrip(t *testing.T) {
 	evidenceDir := t.TempDir()
 	const cmd = "npm install"
 
-	if worktreesetup.IsComplete(evidenceDir, cmd) {
+	if worktreesetup.IsComplete(evidenceDir, cmd, nil) {
 		t.Fatalf("marker reported complete before any MarkComplete")
 	}
 	// ClearComplete on a never-written marker must not error.
@@ -27,18 +27,52 @@ func TestCompletionMarkerRoundTrip(t *testing.T) {
 		t.Fatalf("ClearComplete on missing marker: %v", err)
 	}
 
-	if err := worktreesetup.MarkComplete(evidenceDir, cmd); err != nil {
+	if err := worktreesetup.MarkComplete(evidenceDir, cmd, nil); err != nil {
 		t.Fatalf("MarkComplete: %v", err)
 	}
-	if !worktreesetup.IsComplete(evidenceDir, cmd) {
+	if !worktreesetup.IsComplete(evidenceDir, cmd, nil) {
 		t.Fatalf("marker not reported complete after MarkComplete")
 	}
 
 	if err := worktreesetup.ClearComplete(evidenceDir); err != nil {
 		t.Fatalf("ClearComplete: %v", err)
 	}
-	if worktreesetup.IsComplete(evidenceDir, cmd) {
+	if worktreesetup.IsComplete(evidenceDir, cmd, nil) {
 		t.Fatalf("marker still reported complete after ClearComplete")
+	}
+}
+
+// TestCompletionMarkerIsEnvKeyed proves the marker also folds the injected setup
+// env into its digest: a resumed slice whose per-slice SPRINGFIELD_PORT changed
+// (operator moved the [ports] base in springfield.toml) must NOT trust a marker
+// written under the old port, even though the setup COMMAND is unchanged — else a
+// file the setup script generated from the stale $SPRINGFIELD_PORT would survive
+// while the agent/verify commands get the new port. nil and empty map digest
+// identically so an env-less setup stays stable across the two spellings.
+func TestCompletionMarkerIsEnvKeyed(t *testing.T) {
+	evidenceDir := t.TempDir()
+	const cmd = "npm install"
+
+	if err := worktreesetup.MarkComplete(evidenceDir, cmd, map[string]string{"SPRINGFIELD_PORT": "42000"}); err != nil {
+		t.Fatalf("MarkComplete: %v", err)
+	}
+
+	// Same command + same env stays a match.
+	if !worktreesetup.IsComplete(evidenceDir, cmd, map[string]string{"SPRINGFIELD_PORT": "42000"}) {
+		t.Fatalf("same command + same env not reported complete")
+	}
+	// Changed env (new [ports] base) invalidates the marker → setup re-runs.
+	if worktreesetup.IsComplete(evidenceDir, cmd, map[string]string{"SPRINGFIELD_PORT": "42010"}) {
+		t.Fatalf("changed setup env trusted the prior env's completion marker")
+	}
+
+	// nil env and empty map must be treated identically.
+	nilDir := t.TempDir()
+	if err := worktreesetup.MarkComplete(nilDir, cmd, nil); err != nil {
+		t.Fatalf("MarkComplete nil env: %v", err)
+	}
+	if !worktreesetup.IsComplete(nilDir, cmd, map[string]string{}) {
+		t.Fatalf("nil env marked, empty map checked: spuriously invalidated")
 	}
 }
 
@@ -51,19 +85,19 @@ func TestCompletionMarkerRoundTrip(t *testing.T) {
 func TestCompletionMarkerIsCommandKeyed(t *testing.T) {
 	evidenceDir := t.TempDir()
 
-	if err := worktreesetup.MarkComplete(evidenceDir, "npm install"); err != nil {
+	if err := worktreesetup.MarkComplete(evidenceDir, "npm install", nil); err != nil {
 		t.Fatalf("MarkComplete: %v", err)
 	}
 
-	if !worktreesetup.IsComplete(evidenceDir, "npm install") {
+	if !worktreesetup.IsComplete(evidenceDir, "npm install", nil) {
 		t.Fatalf("same command not reported complete")
 	}
 	// Cosmetic whitespace does not force a re-run (digest trims).
-	if !worktreesetup.IsComplete(evidenceDir, "  npm install  ") {
+	if !worktreesetup.IsComplete(evidenceDir, "  npm install  ", nil) {
 		t.Fatalf("whitespace-only command edit spuriously invalidated marker")
 	}
 	// A materially different command invalidates the marker → setup re-runs.
-	if worktreesetup.IsComplete(evidenceDir, "npm ci") {
+	if worktreesetup.IsComplete(evidenceDir, "npm ci", nil) {
 		t.Fatalf("changed command trusted the prior command's completion marker")
 	}
 }

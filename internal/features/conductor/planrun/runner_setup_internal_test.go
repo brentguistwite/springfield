@@ -37,7 +37,7 @@ func TestRunWorktreeSetupGatesOnCompletionMarkerNotReuse(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("fresh worktree: setup ran %d times, want 1", calls)
 	}
-	if !worktreesetup.IsComplete(evidenceDir, "make setup") {
+	if !worktreesetup.IsComplete(evidenceDir, "make setup", nil) {
 		t.Fatalf("successful setup did not write the completion marker")
 	}
 
@@ -60,7 +60,7 @@ func TestRunWorktreeSetupGatesOnCompletionMarkerNotReuse(t *testing.T) {
 	if calls != 2 {
 		t.Fatalf("reuse after crashed setup: setup ran %d times, want re-run (2)", calls)
 	}
-	if !worktreesetup.IsComplete(evidenceDir, "make setup") {
+	if !worktreesetup.IsComplete(evidenceDir, "make setup", nil) {
 		t.Fatalf("re-run setup did not re-record the completion marker")
 	}
 }
@@ -115,7 +115,7 @@ func TestRunWorktreeSetupReRunsOnChangedCommand(t *testing.T) {
 	if lastCmd != "npm ci" {
 		t.Fatalf("re-run dispatched command %q, want the changed command", lastCmd)
 	}
-	if !worktreesetup.IsComplete(evidenceDir, "npm ci") {
+	if !worktreesetup.IsComplete(evidenceDir, "npm ci", nil) {
 		t.Fatalf("re-run did not re-key the completion marker to the new command")
 	}
 }

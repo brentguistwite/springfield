@@ -13,6 +13,7 @@ import (
 	coreexec "springfield/internal/core/exec"
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/conductor/planrun"
+	"springfield/internal/features/portblock"
 	"springfield/internal/features/worktreesetup"
 )
 
@@ -77,7 +78,7 @@ func TestSetupFailureBlocksAgentDispatch(t *testing.T) {
 
 	// A failed setup must NOT leave a completion marker — otherwise a reuse
 	// resume would skip setup and dispatch an agent into the half-built tree.
-	if worktreesetup.IsComplete(planrun.EvidenceRoot(root, res.Context.PlanKey), "make setup") {
+	if worktreesetup.IsComplete(planrun.EvidenceRoot(root, res.Context.PlanKey), "make setup", nil) {
 		t.Fatalf("failed setup wrote a completion marker; reuse resume would wrongly skip setup")
 	}
 }
@@ -182,8 +183,11 @@ func TestSetupRunsBeforeDispatchWithEnvAndEvidence(t *testing.T) {
 	}
 
 	// A successful setup records the durable completion marker so a later reuse
-	// resume can safely skip re-running it.
-	if !worktreesetup.IsComplete(planrun.EvidenceRoot(root, res.Context.PlanKey), `echo "$SPRINGFIELD_SOURCE_ROOT|$SPRINGFIELD_WORKTREE" > setup-ran.txt; echo done 1>&2`) {
+	// resume can safely skip re-running it. The marker is keyed on the command AND
+	// the injected port env, so the check must supply the same env the runner did
+	// (default base, ordinal 1 → 42000 block).
+	setupEnv := portblock.Allocate(portblock.DefaultBase, 1).Env()
+	if !worktreesetup.IsComplete(planrun.EvidenceRoot(root, res.Context.PlanKey), `echo "$SPRINGFIELD_SOURCE_ROOT|$SPRINGFIELD_WORKTREE" > setup-ran.txt; echo done 1>&2`, setupEnv) {
 		t.Errorf("successful setup did not write the completion marker")
 	}
 }
