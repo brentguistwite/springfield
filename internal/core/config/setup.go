@@ -31,9 +31,19 @@ type SetupConfig struct {
 	// command environment includes SPRINGFIELD_SOURCE_ROOT (the main checkout)
 	// and SPRINGFIELD_WORKTREE (the slice worktree).
 	Command string `toml:"command"`
+	// Teardown is an optional counterpart to Command run at slice cleanup, in
+	// the same worktree root and with the same environment, immediately before
+	// the execution worktree is removed. It exists to release resources that
+	// live OUTSIDE the worktree — a database container, a docker-compose stack,
+	// a bound port — that setup spun up and git-tracked removal alone leaves
+	// running (e.g. "docker compose down"). It is strictly best-effort: a
+	// failing teardown is logged and never blocks cleanup or changes the plan
+	// outcome. Empty (the common case) skips teardown entirely. Governed by the
+	// same Enabled toggle and Timeout as Command.
+	Teardown string `toml:"teardown"`
 	// Timeout is the wall-clock ceiling as a Go duration string (e.g. "20m",
-	// "90s"). Empty/unparseable → DefaultSetupTimeout. Resolve via
-	// TimeoutOrDefault().
+	// "90s") applied to both Command and Teardown. Empty/unparseable →
+	// DefaultSetupTimeout. Resolve via TimeoutOrDefault().
 	Timeout string `toml:"timeout"`
 }
 
@@ -57,4 +67,13 @@ func (s SetupConfig) TimeoutOrDefault() time.Duration {
 // command stays inert rather than failing the slice with nothing to run.
 func (s SetupConfig) ShouldRun() bool {
 	return s.Enabled && strings.TrimSpace(s.Command) != ""
+}
+
+// ShouldTeardown reports whether the teardown step runs at slice cleanup: the
+// [setup] toggle must be on AND a non-empty Teardown command must be present.
+// Teardown is independent of Command — a project may configure teardown without
+// a setup command (though the common case pairs them), so ShouldRun is not a
+// precondition here.
+func (s SetupConfig) ShouldTeardown() bool {
+	return s.Enabled && strings.TrimSpace(s.Teardown) != ""
 }

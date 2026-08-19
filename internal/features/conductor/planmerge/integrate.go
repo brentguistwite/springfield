@@ -47,6 +47,14 @@ type IntegrateInput struct {
 	Now func() time.Time
 	// Progress receives short human-readable lifecycle lines; nil discards.
 	Progress io.Writer
+	// Teardown, when non-nil, is invoked with the execution worktree path
+	// immediately before that worktree is removed — the seam where a plan's
+	// out-of-worktree resources (containers, ports) must be released while the
+	// worktree still exists. It is best-effort by contract: the hook owns its
+	// own logging and error handling, and planmerge always proceeds to remove
+	// the worktree regardless of what it does. nil skips teardown. The runner
+	// builds it from the [setup] block's teardown command (see cmd wiring).
+	Teardown func(worktreePath string)
 }
 
 // IntegrateResult summarizes what Integrate did and what state it persisted.
@@ -519,6 +527,14 @@ func runCleanupMatrixWithPrior(in IntegrateInput, state *conductor.PlanState, me
 	}
 
 	out.ExecutionWorktree = retryArtifactRemove(priorXW, state.WorktreePath, "", func() error {
+		// Teardown fires here, inside the attempt closure, so it runs ONLY when a
+		// removal is actually attempted: retryArtifactRemove skips the closure for
+		// an artifact carried forward as already-succeeded, so a crash-resume never
+		// re-tears-down a worktree that is already gone. Best-effort — the hook
+		// cannot fail the removal or the cleanup.
+		if in.Teardown != nil {
+			in.Teardown(state.WorktreePath)
+		}
 		return in.Git.WorktreeRemoveForce(in.ControlRoot, state.WorktreePath)
 	})
 	if out.ExecutionWorktree.Status == conductor.CleanupFailed {

@@ -851,6 +851,101 @@ func TestIntegrateReEntryAfterPartialCleanupSkipsAlreadyDeletedArtifacts(t *test
 	}
 }
 
+// TestIntegrateTeardownFiresBeforeExecutionWorktreeRemoval proves the
+// consolidate-mode seam: the teardown hook runs exactly once, before the
+// execution worktree is removed and while it still exists, and a hook that
+// represents a failing command does not change the successful cleanup outcome.
+func TestIntegrateTeardownFiresBeforeExecutionWorktreeRemoval(t *testing.T) {
+	root, project, wt := projectFixture(t, "alpha", "springfield/alpha", "main", "AAAA", "BBBB")
+	g := newFakeGit()
+	g.headByDir[wt] = "BBBB"
+	g.resolveByRef["main"] = "AAAA"
+	g.headByDir["branch:springfield/alpha"] = "BBBB"
+	g.currentBranchByDir = map[string]string{root: "main"}
+
+	var calls int
+	var sawWorktree string
+	var execRemovedBefore bool
+	teardown := func(worktreePath string) {
+		calls++
+		sawWorktree = worktreePath
+		// The execution worktree removal must not have happened yet.
+		for _, p := range g.worktreeRemoveAll {
+			if p == wt {
+				execRemovedBefore = true
+			}
+		}
+	}
+
+	res := planmerge.Integrate(planmerge.IntegrateInput{
+		Project: project, PlanID: "alpha", ControlRoot: root, WorktreeBase: ".worktrees",
+		Git: g, Teardown: teardown,
+	})
+	if !planmerge.IsSuccess(res) {
+		t.Fatalf("expected clean merge success, got %+v err=%v", res.Merge, res.Err)
+	}
+	if calls != 1 {
+		t.Fatalf("teardown must fire exactly once, fired %d", calls)
+	}
+	if sawWorktree != wt {
+		t.Fatalf("teardown got worktree %q, want execution worktree %q", sawWorktree, wt)
+	}
+	if execRemovedBefore {
+		t.Fatal("teardown must fire BEFORE the execution worktree is removed")
+	}
+	if res.Cleanup.ExecutionWorktree.Status != conductor.CleanupSucceeded ||
+		res.Cleanup.Status != conductor.CleanupSucceeded {
+		t.Fatalf("teardown must not change cleanup outcome: %+v", res.Cleanup)
+	}
+}
+
+// TestIntegrateReEntrySkipsTeardownForAlreadyRemovedWorktree proves the
+// idempotency guarantee of the attempt-closure placement: on a re-entry where
+// the execution worktree was already removed by a prior run (carried forward as
+// Succeeded), the teardown hook is NOT re-invoked — otherwise a crash-resume
+// would tear down a worktree that no longer exists.
+func TestIntegrateReEntrySkipsTeardownForAlreadyRemovedWorktree(t *testing.T) {
+	root, project, wt := projectFixture(t, "alpha", "springfield/alpha", "main", "AAAA", "BBBB")
+	prior := project.State.Plans["alpha"]
+	prior.PlanHead = "BBBB"
+	prior.Merge = &conductor.MergeOutcome{
+		Status:        conductor.MergeSucceeded,
+		Mode:          string(planmerge.ModeFFOnly),
+		TargetRef:     "main",
+		TargetHead:    "AAAA",
+		PostMergeHead: "BBBB",
+		WorktreePath:  filepath.Join(root, ".worktrees", ".merges", "alpha"),
+	}
+	prior.Cleanup = &conductor.CleanupOutcome{
+		Status: conductor.CleanupFailed,
+		MergeWorktree: &conductor.ArtifactCleanup{
+			Status: conductor.CleanupFailed, Path: prior.Merge.WorktreePath, Error: "busy",
+		},
+		ExecutionWorktree: &conductor.ArtifactCleanup{Status: conductor.CleanupSucceeded, Path: wt},
+		PlanBranch:        &conductor.ArtifactCleanup{Status: conductor.CleanupSucceeded, Branch: "springfield/alpha"},
+	}
+	if err := project.SaveState(); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+
+	g := newFakeGit()
+	g.headByDir[wt] = "BBBB"
+	g.resolveByRef["main"] = "BBBB"
+	g.currentBranchByDir = map[string]string{root: "main"}
+
+	var calls int
+	res := planmerge.Integrate(planmerge.IntegrateInput{
+		Project: project, PlanID: "alpha", ControlRoot: root, WorktreeBase: ".worktrees",
+		Git: g, Teardown: func(string) { calls++ },
+	})
+	if res.Err != nil {
+		t.Fatalf("re-entry returned err: %v", res.Err)
+	}
+	if calls != 0 {
+		t.Fatalf("teardown must NOT re-run for an already-removed execution worktree, fired %d", calls)
+	}
+}
+
 // TestIntegrateRecordsCleanupSaveFailureWithoutLosingMergeRecord proves
 // the end-to-end behaviour of a post-cleanup SaveState failure: the
 // merge succeeded record is durable on disk (saved before cleanup),
