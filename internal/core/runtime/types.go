@@ -16,6 +16,13 @@ type Request struct {
 	OnEvent           exec.EventHandler
 	ExecutionSettings agents.ExecutionSettings
 
+	// Env carries extra environment variables merged into the built agent
+	// command (e.g. the slice's SPRINGFIELD_PORT/SPRINGFIELD_PORT_RANGE block
+	// from portblock). Entries are added to the command's own Env map without
+	// clobbering keys an adapter set deliberately (adapter keys win), then the
+	// whole map is merged over os.Environ() by the exec layer.
+	Env map[string]string
+
 	// MaxTurnsPerIteration caps the agent turns a single Run may consume
 	// before the runtime synthesizes a retryable [TurnCapExceededReason]
 	// failure. Zero (the default) disables the cap so callers that don't opt

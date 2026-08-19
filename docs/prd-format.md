@@ -57,7 +57,7 @@ Field reference:
 | `title` | string | yes | Human-readable batch title. |
 | `source` | string | yes | Verbatim plan markdown that originated this batch. Stored as `source.md` for audit. |
 | `phases` | array | yes | Execution ordering. At least one phase required. |
-| `phases[].mode` | string | yes | `"serial"` or `"parallel"`. Serial phases run their plans one at a time in declared order. Parallel phases declare the plans independent; in per-plan-branches mode they actually execute concurrently (up to `[project] max_parallel`, default 3) — in consolidate mode they still run sequentially, since consolidate merges require a stable base. Only mark a phase parallel when its plans touch disjoint files and share no test resources (ports, containers, databases). |
+| `phases[].mode` | string | yes | `"serial"` or `"parallel"`. Serial phases run their plans one at a time in declared order. Parallel phases declare the plans independent; in per-plan-branches mode they actually execute concurrently (up to `[project] max_parallel`, default 3) — in consolidate mode they still run sequentially, since consolidate merges require a stable base. Port-based test-resource conflicts are handled mechanically: every slice gets a disjoint [per-slice port block](#per-slice-port-blocks) (`SPRINGFIELD_PORT` / `SPRINGFIELD_PORT_RANGE`), so plans that bind to those need no manual coordination. Only mark a phase parallel when its plans touch disjoint files and share no *non-port* test resources — containers, databases, shared files — since those are not partitioned for you. |
 | `phases[].plans` | []string | yes | Ordered list of plan IDs to run in this phase. Must reference IDs present in `plans`. |
 | `plans` | array | yes | One entry per atomic work unit. |
 | `plans[].id` | string | yes | Slug: `^[a-z0-9][a-z0-9-]*$`. Must be unique within the envelope. |
@@ -156,6 +156,55 @@ A missing `[verify]` block, or `enabled = true` with no `command`, leaves the ga
 | `enabled: false` | Force the gate off for this plan, even when globally enabled — the escape hatch for a plan whose work legitimately can't pass the shared command yet. |
 
 `timeout` and `max_verify_iterations` are not per-plan overridable — they always resolve from the global block. When `omitempty` strips the `verify` object from `prd.json`, the runner re-reads it as the full inherit case.
+
+### Worktree setup and teardown
+
+Slice worktrees are created bare — a fresh checkout with no installed dependencies, no untracked files (`.env`, local config), and no generated artifacts. The optional `[setup]` command closes that gap: it runs once in each freshly created slice worktree **after checkout and before any agent dispatch**, so agents don't burn turns on `npm install` or fail on a missing `.env`.
+
+**Global block (`springfield.toml`).** Like `[verify]` (and unlike `[review]`, which lives in the git-ignored `springfield.local.toml` because it may reference personal skills), a setup command such as `npm install` is team-shareable and belongs in the committed config — every teammate's slice worktree needs the same preparation:
+
+```toml
+[setup]
+enabled = true                      # opt-in master switch; default false
+command = "npm ci && cp .env.example .env"  # run via `sh -c` in the slice worktree root
+teardown = "docker compose down"    # optional; run at slice cleanup (see below)
+timeout = "20m"                     # wall-clock ceiling for command AND teardown (Go duration); default 20m
+```
+
+A missing `[setup]` block, or `enabled = true` with no `command`, leaves setup inert — a project with no setup keeps its prior create-and-dispatch behavior byte-identical.
+
+**Environment.** The setup command (like the agent run and `[verify]`) receives the [per-slice port block](#per-slice-port-blocks) variables `SPRINGFIELD_PORT` / `SPRINGFIELD_PORT_RANGE`, plus two path variables:
+
+| Variable | Value |
+|----------|-------|
+| `SPRINGFIELD_SOURCE_ROOT` | The main checkout — copy untracked source files (`.env`, local config) from here. |
+| `SPRINGFIELD_WORKTREE` | The slice worktree the command runs in (also its working directory). |
+
+**Evidence.** Every setup run persists to `<evidence>/setup/`: `setup.json` (command, cwd, exit code, duration, timed_out) plus tail-truncated `stdout.txt` / `stderr.txt`. A setup command that exits non-zero — or is killed at `timeout` — fails the slice with reason `setup-failed` **before any agent runs**, so a broken environment surfaces immediately instead of as a confusing mid-run agent failure.
+
+**Teardown (`[setup] teardown`).** An optional counterpart run at slice cleanup — in the same worktree root, with the same environment, immediately before the execution worktree is removed. Use it to release resources that live *outside* the worktree and so survive git-tracked removal: a database container, a docker-compose stack, a bound port that `command` spun up. It is strictly best-effort — a failing teardown is logged and never blocks cleanup or changes the plan outcome — and is independent of `command` (a project may configure `teardown` alone). It shares the `enabled` toggle and `timeout`. Empty (the common case) skips teardown entirely.
+
+### Per-slice port blocks
+
+Every slice is assigned a deterministic, collision-free block of 10 ports so parallel slices can run servers and tests without colliding. The agent run **and** the `[setup]` / `[verify]` commands all receive two environment variables:
+
+| Variable | Value |
+|----------|-------|
+| `SPRINGFIELD_PORT` | The first port of the slice's block — the obvious "bind here" default. |
+| `SPRINGFIELD_PORT_RANGE` | The full `start-end` span (e.g. `42010-42019`) for a slice that needs several ports. |
+
+The block is a pure function of the plan's 1-based ordinal (`plan_units[].order`) and a configurable base: slice *N* owns `[base+(N-1)*10 … base+(N-1)*10+9]`. Because it depends only on the ordinal, two concurrently running slices always get disjoint blocks, and a single slice's block is identical across every iteration of a run.
+
+**Global block (`springfield.toml`).** Like `[verify]` and `[setup]`, the port scheme is team-shareable and belongs in the committed config:
+
+```toml
+[ports]
+base = 42000   # first port of slice ordinal 1's block; default 42000
+```
+
+A missing `[ports]` block selects the default base — every slice still gets a `SPRINGFIELD_PORT` / `SPRINGFIELD_PORT_RANGE` assignment.
+
+**Out of scope — deterministic assignment, not liveness probing.** Springfield never opens a socket to check whether a port in the assigned block is already free. A port in a slice's block that an unrelated process on the host already occupies is the operator's concern: raise `[ports] base` off the busy range. Probing would trade determinism — the property that makes blocks reproducible and merge-neutral — for a race against every other process on the machine.
 
 ### `context_md` scope
 

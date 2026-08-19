@@ -93,6 +93,36 @@ func TestVerifyGateFailThenFixThenPass(t *testing.T) {
 	}
 }
 
+// TestVerifyGateFixIterationReceivesPortBlock pins the port-scope guarantee for
+// the verify fix-loop: the slice's SPRINGFIELD_PORT block must reach BOTH the
+// verify command AND the fix-iteration agent dispatch, so a fix agent that starts
+// a server binds the same ports the suite expects and no concurrently running
+// slice will touch.
+func TestVerifyGateFixIterationReceivesPortBlock(t *testing.T) {
+	cmd := &seqCmd{results: []verify.Result{
+		{ExitCode: 1, Stderr: "FAIL"}, // round 1: fail → triggers fix
+		{ExitCode: 0},                 // round 2: pass after fix
+	}}
+	agent := &seqRunner{results: []coreruntime.Result{
+		{Agent: agents.AgentClaude, Events: []coreexec.Event{stdout("<promise>COMPLETE</promise>")}}, // fix 1
+	}}
+	in := vgInput(t, cmd.run, agent, 3)
+	in.PortEnv = map[string]string{"SPRINGFIELD_PORT": "42030", "SPRINGFIELD_PORT_RANGE": "42030-42039"}
+	got := runVerifyGate(in)
+	if got.Outcome != verifyPassed {
+		t.Fatalf("outcome = %v, want verifyPassed", got.Outcome)
+	}
+	if len(cmd.reqs) < 1 || cmd.reqs[0].Env["SPRINGFIELD_PORT"] != "42030" {
+		t.Errorf("verify command did not receive the port block: %v", cmd.reqs)
+	}
+	if len(agent.reqs) != 1 {
+		t.Fatalf("expected exactly 1 fix-agent request, got %d", len(agent.reqs))
+	}
+	if agent.reqs[0].Env["SPRINGFIELD_PORT"] != "42030" {
+		t.Errorf("fix-iteration SPRINGFIELD_PORT = %q, want 42030 (env=%v)", agent.reqs[0].Env["SPRINGFIELD_PORT"], agent.reqs[0].Env)
+	}
+}
+
 func TestVerifyGateExhaustionEscalatesToNeedsHuman(t *testing.T) {
 	// max=2: fail(round1)→fix→fail(round2==max) → needs-human, no 3rd command.
 	cmd := &seqCmd{results: []verify.Result{

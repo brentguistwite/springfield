@@ -4,7 +4,7 @@
 
 Local-state conductor for multi-agent code work, distributed as a Claude Code (and Codex) marketplace plugin.
 
-Springfield turns a plan (file or prompt) into a sequential batch of agent runs, executes each slice in an isolated git worktree, captures per-slice evidence, and falls through `agent_priority` (default: Claude → opt-in Codex → opt-in Gemini) when a run is retryable. State lives under `.springfield/` in the repo; install ships through Claude Code and Codex marketplace plugins.
+Springfield turns a plan (file or prompt) into a phase-ordered batch of agent runs — phases run in declared order, and in per-plan-branches mode a parallel phase's plans execute concurrently (up to `[project] max_parallel`, default 3) while consolidate mode stays sequential — executes each slice in an isolated git worktree, captures per-slice evidence, and falls through `agent_priority` (default: Claude → opt-in Codex → opt-in Gemini) when a run is retryable. State lives under `.springfield/` in the repo; install ships through Claude Code and Codex marketplace plugins.
 
 > **Vendor economics:** `claude -p` headless invocations count against the Claude Max/Pro subscription, so Springfield defaults to Claude (Codex and Gemini are opt-in). Anthropic briefly metered `claude -p` separately (2026-05-14) before reverting; Springfield keeps that response — a Codex-led default plus a `springfield start` billing warning — one flag flip away (`ClaudeHeadlessMetered` in `internal/core/agents`) for if it returns. `--cost-cap $X` aborts the batch when spend hits the threshold regardless.
 

@@ -99,6 +99,29 @@ func TestReviewFindsVerdictInRealTranscript(t *testing.T) {
 	}
 }
 
+// TestReviewForwardsEnvToRunner pins that the slice's port block reaches the
+// reviewer process. The reviewer is tool-free by design, but ReviewerRole only
+// relaxes validation — it does not sandbox tools; forwarding Env is
+// defense-in-depth so a reviewer that binds a port cannot collide with a
+// concurrently running slice.
+func TestReviewForwardsEnvToRunner(t *testing.T) {
+	fr := &fakeRunner{result: coreruntime.Result{
+		Agent:  agents.AgentClaude,
+		Events: []coreexec.Event{{Type: coreexec.EventStdout, Data: "<review-verdict>pass</review-verdict>"}},
+	}}
+	env := map[string]string{"SPRINGFIELD_PORT": "42030", "SPRINGFIELD_PORT_RANGE": "42030-42039"}
+	planreview.Review(context.Background(), planreview.ReviewInput{
+		Runner:   fr,
+		AgentIDs: []agents.ID{agents.AgentClaude},
+		WorkDir:  "/tmp/wt",
+		Diff:     "D",
+		Env:      env,
+	})
+	if fr.gotReq.Env["SPRINGFIELD_PORT"] != "42030" {
+		t.Fatalf("reviewer request SPRINGFIELD_PORT = %q, want 42030 (env=%v)", fr.gotReq.Env["SPRINGFIELD_PORT"], fr.gotReq.Env)
+	}
+}
+
 func TestReviewSurfacesRunnerError(t *testing.T) {
 	fr := &fakeRunner{result: coreruntime.Result{
 		Agent: agents.AgentClaude,

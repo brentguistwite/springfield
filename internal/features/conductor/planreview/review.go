@@ -53,6 +53,14 @@ type ReviewInput struct {
 	Criteria          []string
 	CustomPrompt      string
 	OnEvent           coreexec.EventHandler
+	// Env is merged into the reviewer process environment (the slice's
+	// SPRINGFIELD_PORT block). The reviewer is tool-free by design, but
+	// ReviewerRole only relaxes result validation — it does not sandbox tools.
+	// Injecting the block is defense-in-depth: should a reviewer run any
+	// port-binding command, it binds the slice's isolated ports instead of a
+	// default that would collide with a concurrently running slice. Nil leaves
+	// the environment untouched.
+	Env map[string]string
 }
 
 // ReviewResult is the outcome of one review invocation. Found is false when the
@@ -78,6 +86,7 @@ func Review(ctx context.Context, in ReviewInput) ReviewResult {
 		AgentIDs:          in.AgentIDs,
 		Prompt:            prompt,
 		WorkDir:           in.WorkDir,
+		Env:               in.Env,
 		OnEvent:           in.OnEvent,
 		ExecutionSettings: in.ExecutionSettings,
 		// Reviewer is tool-free by design (reasons over the inline diff); relax
