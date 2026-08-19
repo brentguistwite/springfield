@@ -117,6 +117,60 @@ func TestNotifyBatchFailedFiresFailedForLateFailure(t *testing.T) {
 	}
 }
 
+// TestHaltStatusLabelsAgreeWithNotification pins the fix for the notification/
+// CLI divergence: a needs-human halt must render as "needs human review" on the
+// operator-facing stdout status line, matching the NeedsHuman notification the
+// seam fires for the same result — not the plain "failed" the CLI used to print
+// while the desktop alert said "needs human review". A plain failure stays
+// "failed" on both channels. Both the stdout label and the notification Kind are
+// derived from the SAME BatchRunResult here so a future change that forks one
+// without the other trips this test.
+func TestHaltStatusLabelsAgreeWithNotification(t *testing.T) {
+	cases := []struct {
+		name       string
+		result     BatchRunResult
+		wantStatus string
+		wantVerb   string
+		wantKind   notify.Kind
+	}{
+		{
+			name:       "needs-human halt reads as needs-human on both channels",
+			result:     BatchRunResult{Started: true, NeedsHuman: true, Error: "plan paused"},
+			wantStatus: "needs human review",
+			wantVerb:   "halted for human review",
+			wantKind:   notify.NeedsHuman,
+		},
+		{
+			name:       "plain failure reads as failed on both channels",
+			result:     BatchRunResult{Started: true, Error: "boom"},
+			wantStatus: "failed",
+			wantVerb:   "failed",
+			wantKind:   notify.Failed,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotStatus, gotVerb := haltStatusLabels(tc.result)
+			if gotStatus != tc.wantStatus {
+				t.Errorf("status label = %q, want %q", gotStatus, tc.wantStatus)
+			}
+			if gotVerb != tc.wantVerb {
+				t.Errorf("halt verb = %q, want %q", gotVerb, tc.wantVerb)
+			}
+			// The notification the seam fires for the same result must not
+			// contradict the CLI status the operator sees.
+			fake := &fakeNotifier{}
+			notifyBatchOutcome(fake, "batch-1", tc.result)
+			if len(fake.events) != 1 {
+				t.Fatalf("got %d events, want 1: %+v", len(fake.events), fake.events)
+			}
+			if fake.events[0].Kind != tc.wantKind {
+				t.Errorf("notification Kind = %d, want %d (must agree with status %q)", fake.events[0].Kind, tc.wantKind, gotStatus)
+			}
+		})
+	}
+}
+
 // TestBatchPlanRunnerIsTerminal verifies the batchexec terminal contract at
 // the adapter boundary: only a FULLY INTEGRATED plan (merge succeeded +
 // cleanup succeeded) is terminal. In particular StatusCompleted alone is NOT

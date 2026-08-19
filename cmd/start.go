@@ -365,20 +365,27 @@ func NewStartCommand() *cobra.Command {
 				// later persist can flip it (a persist error below only adds
 				// detail to an already-failed batch), so notify from here.
 				notifyBatchOutcome(n, b.ID, result)
+				// The operator-facing status line and the exit error must report
+				// the SAME settled outcome the notification just did — a
+				// needs-human halt that surfaces as a plain "failed" on stdout
+				// while the desktop alert says "needs human review" is exactly the
+				// notification/CLI divergence the seam was built to avoid. Both
+				// channels branch off result.NeedsHuman so they cannot fork.
+				statusLabel, haltVerb := haltStatusLabels(result)
 				if !result.RunStateCleared {
 					run.FatalError = result.Error
 					if writeErr := batch.WriteRun(root, run); writeErr != nil {
-						fmt.Fprintf(w, "Status: failed\n")
+						fmt.Fprintf(w, "Status: %s\n", statusLabel)
 						fmt.Fprintf(w, "Error: %s\n", result.Error)
-						return fmt.Errorf("batch %s failed; additionally failed to persist run state: %w", b.ID, writeErr)
+						return fmt.Errorf("batch %s %s; additionally failed to persist run state: %w", b.ID, haltVerb, writeErr)
 					}
 				}
-				fmt.Fprintf(w, "Status: failed\n")
+				fmt.Fprintf(w, "Status: %s\n", statusLabel)
 				fmt.Fprintf(w, "Error: %s\n", result.Error)
 				if execErr != nil {
 					return execErr
 				}
-				return fmt.Errorf("batch %s failed", b.ID)
+				return fmt.Errorf("batch %s %s", b.ID, haltVerb)
 			}
 
 			// Re-read batch from disk so archive reflects slice statuses
@@ -608,6 +615,22 @@ func buildNotifier(cmd *cobra.Command, rootDir string) notify.Notifier {
 // notification) AND a vacuous completion of an empty batch (no plans ran, so
 // the "completed" branch below would otherwise emit a Complete alert for a
 // zero-plan no-op). Nothing executed in either case, so nothing is announced.
+// haltStatusLabels maps a halted (Error-carrying) BatchRunResult to the
+// operator-facing stdout status label and the verb used in the exit error, so
+// the CLI's own report agrees with the terminal-state notification fired by
+// notifyBatchOutcome. It lives beside notifyBatchOutcome deliberately: both
+// translate the SAME settled result into an operator-visible outcome, and a
+// needs-human halt must read as "needs human review" on both channels rather
+// than one saying "failed" while the other says "needs human review". A
+// cost-cap pause never reaches here (it is handled on its own branch before
+// the Error branch), so only the failure/needs-human split matters.
+func haltStatusLabels(result BatchRunResult) (statusLabel, haltVerb string) {
+	if result.NeedsHuman {
+		return "needs human review", "halted for human review"
+	}
+	return "failed", "failed"
+}
+
 func notifyBatchOutcome(n notify.Notifier, batchID string, result BatchRunResult) {
 	if !result.Started {
 		return
