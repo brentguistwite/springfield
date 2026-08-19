@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <script>document.documentElement.classList.add('js')</script>
 <title>Springfield: an agent orchestrator</title>
-<meta name="description" content="Springfield turns a plan into a sequential batch of AI coding-agent runs, with isolated worktrees, per-step evidence, and automatic fallback across Claude, Codex, and Gemini. Local-first, nothing outbound." />
+<meta name="description" content="Springfield turns a plan into a phase-ordered batch of AI coding-agent runs (parallel phases run concurrently in per-plan-branches mode; consolidate mode sequential), with isolated worktrees, per-step evidence, and automatic fallback across Claude, Codex, and Gemini. Local-first, nothing outbound." />
 <meta property="og:title" content="Springfield: an agent orchestrator" />
 <meta property="og:description" content="Queue a plan. Walk away. Review the evidence. A local-first conductor for AI coding agents." />
 <meta property="og:type" content="website" />
@@ -265,7 +265,7 @@
     <h2>An orchestrator that <span class="accent">drives</span> the agents.<br>It doesn't write the code itself.</h2>
     <p class="lead">Think of a CI runner: it doesn't compile your code, it runs the steps that do, in order, and keeps the logs. Springfield is that, for AI coding agents. You hand it a plan; it runs each piece through an agent in an isolated worktree, and keeps the evidence.</p>
     <div class="grid g3" style="margin-top:30px">
-      <div class="card"><div class="ic svg"><svg viewBox="0 0 24 24" aria-hidden="true"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="15" y2="12"/><line x1="4" y1="17" x2="18" y2="17"/></svg></div><h3>Sequential batches</h3><p>A plan compiles into an ordered batch of work units, each with its own stories and acceptance criteria.</p></div>
+      <div class="card"><div class="ic svg"><svg viewBox="0 0 24 24" aria-hidden="true"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="15" y2="12"/><line x1="4" y1="17" x2="18" y2="17"/></svg></div><h3>Phase-ordered batches</h3><p>A plan compiles into a batch of work units grouped into phases that run in declared order — parallel phases run their units concurrently — each with its own stories and acceptance criteria.</p></div>
       <div class="card"><div class="ic svg"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.6"/><rect x="13" y="4" width="7" height="7" rx="1.6"/><rect x="4" y="13" width="7" height="7" rx="1.6"/><rect x="13" y="13" width="7" height="7" rx="1.6"/></svg></div><h3>Drops into your tools</h3><p>Homebrew installs the CLI; one slash-command in Claude Code or Codex installs the skills. Teammates pick it up in minutes.</p></div>
       <div class="card"><div class="ic svg"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-6 8 6"/><path d="M6 10v9h12v-9"/></svg></div><h3>Local-first</h3><p>State lives in project-local <span class="cmdinline">.springfield/</span>. No global machine state, and nothing outbound from Springfield itself.</p></div>
     </div>
@@ -276,7 +276,7 @@
   <div class="wrap reveal">
     <div class="kicker">How it works</div>
     <h2>Plan in. A branch of vetted commits out.</h2>
-    <p class="lead">A plan compiles into a <strong>batch</strong> of units, each with user stories. Springfield runs them sequentially, each in its own worktree, tracking story-level completion as the agent reports it.</p>
+    <p class="lead">A plan compiles into a <strong>batch</strong> of units, each with user stories. Springfield runs them phase by phase in declared order — parallel phases run concurrently in per-plan-branches mode — each in its own worktree, tracking story-level completion as the agent reports it.</p>
     <div class="flow" style="margin-top:30px">
       <div class="stage"><div class="n">IN</div><h4>Plan</h4><p>Units → stories → acceptance criteria.</p></div>
       <div class="arrow">→</div>
@@ -448,7 +448,7 @@
     <details><summary>Which agents do I need?</summary><div class="ans">At least one of <b>Claude Code</b>, <b>Codex</b>, or <b>Gemini</b>, installed and authenticated. Configure more than one and Springfield falls through them in priority order when a run is rate-limited.</div></details>
     <details><summary>Does my code leave my machine?</summary><div class="ans"><b>Nothing leaves via Springfield.</b> It's local-first: no telemetry, no data collection, nothing outbound from the tool itself. State stays in project-local <span class="cmdinline">.springfield/</span>. (The agents themselves still call their own provider APIs, but that's the agent, not Springfield.)</div></details>
     <details><summary>Will it mess with my git history or working tree?</summary><div class="ans">No. Each run happens in an <b>isolated git worktree</b>. Starting from <span class="cmdinline">main</span>/<span class="cmdinline">master</span>, Springfield auto-cuts a local <span class="cmdinline">springfield/batch-&lt;id&gt;</span> branch and switches you back when it finishes. It never pushes, so opening PRs stays your call.</div></details>
-    <details><summary>Does it run agents in parallel?</summary><div class="ans">No, and that's deliberate. Springfield runs <b>sequentially</b>, one unit then the next. The value is unattended throughput over time plus a clean evidence trail, not racing agents against each other.</div></details>
+    <details><summary>Does it run agents in parallel?</summary><div class="ans">Yes, within a phase. A plan groups units into <b>phases that run in declared order</b>; a phase marked parallel runs its units <b>concurrently</b> in per-plan-branches mode (up to <span class="cmdinline">[project] max_parallel</span>, default 3), while consolidate mode stays sequential. Mark a phase parallel only when its units touch disjoint files and share no test resources.</div></details>
     <details><summary>The agent runs with broad permissions. Is that safe?</summary><div class="ans">The default profile lets agents work without per-action prompts so an unattended batch isn't blocked. The mitigations: <b>worktree isolation</b> (blast radius is a throwaway branch), the <b>evidence trail</b> (every action recorded), and <b>you review the diff before merging</b>. It's a setting in <span class="cmdinline">springfield.toml</span>, not a hardcode.</div></details>
     <details><summary>Does Springfield write the code?</summary><div class="ans">No. It's the conductor, not the orchestra. It builds prompts, dispatches the agent, watches for completion markers, classifies errors, and records evidence. The editing is done by Claude Code / Codex / Gemini.</div></details>
     <details><summary>Is it production-ready?</summary><div class="ans">It's <b>early, pre-1.0</b> (currently v0.13). It works and it's in active use, but interfaces may still shift before 1.0. Treat it accordingly and pin a version if you depend on it.</div></details>

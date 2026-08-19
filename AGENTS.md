@@ -1,6 +1,6 @@
 # Springfield Agent Instructions
 
-Build a shareable, local-first conductor that turns a plan into a sequential batch of agent runs across Claude Code, Codex, and Gemini, with isolated worktrees and per-slice evidence. Surface power-user capability through a simple plugin-first UX.
+Build a shareable, local-first conductor that turns a plan into a phase-ordered batch of agent runs across Claude Code, Codex, and Gemini — phases run in declared order, with parallel phases executing concurrently (up to `[project] max_parallel`, default 3) in per-plan-branches mode and running sequentially in consolidate mode — with isolated worktrees and per-slice evidence. Surface power-user capability through a simple plugin-first UX.
 
 ## Product Priorities
 
