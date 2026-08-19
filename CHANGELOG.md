@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.30.0](https://github.com/brentguistwite/springfield/compare/v0.29.0...v0.30.0) (2026-08-19)
+
+
+### Features
+
+* **worktree:** per-plan setup scripts, port blocks, and teardown hook ([#109](https://github.com/brentguistwite/springfield/issues/109)) ([ced6967](https://github.com/brentguistwite/springfield/commit/ced69671f107c3a1afd02d62708e346486509c6c))
+
 ## [0.29.0](https://github.com/brentguistwite/springfield/compare/v0.28.0...v0.29.0) (2026-08-17)
 
 
