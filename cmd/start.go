@@ -322,10 +322,12 @@ func NewStartCommand() *cobra.Command {
 			// operator notification for this batch. A notify failure must never
 			// fail the batch, so delivery errors are swallowed by the Notifier
 			// itself; the seam is invoked before any archive/persist so a late
-			// error on those paths can't suppress it. The notifier is built
-			// from the operator's git-ignored [notify] config; an absent or
-			// disabled block yields notify.Nop (silent), so the seam is always
-			// invoked but off by default.
+			// error on those paths can't suppress it. notifyBatchOutcome itself
+			// drops results whose batch never started executing (a pre-execution
+			// startup/load error carries Error but is not a batch outcome). The
+			// notifier is built from the operator's git-ignored [notify] config;
+			// an absent or disabled block yields notify.Nop (silent), so the seam
+			// is always invoked but off by default.
 			notifyBatchOutcome(buildNotifier(cmd, loaded.RootDir), b.ID, result)
 
 			// Cost-capped: persist the CostCapped state, surface the spend +
@@ -545,6 +547,14 @@ type BatchRunResult struct {
 	// needs-human event instead of a failure; the halt itself still surfaces
 	// through Error, so the failure-reporting path is unchanged.
 	NeedsHuman bool
+	// Started is true once batch execution actually began (batchexec.Execute was
+	// entered). It gates the terminal-state notification: a pre-execution
+	// startup/load failure (bad config, no agents, missing exec config, a
+	// malformed local file) bubbles out of runBatch with Error set but is NOT a
+	// batch outcome the operator walked away from — it fired instantly while they
+	// watched, so notifying "batch failed" would be a false positive. Only an
+	// error (or completion) that survives to this flag reflects a batch that ran.
+	Started bool
 }
 
 // buildNotifier resolves the operator's Notifier from the git-ignored [notify]
@@ -569,7 +579,14 @@ func buildNotifier(cmd *cobra.Command, rootDir string) notify.Notifier {
 // needs-human pause outrank the halt Error they ride alongside — so the
 // operator hears the actionable reason, not a generic failure. n is required
 // (never nil): callers pass notify.Nop when notifications are unconfigured.
+//
+// A result whose batch never entered execution (result.Started == false) is
+// dropped: a pre-execution startup/load failure is reported synchronously to
+// the watching operator and must not masquerade as a batch-failed notification.
 func notifyBatchOutcome(n notify.Notifier, batchID string, result BatchRunResult) {
+	if !result.Started {
+		return
+	}
 	switch {
 	case result.CostCapped:
 		n.Notify(notify.Event{Kind: notify.CostCapped, BatchID: batchID, SpendUSD: result.SpendUSD})
@@ -710,11 +727,13 @@ func runBatchWithContext(ctx context.Context, root string, run *batch.Run, b bat
 		// A cost-cap pause can coexist with a plan failure (cap fired, then a
 		// draining sibling failed). Carry the cap signal through so the caller
 		// persists the pause state and surfaces the spend alongside the error.
-		return BatchRunResult{Error: execErr.Error(), CostCapped: execRes.CostCapped, SpendUSD: execRes.SpendUSD, NeedsHuman: execRes.NeedsHuman}, execErr
+		// Started: this error came from execution, not startup — it IS a batch
+		// outcome, so it earns a terminal-state notification.
+		return BatchRunResult{Started: true, Error: execErr.Error(), CostCapped: execRes.CostCapped, SpendUSD: execRes.SpendUSD, NeedsHuman: execRes.NeedsHuman}, execErr
 	case execRes.CostCapped:
-		return BatchRunResult{CostCapped: true, SpendUSD: execRes.SpendUSD}, nil
+		return BatchRunResult{Started: true, CostCapped: true, SpendUSD: execRes.SpendUSD}, nil
 	}
-	return BatchRunResult{}, nil
+	return BatchRunResult{Started: true}, nil
 }
 
 // resolveMaxParallel applies --max-parallel flag precedence: any non-zero
