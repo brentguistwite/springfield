@@ -66,10 +66,32 @@ type cmdNotifier struct {
 
 func (c cmdNotifier) Notify(e Event) {
 	cmd := exec.Command("sh", "-c", c.command)
-	cmd.Env = append(os.Environ(), eventEnv(e)...)
+	// Drop any SPRINGFIELD_NOTIFY_* the parent already exports before appending
+	// this event's vars. Appending alone leaves duplicate keys in the child's
+	// environment, and getenv resolves the FIRST occurrence — so a batch fired
+	// from within another notify hook would let the parent's stale value shadow
+	// this event's. Stripping makes the exported set deterministic.
+	cmd.Env = append(envWithoutNotifyVars(os.Environ()), eventEnv(e)...)
 	if err := c.run(cmd); err != nil {
 		fmt.Fprintf(c.logw, "warning: notify command failed: %v\n", err)
 	}
+}
+
+// notifyEnvPrefix is the shared prefix of every event var the command hook
+// exports; envWithoutNotifyVars strips inherited entries carrying it.
+const notifyEnvPrefix = "SPRINGFIELD_NOTIFY_"
+
+// envWithoutNotifyVars returns env minus any SPRINGFIELD_NOTIFY_* entries, so
+// the caller can append a single authoritative copy of each event var.
+func envWithoutNotifyVars(env []string) []string {
+	out := env[:0:0]
+	for _, kv := range env {
+		if strings.HasPrefix(kv, notifyEnvPrefix) {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // eventEnv renders an Event as SPRINGFIELD_NOTIFY_* environment entries for the

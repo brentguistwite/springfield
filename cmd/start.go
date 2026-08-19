@@ -318,17 +318,19 @@ func NewStartCommand() *cobra.Command {
 				return fmt.Errorf("batch %s interrupted; rerun \"springfield start\" to resume", b.ID)
 			}
 
-			// Terminal state reached (not interrupted/resumable): fire the one
-			// operator notification for this batch. A notify failure must never
-			// fail the batch, so delivery errors are swallowed by the Notifier
-			// itself; the seam is invoked before any archive/persist so a late
-			// error on those paths can't suppress it. notifyBatchOutcome itself
-			// drops results whose batch never started executing (a pre-execution
-			// startup/load error carries Error but is not a batch outcome). The
-			// notifier is built from the operator's git-ignored [notify] config;
-			// an absent or disabled block yields notify.Nop (silent), so the seam
-			// is always invoked but off by default.
-			notifyBatchOutcome(buildNotifier(cmd, loaded.RootDir), b.ID, result)
+			// Terminal state reached (not interrupted/resumable): the one
+			// operator notification for this batch fires from the branches below,
+			// AFTER the archive/persist that finalizes each outcome — so a late
+			// write/finalize failure that flips a would-be "completed" or
+			// "cost-capped" into an error is what the operator actually hears,
+			// not the outcome the batch was heading toward. A notify failure is
+			// swallowed by the Notifier itself and never fails the batch; the
+			// seam drops results whose batch never started executing (a
+			// pre-execution startup/load error carries Error but is not a batch
+			// outcome). The notifier is built from the operator's git-ignored
+			// [notify] config; an absent or disabled block yields notify.Nop
+			// (silent), so the seam is always invoked but off by default.
+			n := buildNotifier(cmd, loaded.RootDir)
 
 			// Cost-capped: persist the CostCapped state, surface the spend +
 			// resume hint, and exit non-zero so CI / scripts can detect.
@@ -337,8 +339,12 @@ func NewStartCommand() *cobra.Command {
 				run.CostCapped = true
 				run.LastCheckpoint = time.Now().UTC()
 				if writeErr := batch.WriteRun(root, run); writeErr != nil {
+					// The pause couldn't be persisted, so resume won't work: this
+					// is a failure, not the cost-cap pause. Notify it as such.
+					notifyBatchFailed(n, b.ID, result.Started, writeErr.Error())
 					return fmt.Errorf("persist cost-cap state: %w", writeErr)
 				}
+				notifyBatchOutcome(n, b.ID, result)
 				autoBranchOutcome = autobranch.OutcomeInterrupted
 				fmt.Fprintf(w, "Status: cost-capped\n")
 				fmt.Fprintf(w, "Est. API cost: $%.2f (cap: $%.2f)\n", result.SpendUSD, costCap)
@@ -355,6 +361,10 @@ func NewStartCommand() *cobra.Command {
 
 			run.LastCheckpoint = time.Now().UTC()
 			if result.Error != "" {
+				// Failure / needs-human: the outcome is settled by result and no
+				// later persist can flip it (a persist error below only adds
+				// detail to an already-failed batch), so notify from here.
+				notifyBatchOutcome(n, b.ID, result)
 				if !result.RunStateCleared {
 					run.FatalError = result.Error
 					if writeErr := batch.WriteRun(root, run); writeErr != nil {
@@ -403,12 +413,18 @@ func NewStartCommand() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "warning: archive completed batch %q: %v\n", b.ID, archiveErr)
 				}
 				if clearErr := batch.ClearRun(root); clearErr != nil {
+					notifyBatchFailed(n, b.ID, result.Started, clearErr.Error())
 					return fmt.Errorf("clear run state after completion: %w", clearErr)
 				}
 			} else if finErr := batch.FinalizeBatch(root, b, project, archiveRollup, run.BatchMode, cmd.ErrOrStderr()); finErr != nil {
+				notifyBatchFailed(n, b.ID, result.Started, finErr.Error())
 				return fmt.Errorf("finalize completed batch %q: %w", b.ID, finErr)
 			}
 
+			// Batch is durably archived + the cursor cleared: only now is the
+			// "completed" outcome final, so fire the notification here — a
+			// finalize failure above already notified failure and returned.
+			notifyBatchOutcome(n, b.ID, result)
 			autoBranchOutcome = autobranch.OutcomeSuccess
 			fmt.Fprintf(w, "Status: completed\n")
 			if archiveRollup != nil && archiveRollup.Iterations > 0 {
@@ -597,6 +613,19 @@ func notifyBatchOutcome(n notify.Notifier, batchID string, result BatchRunResult
 	default:
 		n.Notify(notify.Event{Kind: notify.Complete, BatchID: batchID})
 	}
+}
+
+// notifyBatchFailed fires a Failed notification for a late-stage terminal
+// failure — an archive/persist/finalize error that struck AFTER a batch ran but
+// while it was being settled as completed or cost-capped. It exists so those
+// paths don't leave the operator with the "completed"/"cost-capped" event the
+// batch was heading toward when the finalizing write actually failed. Gated on
+// started so a pre-execution failure stays silent, mirroring notifyBatchOutcome.
+func notifyBatchFailed(n notify.Notifier, batchID string, started bool, detail string) {
+	if !started {
+		return
+	}
+	n.Notify(notify.Event{Kind: notify.Failed, BatchID: batchID, Detail: detail})
 }
 
 func runBatch(root string, run *batch.Run, b batch.Batch, progress io.Writer, logPath string, costCap float64, perPlan bool, batchBase string, maxParallel int) (BatchRunResult, error) {

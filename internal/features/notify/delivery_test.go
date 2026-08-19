@@ -133,6 +133,38 @@ func TestNotifyFailureLoggedAndSwallowed(t *testing.T) {
 	}
 }
 
+// TestCommandEnvOverridesInheritedNotifyVars proves the command hook's event
+// vars are deterministic even when the parent process already exports a
+// SPRINGFIELD_NOTIFY_* value: the child sees exactly one entry per key, holding
+// this event's value. Appending to os.Environ() alone would leave a duplicate
+// key whose FIRST (stale parent) occurrence getenv resolves — a real delivery
+// bug that envMap's last-wins folding would otherwise mask.
+func TestCommandEnvOverridesInheritedNotifyVars(t *testing.T) {
+	t.Setenv("SPRINGFIELD_NOTIFY_KIND", "stale-parent-value")
+
+	cap := &capture{}
+	var buf bytes.Buffer
+	n := newNotifier(true, "true", "linux", cap.run, &buf)
+
+	n.Notify(Event{Kind: Complete, BatchID: "b1"})
+
+	if len(cap.cmds) != 1 {
+		t.Fatalf("got %d command runs, want 1", len(cap.cmds))
+	}
+	var kinds []string
+	for _, kv := range cap.cmds[0].Env {
+		if strings.HasPrefix(kv, "SPRINGFIELD_NOTIFY_KIND=") {
+			kinds = append(kinds, strings.TrimPrefix(kv, "SPRINGFIELD_NOTIFY_KIND="))
+		}
+	}
+	if len(kinds) != 1 {
+		t.Fatalf("SPRINGFIELD_NOTIFY_KIND appears %d times %v, want exactly 1 (no inherited duplicate)", len(kinds), kinds)
+	}
+	if kinds[0] != "complete" {
+		t.Fatalf("SPRINGFIELD_NOTIFY_KIND = %q, want complete (event value, not inherited)", kinds[0])
+	}
+}
+
 func envMap(env []string) map[string]string {
 	m := make(map[string]string, len(env))
 	for _, kv := range env {

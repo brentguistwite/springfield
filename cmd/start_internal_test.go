@@ -75,6 +75,32 @@ func TestNotifyBatchOutcomeSkipsPreExecutionFailure(t *testing.T) {
 	}
 }
 
+// TestNotifyBatchFailedFiresFailedForLateFailure pins the late-flip guard: a
+// finalize/persist error striking after a batch ran (Started true) must reach
+// the operator as a Failed event carrying the error detail, so a completion or
+// cost-cap path that fails while settling doesn't leave the operator with the
+// "completed"/"cost-capped" it was heading toward. Started false stays silent,
+// mirroring notifyBatchOutcome's pre-execution guard.
+func TestNotifyBatchFailedFiresFailedForLateFailure(t *testing.T) {
+	fake := &fakeNotifier{}
+	notifyBatchFailed(fake, "batch-1", true, "finalize completed batch: disk full")
+	if len(fake.events) != 1 {
+		t.Fatalf("started late failure fired %d events, want 1: %+v", len(fake.events), fake.events)
+	}
+	if fake.events[0].Kind != notify.Failed {
+		t.Fatalf("late failure Kind = %v, want Failed", fake.events[0].Kind)
+	}
+	if fake.events[0].Detail != "finalize completed batch: disk full" {
+		t.Fatalf("late failure Detail = %q, want the error detail", fake.events[0].Detail)
+	}
+
+	silent := &fakeNotifier{}
+	notifyBatchFailed(silent, "batch-1", false, "pre-execution error")
+	if len(silent.events) != 0 {
+		t.Fatalf("pre-execution late failure fired %d events, want 0", len(silent.events))
+	}
+}
+
 // TestBatchPlanRunnerIsTerminal verifies the batchexec terminal contract at
 // the adapter boundary: only a FULLY INTEGRATED plan (merge succeeded +
 // cleanup succeeded) is terminal. In particular StatusCompleted alone is NOT
