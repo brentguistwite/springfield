@@ -25,6 +25,14 @@ reaches:
 | The batch halted on an unrecoverable plan failure | `failed` | `Batch <id> failed: <detail>` (the `: <detail>` suffix is omitted when there is no failure message) |
 | The batch paused when total spend reached the `--cost-cap` threshold (resumable, not failed) | `cost_capped` | `Batch <id> paused at cost cap ($<spend>)` |
 
+Pre-execution failures — a config that fails to load, an empty
+`agent_priority`, anything that stops the batch before the first plan
+dispatches — deliberately do **not** notify. Those errors print synchronously
+to the terminal the operator just launched from; a notification would
+duplicate what is already on screen and would misreport an interactive launch
+mistake as a batch failure. `failed` means a batch that *started* and then
+died.
+
 ## Configuration — the `[notify]` block
 
 Notify targets (a webhook URL, ntfy topic, or Slack hook baked into a command)
