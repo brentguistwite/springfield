@@ -88,3 +88,32 @@ func TestPlanSurfacesRequireExplicitFilePaths(t *testing.T) {
 		}
 	}
 }
+
+// TestNoSequentialBatchFraming pins spg-9: the shipped execution model is
+// phase-ordered — parallel phases run their plans concurrently in
+// per-plan-branches mode, and only consolidate mode is sequential (see
+// docs/prd-format.md phases table). The top-level docs once framed the whole
+// batch as "sequential", which drifted from the shipped batchexec parallel
+// path. Guard README.md and AGENTS.md so the stale one-liner can't creep back.
+//
+// CLAUDE.md is a symlink to AGENTS.md, so guarding AGENTS.md covers both.
+// Asserted across both surfaces so a partial rewrite is also caught — same
+// pattern as the tests above.
+func TestNoSequentialBatchFraming(t *testing.T) {
+	root := repoRoot(t)
+	surfaces := []string{
+		filepath.Join(root, "README.md"),
+		filepath.Join(root, "AGENTS.md"),
+	}
+
+	for _, path := range surfaces {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if strings.Contains(string(data), "sequential batch") {
+			t.Errorf("%s contains stale \"sequential batch\" framing; the shipped model is phase-ordered "+
+				"(parallel phases concurrent in per-plan-branches mode, only consolidate mode sequential)", path)
+		}
+	}
+}
