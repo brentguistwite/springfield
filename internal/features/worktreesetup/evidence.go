@@ -63,6 +63,45 @@ func WriteEvidence(evidenceDir string, req Request, res Result) (string, error) 
 	return dir, nil
 }
 
+// completionMarkerName is the sentinel file written under <evidenceDir>/setup/
+// once a setup run has EXITED ZERO. Its presence — not the mere existence of the
+// slice worktree — is the durable proof that setup finished, so a resume that
+// reuses a worktree whose setup crashed midway (worktree created, deps only
+// half-installed) re-runs setup instead of silently dispatching an agent into a
+// broken tree. A leading dot keeps it out of casual evidence listings.
+const completionMarkerName = ".completed"
+
+// MarkComplete records that setup finished successfully for the worktree whose
+// evidence lives under evidenceDir. Written only after an exit-zero run; the
+// caller pairs it with ClearComplete so a marker can never outlive the run that
+// earned it.
+func MarkComplete(evidenceDir string) error {
+	dir := filepath.Join(evidenceDir, "setup")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, completionMarkerName), nil, 0o644)
+}
+
+// IsComplete reports whether a successful setup was recorded for evidenceDir.
+// A missing marker (including a never-run setup) reports false.
+func IsComplete(evidenceDir string) bool {
+	_, err := os.Stat(filepath.Join(evidenceDir, "setup", completionMarkerName))
+	return err == nil
+}
+
+// ClearComplete removes any prior completion marker for evidenceDir. It is
+// called immediately BEFORE a setup run so a crash mid-run leaves no stale
+// "completed" record for the next reuse to trust. A missing marker is not an
+// error.
+func ClearComplete(evidenceDir string) error {
+	err := os.Remove(filepath.Join(evidenceDir, "setup", completionMarkerName))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
 // tailTruncate keeps the last streamTailLimitBytes of s, prefixing a notice
 // when the front was dropped so a reader knows the transcript is elided.
 func tailTruncate(s string) []byte {

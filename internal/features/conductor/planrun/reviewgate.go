@@ -55,6 +55,12 @@ type reviewGateInput struct {
 	ReviewConfig      config.ReviewConfig
 	WorktreeRoot      string
 	BaseRef           string
+	// PortEnv is the slice's port block (SPRINGFIELD_PORT/SPRINGFIELD_PORT_RANGE)
+	// injected into each fix-iteration agent dispatch, so a server or test suite
+	// a review-fix agent starts binds the same ports the main story loop, setup
+	// command, and verify gate saw. The reviewer itself is read-only, so it does
+	// not receive the block. Nil leaves the fix-agent environment untouched.
+	PortEnv map[string]string
 	PRD               prd.PRD
 	ContextMD         string
 	ProjectGuidance   string
@@ -217,6 +223,7 @@ func runReviewGate(in reviewGateInput) reviewGateResult {
 			AgentIDs:          in.ImplementerAgents,
 			Prompt:            fixPrompt,
 			WorkDir:           in.WorktreeRoot,
+			Env:               in.PortEnv,
 			OnEvent:           in.OnEvent,
 			ExecutionSettings: in.ExecutionSettings,
 		})

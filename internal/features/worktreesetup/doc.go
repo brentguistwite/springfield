@@ -17,4 +17,10 @@
 // (command, cwd, exit_code, duration, timed_out) plus tail-truncated stdout.txt
 // and stderr.txt. It takes the whole Result so the exit code is recorded from
 // source and cannot be dropped.
+//
+// MarkComplete/IsComplete/ClearComplete manage a completion marker under the
+// same directory — the durable proof that a setup run EXITED ZERO. The runner
+// gates a reuse resume on this marker (not on mere worktree existence) so a
+// worktree whose setup crashed midway re-runs setup instead of dispatching an
+// agent into a half-built tree.
 package worktreesetup

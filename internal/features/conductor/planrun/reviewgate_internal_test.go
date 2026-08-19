@@ -177,6 +177,35 @@ func TestReviewGateCancelledContextErrorsBeforeReviewerCall(t *testing.T) {
 	}
 }
 
+// TestReviewGateFixIterationReceivesPortBlock pins the port-scope guarantee for
+// the review fix-loop: the slice's SPRINGFIELD_PORT block must reach the
+// fix-iteration agent dispatch (which may start a server or test suite), while
+// the read-only reviewer call does NOT get it. Without threading PortEnv the fix
+// agent binds default ports and can collide with a concurrently running slice.
+func TestReviewGateFixIterationReceivesPortBlock(t *testing.T) {
+	r := &seqRunner{results: []coreruntime.Result{
+		{Agent: agents.AgentClaude, Events: []coreexec.Event{stdout("<review-verdict>revise</review-verdict>")}}, // review 1
+		{Agent: agents.AgentClaude, Events: []coreexec.Event{stdout("<promise>COMPLETE</promise>")}},             // fix 1
+		{Agent: agents.AgentClaude, Events: []coreexec.Event{stdout("<review-verdict>pass</review-verdict>")}},   // review 2
+	}}
+	in := gateInput(r, 3)
+	in.PortEnv = map[string]string{"SPRINGFIELD_PORT": "42030", "SPRINGFIELD_PORT_RANGE": "42030-42039"}
+	got := runReviewGate(in)
+	if got.Outcome != reviewPassed {
+		t.Fatalf("outcome = %v, want reviewPassed", got.Outcome)
+	}
+	if len(r.reqs) != 3 {
+		t.Fatalf("expected review→fix→review = 3 requests, got %d", len(r.reqs))
+	}
+	// reqs[0] is the reviewer (read-only, no port block); reqs[1] is the fix agent.
+	if r.reqs[0].Env["SPRINGFIELD_PORT"] != "" {
+		t.Errorf("reviewer must not receive the port block, got %v", r.reqs[0].Env)
+	}
+	if r.reqs[1].Env["SPRINGFIELD_PORT"] != "42030" {
+		t.Errorf("fix-iteration SPRINGFIELD_PORT = %q, want 42030 (env=%v)", r.reqs[1].Env["SPRINGFIELD_PORT"], r.reqs[1].Env)
+	}
+}
+
 // TestReviewGateAgentFallbackHonorsReviewConfigAgent verifies the optional
 // cross-agent reviewer override: when ReviewConfig.Agent is set, the reviewer
 // call uses that ID instead of the implementer agents. (The implementer

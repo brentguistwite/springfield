@@ -10,6 +10,37 @@ import (
 	"springfield/internal/features/worktreesetup"
 )
 
+// TestCompletionMarkerRoundTrip proves the marker helpers form a coherent
+// record: absent by default, present after MarkComplete, and cleared by
+// ClearComplete (which is a no-op when the marker was never written). This is
+// the durable "setup already succeeded" signal the runner gates a reuse resume
+// on, distinct from the mere existence of the worktree.
+func TestCompletionMarkerRoundTrip(t *testing.T) {
+	evidenceDir := t.TempDir()
+
+	if worktreesetup.IsComplete(evidenceDir) {
+		t.Fatalf("marker reported complete before any MarkComplete")
+	}
+	// ClearComplete on a never-written marker must not error.
+	if err := worktreesetup.ClearComplete(evidenceDir); err != nil {
+		t.Fatalf("ClearComplete on missing marker: %v", err)
+	}
+
+	if err := worktreesetup.MarkComplete(evidenceDir); err != nil {
+		t.Fatalf("MarkComplete: %v", err)
+	}
+	if !worktreesetup.IsComplete(evidenceDir) {
+		t.Fatalf("marker not reported complete after MarkComplete")
+	}
+
+	if err := worktreesetup.ClearComplete(evidenceDir); err != nil {
+		t.Fatalf("ClearComplete: %v", err)
+	}
+	if worktreesetup.IsComplete(evidenceDir) {
+		t.Fatalf("marker still reported complete after ClearComplete")
+	}
+}
+
 // TestWriteEvidence_PersistsMetaAndStreams proves setup output is captured under
 // <evidenceDir>/setup/: setup.json plus stdout.txt and stderr.txt.
 func TestWriteEvidence_PersistsMetaAndStreams(t *testing.T) {

@@ -116,8 +116,10 @@ type SinglePlanInput struct {
 	// Zero value (Enabled=false) skips worktree setup, preserving the prior
 	// create-and-dispatch behavior. When it runs, setup executes in the freshly
 	// created slice worktree AFTER checkout and BEFORE any agent dispatch; a
-	// non-zero exit fails the slice before the first agent runs. Setup is
-	// skipped on a worktree-reuse resume (it already ran on first creation).
+	// non-zero exit fails the slice before the first agent runs. On a reuse
+	// resume setup is skipped ONLY when a prior run recorded the completion
+	// marker (exited zero); a reuse whose setup never finished (crash between
+	// worktree creation and setup completing) re-runs it.
 	SetupConfig config.SetupConfig
 	// SetupCommand is the command boundary the setup step dispatches. Nil
 	// defaults to worktreesetup.Run (spawns the real `sh -c` command with the
@@ -483,6 +485,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			ReviewConfig:      in.ReviewConfig,
 			WorktreeRoot:      ctx.WorktreeRoot,
 			BaseRef:           ctx.BaseRef,
+			PortEnv:           portEnv,
 			PRD:               currentPRD,
 			ContextMD:         string(contextMDBytes),
 			ProjectGuidance:   projectGuidance,
@@ -1293,13 +1296,29 @@ func loadProjectGuidance(controlRoot string) string {
 // skipped or succeeded) or a non-nil *SinglePlanResult that the caller must
 // return immediately — the slice is failed before any agent runs.
 //
-// Skipped when the worktree was reused (setup already ran on first creation) or
-// the [setup] block is unconfigured. Setup output is always captured under the
-// slice's evidence directory, even on the success path, so an operator can
-// inspect what the command did.
+// Skipped when the [setup] block is unconfigured, or when the worktree is being
+// reused AND a prior setup run already exited zero for it (proven by the
+// completion marker under the slice's evidence dir — NOT by worktree reuse
+// alone, which would skip setup on a resume that crashed after the worktree was
+// created but before setup finished, dispatching an agent into a half-built
+// tree). A fresh (non-reuse) worktree always re-runs setup. Setup output is
+// always captured under the slice's evidence directory, even on the success
+// path, so an operator can inspect what the command did.
 func runWorktreeSetup(in SinglePlanInput, planID string, ctx Context, decision PrepareDecision, portEnv map[string]string, now func() time.Time) *SinglePlanResult {
-	if decision.Reuse || !in.SetupConfig.ShouldRun() {
+	if !in.SetupConfig.ShouldRun() {
 		return nil
+	}
+
+	evidenceDir := EvidenceRoot(in.ControlRoot, ctx.PlanKey)
+	if decision.Reuse && worktreesetup.IsComplete(evidenceDir) {
+		progress(in.Progress, "plan %s: worktree setup already completed; skipping\n", planID)
+		return nil
+	}
+	// Clear any stale completion marker BEFORE running so that if this run
+	// crashes midway, the next reuse sees no marker and re-runs setup rather than
+	// trusting a "completed" record the crashed run never actually earned.
+	if err := worktreesetup.ClearComplete(evidenceDir); err != nil {
+		progress(in.Progress, "plan %s: WARN: clear setup marker: %v\n", planID, err)
 	}
 
 	req := worktreesetup.Request{
@@ -1318,7 +1337,6 @@ func runWorktreeSetup(in SinglePlanInput, planID string, ctx Context, decision P
 
 	// Capture setup evidence best-effort under the plan's evidence dir. A write
 	// failure must not mask a setup that otherwise succeeded, so it only warns.
-	evidenceDir := EvidenceRoot(in.ControlRoot, ctx.PlanKey)
 	if _, werr := worktreesetup.WriteEvidence(evidenceDir, req, res); werr != nil {
 		progress(in.Progress, "plan %s: WARN: write setup evidence: %v\n", planID, werr)
 	}
@@ -1338,6 +1356,11 @@ func runWorktreeSetup(in SinglePlanInput, planID string, ctx Context, decision P
 		recordPreflightFailure(in.Project, planID, "setup-failed", msg, now())
 		_ = in.Project.SaveState()
 		return &SinglePlanResult{PlanID: planID, Reason: "setup-failed", Context: ctx, Status: conductor.StatusFailed, Err: fmt.Errorf("%s", msg)}
+	}
+	// Setup exited zero: record the durable completion marker so a later reuse
+	// resume can safely skip re-running it.
+	if err := worktreesetup.MarkComplete(evidenceDir); err != nil {
+		progress(in.Progress, "plan %s: WARN: write setup marker: %v\n", planID, err)
 	}
 	return nil
 }

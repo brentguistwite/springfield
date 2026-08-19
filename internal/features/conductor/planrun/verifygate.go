@@ -54,8 +54,9 @@ type verifyGateInput struct {
 	Timeout           time.Duration
 	MaxIterations     int
 	// PortEnv is the slice's port block (SPRINGFIELD_PORT/SPRINGFIELD_PORT_RANGE)
-	// injected into the verify command's environment, so the verify suite binds
-	// the same ports the agent and setup command saw. Nil leaves the command
+	// injected into BOTH the verify command's environment AND each fix-iteration
+	// agent dispatch, so the verify suite and any server a fix agent starts bind
+	// the same ports the main story loop and setup command saw. Nil leaves the
 	// environment untouched.
 	PortEnv         map[string]string
 	WorktreeRoot    string
@@ -202,6 +203,7 @@ func runVerifyGate(in verifyGateInput) verifyGateResult {
 			AgentIDs:          in.ImplementerAgents,
 			Prompt:            fixPrompt,
 			WorkDir:           in.WorktreeRoot,
+			Env:               in.PortEnv,
 			OnEvent:           in.OnEvent,
 			ExecutionSettings: in.ExecutionSettings,
 		})

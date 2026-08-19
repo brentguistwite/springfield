@@ -74,6 +74,12 @@ func TestSetupFailureBlocksAgentDispatch(t *testing.T) {
 	if st == nil || st.Status != conductor.StatusFailed || st.ExitReason != "setup-failed" {
 		t.Fatalf("state = %+v, want failed/setup-failed", st)
 	}
+
+	// A failed setup must NOT leave a completion marker — otherwise a reuse
+	// resume would skip setup and dispatch an agent into the half-built tree.
+	if worktreesetup.IsComplete(planrun.EvidenceRoot(root, res.Context.PlanKey)) {
+		t.Fatalf("failed setup wrote a completion marker; reuse resume would wrongly skip setup")
+	}
 }
 
 // TestSetupAbsentKeepsBehaviorIdentical proves the opt-in guarantee: with no
@@ -173,5 +179,11 @@ func TestSetupRunsBeforeDispatchWithEnvAndEvidence(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(evDir, "stderr.txt")); err != nil {
 		t.Errorf("stderr.txt missing: %v", err)
+	}
+
+	// A successful setup records the durable completion marker so a later reuse
+	// resume can safely skip re-running it.
+	if !worktreesetup.IsComplete(planrun.EvidenceRoot(root, res.Context.PlanKey)) {
+		t.Errorf("successful setup did not write the completion marker")
 	}
 }
