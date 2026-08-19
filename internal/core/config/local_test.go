@@ -67,6 +67,36 @@ max_review_iterations = 2
 	}
 }
 
+func TestLoadLocalFromParsesNotifyBlock(t *testing.T) {
+	dir := t.TempDir()
+	body := `
+[notify]
+enabled = true
+command = "ntfy publish mytopic"
+`
+	if err := os.WriteFile(filepath.Join(dir, LocalFileName), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lc, err := LoadLocalFrom(dir)
+	if err != nil {
+		t.Fatalf("LoadLocalFrom: %v", err)
+	}
+	if !lc.Notify.Enabled || lc.Notify.Command != "ntfy publish mytopic" {
+		t.Fatalf("parsed notify block mismatch: %+v", lc.Notify)
+	}
+}
+
+func TestLoadLocalFromMissingFileLeavesNotifyDisabled(t *testing.T) {
+	dir := t.TempDir() // no springfield.local.toml present
+	lc, err := LoadLocalFrom(dir)
+	if err != nil {
+		t.Fatalf("LoadLocalFrom on missing file: unexpected error %v", err)
+	}
+	if lc.Notify.Enabled {
+		t.Fatalf("missing file should leave notify disabled, got Enabled=true")
+	}
+}
+
 func TestLoadLocalFromMalformedReturnsInvalidConfigError(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, LocalFileName), []byte("[review\nenabled = true"), 0o644); err != nil {

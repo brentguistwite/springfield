@@ -24,6 +24,35 @@ type fakeNotifier struct {
 
 func (f *fakeNotifier) Notify(e notify.Event) { f.events = append(f.events, e) }
 
+// TestNotifyFailureLeavesBatchOutcomeUnchanged proves a failing notify command
+// cannot alter a settled batch: the real command-hook Notifier is wired to a
+// command that exits non-zero, and firing every terminal state through the seam
+// neither panics nor mutates the BatchRunResult the caller reports. The failure
+// is logged, not propagated.
+func TestNotifyFailureLeavesBatchOutcomeUnchanged(t *testing.T) {
+	var logw bytes.Buffer
+	// enabled + a command that always fails; goos is irrelevant when a command
+	// is set (the command hook wins over the osascript built-in).
+	n := notify.New(true, "exit 1", "linux", &logw)
+
+	results := []BatchRunResult{
+		{},
+		{Error: "boom"},
+		{CostCapped: true, SpendUSD: 12.5},
+		{NeedsHuman: true, Error: "plan paused"},
+	}
+	for _, r := range results {
+		before := r
+		notifyBatchOutcome(n, "batch-1", r) // must not panic
+		if r != before {
+			t.Fatalf("notify failure mutated BatchRunResult: got %+v, want %+v", r, before)
+		}
+	}
+	if logw.Len() == 0 {
+		t.Fatal("expected notify command failure to be logged")
+	}
+}
+
 // TestBatchPlanRunnerIsTerminal verifies the batchexec terminal contract at
 // the adapter boundary: only a FULLY INTEGRATED plan (merge succeeded +
 // cleanup succeeded) is terminal. In particular StatusCompleted alone is NOT

@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -321,9 +322,11 @@ func NewStartCommand() *cobra.Command {
 			// operator notification for this batch. A notify failure must never
 			// fail the batch, so delivery errors are swallowed by the Notifier
 			// itself; the seam is invoked before any archive/persist so a late
-			// error on those paths can't suppress it. notify.Nop is the opt-in
-			// default until delivery is configured.
-			notifyBatchOutcome(notify.Nop{}, b.ID, result)
+			// error on those paths can't suppress it. The notifier is built
+			// from the operator's git-ignored [notify] config; an absent or
+			// disabled block yields notify.Nop (silent), so the seam is always
+			// invoked but off by default.
+			notifyBatchOutcome(buildNotifier(cmd, loaded.RootDir), b.ID, result)
 
 			// Cost-capped: persist the CostCapped state, surface the spend +
 			// resume hint, and exit non-zero so CI / scripts can detect.
@@ -542,6 +545,21 @@ type BatchRunResult struct {
 	// needs-human event instead of a failure; the halt itself still surfaces
 	// through Error, so the failure-reporting path is unchanged.
 	NeedsHuman bool
+}
+
+// buildNotifier resolves the operator's Notifier from the git-ignored [notify]
+// block in springfield.local.toml. A missing/disabled block yields notify.Nop
+// (silent, the opt-in default). A malformed local file would already have
+// aborted the batch during load, but should one slip through here it falls back
+// to Nop with a warning rather than failing the settled batch — notification
+// wiring must never change a batch outcome. Delivery warnings go to stderr.
+func buildNotifier(cmd *cobra.Command, rootDir string) notify.Notifier {
+	local, err := config.LoadLocalFrom(rootDir)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: notifications disabled, load springfield.local.toml: %v\n", err)
+		return notify.Nop{}
+	}
+	return notify.New(local.Notify.Enabled, local.Notify.Command, runtime.GOOS, cmd.ErrOrStderr())
 }
 
 // notifyBatchOutcome fires exactly one terminal-state notification for a
