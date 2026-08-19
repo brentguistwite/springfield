@@ -1,10 +1,13 @@
 package worktreesetup
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -69,25 +72,46 @@ func WriteEvidence(evidenceDir string, req Request, res Result) (string, error) 
 // reuses a worktree whose setup crashed midway (worktree created, deps only
 // half-installed) re-runs setup instead of silently dispatching an agent into a
 // broken tree. A leading dot keeps it out of casual evidence listings.
+//
+// The marker's CONTENT is the digest of the command that earned it, so a resume
+// whose [setup] command changed between runs does not trust a marker written by
+// the old command — see IsComplete. This is the surgical alternative to folding
+// the setup command into the worktree-reuse InputDigest: a changed command must
+// re-run setup, but must NOT nuke and recreate the reused worktree (which would
+// discard the agent's committed progress).
 const completionMarkerName = ".completed"
 
+// commandDigest is the stable key stored in (and compared against) the
+// completion marker. Trimmed so whitespace-only edits don't force a re-run, and
+// prefixed "sha256:" so a future digest-format change is detectable.
+func commandDigest(command string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(command)))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
 // MarkComplete records that setup finished successfully for the worktree whose
-// evidence lives under evidenceDir. Written only after an exit-zero run; the
-// caller pairs it with ClearComplete so a marker can never outlive the run that
-// earned it.
-func MarkComplete(evidenceDir string) error {
+// evidence lives under evidenceDir, stamping the marker with the digest of the
+// command that succeeded. Written only after an exit-zero run; the caller pairs
+// it with ClearComplete so a marker can never outlive the run that earned it.
+func MarkComplete(evidenceDir, command string) error {
 	dir := filepath.Join(evidenceDir, "setup")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, completionMarkerName), nil, 0o644)
+	return os.WriteFile(filepath.Join(dir, completionMarkerName), []byte(commandDigest(command)), 0o644)
 }
 
-// IsComplete reports whether a successful setup was recorded for evidenceDir.
-// A missing marker (including a never-run setup) reports false.
-func IsComplete(evidenceDir string) bool {
-	_, err := os.Stat(filepath.Join(evidenceDir, "setup", completionMarkerName))
-	return err == nil
+// IsComplete reports whether a successful setup for THIS command was recorded
+// for evidenceDir. A missing marker (including a never-run setup) reports false,
+// and so does a marker whose stored digest does not match command — a changed
+// [setup] block on a reuse resume must re-run rather than trust the prior
+// command's success.
+func IsComplete(evidenceDir, command string) bool {
+	data, err := os.ReadFile(filepath.Join(evidenceDir, "setup", completionMarkerName))
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(data)) == commandDigest(command)
 }
 
 // ClearComplete removes any prior completion marker for evidenceDir. It is

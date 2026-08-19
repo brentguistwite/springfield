@@ -1310,7 +1310,11 @@ func runWorktreeSetup(in SinglePlanInput, planID string, ctx Context, decision P
 	}
 
 	evidenceDir := EvidenceRoot(in.ControlRoot, ctx.PlanKey)
-	if decision.Reuse && worktreesetup.IsComplete(evidenceDir) {
+	// Skip only when the reused worktree's prior setup succeeded for the SAME
+	// command. The marker is keyed on the command digest, so a changed [setup]
+	// block invalidates it and re-runs setup on the reused worktree (the
+	// worktree itself is kept — the command changing is not worktree drift).
+	if decision.Reuse && worktreesetup.IsComplete(evidenceDir, in.SetupConfig.Command) {
 		progress(in.Progress, "plan %s: worktree setup already completed; skipping\n", planID)
 		return nil
 	}
@@ -1359,7 +1363,7 @@ func runWorktreeSetup(in SinglePlanInput, planID string, ctx Context, decision P
 	}
 	// Setup exited zero: record the durable completion marker so a later reuse
 	// resume can safely skip re-running it.
-	if err := worktreesetup.MarkComplete(evidenceDir); err != nil {
+	if err := worktreesetup.MarkComplete(evidenceDir, req.Command); err != nil {
 		progress(in.Progress, "plan %s: WARN: write setup marker: %v\n", planID, err)
 	}
 	return nil

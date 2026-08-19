@@ -17,8 +17,9 @@ import (
 // on, distinct from the mere existence of the worktree.
 func TestCompletionMarkerRoundTrip(t *testing.T) {
 	evidenceDir := t.TempDir()
+	const cmd = "npm install"
 
-	if worktreesetup.IsComplete(evidenceDir) {
+	if worktreesetup.IsComplete(evidenceDir, cmd) {
 		t.Fatalf("marker reported complete before any MarkComplete")
 	}
 	// ClearComplete on a never-written marker must not error.
@@ -26,18 +27,44 @@ func TestCompletionMarkerRoundTrip(t *testing.T) {
 		t.Fatalf("ClearComplete on missing marker: %v", err)
 	}
 
-	if err := worktreesetup.MarkComplete(evidenceDir); err != nil {
+	if err := worktreesetup.MarkComplete(evidenceDir, cmd); err != nil {
 		t.Fatalf("MarkComplete: %v", err)
 	}
-	if !worktreesetup.IsComplete(evidenceDir) {
+	if !worktreesetup.IsComplete(evidenceDir, cmd) {
 		t.Fatalf("marker not reported complete after MarkComplete")
 	}
 
 	if err := worktreesetup.ClearComplete(evidenceDir); err != nil {
 		t.Fatalf("ClearComplete: %v", err)
 	}
-	if worktreesetup.IsComplete(evidenceDir) {
+	if worktreesetup.IsComplete(evidenceDir, cmd) {
 		t.Fatalf("marker still reported complete after ClearComplete")
+	}
+}
+
+// TestCompletionMarkerIsCommandKeyed proves the marker only reports complete for
+// the command that earned it: a changed [setup] command on a reuse resume must
+// NOT trust the prior command's success marker, so IsComplete reports false and
+// the runner re-runs setup. Whitespace-only edits stay a match (the digest
+// trims). This is the regression guard for a changed [setup] block being
+// silently skipped on resume.
+func TestCompletionMarkerIsCommandKeyed(t *testing.T) {
+	evidenceDir := t.TempDir()
+
+	if err := worktreesetup.MarkComplete(evidenceDir, "npm install"); err != nil {
+		t.Fatalf("MarkComplete: %v", err)
+	}
+
+	if !worktreesetup.IsComplete(evidenceDir, "npm install") {
+		t.Fatalf("same command not reported complete")
+	}
+	// Cosmetic whitespace does not force a re-run (digest trims).
+	if !worktreesetup.IsComplete(evidenceDir, "  npm install  ") {
+		t.Fatalf("whitespace-only command edit spuriously invalidated marker")
+	}
+	// A materially different command invalidates the marker → setup re-runs.
+	if worktreesetup.IsComplete(evidenceDir, "npm ci") {
+		t.Fatalf("changed command trusted the prior command's completion marker")
 	}
 }
 

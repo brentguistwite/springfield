@@ -19,8 +19,9 @@
 // source and cannot be dropped.
 //
 // MarkComplete/IsComplete/ClearComplete manage a completion marker under the
-// same directory — the durable proof that a setup run EXITED ZERO. The runner
-// gates a reuse resume on this marker (not on mere worktree existence) so a
-// worktree whose setup crashed midway re-runs setup instead of dispatching an
-// agent into a half-built tree.
+// same directory — the durable proof that a setup run EXITED ZERO. The marker is
+// keyed on the command that earned it, so the runner gates a reuse resume on
+// both worktree existence AND command identity: a worktree whose setup crashed
+// midway, OR whose [setup] command changed since it last succeeded, re-runs
+// setup instead of dispatching an agent into a half-built (or stale) tree.
 package worktreesetup

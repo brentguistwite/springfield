@@ -77,7 +77,7 @@ func TestSetupFailureBlocksAgentDispatch(t *testing.T) {
 
 	// A failed setup must NOT leave a completion marker — otherwise a reuse
 	// resume would skip setup and dispatch an agent into the half-built tree.
-	if worktreesetup.IsComplete(planrun.EvidenceRoot(root, res.Context.PlanKey)) {
+	if worktreesetup.IsComplete(planrun.EvidenceRoot(root, res.Context.PlanKey), "make setup") {
 		t.Fatalf("failed setup wrote a completion marker; reuse resume would wrongly skip setup")
 	}
 }
@@ -183,7 +183,7 @@ func TestSetupRunsBeforeDispatchWithEnvAndEvidence(t *testing.T) {
 
 	// A successful setup records the durable completion marker so a later reuse
 	// resume can safely skip re-running it.
-	if !worktreesetup.IsComplete(planrun.EvidenceRoot(root, res.Context.PlanKey)) {
+	if !worktreesetup.IsComplete(planrun.EvidenceRoot(root, res.Context.PlanKey), `echo "$SPRINGFIELD_SOURCE_ROOT|$SPRINGFIELD_WORKTREE" > setup-ran.txt; echo done 1>&2`) {
 		t.Errorf("successful setup did not write the completion marker")
 	}
 }
