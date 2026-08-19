@@ -13,7 +13,16 @@ import (
 	"springfield/internal/features/batch"
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/conductor/batchexec"
+	"springfield/internal/features/notify"
 )
+
+// fakeNotifier records every Event it receives without touching the OS, so
+// tests can assert the batch seam fires the right terminal-state event.
+type fakeNotifier struct {
+	events []notify.Event
+}
+
+func (f *fakeNotifier) Notify(e notify.Event) { f.events = append(f.events, e) }
 
 // TestBatchPlanRunnerIsTerminal verifies the batchexec terminal contract at
 // the adapter boundary: only a FULLY INTEGRATED plan (merge succeeded +
@@ -493,5 +502,77 @@ func TestResolveMaxParallelFlagPrecedence(t *testing.T) {
 	// same semantics the config resolver gives max_parallel <= 1.
 	if got := resolveMaxParallel(-1, 3); got != 1 {
 		t.Errorf("flag -1: got %d, want 1 (clamped to sequential)", got)
+	}
+}
+
+// TestNotifyBatchOutcomeFiresRightEventPerTerminalState pins the notifier seam:
+// each batch terminal state (needs-human, complete, failed, cost-capped) fires
+// exactly one Event of the matching Kind, via a fake Notifier that makes no OS
+// call. Priority ties (a pause riding alongside a halt Error) resolve to the
+// pause, matching the RunE report order.
+func TestNotifyBatchOutcomeFiresRightEventPerTerminalState(t *testing.T) {
+	cases := []struct {
+		name     string
+		result   BatchRunResult
+		wantKind notify.Kind
+		assert   func(t *testing.T, e notify.Event)
+	}{
+		{
+			name:     "complete",
+			result:   BatchRunResult{},
+			wantKind: notify.Complete,
+		},
+		{
+			name:     "failed",
+			result:   BatchRunResult{Error: "boom"},
+			wantKind: notify.Failed,
+			assert: func(t *testing.T, e notify.Event) {
+				if e.Detail != "boom" {
+					t.Errorf("failed event Detail = %q, want %q", e.Detail, "boom")
+				}
+			},
+		},
+		{
+			name:     "cost-capped",
+			result:   BatchRunResult{CostCapped: true, SpendUSD: 12.5},
+			wantKind: notify.CostCapped,
+			assert: func(t *testing.T, e notify.Event) {
+				if e.SpendUSD != 12.5 {
+					t.Errorf("cost-capped event SpendUSD = %v, want 12.5", e.SpendUSD)
+				}
+			},
+		},
+		{
+			name: "needs-human outranks the halt error it rides alongside",
+			// A needs-human pause halts the batch, so Error is also set; the
+			// seam must still surface needs-human, not failure.
+			result:   BatchRunResult{NeedsHuman: true, Error: "plan paused"},
+			wantKind: notify.NeedsHuman,
+		},
+		{
+			name: "cost-cap outranks a coexisting failure",
+			// A cost-cap pause draining a failed sibling: pause wins (resumable).
+			result:   BatchRunResult{CostCapped: true, Error: "sibling failed"},
+			wantKind: notify.CostCapped,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeNotifier{}
+			notifyBatchOutcome(fake, "batch-1", tc.result)
+			if len(fake.events) != 1 {
+				t.Fatalf("got %d events, want exactly 1: %+v", len(fake.events), fake.events)
+			}
+			e := fake.events[0]
+			if e.Kind != tc.wantKind {
+				t.Fatalf("Kind = %d, want %d", e.Kind, tc.wantKind)
+			}
+			if e.BatchID != "batch-1" {
+				t.Errorf("BatchID = %q, want %q", e.BatchID, "batch-1")
+			}
+			if tc.assert != nil {
+				tc.assert(t, e)
+			}
+		})
 	}
 }

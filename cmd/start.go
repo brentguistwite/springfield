@@ -37,6 +37,7 @@ import (
 	"springfield/internal/features/conductor/planmerge"
 	"springfield/internal/features/conductor/planrun"
 	"springfield/internal/features/cost"
+	"springfield/internal/features/notify"
 	"springfield/internal/features/wakelock"
 )
 
@@ -316,6 +317,14 @@ func NewStartCommand() *cobra.Command {
 				return fmt.Errorf("batch %s interrupted; rerun \"springfield start\" to resume", b.ID)
 			}
 
+			// Terminal state reached (not interrupted/resumable): fire the one
+			// operator notification for this batch. A notify failure must never
+			// fail the batch, so delivery errors are swallowed by the Notifier
+			// itself; the seam is invoked before any archive/persist so a late
+			// error on those paths can't suppress it. notify.Nop is the opt-in
+			// default until delivery is configured.
+			notifyBatchOutcome(notify.Nop{}, b.ID, result)
+
 			// Cost-capped: persist the CostCapped state, surface the spend +
 			// resume hint, and exit non-zero so CI / scripts can detect.
 			// Do NOT archive — the batch is paused, not done.
@@ -528,6 +537,31 @@ type BatchRunResult struct {
 	// SpendUSD reports the rollup total at the moment the cap fired. Zero
 	// when CostCapped is false.
 	SpendUSD float64
+	// NeedsHuman is true when the batch halted because a plan paused for human
+	// review (and no unrecoverable failure eclipsed it). The caller notifies a
+	// needs-human event instead of a failure; the halt itself still surfaces
+	// through Error, so the failure-reporting path is unchanged.
+	NeedsHuman bool
+}
+
+// notifyBatchOutcome fires exactly one terminal-state notification for a
+// settled batch. It is the single seam the batch terminal-state handling calls
+// once the batch has stopped (never on the interrupt/resume path, which is not
+// terminal). Priority mirrors the RunE report order — a cost-cap pause and a
+// needs-human pause outrank the halt Error they ride alongside — so the
+// operator hears the actionable reason, not a generic failure. n is required
+// (never nil): callers pass notify.Nop when notifications are unconfigured.
+func notifyBatchOutcome(n notify.Notifier, batchID string, result BatchRunResult) {
+	switch {
+	case result.CostCapped:
+		n.Notify(notify.Event{Kind: notify.CostCapped, BatchID: batchID, SpendUSD: result.SpendUSD})
+	case result.NeedsHuman:
+		n.Notify(notify.Event{Kind: notify.NeedsHuman, BatchID: batchID})
+	case result.Error != "":
+		n.Notify(notify.Event{Kind: notify.Failed, BatchID: batchID, Detail: result.Error})
+	default:
+		n.Notify(notify.Event{Kind: notify.Complete, BatchID: batchID})
+	}
 }
 
 func runBatch(root string, run *batch.Run, b batch.Batch, progress io.Writer, logPath string, costCap float64, perPlan bool, batchBase string, maxParallel int) (BatchRunResult, error) {
@@ -658,7 +692,7 @@ func runBatchWithContext(ctx context.Context, root string, run *batch.Run, b bat
 		// A cost-cap pause can coexist with a plan failure (cap fired, then a
 		// draining sibling failed). Carry the cap signal through so the caller
 		// persists the pause state and surfaces the spend alongside the error.
-		return BatchRunResult{Error: execErr.Error(), CostCapped: execRes.CostCapped, SpendUSD: execRes.SpendUSD}, execErr
+		return BatchRunResult{Error: execErr.Error(), CostCapped: execRes.CostCapped, SpendUSD: execRes.SpendUSD, NeedsHuman: execRes.NeedsHuman}, execErr
 	case execRes.CostCapped:
 		return BatchRunResult{CostCapped: true, SpendUSD: execRes.SpendUSD}, nil
 	}
@@ -837,13 +871,16 @@ func (r *batchPlanRunner) RunPlan(ctx context.Context, planID string, info batch
 	}
 	if res.Err != nil {
 		fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
-		if res.Status == conductor.StatusNeedsHuman {
+		needsHuman := res.Status == conductor.StatusNeedsHuman
+		if needsHuman {
 			fmt.Fprintf(progress, "Status: needs human review (%s)\n", res.Reason)
 		} else {
 			fmt.Fprintf(progress, "Status: failed (%s)\n", res.Reason)
 		}
 		fmt.Fprintf(progress, "Error: %s\n", res.Err.Error())
-		return batchexec.Outcome{Err: res.Err}
+		// NeedsHuman rides alongside Err so the batch-level notifier surfaces a
+		// needs-human pause rather than a failure (batchexec still halts).
+		return batchexec.Outcome{Err: res.Err, NeedsHuman: needsHuman}
 	}
 	fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
 	fmt.Fprintf(progress, "Status: completed\n")

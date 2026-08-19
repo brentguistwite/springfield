@@ -88,6 +88,45 @@ func TestExecuteHaltsOnPlanFailure(t *testing.T) {
 	}
 }
 
+func TestExecuteReportsNeedsHumanAlongsideHaltError(t *testing.T) {
+	r := newFakeRunner()
+	wantErr := errors.New("plan paused for review")
+	r.outcomes["p2"] = batchexec.Outcome{Err: wantErr, NeedsHuman: true}
+	res, err := batchexec.Execute(context.Background(), batchexec.Input{Batch: twoPhaseBatch(), Runner: r})
+	// Needs-human still halts the batch (Err surfaces), but the batch-level
+	// result must flag it so the caller can notify needs-human, not failure.
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("err = %v, want %v", err, wantErr)
+	}
+	if !res.NeedsHuman {
+		t.Fatalf("result = %+v, want NeedsHuman", res)
+	}
+}
+
+// A genuine failure in the same phase outranks a needs-human pause: the more
+// urgent failure must drive the batch-level report, so NeedsHuman is cleared.
+func TestExecuteHardFailureOutranksNeedsHuman(t *testing.T) {
+	r := newFakeRunner()
+	// Parallel phase so both plans settle before the barrier: p1 needs human,
+	// p2 hard-fails.
+	b := batch.Batch{
+		ID:      "b1",
+		Phases:  []batch.Phase{{Mode: batch.PhaseParallel, Plans: []string{"p1", "p2"}}},
+		PlanIDs: []string{"p1", "p2"},
+	}
+	r.outcomes["p1"] = batchexec.Outcome{Err: errors.New("needs review"), NeedsHuman: true}
+	r.outcomes["p2"] = batchexec.Outcome{Err: errors.New("hard fail")}
+	res, err := batchexec.Execute(context.Background(), batchexec.Input{
+		Batch: b, Runner: r, Parallelize: true, MaxParallel: 2,
+	})
+	if err == nil {
+		t.Fatalf("expected halt error, got nil")
+	}
+	if res.NeedsHuman {
+		t.Fatalf("result = %+v, want NeedsHuman cleared by hard failure", res)
+	}
+}
+
 func TestExecuteReturnsCostCapPauseWithoutError(t *testing.T) {
 	r := newFakeRunner()
 	r.outcomes["p2"] = batchexec.Outcome{CostCapped: true, SpendUSD: 12.5}
