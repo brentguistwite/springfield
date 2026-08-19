@@ -53,6 +53,64 @@ func TestOsascriptInvocationForSampleEvent(t *testing.T) {
 	}
 }
 
+// TestOsascriptEscapesQuotesAndBackslashes pins the injection guard documented
+// in docs/notifications.md: a batch id or failure detail containing double
+// quotes or backslashes is escaped by osaQuote before it is embedded in the
+// AppleScript expression, so hostile input cannot break out of the string
+// literal and append its own AppleScript. The full osascript argv is asserted,
+// not executed.
+func TestOsascriptEscapesQuotesAndBackslashes(t *testing.T) {
+	cases := []struct {
+		name  string
+		event Event
+		want  string
+	}{
+		{
+			name:  "double quotes in detail",
+			event: Event{Kind: Failed, BatchID: "b1", Detail: `agent said "no"`},
+			want:  `display notification "Batch b1 failed: agent said \"no\"" with title "Springfield"`,
+		},
+		{
+			name:  "backslashes in detail",
+			event: Event{Kind: Failed, BatchID: "b1", Detail: `path C:\tmp\x`},
+			want:  `display notification "Batch b1 failed: path C:\\tmp\\x" with title "Springfield"`,
+		},
+		{
+			name:  "backslash-quote pair escapes in order",
+			event: Event{Kind: Failed, BatchID: "b1", Detail: `\"`},
+			want:  `display notification "Batch b1 failed: \\\"" with title "Springfield"`,
+		},
+		{
+			name:  "injection attempt in batch id stays inside the literal",
+			event: Event{Kind: NeedsHuman, BatchID: `x" with title "Evil`},
+			want:  `display notification "Batch x\" with title \"Evil needs human review" with title "Springfield"`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cap := &capture{}
+			var buf bytes.Buffer
+			n := newNotifier(true, "", "darwin", cap.run, &buf)
+
+			n.Notify(tc.event)
+
+			if len(cap.cmds) != 1 {
+				t.Fatalf("got %d invocations, want 1", len(cap.cmds))
+			}
+			got := cap.cmds[0].Args
+			want := []string{"osascript", "-e", tc.want}
+			if len(got) != len(want) {
+				t.Fatalf("osascript args = %#v, want %#v", got, want)
+			}
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("osascript arg[%d] = %q, want %q", i, got[i], want[i])
+				}
+			}
+		})
+	}
+}
+
 // TestDisabledProducesZeroSideEffects proves the opt-in default: an absent /
 // disabled config fires no runner call and writes no log, for every Kind. It
 // checks both the exported New (production wiring) returns Nop and that the
