@@ -94,16 +94,18 @@ func TestPlanSurfacesRequireExplicitFilePaths(t *testing.T) {
 // per-plan-branches mode, and only consolidate mode is sequential (see
 // docs/prd-format.md phases table). The top-level docs once framed the whole
 // batch as "sequential", which drifted from the shipped batchexec parallel
-// path. Guard README.md and AGENTS.md so the stale one-liner can't creep back.
+// path. Guard README.md, AGENTS.md, and docs/index.html (hand-authored, not
+// generated) so the stale one-liner can't creep back into any top-level surface.
 //
 // CLAUDE.md is a symlink to AGENTS.md, so guarding AGENTS.md covers both.
-// Asserted across both surfaces so a partial rewrite is also caught — same
+// Asserted across every surface so a partial rewrite is also caught — same
 // pattern as the tests above.
 func TestNoSequentialBatchFraming(t *testing.T) {
 	root := repoRoot(t)
 	surfaces := []string{
 		filepath.Join(root, "README.md"),
 		filepath.Join(root, "AGENTS.md"),
+		filepath.Join(root, "docs", "index.html"),
 	}
 
 	for _, path := range surfaces {
