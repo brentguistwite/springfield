@@ -11,6 +11,14 @@ type saveConfig struct {
 	Agents  *saveAgentsConfig     `toml:"agents,omitempty"`
 	Plans   map[string]PlanConfig `toml:"plans"`
 	Start   *saveStartConfig      `toml:"start,omitempty"`
+	// Verify, Setup, and Ports are emitted as pointers so an unconfigured
+	// project keeps a minimal scaffold, but a committed block round-trips
+	// intact through merge-mode `springfield init` (which re-saves via Save).
+	// Each committed [block] MUST be mirrored here — the split saveConfig does
+	// not inherit Config's fields, so an omission silently drops the block.
+	Verify *VerifyConfig `toml:"verify,omitempty"`
+	Setup  *SetupConfig  `toml:"setup,omitempty"`
+	Ports  *PortsConfig  `toml:"ports,omitempty"`
 }
 
 type saveAgentsConfig struct {
@@ -75,6 +83,22 @@ func newSaveConfig(cfg Config) saveConfig {
 
 	if cfg.Start.KeepAwake != nil {
 		out.Start = &saveStartConfig{KeepAwake: cfg.Start.KeepAwake}
+	}
+
+	// Emit [verify]/[setup]/[ports] only when the operator has configured them,
+	// so a fresh project keeps a minimal file while a configured block survives
+	// re-init untouched.
+	if cfg.Verify != (VerifyConfig{}) {
+		v := cfg.Verify
+		out.Verify = &v
+	}
+	if cfg.Setup != (SetupConfig{}) {
+		s := cfg.Setup
+		out.Setup = &s
+	}
+	if cfg.Ports != (PortsConfig{}) {
+		p := cfg.Ports
+		out.Ports = &p
 	}
 
 	return out

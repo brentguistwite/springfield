@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -19,8 +20,10 @@ import (
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/cost"
 	"springfield/internal/features/execution"
+	"springfield/internal/features/portblock"
 	"springfield/internal/features/prd"
 	"springfield/internal/features/verify"
+	"springfield/internal/features/worktreesetup"
 )
 
 // AgentRunner is the runtime boundary planrun depends on. The shared
@@ -109,6 +112,27 @@ type SinglePlanInput struct {
 	// this nil; tests inject a scripted stub so the gate is exercised without
 	// spawning a subprocess. Its signature IS verifyCommandFunc.
 	VerifyCommand func(ctx context.Context, req verify.Request) verify.Result
+	// SetupConfig is the project-global [setup] block from springfield.toml.
+	// Zero value (Enabled=false) skips worktree setup, preserving the prior
+	// create-and-dispatch behavior. When it runs, setup executes in the freshly
+	// created slice worktree AFTER checkout and BEFORE any agent dispatch; a
+	// non-zero exit fails the slice before the first agent runs. On a reuse
+	// resume setup is skipped ONLY when a prior run recorded the completion
+	// marker (exited zero); a reuse whose setup never finished (crash between
+	// worktree creation and setup completing) re-runs it.
+	SetupConfig config.SetupConfig
+	// SetupCommand is the command boundary the setup step dispatches. Nil
+	// defaults to worktreesetup.Run (spawns the real `sh -c` command with the
+	// source-root/worktree env vars). Production leaves this nil; tests inject a
+	// scripted stub so the step is exercised without spawning a subprocess.
+	SetupCommand func(ctx context.Context, req worktreesetup.Request) worktreesetup.Result
+	// PortsConfig is the project-global [ports] block from springfield.toml.
+	// Zero value selects portblock.DefaultBase, so every slice still receives a
+	// deterministic SPRINGFIELD_PORT/SPRINGFIELD_PORT_RANGE block derived from
+	// its 1-based PlanUnit.Order. The block is exported into the setup command,
+	// the verify command, and every agent dispatch for the plan, and is stable
+	// across all iterations of the run (it is a pure function of the ordinal).
+	PortsConfig config.PortsConfig
 	// Ctx, when non-nil, is the parent context for in-loop agent runs that
 	// participate in cooperative cancellation. The legacy story-iteration
 	// dispatch sites use context.Background (no cancellation surface); the
@@ -308,13 +332,31 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 
 	ctx := decision.Context
 
+	// Per-slice port block: a deterministic, collision-free range derived from
+	// this plan's 1-based ordinal (unit.Order) and the configured base. The same
+	// env (SPRINGFIELD_PORT + SPRINGFIELD_PORT_RANGE) is handed to the setup
+	// command, every agent iteration, and the verify command, so a slice's
+	// servers/tests bind ports no concurrently running slice will touch. Pure
+	// function of the ordinal → stable across every iteration of this run.
+	portEnv := portblock.Allocate(in.PortsConfig.BaseOrDefault(), unit.Order).Env()
+
+	// Worktree setup: run the project's [setup] command in the freshly created
+	// slice worktree BEFORE any agent dispatch, so dependencies/untracked files
+	// exist by the time the agent runs. Skipped on a reuse resume (setup already
+	// ran on first creation) and when the [setup] block is unconfigured
+	// (opt-in). A non-zero exit fails the slice here — no agent is ever
+	// dispatched. Runs for both PRD and legacy plans (before the branch below).
+	if setupRes := runWorktreeSetup(in, planID, ctx, decision, portEnv, now); setupRes != nil {
+		return *setupRes
+	}
+
 	// Detect PRD vs legacy plan by path suffix. PRD plans have prd.json paths;
 	// legacy plans are .md files registered before Phase 3.
 	unitPath := filepath.FromSlash(unit.Path)
 	isPRDPlan := filepath.Base(unitPath) == "prd.json"
 
 	if !isPRDPlan {
-		return singlePlanLegacy(in, planID, unit, ctx, decision, startState, now)
+		return singlePlanLegacy(in, planID, unit, ctx, decision, startState, portEnv, now)
 	}
 
 	// Derive plan-level paths. prdPath is the sole writer for story pass state.
@@ -395,6 +437,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 				VerifyCommand:     rv.Command,
 				Timeout:           rv.Timeout,
 				MaxIterations:     rv.MaxIterations,
+				PortEnv:           portEnv,
 				WorktreeRoot:      ctx.WorktreeRoot,
 				PRD:               currentPRD,
 				ContextMD:         string(contextMDBytes),
@@ -442,6 +485,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			ReviewConfig:      in.ReviewConfig,
 			WorktreeRoot:      ctx.WorktreeRoot,
 			BaseRef:           ctx.BaseRef,
+			PortEnv:           portEnv,
 			PRD:               currentPRD,
 			ContextMD:         string(contextMDBytes),
 			ProjectGuidance:   projectGuidance,
@@ -546,6 +590,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			AgentIDs:             in.AgentIDs,
 			Prompt:               prompt,
 			WorkDir:              ctx.WorktreeRoot,
+			Env:                  portEnv,
 			OnEvent:              in.OnEvent,
 			ExecutionSettings:    in.ExecutionSettings,
 			MaxTurnsPerIteration: in.MaxTurnsPerIteration,
@@ -876,7 +921,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 // use legacy .md paths (pre-Phase-3 registrations). The PRD iteration loop
 // is only engaged for plans whose unit.Path ends in "prd.json".
 func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit,
-	ctx Context, decision PrepareDecision, startState *conductor.PlanState, now func() time.Time,
+	ctx Context, decision PrepareDecision, startState *conductor.PlanState, portEnv map[string]string, now func() time.Time,
 ) SinglePlanResult {
 	// Loudly warn when review is enabled but the plan is legacy-format. The
 	// pre-merge review gate only runs on PRD-format plans (it lives inside the
@@ -933,6 +978,7 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 		AgentIDs:          in.AgentIDs,
 		Prompt:            prompt,
 		WorkDir:           ctx.WorktreeRoot,
+		Env:               portEnv,
 		OnEvent:           in.OnEvent,
 		ExecutionSettings: in.ExecutionSettings,
 	})
@@ -1243,6 +1289,86 @@ func loadProjectGuidance(controlRoot string) string {
 		fmt.Fprintf(&b, "## %s\n%s\n", name, string(data))
 	}
 	return b.String()
+}
+
+// runWorktreeSetup runs the project's [setup] command in a freshly created
+// slice worktree before agent dispatch. It returns nil to proceed (setup was
+// skipped or succeeded) or a non-nil *SinglePlanResult that the caller must
+// return immediately — the slice is failed before any agent runs.
+//
+// Skipped when the [setup] block is unconfigured, or when the worktree is being
+// reused AND a prior setup run already exited zero for it (proven by the
+// completion marker under the slice's evidence dir — NOT by worktree reuse
+// alone, which would skip setup on a resume that crashed after the worktree was
+// created but before setup finished, dispatching an agent into a half-built
+// tree). A fresh (non-reuse) worktree always re-runs setup. Setup output is
+// always captured under the slice's evidence directory, even on the success
+// path, so an operator can inspect what the command did.
+func runWorktreeSetup(in SinglePlanInput, planID string, ctx Context, decision PrepareDecision, portEnv map[string]string, now func() time.Time) *SinglePlanResult {
+	if !in.SetupConfig.ShouldRun() {
+		return nil
+	}
+
+	evidenceDir := EvidenceRoot(in.ControlRoot, ctx.PlanKey)
+	// Skip only when the reused worktree's prior setup succeeded for the SAME
+	// command AND the SAME injected env. The marker is keyed on a digest of the
+	// command plus the port env below, so a changed [setup] block OR a changed
+	// [ports] base (which moves SPRINGFIELD_PORT) invalidates it and re-runs setup
+	// on the reused worktree (the worktree itself is kept — the command/env
+	// changing is not worktree drift).
+	if decision.Reuse && worktreesetup.IsComplete(evidenceDir, in.SetupConfig.Command, portEnv) {
+		progress(in.Progress, "plan %s: worktree setup already completed; skipping\n", planID)
+		return nil
+	}
+	// Clear any stale completion marker BEFORE running so that if this run
+	// crashes midway, the next reuse sees no marker and re-runs setup rather than
+	// trusting a "completed" record the crashed run never actually earned.
+	if err := worktreesetup.ClearComplete(evidenceDir); err != nil {
+		progress(in.Progress, "plan %s: WARN: clear setup marker: %v\n", planID, err)
+	}
+
+	req := worktreesetup.Request{
+		Command:      in.SetupConfig.Command,
+		WorktreeRoot: ctx.WorktreeRoot,
+		SourceRoot:   in.ControlRoot,
+		Env:          portEnv,
+		Timeout:      in.SetupConfig.TimeoutOrDefault(),
+	}
+	run := in.SetupCommand
+	if run == nil {
+		run = worktreesetup.Run
+	}
+	progress(in.Progress, "plan %s: worktree setup (%s)\n", planID, req.Command)
+	res := run(in.Ctx, req)
+
+	// Capture setup evidence best-effort under the plan's evidence dir. A write
+	// failure must not mask a setup that otherwise succeeded, so it only warns.
+	if _, werr := worktreesetup.WriteEvidence(evidenceDir, req, res); werr != nil {
+		progress(in.Progress, "plan %s: WARN: write setup evidence: %v\n", planID, werr)
+	}
+
+	if res.Err != nil {
+		msg := fmt.Sprintf("worktree setup command %q could not be launched: %v", req.Command, res.Err)
+		recordPreflightFailure(in.Project, planID, "setup-failed", msg, now())
+		_ = in.Project.SaveState()
+		return &SinglePlanResult{PlanID: planID, Reason: "setup-failed", Context: ctx, Status: conductor.StatusFailed, Err: fmt.Errorf("%s", msg)}
+	}
+	if res.ExitCode != 0 {
+		detail := "exit code " + strconv.Itoa(res.ExitCode)
+		if res.TimedOut {
+			detail += " (timed out)"
+		}
+		msg := fmt.Sprintf("worktree setup command %q failed with %s before any agent ran (setup output in evidence setup/)", req.Command, detail)
+		recordPreflightFailure(in.Project, planID, "setup-failed", msg, now())
+		_ = in.Project.SaveState()
+		return &SinglePlanResult{PlanID: planID, Reason: "setup-failed", Context: ctx, Status: conductor.StatusFailed, Err: fmt.Errorf("%s", msg)}
+	}
+	// Setup exited zero: record the durable completion marker so a later reuse
+	// resume can safely skip re-running it.
+	if err := worktreesetup.MarkComplete(evidenceDir, req.Command, req.Env); err != nil {
+		progress(in.Progress, "plan %s: WARN: write setup marker: %v\n", planID, err)
+	}
+	return nil
 }
 
 func recordPreflightFailure(p *conductor.Project, planID, tag, msg string, now time.Time) {

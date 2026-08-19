@@ -1,13 +1,100 @@
 package planmerge_test
 
 import (
+	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/conductor/planmerge"
+	"springfield/internal/features/worktreesetup"
 )
+
+// TestRetainFailingTeardownNeverBlocksCleanup proves the teardown hook contract
+// end to end: a REAL failing teardown command (exit 1, run through
+// worktreesetup.Run — the same runner setup uses) is logged and yet the
+// execution worktree is still removed, the cleanup still succeeds, and the plan
+// still integrates. The teardown must also fire BEFORE removal, while the
+// worktree still exists, so an out-of-worktree resource can be released.
+func TestRetainFailingTeardownNeverBlocksCleanup(t *testing.T) {
+	root, project, wt := projectFixture(t, "alpha", "springfield/alpha", "develop", "AAAA", "BBBB")
+	g := newFakeGit()
+
+	var log bytes.Buffer
+	var firedBeforeRemoval bool
+	var worktreeExistedAtTeardown bool
+	teardown := func(worktreePath string) {
+		// Prove the seam: removal has not happened yet and the worktree is on disk.
+		firedBeforeRemoval = len(g.worktreeRemoveAll) == 0
+		_, statErr := os.Stat(worktreePath)
+		worktreeExistedAtTeardown = statErr == nil
+		res := worktreesetup.Run(context.Background(), worktreesetup.Request{
+			Command:      "exit 1",
+			WorktreeRoot: worktreePath,
+			SourceRoot:   root,
+		})
+		fmt.Fprintf(&log, "teardown alpha: command exited %d\n", res.ExitCode)
+	}
+
+	res := planmerge.Retain(planmerge.RetainInput{
+		Project:     project,
+		PlanID:      "alpha",
+		ControlRoot: root,
+		Git:         g,
+		Teardown:    teardown,
+	})
+
+	if res.Err != nil {
+		t.Fatalf("failing teardown must not error Retain: %v", res.Err)
+	}
+	if !firedBeforeRemoval {
+		t.Fatal("teardown must fire BEFORE worktree removal")
+	}
+	if !worktreeExistedAtTeardown {
+		t.Fatal("worktree must still exist when teardown runs")
+	}
+	// Cleanup unaffected: worktree removed, execution artifact succeeded.
+	if len(g.worktreeRemoveAll) != 1 || g.worktreeRemoveAll[0] != wt {
+		t.Fatalf("worktree must still be removed after a failing teardown, got %v", g.worktreeRemoveAll)
+	}
+	if res.Cleanup == nil || res.Cleanup.ExecutionWorktree == nil ||
+		res.Cleanup.ExecutionWorktree.Status != conductor.CleanupSucceeded ||
+		res.Cleanup.Status != conductor.CleanupSucceeded {
+		t.Fatalf("failing teardown must not change cleanup outcome: %+v", res.Cleanup)
+	}
+	// Plan outcome unchanged.
+	reloaded, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if !reloaded.State.Plans["alpha"].IsIntegrated() {
+		t.Fatal("failing teardown must not change the plan outcome (still integrated)")
+	}
+	// The failure was surfaced (logged), not swallowed silently.
+	if log.Len() == 0 {
+		t.Fatal("teardown failure must be logged")
+	}
+}
+
+// TestRetainNilTeardownIsInert proves an unconfigured teardown (nil hook) leaves
+// cleanup byte-identical to the no-teardown path.
+func TestRetainNilTeardownIsInert(t *testing.T) {
+	root, project, wt := projectFixture(t, "alpha", "springfield/alpha", "develop", "AAAA", "BBBB")
+	g := newFakeGit()
+
+	res := planmerge.Retain(planmerge.RetainInput{
+		Project: project, PlanID: "alpha", ControlRoot: root, Git: g, Teardown: nil,
+	})
+	if res.Err != nil {
+		t.Fatalf("nil teardown must not error: %v", res.Err)
+	}
+	if len(g.worktreeRemoveAll) != 1 || g.worktreeRemoveAll[0] != wt {
+		t.Fatalf("nil teardown must still remove worktree once, got %v", g.worktreeRemoveAll)
+	}
+}
 
 func TestRetainWorktreeAlreadyGoneIsSuccess(t *testing.T) {
 	root, project, wt := projectFixture(t, "alpha", "springfield/alpha", "develop", "AAAA", "BBBB")

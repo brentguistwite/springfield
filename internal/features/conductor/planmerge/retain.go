@@ -33,6 +33,11 @@ type RetainInput struct {
 	Now func() time.Time
 	// Progress receives short human-readable lifecycle lines; nil discards.
 	Progress io.Writer
+	// Teardown, when non-nil, is invoked with the execution worktree path
+	// immediately before that worktree is removed (same contract as
+	// IntegrateInput.Teardown): best-effort release of out-of-worktree
+	// resources while the worktree still exists. nil skips teardown.
+	Teardown func(worktreePath string)
 }
 
 // Retain finalizes a clean-success plan in per-plan branch mode: it skips the
@@ -106,6 +111,13 @@ func Retain(in RetainInput) IntegrateResult {
 	if _, statErr := os.Stat(state.WorktreePath); errors.Is(statErr, fs.ErrNotExist) {
 		progress(in.Progress, "retain %s: execution worktree already removed\n", in.PlanID)
 	} else {
+		// Teardown before removal, and only when the worktree still exists (the
+		// already-removed branch above skips it), so a resume after a prior clean
+		// removal does not re-tear-down. Best-effort — the hook cannot fail the
+		// removal or the cleanup.
+		if in.Teardown != nil {
+			in.Teardown(state.WorktreePath)
+		}
 		// `git worktree remove` mutates shared .git metadata — serialize
 		// against concurrent worktree add/remove from sibling plans.
 		var removeErr error

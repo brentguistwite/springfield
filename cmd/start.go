@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -37,7 +38,9 @@ import (
 	"springfield/internal/features/conductor/planmerge"
 	"springfield/internal/features/conductor/planrun"
 	"springfield/internal/features/cost"
+	"springfield/internal/features/portblock"
 	"springfield/internal/features/wakelock"
+	"springfield/internal/features/worktreesetup"
 )
 
 // runtimeAgentRunner is a thin adapter so cmd does not need to import the
@@ -794,7 +797,7 @@ func (r *batchPlanRunner) RunPlan(ctx context.Context, planID string, info batch
 	if st, ok := r.project.ReadPlan(planID); ok && st.Status == conductor.StatusCompleted {
 		fmt.Fprintf(progress, "Plan: %s\n", planID)
 		fmt.Fprintf(progress, "Status: resuming integration\n")
-		if halt, err := integratePlan(r.perPlan, r.project, r.root, r.worktreeBase, planID, progress); halt != nil {
+		if halt, err := integratePlan(r.perPlan, r.project, r.root, r.worktreeBase, planID, r.loaded.Config.Setup, r.loaded.Config.Ports, progress); halt != nil {
 			return batchexec.Outcome{Err: err}
 		}
 		return batchexec.Outcome{}
@@ -809,6 +812,8 @@ func (r *batchPlanRunner) RunPlan(ctx context.Context, planID string, info batch
 		ExecutionSettings:    r.loaded.Config.ExecutionSettings(),
 		ReviewConfig:         r.local.Review,
 		VerifyConfig:         r.loaded.Config.Verify,
+		SetupConfig:          r.loaded.Config.Setup,
+		PortsConfig:          r.loaded.Config.Ports,
 		Runner:               runtimeAgentRunner{coreruntime.NewRunner(r.registry)},
 		Manager:              planrun.NewManager(),
 		OnEvent:              onEvent,
@@ -851,7 +856,7 @@ func (r *batchPlanRunner) RunPlan(ctx context.Context, planID string, info batch
 		fmt.Fprintf(progress, "Evidence: %s\n", res.EvidencePath)
 	}
 
-	if halt, err := integratePlan(r.perPlan, r.project, r.root, r.worktreeBase, res.PlanID, progress); halt != nil {
+	if halt, err := integratePlan(r.perPlan, r.project, r.root, r.worktreeBase, res.PlanID, r.loaded.Config.Setup, r.loaded.Config.Ports, progress); halt != nil {
 		return batchexec.Outcome{Err: err}
 	}
 	return batchexec.Outcome{}
@@ -896,7 +901,8 @@ func anyPlanStarted(b batch.Batch, state *conductor.State) bool {
 // must halt; nil means the plan integrated cleanly and the loop may advance.
 // Shared by the normal dispatch path and the completed-but-not-integrated
 // re-entry path so both apply identical halt semantics.
-func integratePlan(perPlan bool, project *conductor.Project, root, worktreeBase, planID string, progress io.Writer) (*BatchRunResult, error) {
+func integratePlan(perPlan bool, project *conductor.Project, root, worktreeBase, planID string, setup config.SetupConfig, ports config.PortsConfig, progress io.Writer) (*BatchRunResult, error) {
+	teardown := teardownHookFor(setup, ports, project, planID, root, progress)
 	var mergeRes planmerge.IntegrateResult
 	if perPlan {
 		mergeRes = planmerge.Retain(planmerge.RetainInput{
@@ -904,6 +910,7 @@ func integratePlan(perPlan bool, project *conductor.Project, root, worktreeBase,
 			PlanID:      planID,
 			ControlRoot: root,
 			Progress:    progress,
+			Teardown:    teardown,
 		})
 	} else {
 		mergeRes = planmerge.Integrate(planmerge.IntegrateInput{
@@ -912,6 +919,7 @@ func integratePlan(perPlan bool, project *conductor.Project, root, worktreeBase,
 			ControlRoot:  root,
 			WorktreeBase: worktreeBase,
 			Progress:     progress,
+			Teardown:     teardown,
 		})
 	}
 	renderMergeOutcome(progress, mergeRes)
@@ -932,6 +940,54 @@ func integratePlan(perPlan bool, project *conductor.Project, root, worktreeBase,
 		return &BatchRunResult{Error: e.Error()}, e
 	}
 	return nil, nil
+}
+
+// teardownHookFor builds the planmerge teardown hook from the project's [setup]
+// block, or nil when no teardown command is configured (the common case).
+//
+// The hook runs the teardown command in the execution worktree with the SAME
+// environment setup received on the way in — SPRINGFIELD_SOURCE_ROOT,
+// SPRINGFIELD_WORKTREE, and the slice's deterministic SPRINGFIELD_PORT block —
+// so a symmetric teardown ("docker compose down") can address the very
+// resources setup ("docker compose up") created. planmerge invokes it
+// immediately before the execution worktree is removed, while it still exists.
+//
+// It is best-effort by contract: a launch failure, non-zero exit, or timeout is
+// logged to progress and never propagated, so a broken teardown cannot block
+// cleanup or change the plan outcome. The [setup] block's timeout governs it.
+func teardownHookFor(setup config.SetupConfig, ports config.PortsConfig, project *conductor.Project, planID, sourceRoot string, progress io.Writer) func(string) {
+	if !setup.ShouldTeardown() {
+		return nil
+	}
+	// Reconstruct the slice's port block from its ordinal so teardown sees the
+	// identical SPRINGFIELD_PORT env the agent and setup did. A missing unit
+	// (e.g. a plan removed from the schedule) leaves portEnv nil — the SOURCE_
+	// ROOT/WORKTREE vars still flow, matching setup's minimum contract.
+	var portEnv map[string]string
+	if unit, ok := project.PlanUnitByID(planID); ok {
+		portEnv = portblock.Allocate(ports.BaseOrDefault(), unit.Order).Env()
+	}
+	return func(worktreePath string) {
+		req := worktreesetup.Request{
+			Command:      setup.Teardown,
+			WorktreeRoot: worktreePath,
+			SourceRoot:   sourceRoot,
+			Env:          portEnv,
+			Timeout:      setup.TimeoutOrDefault(),
+		}
+		fmt.Fprintf(progress, "teardown %s: %s\n", planID, req.Command)
+		res := worktreesetup.Run(context.Background(), req)
+		switch {
+		case res.Err != nil:
+			fmt.Fprintf(progress, "teardown %s: WARN could not launch (cleanup continues): %v\n", planID, res.Err)
+		case res.ExitCode != 0:
+			detail := "exit " + strconv.Itoa(res.ExitCode)
+			if res.TimedOut {
+				detail += " (timed out)"
+			}
+			fmt.Fprintf(progress, "teardown %s: WARN command failed %s (cleanup continues)\n", planID, detail)
+		}
+	}
 }
 
 // controlPlaneSnapshot captures every Springfield-owned file under
@@ -1651,7 +1707,7 @@ func runOnePlan(ctx context.Context, w io.Writer, project *conductor.Project, ro
 				return err
 			}
 		}
-		_, err := runMergeIntegrationOnly(w, project, root, worktreeBase, planID)
+		_, err := runMergeIntegrationOnly(w, project, root, worktreeBase, planID, loaded.Config.Setup, loaded.Config.Ports)
 		if err != nil {
 			return err
 		}
@@ -1666,6 +1722,8 @@ func runOnePlan(ctx context.Context, w io.Writer, project *conductor.Project, ro
 		ExecutionSettings:    loaded.Config.ExecutionSettings(),
 		ReviewConfig:         local.Review,
 		VerifyConfig:         loaded.Config.Verify,
+		SetupConfig:          loaded.Config.Setup,
+		PortsConfig:          loaded.Config.Ports,
 		Runner:               runtimeAgentRunner{coreruntime.NewRunner(registry)},
 		Manager:              planrun.NewManager(),
 		Progress:             w,
@@ -1735,6 +1793,7 @@ func runOnePlan(ctx context.Context, w io.Writer, project *conductor.Project, ro
 		ControlRoot:  root,
 		WorktreeBase: worktreeBase,
 		Progress:     w,
+		Teardown:     teardownHookFor(loaded.Config.Setup, loaded.Config.Ports, project, res.PlanID, root, w),
 	})
 	renderMergeOutcome(w, mergeRes)
 	if mergeRes.Err != nil {
@@ -1781,7 +1840,7 @@ func nextNonIntegratedCompletedPlan(project *conductor.Project) (string, bool) {
 // execution already succeeded but whose integration is incomplete. Output
 // reflects the re-entry: no fresh "Plan: ..." / "Status: completed"
 // banner, just the merge phase progress and outcome.
-func runMergeIntegrationOnly(w io.Writer, project *conductor.Project, root, worktreeBase, planID string) (bool, error) {
+func runMergeIntegrationOnly(w io.Writer, project *conductor.Project, root, worktreeBase, planID string, setup config.SetupConfig, ports config.PortsConfig) (bool, error) {
 	fmt.Fprintf(w, "Plan: %s (re-running merge integration)\n", planID)
 	mergeRes := planmerge.Integrate(planmerge.IntegrateInput{
 		Project:      project,
@@ -1789,6 +1848,7 @@ func runMergeIntegrationOnly(w io.Writer, project *conductor.Project, root, work
 		ControlRoot:  root,
 		WorktreeBase: worktreeBase,
 		Progress:     w,
+		Teardown:     teardownHookFor(setup, ports, project, planID, root, w),
 	})
 	renderMergeOutcome(w, mergeRes)
 	if mergeRes.Err != nil {

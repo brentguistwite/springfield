@@ -3,6 +3,8 @@ package verify
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"os"
 	"os/exec"
 	"time"
 )
@@ -14,6 +16,11 @@ type Request struct {
 	// Dir is the working directory the command runs in (the worktree root).
 	// Empty means the current process's working directory.
 	Dir string
+	// Env carries additional environment variables merged over the base
+	// environment (e.g. the slice's SPRINGFIELD_PORT/SPRINGFIELD_PORT_RANGE
+	// block from portblock), so a verify suite binds the same ports the agent
+	// and setup command saw. Empty leaves the process environment untouched.
+	Env map[string]string
 	// Timeout is the wall-clock ceiling. A run that exceeds it has its whole
 	// process group killed and is reported with TimedOut=true. <=0 disables the
 	// timeout.
@@ -55,6 +62,13 @@ func Run(ctx context.Context, req Request) Result {
 
 	proc := exec.Command("sh", "-c", req.Command)
 	proc.Dir = req.Dir
+	if len(req.Env) > 0 {
+		env := os.Environ()
+		for k, v := range req.Env {
+			env = append(env, fmt.Sprintf("%s=%s", k, v))
+		}
+		proc.Env = env
+	}
 	var stdout, stderr bytes.Buffer
 	proc.Stdout = &stdout
 	proc.Stderr = &stderr

@@ -63,6 +63,22 @@ func TestRun_CapturesStdoutAndStderr(t *testing.T) {
 	}
 }
 
+// TestRun_MergesRequestEnv proves Request.Env (the slice's port block) reaches
+// the verify command so a test suite binds the same ports the agent saw.
+func TestRun_MergesRequestEnv(t *testing.T) {
+	res := verify.Run(context.Background(), verify.Request{
+		Command: `echo "port=$SPRINGFIELD_PORT range=$SPRINGFIELD_PORT_RANGE"`,
+		Env:     map[string]string{"SPRINGFIELD_PORT": "42020", "SPRINGFIELD_PORT_RANGE": "42020-42029"},
+	})
+	if res.Err != nil || res.ExitCode != 0 {
+		t.Fatalf("run failed: err=%v exit=%d", res.Err, res.ExitCode)
+	}
+	out := strings.TrimSpace(res.Stdout)
+	if !strings.Contains(out, "port=42020") || !strings.Contains(out, "range=42020-42029") {
+		t.Fatalf("stdout %q missing injected port env", out)
+	}
+}
+
 func TestRun_CwdHonored(t *testing.T) {
 	// Prove Dir is used by reading a file that only exists inside it. Using a
 	// file read (not `pwd`) sidesteps macOS /var→/private/var symlink noise.
