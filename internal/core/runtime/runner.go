@@ -158,6 +158,19 @@ func (r *Runner) Run(ctx context.Context, req Request) Result {
 			}
 		}
 		cmd.Timeout = req.Timeout
+		// Inject caller env (e.g. the slice's port block) without clobbering
+		// keys the adapter set deliberately — the adapter owns its own control
+		// vars, so an existing key wins over the request's.
+		if len(req.Env) > 0 {
+			if cmd.Env == nil {
+				cmd.Env = make(map[string]string, len(req.Env))
+			}
+			for k, v := range req.Env {
+				if _, ok := cmd.Env[k]; !ok {
+					cmd.Env[k] = v
+				}
+			}
+		}
 
 		iterStart := r.now()
 		execResult := r.run(ctx, cmd, req.OnEvent)

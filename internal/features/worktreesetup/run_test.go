@@ -62,6 +62,40 @@ func TestRun_InjectsEnvVars(t *testing.T) {
 	}
 }
 
+// TestRun_MergesRequestEnv proves Request.Env (e.g. the slice's port block) is
+// exported into the setup command alongside the source-root/worktree vars.
+func TestRun_MergesRequestEnv(t *testing.T) {
+	res := worktreesetup.Run(context.Background(), worktreesetup.Request{
+		Command: `echo "port=$SPRINGFIELD_PORT range=$SPRINGFIELD_PORT_RANGE"`,
+		Env:     map[string]string{"SPRINGFIELD_PORT": "42010", "SPRINGFIELD_PORT_RANGE": "42010-42019"},
+	})
+	if res.Err != nil || res.ExitCode != 0 {
+		t.Fatalf("run failed: err=%v exit=%d", res.Err, res.ExitCode)
+	}
+	out := strings.TrimSpace(res.Stdout)
+	if !strings.Contains(out, "port=42010") || !strings.Contains(out, "range=42010-42019") {
+		t.Fatalf("stdout %q missing injected port env", out)
+	}
+}
+
+// TestRun_SourceRootWinsOverRequestEnv proves the unconditional
+// SPRINGFIELD_SOURCE_ROOT/WORKTREE vars override a same-named Request.Env key,
+// so a caller cannot accidentally shadow the checkout paths.
+func TestRun_SourceRootWinsOverRequestEnv(t *testing.T) {
+	src := t.TempDir()
+	res := worktreesetup.Run(context.Background(), worktreesetup.Request{
+		Command:    `echo "src=$SPRINGFIELD_SOURCE_ROOT"`,
+		SourceRoot: src,
+		Env:        map[string]string{"SPRINGFIELD_SOURCE_ROOT": "/bogus"},
+	})
+	if res.Err != nil || res.ExitCode != 0 {
+		t.Fatalf("run failed: err=%v exit=%d", res.Err, res.ExitCode)
+	}
+	if out := strings.TrimSpace(res.Stdout); !strings.Contains(out, "src="+src) {
+		t.Fatalf("stdout %q — SPRINGFIELD_SOURCE_ROOT should win over Request.Env", out)
+	}
+}
+
 // TestRun_RunsInWorktreeRoot proves WorktreeRoot is the working directory: a
 // file written by the command lands there. Reading a marker (not `pwd`)
 // sidesteps macOS /var→/private/var symlink noise.

@@ -28,6 +28,11 @@ type Request struct {
 	WorktreeRoot string
 	// SourceRoot is the main checkout path exported as SPRINGFIELD_SOURCE_ROOT.
 	SourceRoot string
+	// Env carries additional environment variables merged over the base
+	// environment (e.g. the slice's SPRINGFIELD_PORT/SPRINGFIELD_PORT_RANGE
+	// block from portblock). SPRINGFIELD_SOURCE_ROOT and SPRINGFIELD_WORKTREE
+	// are set unconditionally and win over any same-named key here.
+	Env map[string]string
 	// Timeout is the wall-clock ceiling. A run that exceeds it has its whole
 	// process group killed and is reported with TimedOut=true. <=0 disables the
 	// timeout.
@@ -65,7 +70,13 @@ func Run(ctx context.Context, req Request) Result {
 
 	proc := exec.Command("sh", "-c", req.Command)
 	proc.Dir = req.WorktreeRoot
-	proc.Env = append(os.Environ(),
+	env := os.Environ()
+	// Caller-supplied vars first so the two SPRINGFIELD_SOURCE_ROOT/WORKTREE
+	// entries appended last win on a key collision (last-wins in exec env).
+	for k, v := range req.Env {
+		env = append(env, fmt.Sprintf("%s=%s", k, v))
+	}
+	proc.Env = append(env,
 		fmt.Sprintf("%s=%s", EnvSourceRoot, req.SourceRoot),
 		fmt.Sprintf("%s=%s", EnvWorktree, req.WorktreeRoot),
 	)

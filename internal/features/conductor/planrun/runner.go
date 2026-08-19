@@ -20,6 +20,7 @@ import (
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/cost"
 	"springfield/internal/features/execution"
+	"springfield/internal/features/portblock"
 	"springfield/internal/features/prd"
 	"springfield/internal/features/verify"
 	"springfield/internal/features/worktreesetup"
@@ -123,6 +124,13 @@ type SinglePlanInput struct {
 	// source-root/worktree env vars). Production leaves this nil; tests inject a
 	// scripted stub so the step is exercised without spawning a subprocess.
 	SetupCommand func(ctx context.Context, req worktreesetup.Request) worktreesetup.Result
+	// PortsConfig is the project-global [ports] block from springfield.toml.
+	// Zero value selects portblock.DefaultBase, so every slice still receives a
+	// deterministic SPRINGFIELD_PORT/SPRINGFIELD_PORT_RANGE block derived from
+	// its 1-based PlanUnit.Order. The block is exported into the setup command,
+	// the verify command, and every agent dispatch for the plan, and is stable
+	// across all iterations of the run (it is a pure function of the ordinal).
+	PortsConfig config.PortsConfig
 	// Ctx, when non-nil, is the parent context for in-loop agent runs that
 	// participate in cooperative cancellation. The legacy story-iteration
 	// dispatch sites use context.Background (no cancellation surface); the
@@ -322,13 +330,21 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 
 	ctx := decision.Context
 
+	// Per-slice port block: a deterministic, collision-free range derived from
+	// this plan's 1-based ordinal (unit.Order) and the configured base. The same
+	// env (SPRINGFIELD_PORT + SPRINGFIELD_PORT_RANGE) is handed to the setup
+	// command, every agent iteration, and the verify command, so a slice's
+	// servers/tests bind ports no concurrently running slice will touch. Pure
+	// function of the ordinal → stable across every iteration of this run.
+	portEnv := portblock.Allocate(in.PortsConfig.BaseOrDefault(), unit.Order).Env()
+
 	// Worktree setup: run the project's [setup] command in the freshly created
 	// slice worktree BEFORE any agent dispatch, so dependencies/untracked files
 	// exist by the time the agent runs. Skipped on a reuse resume (setup already
 	// ran on first creation) and when the [setup] block is unconfigured
 	// (opt-in). A non-zero exit fails the slice here — no agent is ever
 	// dispatched. Runs for both PRD and legacy plans (before the branch below).
-	if setupRes := runWorktreeSetup(in, planID, ctx, decision, now); setupRes != nil {
+	if setupRes := runWorktreeSetup(in, planID, ctx, decision, portEnv, now); setupRes != nil {
 		return *setupRes
 	}
 
@@ -338,7 +354,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 	isPRDPlan := filepath.Base(unitPath) == "prd.json"
 
 	if !isPRDPlan {
-		return singlePlanLegacy(in, planID, unit, ctx, decision, startState, now)
+		return singlePlanLegacy(in, planID, unit, ctx, decision, startState, portEnv, now)
 	}
 
 	// Derive plan-level paths. prdPath is the sole writer for story pass state.
@@ -419,6 +435,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 				VerifyCommand:     rv.Command,
 				Timeout:           rv.Timeout,
 				MaxIterations:     rv.MaxIterations,
+				PortEnv:           portEnv,
 				WorktreeRoot:      ctx.WorktreeRoot,
 				PRD:               currentPRD,
 				ContextMD:         string(contextMDBytes),
@@ -570,6 +587,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			AgentIDs:             in.AgentIDs,
 			Prompt:               prompt,
 			WorkDir:              ctx.WorktreeRoot,
+			Env:                  portEnv,
 			OnEvent:              in.OnEvent,
 			ExecutionSettings:    in.ExecutionSettings,
 			MaxTurnsPerIteration: in.MaxTurnsPerIteration,
@@ -900,7 +918,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 // use legacy .md paths (pre-Phase-3 registrations). The PRD iteration loop
 // is only engaged for plans whose unit.Path ends in "prd.json".
 func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit,
-	ctx Context, decision PrepareDecision, startState *conductor.PlanState, now func() time.Time,
+	ctx Context, decision PrepareDecision, startState *conductor.PlanState, portEnv map[string]string, now func() time.Time,
 ) SinglePlanResult {
 	// Loudly warn when review is enabled but the plan is legacy-format. The
 	// pre-merge review gate only runs on PRD-format plans (it lives inside the
@@ -957,6 +975,7 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 		AgentIDs:          in.AgentIDs,
 		Prompt:            prompt,
 		WorkDir:           ctx.WorktreeRoot,
+		Env:               portEnv,
 		OnEvent:           in.OnEvent,
 		ExecutionSettings: in.ExecutionSettings,
 	})
@@ -1278,7 +1297,7 @@ func loadProjectGuidance(controlRoot string) string {
 // the [setup] block is unconfigured. Setup output is always captured under the
 // slice's evidence directory, even on the success path, so an operator can
 // inspect what the command did.
-func runWorktreeSetup(in SinglePlanInput, planID string, ctx Context, decision PrepareDecision, now func() time.Time) *SinglePlanResult {
+func runWorktreeSetup(in SinglePlanInput, planID string, ctx Context, decision PrepareDecision, portEnv map[string]string, now func() time.Time) *SinglePlanResult {
 	if decision.Reuse || !in.SetupConfig.ShouldRun() {
 		return nil
 	}
@@ -1287,6 +1306,7 @@ func runWorktreeSetup(in SinglePlanInput, planID string, ctx Context, decision P
 		Command:      in.SetupConfig.Command,
 		WorktreeRoot: ctx.WorktreeRoot,
 		SourceRoot:   in.ControlRoot,
+		Env:          portEnv,
 		Timeout:      in.SetupConfig.TimeoutOrDefault(),
 	}
 	run := in.SetupCommand

@@ -53,13 +53,18 @@ type verifyGateInput struct {
 	VerifyCommand     string
 	Timeout           time.Duration
 	MaxIterations     int
-	WorktreeRoot      string
-	PRD               prd.PRD
-	ContextMD         string
-	ProjectGuidance   string
-	ProjectRoot       string
-	EvidenceDir       string
-	OnEvent           coreexec.EventHandler
+	// PortEnv is the slice's port block (SPRINGFIELD_PORT/SPRINGFIELD_PORT_RANGE)
+	// injected into the verify command's environment, so the verify suite binds
+	// the same ports the agent and setup command saw. Nil leaves the command
+	// environment untouched.
+	PortEnv         map[string]string
+	WorktreeRoot    string
+	PRD             prd.PRD
+	ContextMD       string
+	ProjectGuidance string
+	ProjectRoot     string
+	EvidenceDir     string
+	OnEvent         coreexec.EventHandler
 	// TamperGuard, when non-nil, wraps each fix-iteration agent run: the
 	// implementer can touch .springfield/ and the same protection the main story
 	// loop uses must apply here. The verify command itself is a deterministic
@@ -104,6 +109,7 @@ func runVerifyGate(in verifyGateInput) verifyGateResult {
 	req := verify.Request{
 		Command: in.VerifyCommand,
 		Dir:     in.WorktreeRoot,
+		Env:     in.PortEnv,
 		Timeout: in.Timeout,
 	}
 

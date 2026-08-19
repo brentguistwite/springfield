@@ -48,6 +48,10 @@ type Config struct {
 	// (Enabled=false) leaves setup off, so create-and-dispatch behavior is
 	// unchanged for projects that omit it. See SetupConfig.
 	Setup SetupConfig `toml:"setup"`
+	// Ports is the [ports] per-slice port-block block. Zero value selects
+	// portblock.DefaultBase, so every slice still receives a deterministic
+	// SPRINGFIELD_PORT/SPRINGFIELD_PORT_RANGE assignment. See PortsConfig.
+	Ports PortsConfig `toml:"ports"`
 }
 
 // StartConfig holds settings for the start command.

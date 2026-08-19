@@ -157,6 +157,28 @@ A missing `[verify]` block, or `enabled = true` with no `command`, leaves the ga
 
 `timeout` and `max_verify_iterations` are not per-plan overridable — they always resolve from the global block. When `omitempty` strips the `verify` object from `prd.json`, the runner re-reads it as the full inherit case.
 
+### Per-slice port blocks
+
+Every slice is assigned a deterministic, collision-free block of 10 ports so parallel slices can run servers and tests without colliding. The agent run **and** the `[setup]` / `[verify]` commands all receive two environment variables:
+
+| Variable | Value |
+|----------|-------|
+| `SPRINGFIELD_PORT` | The first port of the slice's block — the obvious "bind here" default. |
+| `SPRINGFIELD_PORT_RANGE` | The full `start-end` span (e.g. `42010-42019`) for a slice that needs several ports. |
+
+The block is a pure function of the plan's 1-based ordinal (`plan_units[].order`) and a configurable base: slice *N* owns `[base+(N-1)*10 … base+(N-1)*10+9]`. Because it depends only on the ordinal, two concurrently running slices always get disjoint blocks, and a single slice's block is identical across every iteration of a run.
+
+**Global block (`springfield.toml`).** Like `[verify]` and `[setup]`, the port scheme is team-shareable and belongs in the committed config:
+
+```toml
+[ports]
+base = 42000   # first port of slice ordinal 1's block; default 42000
+```
+
+A missing `[ports]` block selects the default base — every slice still gets a `SPRINGFIELD_PORT` / `SPRINGFIELD_PORT_RANGE` assignment.
+
+**Out of scope — deterministic assignment, not liveness probing.** Springfield never opens a socket to check whether a port in the assigned block is already free. A port in a slice's block that an unrelated process on the host already occupies is the operator's concern: raise `[ports] base` off the busy range. Probing would trade determinism — the property that makes blocks reproducible and merge-neutral — for a race against every other process on the machine.
+
 ### `context_md` scope
 
 Each agent prompt is assembled as: header + per-plan `context.md` (verbatim, if present) + project-wide guidance (concatenated `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` from the project root) + footer. Both layers are sent on every iteration.
