@@ -46,10 +46,28 @@ func (r ReviewConfig) MaxReviewIterationsOrDefault() int {
 	return r.MaxReviewIterations
 }
 
+// NotifyConfig is the [notify] block from springfield.local.toml. The zero
+// value means notifications are disabled (Enabled=false), matching the opt-in
+// default. Notify targets (a webhook URL, ntfy topic, Slack hook baked into a
+// command) are machine-personal, so this lives in the git-ignored local file
+// beside [review] rather than the committed springfield.toml.
+type NotifyConfig struct {
+	// Enabled turns notifications on for terminal batch states. Default false
+	// (opt-in): an unconfigured run stays silent and fires zero delivery.
+	Enabled bool `toml:"enabled"`
+	// Command is an optional user-supplied command run once per event for
+	// webhook/ntfy/Slack delivery. It runs via `sh -c` with the event details
+	// exported as SPRINGFIELD_NOTIFY_* environment variables. Empty → fall back
+	// to the built-in macOS Notification Center delivery (osascript); on other
+	// platforms an empty command with Enabled=true delivers nothing.
+	Command string `toml:"command"`
+}
+
 // LocalConfig is the decoded springfield.local.toml. A missing file decodes to
-// the zero value, which leaves review disabled.
+// the zero value, which leaves review and notifications disabled.
 type LocalConfig struct {
 	Review ReviewConfig `toml:"review"`
+	Notify NotifyConfig `toml:"notify"`
 }
 
 // LoadLocalFrom loads springfield.local.toml from rootDir. A missing file is

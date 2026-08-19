@@ -29,6 +29,11 @@ type Outcome struct {
 	SpendUSD float64
 	// Err is a terminal plan failure (including failed integration).
 	Err error
+	// NeedsHuman marks that this plan's terminal Err is a pause for human
+	// review, not an unrecoverable failure. It rides alongside Err (the batch
+	// still halts) so the caller can surface a needs-human notification instead
+	// of a failure one.
+	NeedsHuman bool
 }
 
 // RunInfo carries per-dispatch execution context to the runner.
@@ -86,6 +91,10 @@ type Result struct {
 	// plan failed while the phase drained after the cap fired.
 	CostCapped bool
 	SpendUSD   float64
+	// NeedsHuman reports the batch halted because a plan paused for human
+	// review and no unrecoverable failure eclipsed it. A genuine failure in the
+	// same phase outranks the pause and clears this flag.
+	NeedsHuman bool
 	// Cancelled reports the batch stopped because ctx was cancelled (the
 	// accompanying error is ctx.Err()). Distinguishes a cancellation from a
 	// plan failure so callers can keep the two report shapes separate.
@@ -142,6 +151,8 @@ func runPhase(ctx context.Context, index int, phase batch.Phase, in Input) (Resu
 		costCapped   bool
 		spendUSD     float64
 		noEligible   bool
+		needsHuman   bool
+		hardFail     bool
 		stopDispatch = false
 	)
 
@@ -183,6 +194,13 @@ func runPhase(ctx context.Context, index int, phase batch.Phase, in Input) (Resu
 			stopDispatch = true
 		case s.out.Err != nil:
 			errs = append(errs, s.out.Err)
+			// A needs-human pause and a genuine failure both surface as Err;
+			// track them apart so the batch report can prefer the failure.
+			if s.out.NeedsHuman {
+				needsHuman = true
+			} else {
+				hardFail = true
+			}
 			// Parallel phases drain: independent siblings keep dispatching
 			// and the batch halts at the barrier. Serial phases keep the
 			// historical immediate halt.
@@ -196,7 +214,9 @@ func runPhase(ctx context.Context, index int, phase batch.Phase, in Input) (Resu
 	// (cap fires, then a draining sibling fails). Neither signal may eclipse
 	// the other: the error drives the failure report, while CostCapped/spend
 	// must survive for the resume flow.
-	res := Result{CostCapped: costCapped, SpendUSD: spendUSD}
+	// A needs-human pause only drives the batch report when no unrecoverable
+	// failure eclipsed it — the failure is the more urgent thing to surface.
+	res := Result{CostCapped: costCapped, SpendUSD: spendUSD, NeedsHuman: needsHuman && !hardFail}
 	switch {
 	case len(errs) == 1:
 		return res, errs[0], true

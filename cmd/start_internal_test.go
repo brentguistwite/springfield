@@ -13,7 +13,163 @@ import (
 	"springfield/internal/features/batch"
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/conductor/batchexec"
+	"springfield/internal/features/notify"
 )
+
+// fakeNotifier records every Event it receives without touching the OS, so
+// tests can assert the batch seam fires the right terminal-state event.
+type fakeNotifier struct {
+	events []notify.Event
+}
+
+func (f *fakeNotifier) Notify(e notify.Event) { f.events = append(f.events, e) }
+
+// TestNotifyFailureLeavesBatchOutcomeUnchanged proves a failing notify command
+// cannot alter a settled batch: the real command-hook Notifier is wired to a
+// command that exits non-zero, and firing every terminal state through the seam
+// neither panics nor mutates the BatchRunResult the caller reports. The failure
+// is logged, not propagated.
+func TestNotifyFailureLeavesBatchOutcomeUnchanged(t *testing.T) {
+	var logw bytes.Buffer
+	// enabled + a command that always fails; goos is irrelevant when a command
+	// is set (the command hook wins over the osascript built-in).
+	n := notify.New(true, "exit 1", "linux", &logw)
+
+	results := []BatchRunResult{
+		{Started: true},
+		{Started: true, Error: "boom"},
+		{Started: true, CostCapped: true, SpendUSD: 12.5},
+		{Started: true, NeedsHuman: true, Error: "plan paused"},
+	}
+	for _, r := range results {
+		before := r
+		notifyBatchOutcome(n, "batch-1", r) // must not panic
+		if r != before {
+			t.Fatalf("notify failure mutated BatchRunResult: got %+v, want %+v", r, before)
+		}
+	}
+	if logw.Len() == 0 {
+		t.Fatal("expected notify command failure to be logged")
+	}
+}
+
+// TestNotifyBatchOutcomeSkipsPreExecutionFailure pins the false-positive guard:
+// a startup/load failure bubbles out of runBatch with Error set but Started
+// false (batch execution never began). Such a result must fire NO notification —
+// the operator saw the error synchronously, and a "batch failed" desktop alert
+// for a config typo would be noise. Every terminal Kind is proven silent when
+// Started is false so no future field addition reopens the path.
+func TestNotifyBatchOutcomeSkipsPreExecutionFailure(t *testing.T) {
+	notStarted := []BatchRunResult{
+		{Error: "load springfield.toml: x"}, // config load failure
+		{Error: "agent_priority is empty"},  // no agents configured
+		{Error: "execution config is missing"},
+	}
+	for _, r := range notStarted {
+		fake := &fakeNotifier{}
+		notifyBatchOutcome(fake, "batch-1", r)
+		if len(fake.events) != 0 {
+			t.Fatalf("pre-execution result %+v fired %d notifications, want 0: %+v", r, len(fake.events), fake.events)
+		}
+	}
+}
+
+// TestNotifyBatchOutcomeSkipsVacuousCompletion pins the OTHER Started==false
+// path — the one the reviewer flagged as a semantic fork. An empty batch (no
+// conductor project, no plan IDs) returns cleanly from runBatch with no Error
+// and Started false; it then flows through RunE's completion branch and archives
+// as "completed". That successful, non-failure result must still fire NO
+// notification: nothing executed, so a Complete desktop alert for a zero-plan
+// no-op would be noise. This is distinct from a pre-execution failure (no Error
+// here) and locks the intent so a future reader does not "fix" the empty-batch
+// path into emitting Complete.
+func TestNotifyBatchOutcomeSkipsVacuousCompletion(t *testing.T) {
+	fake := &fakeNotifier{}
+	notifyBatchOutcome(fake, "batch-1", BatchRunResult{}) // clean completion, never ran
+	if len(fake.events) != 0 {
+		t.Fatalf("vacuous completion fired %d notifications, want 0: %+v", len(fake.events), fake.events)
+	}
+}
+
+// TestNotifyBatchFailedFiresFailedForLateFailure pins the late-flip guard: a
+// finalize/persist error striking after a batch ran (Started true) must reach
+// the operator as a Failed event carrying the error detail, so a completion or
+// cost-cap path that fails while settling doesn't leave the operator with the
+// "completed"/"cost-capped" it was heading toward. Started false stays silent,
+// mirroring notifyBatchOutcome's pre-execution guard.
+func TestNotifyBatchFailedFiresFailedForLateFailure(t *testing.T) {
+	fake := &fakeNotifier{}
+	notifyBatchFailed(fake, "batch-1", true, "finalize completed batch: disk full")
+	if len(fake.events) != 1 {
+		t.Fatalf("started late failure fired %d events, want 1: %+v", len(fake.events), fake.events)
+	}
+	if fake.events[0].Kind != notify.Failed {
+		t.Fatalf("late failure Kind = %v, want Failed", fake.events[0].Kind)
+	}
+	if fake.events[0].Detail != "finalize completed batch: disk full" {
+		t.Fatalf("late failure Detail = %q, want the error detail", fake.events[0].Detail)
+	}
+
+	silent := &fakeNotifier{}
+	notifyBatchFailed(silent, "batch-1", false, "pre-execution error")
+	if len(silent.events) != 0 {
+		t.Fatalf("pre-execution late failure fired %d events, want 0", len(silent.events))
+	}
+}
+
+// TestHaltStatusLabelsAgreeWithNotification pins the fix for the notification/
+// CLI divergence: a needs-human halt must render as "needs human review" on the
+// operator-facing stdout status line, matching the NeedsHuman notification the
+// seam fires for the same result — not the plain "failed" the CLI used to print
+// while the desktop alert said "needs human review". A plain failure stays
+// "failed" on both channels. Both the stdout label and the notification Kind are
+// derived from the SAME BatchRunResult here so a future change that forks one
+// without the other trips this test.
+func TestHaltStatusLabelsAgreeWithNotification(t *testing.T) {
+	cases := []struct {
+		name       string
+		result     BatchRunResult
+		wantStatus string
+		wantVerb   string
+		wantKind   notify.Kind
+	}{
+		{
+			name:       "needs-human halt reads as needs-human on both channels",
+			result:     BatchRunResult{Started: true, NeedsHuman: true, Error: "plan paused"},
+			wantStatus: "needs human review",
+			wantVerb:   "halted for human review",
+			wantKind:   notify.NeedsHuman,
+		},
+		{
+			name:       "plain failure reads as failed on both channels",
+			result:     BatchRunResult{Started: true, Error: "boom"},
+			wantStatus: "failed",
+			wantVerb:   "failed",
+			wantKind:   notify.Failed,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotStatus, gotVerb := haltStatusLabels(tc.result)
+			if gotStatus != tc.wantStatus {
+				t.Errorf("status label = %q, want %q", gotStatus, tc.wantStatus)
+			}
+			if gotVerb != tc.wantVerb {
+				t.Errorf("halt verb = %q, want %q", gotVerb, tc.wantVerb)
+			}
+			// The notification the seam fires for the same result must not
+			// contradict the CLI status the operator sees.
+			fake := &fakeNotifier{}
+			notifyBatchOutcome(fake, "batch-1", tc.result)
+			if len(fake.events) != 1 {
+				t.Fatalf("got %d events, want 1: %+v", len(fake.events), fake.events)
+			}
+			if fake.events[0].Kind != tc.wantKind {
+				t.Errorf("notification Kind = %d, want %d (must agree with status %q)", fake.events[0].Kind, tc.wantKind, gotStatus)
+			}
+		})
+	}
+}
 
 // TestBatchPlanRunnerIsTerminal verifies the batchexec terminal contract at
 // the adapter boundary: only a FULLY INTEGRATED plan (merge succeeded +
@@ -271,6 +427,12 @@ func TestRunBatchWithContextMissingExecutionConfigFails(t *testing.T) {
 	if result.Error == "" {
 		t.Fatal("expected BatchRunResult.Error to be set")
 	}
+	// This failure happened at startup (before batchexec.Execute), so the batch
+	// never "started" — the notifier seam must treat it as non-terminal and stay
+	// silent rather than firing a false batch-failed alert.
+	if result.Started {
+		t.Error("missing-exec-config is a pre-execution failure; Started must be false")
+	}
 
 	// Batch must still be present (not archived/cleared).
 	if _, statErr := os.Stat(batch.RunPath(root)); statErr != nil {
@@ -312,12 +474,17 @@ func TestRunBatchWithContextMalformedLocalTOMLFails(t *testing.T) {
 		Phases:  []batch.Phase{{Mode: batch.PhaseSerial, Plans: []string{"plan-a"}}},
 	}
 
-	_, err := runBatchWithContext(context.Background(), root, &run, b, io.Discard, "", 0, false, "", 1)
+	result, err := runBatchWithContext(context.Background(), root, &run, b, io.Discard, "", 0, false, "", 1)
 	if err == nil {
 		t.Fatal("expected error from malformed local toml, got nil")
 	}
 	if !bytes.Contains([]byte(err.Error()), []byte("load springfield.local.toml")) {
 		t.Errorf("error %q missing wrap prefix \"load springfield.local.toml\"", err.Error())
+	}
+	// A malformed local file is a pre-execution load failure: Started must stay
+	// false so the notifier seam does not report it as a batch outcome.
+	if result.Started {
+		t.Error("malformed local toml is a pre-execution failure; Started must be false")
 	}
 }
 
@@ -493,5 +660,77 @@ func TestResolveMaxParallelFlagPrecedence(t *testing.T) {
 	// same semantics the config resolver gives max_parallel <= 1.
 	if got := resolveMaxParallel(-1, 3); got != 1 {
 		t.Errorf("flag -1: got %d, want 1 (clamped to sequential)", got)
+	}
+}
+
+// TestNotifyBatchOutcomeFiresRightEventPerTerminalState pins the notifier seam:
+// each batch terminal state (needs-human, complete, failed, cost-capped) fires
+// exactly one Event of the matching Kind, via a fake Notifier that makes no OS
+// call. Priority ties (a pause riding alongside a halt Error) resolve to the
+// pause, matching the RunE report order.
+func TestNotifyBatchOutcomeFiresRightEventPerTerminalState(t *testing.T) {
+	cases := []struct {
+		name     string
+		result   BatchRunResult
+		wantKind notify.Kind
+		assert   func(t *testing.T, e notify.Event)
+	}{
+		{
+			name:     "complete",
+			result:   BatchRunResult{Started: true},
+			wantKind: notify.Complete,
+		},
+		{
+			name:     "failed",
+			result:   BatchRunResult{Started: true, Error: "boom"},
+			wantKind: notify.Failed,
+			assert: func(t *testing.T, e notify.Event) {
+				if e.Detail != "boom" {
+					t.Errorf("failed event Detail = %q, want %q", e.Detail, "boom")
+				}
+			},
+		},
+		{
+			name:     "cost-capped",
+			result:   BatchRunResult{Started: true, CostCapped: true, SpendUSD: 12.5},
+			wantKind: notify.CostCapped,
+			assert: func(t *testing.T, e notify.Event) {
+				if e.SpendUSD != 12.5 {
+					t.Errorf("cost-capped event SpendUSD = %v, want 12.5", e.SpendUSD)
+				}
+			},
+		},
+		{
+			name: "needs-human outranks the halt error it rides alongside",
+			// A needs-human pause halts the batch, so Error is also set; the
+			// seam must still surface needs-human, not failure.
+			result:   BatchRunResult{Started: true, NeedsHuman: true, Error: "plan paused"},
+			wantKind: notify.NeedsHuman,
+		},
+		{
+			name: "cost-cap outranks a coexisting failure",
+			// A cost-cap pause draining a failed sibling: pause wins (resumable).
+			result:   BatchRunResult{Started: true, CostCapped: true, Error: "sibling failed"},
+			wantKind: notify.CostCapped,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeNotifier{}
+			notifyBatchOutcome(fake, "batch-1", tc.result)
+			if len(fake.events) != 1 {
+				t.Fatalf("got %d events, want exactly 1: %+v", len(fake.events), fake.events)
+			}
+			e := fake.events[0]
+			if e.Kind != tc.wantKind {
+				t.Fatalf("Kind = %d, want %d", e.Kind, tc.wantKind)
+			}
+			if e.BatchID != "batch-1" {
+				t.Errorf("BatchID = %q, want %q", e.BatchID, "batch-1")
+			}
+			if tc.assert != nil {
+				tc.assert(t, e)
+			}
+		})
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -38,6 +39,7 @@ import (
 	"springfield/internal/features/conductor/planmerge"
 	"springfield/internal/features/conductor/planrun"
 	"springfield/internal/features/cost"
+	"springfield/internal/features/notify"
 	"springfield/internal/features/portblock"
 	"springfield/internal/features/wakelock"
 	"springfield/internal/features/worktreesetup"
@@ -319,6 +321,20 @@ func NewStartCommand() *cobra.Command {
 				return fmt.Errorf("batch %s interrupted; rerun \"springfield start\" to resume", b.ID)
 			}
 
+			// Terminal state reached (not interrupted/resumable): the one
+			// operator notification for this batch fires from the branches below,
+			// AFTER the archive/persist that finalizes each outcome — so a late
+			// write/finalize failure that flips a would-be "completed" or
+			// "cost-capped" into an error is what the operator actually hears,
+			// not the outcome the batch was heading toward. A notify failure is
+			// swallowed by the Notifier itself and never fails the batch; the
+			// seam drops results whose batch never started executing (a
+			// pre-execution startup/load error carries Error but is not a batch
+			// outcome). The notifier is built from the operator's git-ignored
+			// [notify] config; an absent or disabled block yields notify.Nop
+			// (silent), so the seam is always invoked but off by default.
+			n := buildNotifier(cmd, loaded.RootDir)
+
 			// Cost-capped: persist the CostCapped state, surface the spend +
 			// resume hint, and exit non-zero so CI / scripts can detect.
 			// Do NOT archive — the batch is paused, not done.
@@ -326,8 +342,12 @@ func NewStartCommand() *cobra.Command {
 				run.CostCapped = true
 				run.LastCheckpoint = time.Now().UTC()
 				if writeErr := batch.WriteRun(root, run); writeErr != nil {
+					// The pause couldn't be persisted, so resume won't work: this
+					// is a failure, not the cost-cap pause. Notify it as such.
+					notifyBatchFailed(n, b.ID, result.Started, writeErr.Error())
 					return fmt.Errorf("persist cost-cap state: %w", writeErr)
 				}
+				notifyBatchOutcome(n, b.ID, result)
 				autoBranchOutcome = autobranch.OutcomeInterrupted
 				fmt.Fprintf(w, "Status: cost-capped\n")
 				fmt.Fprintf(w, "Est. API cost: $%.2f (cap: $%.2f)\n", result.SpendUSD, costCap)
@@ -344,20 +364,31 @@ func NewStartCommand() *cobra.Command {
 
 			run.LastCheckpoint = time.Now().UTC()
 			if result.Error != "" {
+				// Failure / needs-human: the outcome is settled by result and no
+				// later persist can flip it (a persist error below only adds
+				// detail to an already-failed batch), so notify from here.
+				notifyBatchOutcome(n, b.ID, result)
+				// The operator-facing status line and the exit error must report
+				// the SAME settled outcome the notification just did — a
+				// needs-human halt that surfaces as a plain "failed" on stdout
+				// while the desktop alert says "needs human review" is exactly the
+				// notification/CLI divergence the seam was built to avoid. Both
+				// channels branch off result.NeedsHuman so they cannot fork.
+				statusLabel, haltVerb := haltStatusLabels(result)
 				if !result.RunStateCleared {
 					run.FatalError = result.Error
 					if writeErr := batch.WriteRun(root, run); writeErr != nil {
-						fmt.Fprintf(w, "Status: failed\n")
+						fmt.Fprintf(w, "Status: %s\n", statusLabel)
 						fmt.Fprintf(w, "Error: %s\n", result.Error)
-						return fmt.Errorf("batch %s failed; additionally failed to persist run state: %w", b.ID, writeErr)
+						return fmt.Errorf("batch %s %s; additionally failed to persist run state: %w", b.ID, haltVerb, writeErr)
 					}
 				}
-				fmt.Fprintf(w, "Status: failed\n")
+				fmt.Fprintf(w, "Status: %s\n", statusLabel)
 				fmt.Fprintf(w, "Error: %s\n", result.Error)
 				if execErr != nil {
 					return execErr
 				}
-				return fmt.Errorf("batch %s failed", b.ID)
+				return fmt.Errorf("batch %s %s", b.ID, haltVerb)
 			}
 
 			// Re-read batch from disk so archive reflects slice statuses
@@ -392,12 +423,18 @@ func NewStartCommand() *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "warning: archive completed batch %q: %v\n", b.ID, archiveErr)
 				}
 				if clearErr := batch.ClearRun(root); clearErr != nil {
+					notifyBatchFailed(n, b.ID, result.Started, clearErr.Error())
 					return fmt.Errorf("clear run state after completion: %w", clearErr)
 				}
 			} else if finErr := batch.FinalizeBatch(root, b, project, archiveRollup, run.BatchMode, cmd.ErrOrStderr()); finErr != nil {
+				notifyBatchFailed(n, b.ID, result.Started, finErr.Error())
 				return fmt.Errorf("finalize completed batch %q: %w", b.ID, finErr)
 			}
 
+			// Batch is durably archived + the cursor cleared: only now is the
+			// "completed" outcome final, so fire the notification here — a
+			// finalize failure above already notified failure and returned.
+			notifyBatchOutcome(n, b.ID, result)
 			autoBranchOutcome = autobranch.OutcomeSuccess
 			fmt.Fprintf(w, "Status: completed\n")
 			if archiveRollup != nil && archiveRollup.Iterations > 0 {
@@ -531,6 +568,99 @@ type BatchRunResult struct {
 	// SpendUSD reports the rollup total at the moment the cap fired. Zero
 	// when CostCapped is false.
 	SpendUSD float64
+	// NeedsHuman is true when the batch halted because a plan paused for human
+	// review (and no unrecoverable failure eclipsed it). The caller notifies a
+	// needs-human event instead of a failure; the halt itself still surfaces
+	// through Error, so the failure-reporting path is unchanged.
+	NeedsHuman bool
+	// Started is true once batch execution actually began (batchexec.Execute was
+	// entered). It gates the terminal-state notification. Two distinct
+	// Started==false paths exist, and BOTH must stay silent:
+	//   - Pre-execution FAILURE: a startup/load error (bad config, no agents,
+	//     missing exec config, a malformed local file) bubbles out of runBatch
+	//     with Error set. Notifying "batch failed" would be a false positive —
+	//     the operator saw it synchronously; nothing ran.
+	//   - Vacuous COMPLETION: an empty batch (no conductor project, no plan IDs)
+	//     returns cleanly with no Error. It reaches the RunE completion branch
+	//     and archives as "completed", but nothing executed, so a "batch
+	//     complete" alert for a zero-plan no-op would be equally noisy.
+	// Only an error (or completion) that survives to this flag as true reflects
+	// a batch that actually ran and is worth announcing.
+	Started bool
+}
+
+// buildNotifier resolves the operator's Notifier from the git-ignored [notify]
+// block in springfield.local.toml. A missing/disabled block yields notify.Nop
+// (silent, the opt-in default). A malformed local file would already have
+// aborted the batch during load, but should one slip through here it falls back
+// to Nop with a warning rather than failing the settled batch — notification
+// wiring must never change a batch outcome. Delivery warnings go to stderr.
+func buildNotifier(cmd *cobra.Command, rootDir string) notify.Notifier {
+	local, err := config.LoadLocalFrom(rootDir)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: notifications disabled, load springfield.local.toml: %v\n", err)
+		return notify.Nop{}
+	}
+	return notify.New(local.Notify.Enabled, local.Notify.Command, runtime.GOOS, cmd.ErrOrStderr())
+}
+
+// notifyBatchOutcome fires exactly one terminal-state notification for a
+// settled batch. It is the single seam the batch terminal-state handling calls
+// once the batch has stopped (never on the interrupt/resume path, which is not
+// terminal). Priority mirrors the RunE report order — a cost-cap pause and a
+// needs-human pause outrank the halt Error they ride alongside — so the
+// operator hears the actionable reason, not a generic failure. n is required
+// (never nil): callers pass notify.Nop when notifications are unconfigured.
+//
+// A result whose batch never entered execution (result.Started == false) is
+// dropped. This covers BOTH Started==false paths: a pre-execution startup/load
+// failure (reported synchronously; must not masquerade as a batch-failed
+// notification) AND a vacuous completion of an empty batch (no plans ran, so
+// the "completed" branch below would otherwise emit a Complete alert for a
+// zero-plan no-op). Nothing executed in either case, so nothing is announced.
+// haltStatusLabels maps a halted (Error-carrying) BatchRunResult to the
+// operator-facing stdout status label and the verb used in the exit error, so
+// the CLI's own report agrees with the terminal-state notification fired by
+// notifyBatchOutcome. It lives beside notifyBatchOutcome deliberately: both
+// translate the SAME settled result into an operator-visible outcome, and a
+// needs-human halt must read as "needs human review" on both channels rather
+// than one saying "failed" while the other says "needs human review". A
+// cost-cap pause never reaches here (it is handled on its own branch before
+// the Error branch), so only the failure/needs-human split matters.
+func haltStatusLabels(result BatchRunResult) (statusLabel, haltVerb string) {
+	if result.NeedsHuman {
+		return "needs human review", "halted for human review"
+	}
+	return "failed", "failed"
+}
+
+func notifyBatchOutcome(n notify.Notifier, batchID string, result BatchRunResult) {
+	if !result.Started {
+		return
+	}
+	switch {
+	case result.CostCapped:
+		n.Notify(notify.Event{Kind: notify.CostCapped, BatchID: batchID, SpendUSD: result.SpendUSD})
+	case result.NeedsHuman:
+		n.Notify(notify.Event{Kind: notify.NeedsHuman, BatchID: batchID})
+	case result.Error != "":
+		n.Notify(notify.Event{Kind: notify.Failed, BatchID: batchID, Detail: result.Error})
+	default:
+		n.Notify(notify.Event{Kind: notify.Complete, BatchID: batchID})
+	}
+}
+
+// notifyBatchFailed fires a Failed notification for a late-stage terminal
+// failure — an archive/persist/finalize error that struck AFTER a batch ran but
+// while it was being settled as completed or cost-capped. It exists so those
+// paths don't leave the operator with the "completed"/"cost-capped" event the
+// batch was heading toward when the finalizing write actually failed. Gated on
+// started so a pre-execution failure stays silent, mirroring notifyBatchOutcome.
+func notifyBatchFailed(n notify.Notifier, batchID string, started bool, detail string) {
+	if !started {
+		return
+	}
+	n.Notify(notify.Event{Kind: notify.Failed, BatchID: batchID, Detail: detail})
 }
 
 func runBatch(root string, run *batch.Run, b batch.Batch, progress io.Writer, logPath string, costCap float64, perPlan bool, batchBase string, maxParallel int) (BatchRunResult, error) {
@@ -599,6 +729,10 @@ func runBatchWithContext(ctx context.Context, root string, run *batch.Run, b bat
 			return BatchRunResult{Error: e.Error()}, e
 		}
 		// No conductor project and no plans: vacuous completion is fine.
+		// Started stays false intentionally — this is the sole clean-completion
+		// path that never entered batchexec, so the RunE completion branch
+		// archives it as "completed" but notifyBatchOutcome drops it (a Complete
+		// alert for a zero-plan no-op batch would be noise). See BatchRunResult.Started.
 		return BatchRunResult{}, nil
 	}
 	// If the project loaded but its plan registry is empty while the batch has
@@ -661,11 +795,13 @@ func runBatchWithContext(ctx context.Context, root string, run *batch.Run, b bat
 		// A cost-cap pause can coexist with a plan failure (cap fired, then a
 		// draining sibling failed). Carry the cap signal through so the caller
 		// persists the pause state and surfaces the spend alongside the error.
-		return BatchRunResult{Error: execErr.Error(), CostCapped: execRes.CostCapped, SpendUSD: execRes.SpendUSD}, execErr
+		// Started: this error came from execution, not startup — it IS a batch
+		// outcome, so it earns a terminal-state notification.
+		return BatchRunResult{Started: true, Error: execErr.Error(), CostCapped: execRes.CostCapped, SpendUSD: execRes.SpendUSD, NeedsHuman: execRes.NeedsHuman}, execErr
 	case execRes.CostCapped:
-		return BatchRunResult{CostCapped: true, SpendUSD: execRes.SpendUSD}, nil
+		return BatchRunResult{Started: true, CostCapped: true, SpendUSD: execRes.SpendUSD}, nil
 	}
-	return BatchRunResult{}, nil
+	return BatchRunResult{Started: true}, nil
 }
 
 // resolveMaxParallel applies --max-parallel flag precedence: any non-zero
@@ -842,13 +978,16 @@ func (r *batchPlanRunner) RunPlan(ctx context.Context, planID string, info batch
 	}
 	if res.Err != nil {
 		fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
-		if res.Status == conductor.StatusNeedsHuman {
+		needsHuman := res.Status == conductor.StatusNeedsHuman
+		if needsHuman {
 			fmt.Fprintf(progress, "Status: needs human review (%s)\n", res.Reason)
 		} else {
 			fmt.Fprintf(progress, "Status: failed (%s)\n", res.Reason)
 		}
 		fmt.Fprintf(progress, "Error: %s\n", res.Err.Error())
-		return batchexec.Outcome{Err: res.Err}
+		// NeedsHuman rides alongside Err so the batch-level notifier surfaces a
+		// needs-human pause rather than a failure (batchexec still halts).
+		return batchexec.Outcome{Err: res.Err, NeedsHuman: needsHuman}
 	}
 	fmt.Fprintf(progress, "Plan: %s\n", res.PlanID)
 	fmt.Fprintf(progress, "Status: completed\n")
