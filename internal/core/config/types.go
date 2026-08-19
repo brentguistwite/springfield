@@ -44,6 +44,10 @@ type Config struct {
 	// leaves the gate off, so marker-only completion behavior is unchanged for
 	// projects that omit it. See VerifyConfig and ResolveVerify.
 	Verify VerifyConfig `toml:"verify"`
+	// Setup is the [setup] worktree-preparation block. Zero value
+	// (Enabled=false) leaves setup off, so create-and-dispatch behavior is
+	// unchanged for projects that omit it. See SetupConfig.
+	Setup SetupConfig `toml:"setup"`
 }
 
 // StartConfig holds settings for the start command.

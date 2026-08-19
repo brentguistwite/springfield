@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -21,6 +22,7 @@ import (
 	"springfield/internal/features/execution"
 	"springfield/internal/features/prd"
 	"springfield/internal/features/verify"
+	"springfield/internal/features/worktreesetup"
 )
 
 // AgentRunner is the runtime boundary planrun depends on. The shared
@@ -109,6 +111,18 @@ type SinglePlanInput struct {
 	// this nil; tests inject a scripted stub so the gate is exercised without
 	// spawning a subprocess. Its signature IS verifyCommandFunc.
 	VerifyCommand func(ctx context.Context, req verify.Request) verify.Result
+	// SetupConfig is the project-global [setup] block from springfield.toml.
+	// Zero value (Enabled=false) skips worktree setup, preserving the prior
+	// create-and-dispatch behavior. When it runs, setup executes in the freshly
+	// created slice worktree AFTER checkout and BEFORE any agent dispatch; a
+	// non-zero exit fails the slice before the first agent runs. Setup is
+	// skipped on a worktree-reuse resume (it already ran on first creation).
+	SetupConfig config.SetupConfig
+	// SetupCommand is the command boundary the setup step dispatches. Nil
+	// defaults to worktreesetup.Run (spawns the real `sh -c` command with the
+	// source-root/worktree env vars). Production leaves this nil; tests inject a
+	// scripted stub so the step is exercised without spawning a subprocess.
+	SetupCommand func(ctx context.Context, req worktreesetup.Request) worktreesetup.Result
 	// Ctx, when non-nil, is the parent context for in-loop agent runs that
 	// participate in cooperative cancellation. The legacy story-iteration
 	// dispatch sites use context.Background (no cancellation surface); the
@@ -307,6 +321,16 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 	}
 
 	ctx := decision.Context
+
+	// Worktree setup: run the project's [setup] command in the freshly created
+	// slice worktree BEFORE any agent dispatch, so dependencies/untracked files
+	// exist by the time the agent runs. Skipped on a reuse resume (setup already
+	// ran on first creation) and when the [setup] block is unconfigured
+	// (opt-in). A non-zero exit fails the slice here — no agent is ever
+	// dispatched. Runs for both PRD and legacy plans (before the branch below).
+	if setupRes := runWorktreeSetup(in, planID, ctx, decision, now); setupRes != nil {
+		return *setupRes
+	}
 
 	// Detect PRD vs legacy plan by path suffix. PRD plans have prd.json paths;
 	// legacy plans are .md files registered before Phase 3.
@@ -1243,6 +1267,59 @@ func loadProjectGuidance(controlRoot string) string {
 		fmt.Fprintf(&b, "## %s\n%s\n", name, string(data))
 	}
 	return b.String()
+}
+
+// runWorktreeSetup runs the project's [setup] command in a freshly created
+// slice worktree before agent dispatch. It returns nil to proceed (setup was
+// skipped or succeeded) or a non-nil *SinglePlanResult that the caller must
+// return immediately — the slice is failed before any agent runs.
+//
+// Skipped when the worktree was reused (setup already ran on first creation) or
+// the [setup] block is unconfigured. Setup output is always captured under the
+// slice's evidence directory, even on the success path, so an operator can
+// inspect what the command did.
+func runWorktreeSetup(in SinglePlanInput, planID string, ctx Context, decision PrepareDecision, now func() time.Time) *SinglePlanResult {
+	if decision.Reuse || !in.SetupConfig.ShouldRun() {
+		return nil
+	}
+
+	req := worktreesetup.Request{
+		Command:      in.SetupConfig.Command,
+		WorktreeRoot: ctx.WorktreeRoot,
+		SourceRoot:   in.ControlRoot,
+		Timeout:      in.SetupConfig.TimeoutOrDefault(),
+	}
+	run := in.SetupCommand
+	if run == nil {
+		run = worktreesetup.Run
+	}
+	progress(in.Progress, "plan %s: worktree setup (%s)\n", planID, req.Command)
+	res := run(in.Ctx, req)
+
+	// Capture setup evidence best-effort under the plan's evidence dir. A write
+	// failure must not mask a setup that otherwise succeeded, so it only warns.
+	evidenceDir := EvidenceRoot(in.ControlRoot, ctx.PlanKey)
+	if _, werr := worktreesetup.WriteEvidence(evidenceDir, req, res); werr != nil {
+		progress(in.Progress, "plan %s: WARN: write setup evidence: %v\n", planID, werr)
+	}
+
+	if res.Err != nil {
+		msg := fmt.Sprintf("worktree setup command %q could not be launched: %v", req.Command, res.Err)
+		recordPreflightFailure(in.Project, planID, "setup-failed", msg, now())
+		_ = in.Project.SaveState()
+		return &SinglePlanResult{PlanID: planID, Reason: "setup-failed", Context: ctx, Status: conductor.StatusFailed, Err: fmt.Errorf("%s", msg)}
+	}
+	if res.ExitCode != 0 {
+		detail := "exit code " + strconv.Itoa(res.ExitCode)
+		if res.TimedOut {
+			detail += " (timed out)"
+		}
+		msg := fmt.Sprintf("worktree setup command %q failed with %s before any agent ran (setup output in evidence setup/)", req.Command, detail)
+		recordPreflightFailure(in.Project, planID, "setup-failed", msg, now())
+		_ = in.Project.SaveState()
+		return &SinglePlanResult{PlanID: planID, Reason: "setup-failed", Context: ctx, Status: conductor.StatusFailed, Err: fmt.Errorf("%s", msg)}
+	}
+	return nil
 }
 
 func recordPreflightFailure(p *conductor.Project, planID, tag, msg string, now time.Time) {
