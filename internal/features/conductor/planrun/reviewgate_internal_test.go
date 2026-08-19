@@ -178,10 +178,13 @@ func TestReviewGateCancelledContextErrorsBeforeReviewerCall(t *testing.T) {
 }
 
 // TestReviewGateFixIterationReceivesPortBlock pins the port-scope guarantee for
-// the review fix-loop: the slice's SPRINGFIELD_PORT block must reach the
-// fix-iteration agent dispatch (which may start a server or test suite), while
-// the read-only reviewer call does NOT get it. Without threading PortEnv the fix
-// agent binds default ports and can collide with a concurrently running slice.
+// the review fix-loop: the slice's SPRINGFIELD_PORT block must reach BOTH the
+// reviewer dispatch AND the fix-iteration agent dispatch (either may start a
+// server or test suite). The reviewer is tool-free by design, but ReviewerRole
+// only relaxes validation — it does not sandbox tools; handing it the block is
+// defense-in-depth so a reviewer that does bind a port cannot collide with a
+// concurrently running slice. Without threading PortEnv either dispatch binds
+// default ports and can collide.
 func TestReviewGateFixIterationReceivesPortBlock(t *testing.T) {
 	r := &seqRunner{results: []coreruntime.Result{
 		{Agent: agents.AgentClaude, Events: []coreexec.Event{stdout("<review-verdict>revise</review-verdict>")}}, // review 1
@@ -197,9 +200,9 @@ func TestReviewGateFixIterationReceivesPortBlock(t *testing.T) {
 	if len(r.reqs) != 3 {
 		t.Fatalf("expected review→fix→review = 3 requests, got %d", len(r.reqs))
 	}
-	// reqs[0] is the reviewer (read-only, no port block); reqs[1] is the fix agent.
-	if r.reqs[0].Env["SPRINGFIELD_PORT"] != "" {
-		t.Errorf("reviewer must not receive the port block, got %v", r.reqs[0].Env)
+	// reqs[0] is the reviewer; reqs[1] is the fix agent. BOTH receive the block.
+	if r.reqs[0].Env["SPRINGFIELD_PORT"] != "42030" {
+		t.Errorf("reviewer SPRINGFIELD_PORT = %q, want 42030 (env=%v)", r.reqs[0].Env["SPRINGFIELD_PORT"], r.reqs[0].Env)
 	}
 	if r.reqs[1].Env["SPRINGFIELD_PORT"] != "42030" {
 		t.Errorf("fix-iteration SPRINGFIELD_PORT = %q, want 42030 (env=%v)", r.reqs[1].Env["SPRINGFIELD_PORT"], r.reqs[1].Env)
