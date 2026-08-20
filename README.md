@@ -435,6 +435,24 @@ springfield plan --append  --prd extra-plans.json
 
 Use `springfield doctor` whenever local agent tooling looks unhealthy or a host CLI is missing.
 
+## Watching a live batch
+
+`springfield status` renders once and exits. Two read-only flags let you follow a run as it happens — neither writes, creates, or locks anything under `.springfield/`, so they are safe to leave open beside a live `springfield start`:
+
+```bash
+# Self-refreshing batch view: re-renders the whole batch every couple of
+# seconds (plans, current/next, in-flight activity) until you Ctrl-C. With no
+# active batch it prints a one-line notice and exits 0.
+springfield status --watch
+
+# Follow ONE plan's live agent events, streamed as they arrive:
+springfield status --watch --plan <plan-id>
+```
+
+`--watch` re-renders from the same view-model `--json` emits — the two surfaces can never disagree about a batch's state.
+
+`--plan <id>` is a per-plan *follow*: it streams that plan's live agent output, filtered from the batch's live agent-trace log so concurrent siblings never interleave into it. (It sources from the live trace, not the per-slice `evidence/.../events.jsonl`, which is written only after a subprocess exits and so cannot be tailed live.) `--watch` is accepted alongside `--plan` as the natural "keep streaming" phrasing but is optional — follow always streams. An unknown plan id fails fast and names the batch's known plan ids.
+
 ## Debugging a stuck run
 
 When a batch stalls or an agent run fails in a way you don't recognise, work from these commands. Everything below is read-only — only `springfield recover --plan <id>` *without* `--diagnose` mutates state.

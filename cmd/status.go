@@ -25,6 +25,7 @@ func NewStatusCommand() *cobra.Command {
 	var dir string
 	var jsonOut bool
 	var watch bool
+	var planID string
 
 	cmd := &cobra.Command{
 		Use:   "status",
@@ -37,6 +38,16 @@ func NewStatusCommand() *cobra.Command {
 				return err
 			}
 			root := loaded.RootDir
+
+			// --plan follows a single plan's LIVE agent events, streamed from the
+			// trace pipeline (never the post-hoc evidence events.jsonl). It is a
+			// distinct surface from the batch view, so it takes precedence over the
+			// --watch batch redraw and --json. --watch is accepted alongside it as
+			// the natural "keep streaming" phrasing but adds nothing: follow always
+			// streams. Read-only, like every status surface.
+			if planID != "" {
+				return runFollow(cmd.OutOrStdout(), root, planID)
+			}
 
 			// --watch re-renders the active batch on an interval, polling the
 			// control plane read-only through the SAME statusview.Poll projection
@@ -102,6 +113,7 @@ func NewStatusCommand() *cobra.Command {
 	cmd.Flags().StringVar(&dir, "dir", ".", "project root or nested path inside the Springfield project")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit machine-readable JSON (stable view-model for tooling)")
 	cmd.Flags().BoolVar(&watch, "watch", false, "re-render the active batch on an interval until interrupted (read-only)")
+	cmd.Flags().StringVar(&planID, "plan", "", "follow a single plan's live agent events, filtered from the batch trace (read-only)")
 	return cmd
 }
 
@@ -165,6 +177,68 @@ func watchIdleMessage(v statusview.View) string {
 		return v.Summary + " — nothing to watch."
 	default:
 		return "No active batch to watch."
+	}
+}
+
+// followInterval is the poll cadence for `status --plan <id>`. It matches the
+// watch cadence: the runner appends trace events continuously, so a couple
+// seconds keeps the stream fresh without hammering the log file.
+const followInterval = 2 * time.Second
+
+// runFollow streams a single plan's live agent events until the batch is no
+// longer active (or the process is interrupted). It sources from the live
+// agent-trace stream — the ONLY tail-able per-event source; per-slice evidence
+// events.jsonl is written post-hoc and cannot be followed live — and renders
+// only the selected plan's lines, so concurrent siblings never interleave.
+//
+// The plan id is validated up front against the active batch's known plans: an
+// unknown id fails fast with a message naming the known ids (non-zero exit),
+// rather than silently tailing a stream that will never match. Everything here
+// is read-only against .springfield/.
+func runFollow(w io.Writer, root, planID string) error {
+	v, err := statusview.Poll(root)
+	if err != nil {
+		return err
+	}
+	if v.State != "active" || v.Batch == nil {
+		return fmt.Errorf("no active batch to follow")
+	}
+	known := make([]string, 0, len(v.Plans))
+	found := false
+	for _, p := range v.Plans {
+		known = append(known, p.ID)
+		if p.ID == planID {
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("unknown plan %q; known plans: %s", planID, strings.Join(known, ", "))
+	}
+
+	batchID := v.Batch.ID
+	var offset int64
+	for {
+		tracePath, ok, err := statusview.LatestTracePath(root, batchID)
+		if err != nil {
+			return err
+		}
+		if ok {
+			offset, err = statusview.TailTrace(w, tracePath, offset, planID)
+			if err != nil {
+				return err
+			}
+		}
+		// Stop once the batch leaves the active state — a final tick above has
+		// already drained whatever the trace holds, so there is nothing more to
+		// follow. Re-Poll is read-only, matching the watch loop.
+		v, err := statusview.Poll(root)
+		if err != nil {
+			return err
+		}
+		if v.State != "active" {
+			return nil
+		}
+		time.Sleep(followInterval)
 	}
 }
 

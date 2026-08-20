@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	coreexec "springfield/internal/core/exec"
 	"springfield/internal/core/lock"
 	"springfield/internal/features/batch"
 	"springfield/internal/features/conductor"
@@ -746,6 +747,129 @@ func TestStatusKeepsFatalErrorWhileAnotherPlanStillFailed(t *testing.T) {
 	}
 	if !strings.Contains(out, "Fatal error") {
 		t.Fatalf("fatal error must remain while a plan is still failed:\n%s", out)
+	}
+}
+
+// TestStatusFollowUnknownPlanErrorsWithKnownIDs pins that following an unknown
+// plan id fails fast (non-zero exit) with a message naming the batch's known
+// plan ids — the operator learns what they could have typed instead of tailing
+// a stream that will never match.
+func TestStatusFollowUnknownPlanErrorsWithKnownIDs(t *testing.T) {
+	root := newStatusRoot(t)
+	writeStatusPlan(t, root, "feature.md")
+	writeStatusConfig(t, root, []map[string]any{
+		{"id": "01", "path": ".springfield/plans/feature.md", "order": 1},
+		{"id": "02", "path": ".springfield/plans/feature.md", "order": 2},
+	})
+	writeActiveBatchN(t, root, "batch-001", "Active Batch", []string{"01", "02"})
+
+	cmd := NewStatusCommand()
+	cmd.SetArgs([]string{"--dir", root, "--watch", "--plan", "nope"})
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("following an unknown plan must error (non-zero exit)")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "nope") || !strings.Contains(msg, "01") || !strings.Contains(msg, "02") {
+		t.Fatalf("error must name the unknown id and the known ids, got: %q", msg)
+	}
+}
+
+// TestStatusFollowReadOnly pins that tailing a plan's live trace writes,
+// creates, or locks nothing under .springfield/ — the same byte-identical
+// fixture guarantee as the batch watch (US-001). It drives the real follow tick
+// unit (statusview.TailTrace) against a live trace file several times.
+func TestStatusFollowReadOnly(t *testing.T) {
+	root := newStatusRoot(t)
+	writeStatusPlan(t, root, "feature.md")
+	writeStatusConfig(t, root, []map[string]any{
+		{"id": "01", "path": ".springfield/plans/feature.md", "order": 1},
+		{"id": "02", "path": ".springfield/plans/feature.md", "order": 2},
+	})
+	writeActiveBatchN(t, root, "batch-001", "Active Batch", []string{"01", "02"})
+	// A live trace interleaving both plans' events.
+	logs := filepath.Join(root, ".springfield", "logs")
+	if err := os.MkdirAll(logs, 0o755); err != nil {
+		t.Fatalf("mkdir logs: %v", err)
+	}
+	tracePath := filepath.Join(logs, "batch-001-20260820T120000Z.agent-trace.jsonl")
+	trace := `{"type":"stdout","time":"t","data":"one alpha","plan":"01"}
+{"type":"stdout","time":"t","data":"two bravo","plan":"02"}
+{"type":"stdout","time":"t","data":"three alpha","plan":"01"}
+`
+	if err := os.WriteFile(tracePath, []byte(trace), 0o644); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	sp := filepath.Join(root, ".springfield")
+	before := snapshotDir(t, sp)
+
+	var buf bytes.Buffer
+	var off int64
+	var err error
+	for i := 0; i < 3; i++ {
+		off, err = statusview.TailTrace(&buf, tracePath, off, "01")
+		if err != nil {
+			t.Fatalf("TailTrace: %v", err)
+		}
+	}
+
+	after := snapshotDir(t, sp)
+	if len(before) != len(after) {
+		t.Fatalf("follow changed file set: before=%d after=%d", len(before), len(after))
+	}
+	for rel, data := range before {
+		got, ok := after[rel]
+		if !ok {
+			t.Fatalf("follow removed %s", rel)
+		}
+		if got != data {
+			t.Fatalf("follow mutated %s", rel)
+		}
+	}
+	// Only plan 01's events streamed; plan 02 never interleaved.
+	out := buf.String()
+	if !strings.Contains(out, "one alpha") || !strings.Contains(out, "three alpha") {
+		t.Fatalf("plan 01 events missing:\n%s", out)
+	}
+	if strings.Contains(out, "bravo") {
+		t.Fatalf("plan 02 leaked into plan 01 follow:\n%s", out)
+	}
+}
+
+// TestOpenAgentTraceStampsPlanID pins that the live trace writer attributes
+// every event to its plan — the field per-plan follow filters on. Concurrent
+// plans share one serialized append file, so without this stamp their events
+// would be indistinguishable and follow could not isolate one plan.
+func TestOpenAgentTraceStampsPlanID(t *testing.T) {
+	root := t.TempDir()
+	handlerFor, closer := openAgentTrace(root, "batch-001")
+	if handlerFor == nil {
+		t.Fatalf("openAgentTrace returned nil handler")
+	}
+	handlerFor("01")(coreexec.Event{Type: coreexec.EventStdout, Data: "hello", Time: time.Now()})
+	closer()
+
+	matches, err := filepath.Glob(filepath.Join(root, ".springfield", "logs", "batch-001-*.agent-trace.jsonl"))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("want one trace file, got %v err=%v", matches, err)
+	}
+	data, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatalf("read trace: %v", err)
+	}
+	var ev map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(data), &ev); err != nil {
+		t.Fatalf("trace line not JSON: %v (%s)", err, data)
+	}
+	if ev["plan"] != "01" {
+		t.Fatalf("trace event missing plan attribution, got: %v", ev)
+	}
+	if ev["data"] != "hello" {
+		t.Fatalf("trace event lost data, got: %v", ev)
 	}
 }
 
