@@ -13,9 +13,11 @@ import (
 // projection — never a second source of truth.
 //
 // now is the reference clock for per-plan elapsed time; the caller passes
-// time.Now() per tick (tests pass a fixed instant for determinism). Only a
-// running plan with a recorded StartedAt shows elapsed — a stale duration on a
-// finished or unstarted plan would be a lie, so the row omits it.
+// time.Now() per tick (tests pass a fixed instant for determinism). A running
+// OR stalled plan with a recorded StartedAt shows elapsed — for a stalled plan
+// (started, then its owning process died) elapsed-since-start is the most useful
+// number an operator has: how long it has been stuck. A finished or unstarted
+// plan omits it — a stale duration there would be a lie.
 //
 // The output is a self-contained frame with no terminal escapes; the CLI redraw
 // loop owns clearing the screen between frames.
@@ -36,7 +38,7 @@ func Render(v View, now time.Time) string {
 		if p.Agent != "" {
 			fmt.Fprintf(&b, "  [%s]", p.Agent)
 		}
-		if p.Status == StatusRunning && p.StartedAt != nil {
+		if (p.Status == StatusRunning || p.Status == StatusStalled) && p.StartedAt != nil {
 			fmt.Fprintf(&b, "  %s", formatElapsed(now.Sub(*p.StartedAt)))
 		}
 		fmt.Fprintln(&b)

@@ -128,12 +128,21 @@ const watchInterval = 2 * time.Second
 // active it prints a one-line idle notice and returns (exit 0) rather than
 // spinning a redraw loop on nothing.
 func runWatch(w io.Writer, root string) error {
+	// seenActive records whether this watch has ever observed the batch in the
+	// active state. It gates the archived final frame: only a batch we actually
+	// watched running should end with its terminal frame (the active->archived
+	// transition). A COLD watch that opens straight onto an archived state — a
+	// prior batch whose run cursor was long cleared, with a new batch not yet
+	// started — has nothing it was watching, so it is idle, not "just finished".
+	seenActive := false
 	for {
-		active, err := watchFrame(w, root, time.Now(), true)
+		active, err := watchFrame(w, root, time.Now(), true, seenActive)
 		if err != nil {
 			return err
 		}
-		if !active {
+		if active {
+			seenActive = true
+		} else {
 			return nil
 		}
 		time.Sleep(watchInterval)
@@ -148,20 +157,28 @@ func runWatch(w io.Writer, root string) error {
 // redraw replaces the last; tests pass false to keep the captured output
 // diffable. Poll is read-only, so ticking never writes under .springfield/.
 //
-// The natural end of a watched batch is the archived state: the runner clears
+// seenActive reports whether the loop has already observed the batch active on a
+// prior tick. It gates the archived final frame (see below); the caller flips it
+// to true after the first active frame.
+//
+// The natural end of a WATCHED batch is the archived state: the runner clears
 // the run cursor and Poll surfaces the just-finished batch from the archive.
-// That frame carries full per-plan rows, so it is RENDERED once (not dismissed
-// with a one-liner) — an operator watching a batch to completion sees the
-// terminal result — then the loop exits (false). Idle (never started) and
-// orphan (broken cursor) have no batch frame to draw, so they print a one-line
-// notice and exit.
-func watchFrame(w io.Writer, root string, now time.Time, clear bool) (bool, error) {
+// That frame carries full per-plan rows, so — when the loop actually watched the
+// batch run (seenActive) — it is RENDERED once (not dismissed with a one-liner),
+// so an operator watching a batch to completion sees the terminal result, then
+// the loop exits (false). A COLD watch that opens straight onto an archived
+// state (seenActive false: a prior batch's cursor was long cleared, no new batch
+// started) was watching nothing, so it is treated as idle — the stated
+// no-active-batch semantics — not "just finished". Idle (never started) and
+// orphan (broken cursor) likewise have no batch frame to draw, so they print a
+// one-line notice and exit.
+func watchFrame(w io.Writer, root string, now time.Time, clear, seenActive bool) (bool, error) {
 	v, err := statusview.Poll(root)
 	if err != nil {
 		return false, err
 	}
-	switch v.State {
-	case "active", "archived":
+	switch {
+	case v.State == "active", v.State == "archived" && seenActive:
 		if clear {
 			// Home cursor + clear screen: plain ANSI, no dependency.
 			fmt.Fprint(w, "\033[H\033[2J")
@@ -176,9 +193,10 @@ func watchFrame(w io.Writer, root string, now time.Time, clear bool) (bool, erro
 }
 
 // watchIdleMessage renders the one-line notice shown when there is no batch
-// frame to draw, tailored to why: never-started (idle) or a broken cursor
-// (orphan). The archived case is NOT handled here — a finished batch is rendered
-// as a final frame by watchFrame, not dismissed with a one-liner.
+// frame to draw, tailored to why: never-started (idle), a cold watch that opened
+// onto a long-archived batch (also idle — nothing was being watched), or a
+// broken cursor (orphan). A watched batch that reaches archived is rendered as a
+// final frame by watchFrame, not routed here.
 func watchIdleMessage(v statusview.View) string {
 	switch v.State {
 	case "orphan":

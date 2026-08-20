@@ -1081,7 +1081,7 @@ func TestStatusWatchReadOnly(t *testing.T) {
 
 	var buf bytes.Buffer
 	for i := 0; i < 3; i++ {
-		active, err := watchFrame(&buf, root, time.Date(2026, 8, 20, 12, 5, 0, 0, time.UTC), false)
+		active, err := watchFrame(&buf, root, time.Date(2026, 8, 20, 12, 5, 0, 0, time.UTC), false, true)
 		if err != nil {
 			t.Fatalf("watchFrame: %v", err)
 		}
@@ -1129,7 +1129,8 @@ func TestStatusWatchNoActiveBatchExitsIdle(t *testing.T) {
 // watched batch finishes and its run cursor clears, the watch loop renders the
 // archived batch's final per-plan frame ONCE (so the operator sees the terminal
 // result) and then exits, rather than dismissing it with a bare "nothing to
-// watch" one-liner.
+// watch" one-liner. seenActive=true models a loop that already observed the
+// batch active — i.e. the active->archived transition of a batch it watched run.
 func TestStatusWatchArchivedRendersFinalFrame(t *testing.T) {
 	root := newStatusRoot(t)
 	// No active run cursor + an archive entry is the just-finished-batch shape:
@@ -1137,7 +1138,7 @@ func TestStatusWatchArchivedRendersFinalFrame(t *testing.T) {
 	writeArchive(t, root, "batch-001", 0, 2)
 
 	var buf bytes.Buffer
-	active, err := watchFrame(&buf, root, time.Date(2026, 8, 20, 12, 5, 0, 0, time.UTC), false)
+	active, err := watchFrame(&buf, root, time.Date(2026, 8, 20, 12, 5, 0, 0, time.UTC), false, true)
 	if err != nil {
 		t.Fatalf("watchFrame: %v", err)
 	}
@@ -1155,5 +1156,48 @@ func TestStatusWatchArchivedRendersFinalFrame(t *testing.T) {
 	}
 	if strings.Contains(out, "nothing to watch") {
 		t.Fatalf("archived batch must render a final frame, not a dismissal:\n%s", out)
+	}
+}
+
+// TestStatusWatchColdArchivedExitsIdle pins the flip side of the final-frame
+// behavior: a COLD watch that opens straight onto an archived state — a prior
+// batch whose run cursor was long cleared, with no new batch started and nothing
+// this watch ever observed active (seenActive=false) — must NOT resurrect that
+// stale batch as a "final frame". It was watching nothing, so it prints the
+// no-active-batch idle notice and exits, matching runWatch's stated semantics.
+func TestStatusWatchColdArchivedExitsIdle(t *testing.T) {
+	root := newStatusRoot(t)
+	writeArchive(t, root, "batch-001", 0, 2)
+
+	var buf bytes.Buffer
+	active, err := watchFrame(&buf, root, time.Date(2026, 8, 20, 12, 5, 0, 0, time.UTC), false, false)
+	if err != nil {
+		t.Fatalf("watchFrame: %v", err)
+	}
+	if active {
+		t.Fatalf("cold archived watch must not keep looping")
+	}
+	out := buf.String()
+	if !strings.Contains(out, "No active batch to watch.") {
+		t.Fatalf("cold archived watch must print the idle notice:\n%s", out)
+	}
+	if strings.Contains(out, "archived (2 plans)") {
+		t.Fatalf("cold watch must not resurrect a stale archived batch as a final frame:\n%s", out)
+	}
+}
+
+// TestRunWatchColdArchivedExitsIdle drives the full runWatch loop (not just one
+// frame) to pin that a cold start on a stale archive threads seenActive=false
+// through and lands on the idle notice — the loop's own gating, end to end.
+func TestRunWatchColdArchivedExitsIdle(t *testing.T) {
+	root := newStatusRoot(t)
+	writeArchive(t, root, "batch-001", 0, 2)
+
+	var buf bytes.Buffer
+	if err := runWatch(&buf, root); err != nil {
+		t.Fatalf("runWatch should exit 0 on a cold archive: %v", err)
+	}
+	if !strings.Contains(buf.String(), "No active batch to watch.") {
+		t.Fatalf("expected idle notice on cold archive:\n%s", buf.String())
 	}
 }

@@ -48,6 +48,32 @@ func TestRenderActivePlansSurfacesActivityAgentElapsed(t *testing.T) {
 	}
 }
 
+// TestRenderShowsElapsedForStalledPlan pins that a stalled plan (started, then
+// its owning process died) still shows elapsed-since-start — the number that
+// tells an operator how long it has been stuck. It carries a StartedAt like a
+// running plan, so the row must not swallow the duration just because the plan
+// left the running state.
+func TestRenderShowsElapsedForStalledPlan(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	started := now.Add(-5 * time.Minute)
+	v := statusview.View{
+		State:   "active",
+		Summary: "Batch batch-001: 0/1 plans integrated.",
+		Plans: []statusview.PlanView{
+			{ID: "01", Status: statusview.StatusStalled, StartedAt: &started},
+		},
+	}
+
+	out := statusview.Render(v, now)
+
+	if !strings.Contains(out, statusview.StatusStalled) {
+		t.Fatalf("render missing stalled status:\n%s", out)
+	}
+	if !strings.Contains(out, "5m00s") {
+		t.Fatalf("stalled plan must show elapsed-since-start:\n%s", out)
+	}
+}
+
 // TestRenderOmitsElapsedAndActivityForNonRunning pins the "never lie" contract:
 // a non-running plan (nil Activity, no StartedAt) shows no phase and no elapsed
 // duration.
