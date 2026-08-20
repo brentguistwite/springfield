@@ -1124,3 +1124,36 @@ func TestStatusWatchNoActiveBatchExitsIdle(t *testing.T) {
 		t.Fatalf("expected idle notice:\n%s", buf.String())
 	}
 }
+
+// TestStatusWatchArchivedRendersFinalFrame pins the natural-end behavior: when a
+// watched batch finishes and its run cursor clears, the watch loop renders the
+// archived batch's final per-plan frame ONCE (so the operator sees the terminal
+// result) and then exits, rather than dismissing it with a bare "nothing to
+// watch" one-liner.
+func TestStatusWatchArchivedRendersFinalFrame(t *testing.T) {
+	root := newStatusRoot(t)
+	// No active run cursor + an archive entry is the just-finished-batch shape:
+	// Poll surfaces it via LatestArchive as state "archived".
+	writeArchive(t, root, "batch-001", 0, 2)
+
+	var buf bytes.Buffer
+	active, err := watchFrame(&buf, root, time.Date(2026, 8, 20, 12, 5, 0, 0, time.UTC), false)
+	if err != nil {
+		t.Fatalf("watchFrame: %v", err)
+	}
+	if active {
+		t.Fatalf("archived batch is terminal — watch loop must not keep looping")
+	}
+	out := buf.String()
+	// The final frame carries the archive summary and per-plan rows, not the
+	// dismissive one-liner.
+	if !strings.Contains(out, "Batch batch-001 archived (2 plans)") {
+		t.Fatalf("expected archived summary in final frame:\n%s", out)
+	}
+	if !strings.Contains(out, "  p  ") {
+		t.Fatalf("expected per-plan row in final frame:\n%s", out)
+	}
+	if strings.Contains(out, "nothing to watch") {
+		t.Fatalf("archived batch must render a final frame, not a dismissal:\n%s", out)
+	}
+}

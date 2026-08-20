@@ -144,37 +144,45 @@ func runWatch(w io.Writer, root string) error {
 // the batch is still active (the caller keeps looping while true). It is the
 // unit the redraw loop and the read-only watch tests both drive.
 //
-// clear gates the leading screen-clear escape on an active frame: the live loop
-// passes true so each redraw replaces the last; tests pass false to keep the
-// captured output diffable. A non-active state (idle/orphan/archived) prints a
-// clear idle notice and returns false so the loop exits 0 — there is nothing to
-// follow. Poll is read-only, so ticking never writes under .springfield/.
+// clear gates the leading screen-clear escape: the live loop passes true so each
+// redraw replaces the last; tests pass false to keep the captured output
+// diffable. Poll is read-only, so ticking never writes under .springfield/.
+//
+// The natural end of a watched batch is the archived state: the runner clears
+// the run cursor and Poll surfaces the just-finished batch from the archive.
+// That frame carries full per-plan rows, so it is RENDERED once (not dismissed
+// with a one-liner) — an operator watching a batch to completion sees the
+// terminal result — then the loop exits (false). Idle (never started) and
+// orphan (broken cursor) have no batch frame to draw, so they print a one-line
+// notice and exit.
 func watchFrame(w io.Writer, root string, now time.Time, clear bool) (bool, error) {
 	v, err := statusview.Poll(root)
 	if err != nil {
 		return false, err
 	}
-	if v.State != "active" {
+	switch v.State {
+	case "active", "archived":
+		if clear {
+			// Home cursor + clear screen: plain ANSI, no dependency.
+			fmt.Fprint(w, "\033[H\033[2J")
+		}
+		fmt.Fprint(w, statusview.Render(v, now))
+		// Active keeps the loop alive; archived is the terminal frame, so stop.
+		return v.State == "active", nil
+	default:
 		fmt.Fprintln(w, watchIdleMessage(v))
 		return false, nil
 	}
-	if clear {
-		// Home cursor + clear screen: plain ANSI, no dependency.
-		fmt.Fprint(w, "\033[H\033[2J")
-	}
-	fmt.Fprint(w, statusview.Render(v, now))
-	return true, nil
 }
 
-// watchIdleMessage renders the one-line notice shown when there is no active
-// batch to follow, tailored to why: never-started (idle), a broken cursor
-// (orphan), or an already-finished batch (archived).
+// watchIdleMessage renders the one-line notice shown when there is no batch
+// frame to draw, tailored to why: never-started (idle) or a broken cursor
+// (orphan). The archived case is NOT handled here — a finished batch is rendered
+// as a final frame by watchFrame, not dismissed with a one-liner.
 func watchIdleMessage(v statusview.View) string {
 	switch v.State {
 	case "orphan":
 		return v.Summary + " Nothing to watch."
-	case "archived":
-		return v.Summary + " — nothing to watch."
 	default:
 		return "No active batch to watch."
 	}
