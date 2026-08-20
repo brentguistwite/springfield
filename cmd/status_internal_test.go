@@ -863,3 +863,140 @@ func runStatusIn(root string) (string, error) {
 	}
 	return buf.String(), nil
 }
+
+// snapshotDir captures the byte contents of every file under dir (relative
+// paths) so a test can assert a code path left the tree byte-identical.
+func snapshotDir(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		rel, relErr := filepath.Rel(dir, path)
+		if relErr != nil {
+			return relErr
+		}
+		out[rel] = string(data)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("snapshot %s: %v", dir, err)
+	}
+	return out
+}
+
+// TestStatusWatchAndJSONRenderSameView pins the core acceptance contract: the
+// --watch path and the --json path render from the SAME statusview.View value,
+// not a second projection. Both funnel through statusview.Poll; this asserts the
+// bytes --json emits equal the bytes Poll's View marshals to (the exact value a
+// watch frame is rendered from).
+func TestStatusWatchAndJSONRenderSameView(t *testing.T) {
+	root := newStatusRoot(t)
+	writeStatusPlan(t, root, "feature.md")
+	writeStatusConfig(t, root, []map[string]any{
+		{"id": "01", "path": ".springfield/plans/feature.md", "order": 1},
+		{"id": "02", "path": ".springfield/plans/feature.md", "order": 2},
+	})
+	writeActiveBatchN(t, root, "batch-001", "Active Batch", []string{"01", "02"})
+	writeStatusState(t, root, map[string]any{
+		"plans": map[string]any{
+			"01": map[string]any{"status": "running", "agent": "claude"},
+		},
+	})
+
+	cmd := NewStatusCommand()
+	cmd.SetArgs([]string{"--dir", root, "--json"})
+	var jsonBuf bytes.Buffer
+	cmd.SetOut(&jsonBuf)
+	cmd.SetErr(&jsonBuf)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("status --json: %v", err)
+	}
+
+	// The View the watch loop renders from is exactly statusview.Poll(root).
+	pollView, err := statusview.Poll(root)
+	if err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+	var pollBuf bytes.Buffer
+	if err := emitStatusJSON(&pollBuf, pollView); err != nil {
+		t.Fatalf("emit poll view: %v", err)
+	}
+
+	if jsonBuf.String() != pollBuf.String() {
+		t.Fatalf("watch/json View diverged.\n--json:\n%s\nPoll:\n%s", jsonBuf.String(), pollBuf.String())
+	}
+}
+
+// TestStatusWatchReadOnly pins that ticking the watch loop against a live
+// control plane writes, creates, or locks nothing under .springfield/ — the
+// directory is byte-identical afterwards.
+func TestStatusWatchReadOnly(t *testing.T) {
+	root := newStatusRoot(t)
+	writeStatusPlan(t, root, "feature.md")
+	writeStatusConfig(t, root, []map[string]any{
+		{"id": "01", "path": ".springfield/plans/feature.md", "order": 1},
+	})
+	writeActiveBatchN(t, root, "batch-001", "Active Batch", []string{"01"})
+	writeStatusState(t, root, map[string]any{
+		"plans": map[string]any{
+			"01": map[string]any{"status": "running", "agent": "claude", "started_at": "2026-08-20T12:00:00Z"},
+		},
+	})
+
+	sp := filepath.Join(root, ".springfield")
+	before := snapshotDir(t, sp)
+
+	var buf bytes.Buffer
+	for i := 0; i < 3; i++ {
+		active, err := watchFrame(&buf, root, time.Date(2026, 8, 20, 12, 5, 0, 0, time.UTC), false)
+		if err != nil {
+			t.Fatalf("watchFrame: %v", err)
+		}
+		if !active {
+			t.Fatalf("expected active batch to keep the watch loop running")
+		}
+	}
+
+	after := snapshotDir(t, sp)
+	if len(before) != len(after) {
+		t.Fatalf("watch changed file set: before=%d after=%d", len(before), len(after))
+	}
+	for rel, data := range before {
+		got, ok := after[rel]
+		if !ok {
+			t.Fatalf("watch removed %s", rel)
+		}
+		if got != data {
+			t.Fatalf("watch mutated %s", rel)
+		}
+	}
+	// No live lock is held in the fixture, so the started plan is correctly
+	// classified stalled (not running); the frame still carries its per-plan row.
+	if !strings.Contains(buf.String(), "01  "+statusview.StatusStalled) {
+		t.Fatalf("watch frame missing plan row:\n%s", buf.String())
+	}
+}
+
+// TestStatusWatchNoActiveBatchExitsIdle pins that with no active batch the watch
+// path prints a clear idle notice and returns (exit 0) rather than spinning a
+// redraw loop on nothing.
+func TestStatusWatchNoActiveBatchExitsIdle(t *testing.T) {
+	root := newStatusRoot(t)
+
+	var buf bytes.Buffer
+	if err := runWatch(&buf, root); err != nil {
+		t.Fatalf("runWatch should exit 0 with no batch: %v", err)
+	}
+	if !strings.Contains(buf.String(), "No active batch to watch.") {
+		t.Fatalf("expected idle notice:\n%s", buf.String())
+	}
+}

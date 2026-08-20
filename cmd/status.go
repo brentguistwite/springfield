@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -24,6 +24,7 @@ import (
 func NewStatusCommand() *cobra.Command {
 	var dir string
 	var jsonOut bool
+	var watch bool
 
 	cmd := &cobra.Command{
 		Use:   "status",
@@ -37,21 +38,29 @@ func NewStatusCommand() *cobra.Command {
 			}
 			root := loaded.RootDir
 
+			// --watch re-renders the active batch on an interval, polling the
+			// control plane read-only through the SAME statusview.Poll projection
+			// --json emits — never a second view. It takes precedence over --json.
+			if watch {
+				return runWatch(cmd.OutOrStdout(), root)
+			}
+
+			// --json emits the stable view-model. It is built by the single
+			// read-only Poll projection so the JSON and watch surfaces can never
+			// disagree about a batch's state.
+			if jsonOut {
+				v, err := statusview.Poll(root)
+				if err != nil {
+					return err
+				}
+				return emitStatusJSON(cmd.OutOrStdout(), v)
+			}
+
 			run, hasRun, err := batch.ReadRun(root)
 			if err != nil {
 				return err
 			}
 			if !hasRun || run.ActiveBatchID == "" {
-				if jsonOut {
-					// Once the run cursor is cleared, the just-completed batch's
-					// per-ticket results live only in the archive. Surface the
-					// latest archive so a controller can read them back; fall to
-					// idle only when no batch has ever been archived.
-					if entry, ok, archErr := batch.LatestArchive(root); archErr == nil && ok {
-						return emitStatusJSON(cmd.OutOrStdout(), statusview.Archived(entry))
-					}
-					return emitStatusJSON(cmd.OutOrStdout(), statusview.Idle())
-				}
 				return printPlanRegistry(cmd.OutOrStdout(), root)
 			}
 
@@ -62,9 +71,6 @@ func NewStatusCommand() *cobra.Command {
 			b, err := batch.ReadBatch(paths)
 			if err != nil {
 				if batch.IsMissingBatchError(err) {
-					if jsonOut {
-						return emitStatusJSON(cmd.OutOrStdout(), statusview.Orphan(run))
-					}
 					printOrphanStatus(cmd.OutOrStdout(), run)
 					return nil
 				}
@@ -89,52 +95,77 @@ func NewStatusCommand() *cobra.Command {
 			held := lock.Inspect(root)
 			live := held != nil && held.PID != 0
 
-			if jsonOut {
-				rollup, rollupErr := cost.ComputeRollup(root, b.ID)
-				effectiveFatalError := ""
-				if run.FatalError != "" && batchHasFailedPlan(b, state) {
-					effectiveFatalError = run.FatalError
-				}
-				in := statusview.ActiveInput{
-					Batch:      b,
-					Run:        run,
-					State:      state,
-					Units:      units,
-					Rollup:     rollup,
-					HasRollup:  rollupErr == nil && rollup.Iterations > 0,
-					FatalError: effectiveFatalError,
-					Live:       live,
-					PRDs:       loadPlanPRDs(root, units),
-				}
-				return emitStatusJSON(cmd.OutOrStdout(), statusview.Active(in))
-			}
-			return printBatchStatus(cmd.OutOrStdout(), root, b, run, state, live, loadPlanPRDs(root, units))
+			return printBatchStatus(cmd.OutOrStdout(), root, b, run, state, live, statusview.LoadPlanPRDs(root, units))
 		},
 	}
 
 	cmd.Flags().StringVar(&dir, "dir", ".", "project root or nested path inside the Springfield project")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit machine-readable JSON (stable view-model for tooling)")
+	cmd.Flags().BoolVar(&watch, "watch", false, "re-render the active batch on an interval until interrupted (read-only)")
 	return cmd
 }
 
-// loadPlanPRDs reads each plan's persisted prd.json so the projection can derive
-// the in-flight coarse phase (the current story) from durable truth. It is
-// best-effort by design: a legacy .md plan-unit path or a missing/malformed
-// prd.json is simply skipped, so the plan gets no derived current story rather
-// than a fabricated one — the derivation degrades to silence, never a lie.
-func loadPlanPRDs(root string, units []conductor.PlanUnit) map[string]prd.PRD {
-	out := make(map[string]prd.PRD, len(units))
-	for _, u := range units {
-		if filepath.Base(u.Path) != "prd.json" {
-			continue
-		}
-		p, err := prd.ParseFile(filepath.Join(root, u.Path))
+// watchInterval is the redraw cadence for `status --watch`. It is deliberately
+// gentle: the runner persists progress continuously, so a couple seconds keeps
+// the frame fresh without hammering the control-plane files.
+const watchInterval = 2 * time.Second
+
+// runWatch re-renders the active batch status until interrupted (Ctrl-C). Each
+// tick polls the control plane read-only and redraws with a plain terminal
+// clear-and-home escape — no third-party TUI dependency. When no batch is
+// active it prints a one-line idle notice and returns (exit 0) rather than
+// spinning a redraw loop on nothing.
+func runWatch(w io.Writer, root string) error {
+	for {
+		active, err := watchFrame(w, root, time.Now(), true)
 		if err != nil {
-			continue
+			return err
 		}
-		out[u.ID] = p
+		if !active {
+			return nil
+		}
+		time.Sleep(watchInterval)
 	}
-	return out
+}
+
+// watchFrame polls once and writes a single watch frame to w, returning whether
+// the batch is still active (the caller keeps looping while true). It is the
+// unit the redraw loop and the read-only watch tests both drive.
+//
+// clear gates the leading screen-clear escape on an active frame: the live loop
+// passes true so each redraw replaces the last; tests pass false to keep the
+// captured output diffable. A non-active state (idle/orphan/archived) prints a
+// clear idle notice and returns false so the loop exits 0 — there is nothing to
+// follow. Poll is read-only, so ticking never writes under .springfield/.
+func watchFrame(w io.Writer, root string, now time.Time, clear bool) (bool, error) {
+	v, err := statusview.Poll(root)
+	if err != nil {
+		return false, err
+	}
+	if v.State != "active" {
+		fmt.Fprintln(w, watchIdleMessage(v))
+		return false, nil
+	}
+	if clear {
+		// Home cursor + clear screen: plain ANSI, no dependency.
+		fmt.Fprint(w, "\033[H\033[2J")
+	}
+	fmt.Fprint(w, statusview.Render(v, now))
+	return true, nil
+}
+
+// watchIdleMessage renders the one-line notice shown when there is no active
+// batch to follow, tailored to why: never-started (idle), a broken cursor
+// (orphan), or an already-finished batch (archived).
+func watchIdleMessage(v statusview.View) string {
+	switch v.State {
+	case "orphan":
+		return v.Summary + " Nothing to watch."
+	case "archived":
+		return v.Summary + " — nothing to watch."
+	default:
+		return "No active batch to watch."
+	}
 }
 
 func printBatchStatus(w io.Writer, root string, b batch.Batch, run batch.Run, state *conductor.State, live bool, prds map[string]prd.PRD) error {
@@ -153,7 +184,7 @@ func printBatchStatus(w io.Writer, root string, b batch.Batch, run batch.Run, st
 	// run. Once that plan has been recovered (no plan in the batch is failed
 	// anymore), the error is stale — suppress it so it does not sit beside a
 	// fresh "Next:" gate and confuse the operator (D1).
-	if run.FatalError != "" && batchHasFailedPlan(b, state) {
+	if run.FatalError != "" && statusview.BatchHasFailedPlan(b, state) {
 		fmt.Fprintf(w, "Fatal error: %s\n", run.FatalError)
 	}
 	if len(run.LastRetry) > 0 {
@@ -301,31 +332,6 @@ func formatActivity(av *statusview.ActivityView) string {
 		out += fmt.Sprintf(" (round %d)", av.Round)
 	}
 	return out
-}
-
-// batchHasFailedPlan reports whether any plan in the batch is still in a
-// halting state per the conductor snapshot. It gates whether the batch-level
-// fatal error is still relevant: a sequential batch halts on the plan it
-// leaves in StatusFailed OR StatusNeedsHuman (both set FatalError in run.json
-// per cmd/start.go), so as long as either remains the error is still
-// operator-actionable. Once the plan is recovered (e.g. via "springfield
-// recover --plan X" or "--mark-completed") no halting plan remains and the
-// now-stale error is dropped. When state is nil the snapshot is unavailable,
-// so the error cannot be proven stale and is kept.
-func batchHasFailedPlan(b batch.Batch, state *conductor.State) bool {
-	if state == nil {
-		return true
-	}
-	for _, id := range b.PlanIDs {
-		ps, ok := state.Plans[id]
-		if !ok || ps == nil {
-			continue
-		}
-		if ps.Status == conductor.StatusFailed || ps.Status == conductor.StatusNeedsHuman {
-			return true
-		}
-	}
-	return false
 }
 
 // printSpendLine emits an "Est. API cost:" line summarizing per-adapter cost

@@ -81,6 +81,15 @@ type PlanView struct {
 	Attempt      int             `json:"attempt"`
 	LastError    *string         `json:"last_error"`
 	EvidencePath string          `json:"evidence_path"`
+	// Agent is the adapter running the plan (claude / codex / gemini), surfaced
+	// so a live watcher shows which agent holds the plan. Empty (omitted) when
+	// the plan has no recorded agent yet.
+	Agent string `json:"agent,omitempty"`
+	// StartedAt is when the current attempt began; nil (omitted) until the plan
+	// starts. A live watcher renders elapsed time from it — sourced here so the
+	// watch and --json surfaces read the same durable timestamp, never a second
+	// clock.
+	StartedAt *time.Time `json:"started_at,omitempty"`
 	Merge        MergeView       `json:"merge"`
 	Integration  IntegrationView `json:"integration"`
 	// Activity is the in-flight progress card. It is explicit null for any plan

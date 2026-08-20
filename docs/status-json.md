@@ -62,7 +62,8 @@ are their empty/clean projections. A repo that has never archived a batch stays
 ## Per-plan card
 
 `id`, `title`, `status`, `branch`, `base_branch`, `base_head`, `review`,
-`attempt`, `last_error`, `evidence_path`, `merge`, `integration`, `activity`.
+`attempt`, `last_error`, `evidence_path`, `agent`, `started_at`, `merge`,
+`integration`, `activity`.
 
 - `status` (owned enum): `pending` | `running` | `stalled` | `needs-human` |
   `failed` | `done` | `merged` | `retained`.
@@ -82,6 +83,11 @@ are their empty/clean projections. A repo that has never archived a batch stays
     surface as `needs-human`.
 - `branch` is the per-plan worktree branch (deleted on merge success).
   **`base_branch` is the durable integration target — push this to open the PR.**
+- `agent` (omitted when unset) is the adapter running the plan (`claude` /
+  `codex` / `gemini`); `started_at` (omitted until the plan starts) is when the
+  current attempt began. Both are surfaced so a live watcher (`status --watch`)
+  shows which agent holds each plan and its elapsed time from the same
+  projection — never a second source.
 - `review.verdict` is `halt` (with a `reason` excerpt) only when the plan
   halted at the pre-merge review gate; otherwise null.
 - `merge.status`: `pending` | `refused` | `succeeded` | `failed`.

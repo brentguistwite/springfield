@@ -202,6 +202,11 @@ func buildPlan(id, title string, ps *conductor.PlanState, live bool, plan *prd.P
 		pv.BaseHead = ps.BaseHead
 		pv.Attempt = ps.Attempts
 		pv.EvidencePath = ps.EvidencePath
+		pv.Agent = ps.Agent
+		if !ps.StartedAt.IsZero() {
+			st := ps.StartedAt
+			pv.StartedAt = &st
+		}
 		if ps.Error != "" {
 			e := ps.Error
 			pv.LastError = &e
