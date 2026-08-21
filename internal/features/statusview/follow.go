@@ -109,8 +109,10 @@ func TailTrace(w io.Writer, tracePath string, offset int64, planID string) (int6
 // batch restart/resume rolls the trace over to a NEW timestamped file (see
 // cmd/start.go openAgentTrace), so an offset advanced into the old file would
 // Seek past the head of the new, shorter one and silently drop its opening
-// events. Tail resets the offset to 0 whenever the path changes, preserving the
-// read-only, no-re-emit, no-drop guarantees of TailTrace within each file.
+// events. On a path change Tail first drains the old file's unread tail (events
+// appended after the last tick but before the roll) and only then resets the
+// offset to 0, preserving the read-only, no-re-emit, no-drop guarantees of
+// TailTrace across the roll as well as within each file.
 type TraceFollower struct {
 	path   string
 	offset int64
@@ -119,9 +121,23 @@ type TraceFollower struct {
 // Tail streams planID's new trace lines at tracePath to w, resuming from the
 // prior offset when tracePath is unchanged and restarting from 0 when it rolls
 // over to a new file. It is read-only and delegates the whole-line, lazy-file
-// semantics to TailTrace; only the cross-file offset reset lives here.
+// semantics to TailTrace; only the cross-file drain-and-reset lives here.
 func (f *TraceFollower) Tail(w io.Writer, tracePath, planID string) error {
 	if tracePath != f.path {
+		// Rollover: the batch restarted/resumed onto a new timestamped trace
+		// file. Events can have been appended to the OLD file between our last
+		// tick and the switch (a follow loop stays alive across an interrupt —
+		// the batch view-state remains "active" while a plan is merely stalled —
+		// so it can still be tailing when a resume rolls the trace). Drain that
+		// unread remainder FIRST so a rollover never silently drops the old
+		// stream's final events, then reset to the new file's head. The old
+		// file is read once from f.offset (no re-emit) and left untouched
+		// (read-only); its advanced offset is discarded since we switch away.
+		if f.path != "" {
+			if _, err := TailTrace(w, f.path, f.offset, planID); err != nil {
+				return err
+			}
+		}
 		f.path = tracePath
 		f.offset = 0
 	}

@@ -189,6 +189,63 @@ func TestTraceFollowerResetsOffsetOnRollover(t *testing.T) {
 	}
 }
 
+// TestTraceFollowerDrainsOldTailOnRollover pins the no-drop-on-roll contract:
+// when the batch rolls over to a new trace file while the OLD file still holds
+// event lines the follower has not yet streamed (events appended after the last
+// tick but before the roll — reachable because a follow loop stays alive across
+// an interrupt, so a resume can roll the trace mid-follow), those final old-file
+// lines are drained before the switch, not lost. The prior rollover test fully
+// consumed file A first, so it never exercised an unread tail at roll time.
+func TestTraceFollowerDrainsOldTailOnRollover(t *testing.T) {
+	dir := t.TempDir()
+	pathA := filepath.Join(dir, "batch-20260820T120000Z.agent-trace.jsonl")
+	pathB := filepath.Join(dir, "batch-20260820T130000Z.agent-trace.jsonl")
+
+	// File A, first tick: only the first line exists when the follower reads it.
+	if err := os.WriteFile(pathA, []byte(`{"type":"stdout","time":"t","data":"alpha one","plan":"01"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write A: %v", err)
+	}
+	var fol statusview.TraceFollower
+	var buf bytes.Buffer
+	if err := fol.Tail(&buf, pathA, "01"); err != nil {
+		t.Fatalf("Tail A: %v", err)
+	}
+	if !strings.Contains(buf.String(), "alpha one") {
+		t.Fatalf("file A first line missing:\n%s", buf.String())
+	}
+
+	// More events land in A AFTER that tick (still the same file), then the batch
+	// resumes onto a fresh trace file B — all before the follower's next tick.
+	fa, err := os.OpenFile(pathA, os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		t.Fatalf("open A append: %v", err)
+	}
+	if _, err := fa.WriteString(`{"type":"stdout","time":"t","data":"alpha two","plan":"01"}` + "\n"); err != nil {
+		t.Fatalf("append A: %v", err)
+	}
+	fa.Close()
+	if err := os.WriteFile(pathB, []byte(`{"type":"stdout","time":"t","data":"bravo one","plan":"01"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write B: %v", err)
+	}
+
+	// Next tick observes the rolled path: the unread A tail must still surface,
+	// and B's head must surface too — nothing dropped, nothing re-emitted.
+	buf.Reset()
+	if err := fol.Tail(&buf, pathB, "01"); err != nil {
+		t.Fatalf("Tail B: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "alpha two") {
+		t.Fatalf("rollover dropped the old file's unread tail:\n%s", out)
+	}
+	if !strings.Contains(out, "bravo one") {
+		t.Fatalf("rollover skipped the head of the new trace:\n%s", out)
+	}
+	if strings.Contains(out, "alpha one") {
+		t.Fatalf("re-emitted an already-streamed old-file line:\n%s", out)
+	}
+}
+
 // TestTailTraceMissingFileIsNotAnError pins that a not-yet-created trace (the
 // runner writes it lazily on the first agent event) returns the offset
 // unchanged with no error, so the follow loop keeps polling.
