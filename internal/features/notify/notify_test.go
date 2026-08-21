@@ -24,6 +24,26 @@ func TestKindsAreDistinct(t *testing.T) {
 	}
 }
 
+// TestStalledIsDistinctFromTerminalKinds pins the possibly-wedged Kind as its
+// own value so the seam can switch on it without colliding with a terminal
+// state — Stalled is deliberately NOT terminal (the batch keeps running).
+func TestStalledIsDistinctFromTerminalKinds(t *testing.T) {
+	kinds := []notify.Kind{
+		notify.NeedsHuman,
+		notify.Complete,
+		notify.Failed,
+		notify.CostCapped,
+		notify.Stalled,
+	}
+	seen := map[notify.Kind]bool{}
+	for _, k := range kinds {
+		if seen[k] {
+			t.Fatalf("duplicate Kind value %d", k)
+		}
+		seen[k] = true
+	}
+}
+
 // TestNopDeliversNothingAndNeverPanics locks the default Notifier's contract:
 // it is a valid Notifier (used when notifications are unconfigured) and swallows
 // every Event without side effects or panics.

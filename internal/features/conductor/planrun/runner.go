@@ -20,6 +20,7 @@ import (
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/cost"
 	"springfield/internal/features/execution"
+	"springfield/internal/features/notify"
 	"springfield/internal/features/portblock"
 	"springfield/internal/features/prd"
 	"springfield/internal/features/verify"
@@ -159,6 +160,20 @@ type SinglePlanInput struct {
 	// the loop breaks with Reason "cost-capped" so the caller (runBatch) can
 	// abort the batch without dispatching further plans. Zero disables.
 	CostCapUSD float64
+	// StallConfig is the project-global [stall] block from springfield.toml. The
+	// resolved threshold (StallConfig.ThresholdOrDefault) is the event-recency
+	// idle ceiling handed to each agent dispatch: a silent agent past it is
+	// classified possibly-wedged and escalated via [Notifier]/status/evidence,
+	// NEVER killed. The zero value applies config.DefaultStallThreshold; an
+	// explicit "0" disables detection. cmd/start passes config.Config.Stall.
+	StallConfig config.StallConfig
+	// Notifier is the escalation seam a possibly-wedged classification fires
+	// through: when event-recency stall detection flags a silent agent, the
+	// dispatch emits a notify.Stalled Event naming the plan and staleness
+	// duration. Nil defaults to notify.Nop (the seam is always invoked, never
+	// nil), matching the opt-in, off-by-default notification policy. cmd/start
+	// passes the operator's configured Notifier.
+	Notifier notify.Notifier
 	// BatchID stamps every cost.json this run writes so cost.ComputeRollup
 	// can scope spend to the live batch and exclude leaked iter-N files from
 	// an earlier batch that reused this plan's evidence dir. The batch path
@@ -385,6 +400,10 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 	projectGuidance := loadProjectGuidance(in.ControlRoot)
 
 	evidenceDir := EvidenceRoot(in.ControlRoot, ctx.PlanKey)
+	// Event-recency stall threshold, resolved once for the run: a silent agent is
+	// classified possibly-wedged past it and escalated (never killed). Zero
+	// disables detection (see StallConfig.ThresholdOrDefault).
+	stallThreshold := in.StallConfig.ThresholdOrDefault()
 	iterCap := in.Project.Config.SingleWorkstreamIterations
 	if iterCap <= 0 {
 		iterCap = 50
@@ -595,6 +614,8 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			ExecutionSettings:    in.ExecutionSettings,
 			MaxTurnsPerIteration: in.MaxTurnsPerIteration,
 			WorkCompleteCheck:    workCompleteCheck,
+			StallThreshold:       stallThreshold,
+			OnStall:              in.stallHook(planID, iter, evidenceDir, stallThreshold, now),
 		})
 		lastAgent = result.Agent
 
@@ -1124,6 +1145,61 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 		progress(in.Progress, "plan %s: state save failed — %v (agent succeeded but on-disk state may be stale)\n", planID, saveErr)
 	}
 	return out
+}
+
+// notifier returns the configured escalation seam, defaulting to notify.Nop so
+// the seam is always safe to call (never nil) when notifications are unconfigured.
+func (in SinglePlanInput) notifier() notify.Notifier {
+	if in.Notifier == nil {
+		return notify.Nop{}
+	}
+	return in.Notifier
+}
+
+// stallHook builds the advisory escalation callback the runtime fires when
+// event-recency stall detection classifies this dispatch as possibly-wedged. It
+// escalates on three surfaces and NEVER touches the subprocess:
+//
+//  1. persists a [conductor.PlanStall] onto PlanState so `springfield status`
+//     surfaces the possibly-wedged indicator on the live plan;
+//  2. appends the occurrence to the plan's evidence (stalls.jsonl) so recurring
+//     wedges are diagnosable post-hoc even after a terminal transition clears
+//     the live signal;
+//  3. emits a notify.Stalled Event through the operator's Notifier seam.
+//
+// It runs on the stall watcher's goroutine while the dispatch is still live; all
+// three side effects are best-effort (state/evidence write errors are dropped —
+// a failed advisory escalation must never fail the plan, and the wedge is not a
+// correctness fault to begin with).
+func (in SinglePlanInput) stallHook(planID string, iter int, evidenceDir string, threshold time.Duration, now func() time.Time) func() {
+	staleFor := threshold.String()
+	return func() {
+		ts := now()
+		in.Project.UpdatePlan(planID, func(ps *conductor.PlanState) {
+			if ps.Stall == nil {
+				ps.Stall = &conductor.PlanStall{StaleFor: staleFor, Since: ts, Occurrences: 1}
+				return
+			}
+			// Recurrence: keep the first-observed Since, bump the count so a plan
+			// that recovered and re-wedged is visibly distinguished from a single
+			// stretch.
+			ps.Stall.Occurrences++
+			ps.Stall.StaleFor = staleFor
+		})
+		_ = in.Project.SaveState()
+		_ = execution.AppendStallRecord(evidenceDir, execution.StallRecord{
+			PlanID:     planID,
+			Iteration:  iter,
+			StaleFor:   staleFor,
+			ObservedAt: ts,
+		})
+		in.notifier().Notify(notify.Event{
+			Kind:    notify.Stalled,
+			BatchID: in.BatchID,
+			PlanID:  planID,
+			Detail:  staleFor,
+		})
+	}
 }
 
 // truncateForError reduces s to at most max runes (NOT bytes), replacing the

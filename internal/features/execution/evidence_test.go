@@ -252,3 +252,41 @@ func TestWriteEvidenceIsIdempotent(t *testing.T) {
 		t.Fatalf("meta agent_id = %q, want %q", meta.AgentID, second.AgentID)
 	}
 }
+
+// TestAppendStallRecordAccumulatesOccurrences proves each wedge classification is
+// recorded as its own JSONL line in the plan's evidence dir (append-only), so a
+// plan that wedged more than once during a run leaves a full, diagnosable history
+// rather than only the last occurrence.
+func TestAppendStallRecordAccumulatesOccurrences(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "evidence")
+	t0 := time.Date(2026, time.April, 30, 9, 0, 0, 0, time.UTC)
+
+	first := StallRecord{PlanID: "feat-a", Iteration: 2, StaleFor: "5m0s", ObservedAt: t0}
+	second := StallRecord{PlanID: "feat-a", Iteration: 2, StaleFor: "5m0s", ObservedAt: t0.Add(6 * time.Minute)}
+	if err := AppendStallRecord(dir, first); err != nil {
+		t.Fatalf("AppendStallRecord(first): %v", err)
+	}
+	if err := AppendStallRecord(dir, second); err != nil {
+		t.Fatalf("AppendStallRecord(second): %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "stalls.jsonl"))
+	if err != nil {
+		t.Fatalf("ReadFile(stalls.jsonl): %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("stall records = %d, want 2 (append-only, not overwrite)", len(lines))
+	}
+	var got []StallRecord
+	for _, line := range lines {
+		var rec StallRecord
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("Unmarshal(stall record): %v", err)
+		}
+		got = append(got, rec)
+	}
+	if !reflect.DeepEqual(got, []StallRecord{first, second}) {
+		t.Fatalf("stall records = %#v, want %#v", got, []StallRecord{first, second})
+	}
+}

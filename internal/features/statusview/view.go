@@ -10,7 +10,8 @@ import "time"
 // SchemaVersion is the contract version. Adding fields is a non-breaking
 // bump; removing/renaming requires an increment so consumers can branch.
 // v2 added the per-plan in-flight [ActivityView] card (additive).
-const SchemaVersion = 2
+// v3 added the per-plan [StallView] possibly-wedged indicator (additive).
+const SchemaVersion = 3
 
 // Public board-status enum. A total projection of conductor.PlanStatus
 // composed with merge outcome.
@@ -87,6 +88,23 @@ type PlanView struct {
 	// that is not running — the contract degrades to silence rather than show a
 	// stale phase (see [ActivityView]).
 	Activity *ActivityView `json:"activity"`
+	// Stall is the possibly-wedged indicator: non-null only while a running plan's
+	// agent has been classified silent past the configured stall threshold. It is
+	// explicit null otherwise (not running, or running normally). Advisory only —
+	// a wedge never kills the subprocess (see [StallView]).
+	Stall *StallView `json:"stall"`
+}
+
+// StallView is the per-plan possibly-wedged card: a running plan whose agent
+// emitted no stream event within the configured stall threshold. stale_for is
+// the human-readable threshold crossed; since stamps when the wedge was first
+// observed; occurrences counts distinct idle stretches flagged this run (> 1
+// means the plan recovered and re-wedged). It is surfaced ONLY while the plan is
+// running so a stale signal from a prior run can never leak.
+type StallView struct {
+	StaleFor    string    `json:"stale_for"`
+	Since       time.Time `json:"since"`
+	Occurrences int       `json:"occurrences"`
 }
 
 // ActivityView is the in-flight progress card: what a running plan is doing

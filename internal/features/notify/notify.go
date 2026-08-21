@@ -24,6 +24,12 @@ const (
 	// CostCapped: the batch paused when total spend reached the --cost-cap
 	// threshold. It is resumable, not failed.
 	CostCapped
+	// Stalled: a running plan's agent went silent (no stream event) past the
+	// configured stall threshold and is classified possibly-wedged. Unlike the
+	// other kinds this is NOT terminal — the batch keeps running and the
+	// subprocess is never signalled or killed (advisory escalation only). It
+	// fires from inside a live run, not at a batch terminal state.
+	Stalled
 )
 
 // Event describes one batch terminal state worth surfacing to the operator.
@@ -34,9 +40,13 @@ type Event struct {
 	Kind Kind
 	// BatchID names the batch this Event is about.
 	BatchID string
+	// PlanID names the plan a Stalled Event is about; empty for batch-level
+	// kinds, which concern the batch as a whole rather than one plan.
+	PlanID string
 	// SpendUSD is the batch spend at the moment CostCapped fired; 0 otherwise.
 	SpendUSD float64
-	// Detail carries the failure message for Failed; empty otherwise.
+	// Detail carries the failure message for Failed and the human-readable
+	// staleness duration (e.g. "5m0s") for Stalled; empty otherwise.
 	Detail string
 }
 

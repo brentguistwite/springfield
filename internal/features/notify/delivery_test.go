@@ -173,6 +173,33 @@ func TestCommandRunsPerEventWithEventDetails(t *testing.T) {
 	}
 }
 
+// TestStalledEventNamesPlanAndStaleness proves a possibly-wedged escalation
+// carries the plan id and staleness duration through both the message and the
+// command hook's env, so an operator (or webhook) can see WHICH plan wedged and
+// for how long — the whole point of surfacing a stall before the wall clock.
+func TestStalledEventNamesPlanAndStaleness(t *testing.T) {
+	cap := &capture{}
+	var buf bytes.Buffer
+	n := newNotifier(true, "true", "linux", cap.run, &buf)
+
+	n.Notify(Event{Kind: Stalled, BatchID: "b7", PlanID: "feat-a", Detail: "5m0s"})
+
+	if len(cap.cmds) != 1 {
+		t.Fatalf("got %d command runs, want 1", len(cap.cmds))
+	}
+	env := envMap(cap.cmds[0].Env)
+	if env["SPRINGFIELD_NOTIFY_KIND"] != "stalled" {
+		t.Errorf("KIND = %q, want stalled", env["SPRINGFIELD_NOTIFY_KIND"])
+	}
+	if env["SPRINGFIELD_NOTIFY_PLAN_ID"] != "feat-a" {
+		t.Errorf("PLAN_ID = %q, want feat-a", env["SPRINGFIELD_NOTIFY_PLAN_ID"])
+	}
+	msg := env["SPRINGFIELD_NOTIFY_MESSAGE"]
+	if !strings.Contains(msg, "feat-a") || !strings.Contains(msg, "5m0s") {
+		t.Errorf("MESSAGE = %q, want it to name plan feat-a and staleness 5m0s", msg)
+	}
+}
+
 // TestNotifyFailureLoggedAndSwallowed proves a failing/misconfigured notify
 // command logs and continues: Notify never panics and never propagates the
 // error (its signature has no return), so a batch outcome cannot change.

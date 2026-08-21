@@ -106,6 +106,15 @@ type PlanState struct {
 	// [PlanActivity]. The status projection surfaces it ONLY while the plan is
 	// running so a stale value from a prior phase can never leak.
 	Activity *PlanActivity `json:"activity,omitempty"`
+
+	// Stall records the most recent possibly-wedged classification for a running
+	// plan: its agent emitted no stream event within the configured stall
+	// threshold (see [PlanStall]). nil until the first wedge is observed. The
+	// status projection surfaces it ONLY while the plan is running, and a
+	// terminal transition replaces PlanState wholesale so the signal never leaks
+	// past the run that produced it. ADVISORY ONLY — a wedge never kills the
+	// subprocess.
+	Stall *PlanStall `json:"stall,omitempty"`
 }
 
 // PlanActivity is the in-flight, per-plan progress signal that answers "what is
@@ -123,6 +132,22 @@ type PlanActivity struct {
 	Detail    string    `json:"detail,omitempty"`
 	Round     int       `json:"round,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// PlanStall is the per-plan possibly-wedged signal recorded when event-recency
+// stall detection classifies a running plan's agent as silent past the
+// configured threshold. StaleFor is the human-readable threshold that was
+// crossed (e.g. "5m0s"); Since stamps when the wedge was first observed;
+// Occurrences counts how many distinct idle stretches were flagged during this
+// run (a value > 1 means the plan recovered and re-wedged, worth diagnosing).
+//
+// This signal escalates for operator visibility ONLY. It never interrupts,
+// signals, or kills the live subprocess — the process runs to its own
+// completion or the subprocess wall-clock timeout.
+type PlanStall struct {
+	StaleFor    string    `json:"stale_for"`
+	Since       time.Time `json:"since"`
+	Occurrences int       `json:"occurrences"`
 }
 
 // The coarse Activity phases. This is the authoritative vocabulary for
