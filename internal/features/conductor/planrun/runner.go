@@ -17,6 +17,7 @@ import (
 	"springfield/internal/core/config"
 	"springfield/internal/core/exec"
 	coreruntime "springfield/internal/core/runtime"
+	"springfield/internal/core/stall"
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/cost"
 	"springfield/internal/features/execution"
@@ -444,28 +445,38 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			if vpr == "" {
 				vpr = in.ControlRoot
 			}
-			vgate := runVerifyGate(verifyGateInput{
-				Ctx:               in.Ctx,
-				Project:           in.Project,
-				PlanID:            planID,
-				Now:               now,
-				Command:           vcmd,
-				Runner:            in.Runner,
-				ImplementerAgents: in.AgentIDs,
-				ExecutionSettings: in.ExecutionSettings,
-				VerifyCommand:     rv.Command,
-				Timeout:           rv.Timeout,
-				MaxIterations:     rv.MaxIterations,
-				PortEnv:           portEnv,
-				WorktreeRoot:      ctx.WorktreeRoot,
-				PRD:               currentPRD,
-				ContextMD:         string(contextMDBytes),
-				ProjectGuidance:   projectGuidance,
-				ProjectRoot:       vpr,
-				EvidenceDir:       evidenceDir,
-				OnEvent:           in.OnEvent,
-				TamperGuard:       in.TamperGuard,
-			})
+			// Build the shared stall detector spanning JUST the verify gate: it
+			// heartbeats on fix-iteration agent events and is suppressed around each
+			// verify command run. The watcher is stopped the moment the gate returns
+			// (the deferred cancel inside the IIFE) so it never leaks into the review
+			// gate — which does not heartbeat it and would falsely flag a wedge.
+			vgate := func() verifyGateResult {
+				vstall, stopStall := in.newVerifyStall(planID, evidenceDir, stallThreshold, now, in.Ctx)
+				defer stopStall()
+				return runVerifyGate(verifyGateInput{
+					Ctx:               in.Ctx,
+					Project:           in.Project,
+					PlanID:            planID,
+					Now:               now,
+					Command:           vcmd,
+					Runner:            in.Runner,
+					ImplementerAgents: in.AgentIDs,
+					ExecutionSettings: in.ExecutionSettings,
+					VerifyCommand:     rv.Command,
+					Timeout:           rv.Timeout,
+					MaxIterations:     rv.MaxIterations,
+					PortEnv:           portEnv,
+					WorktreeRoot:      ctx.WorktreeRoot,
+					PRD:               currentPRD,
+					ContextMD:         string(contextMDBytes),
+					ProjectGuidance:   projectGuidance,
+					ProjectRoot:       vpr,
+					EvidenceDir:       evidenceDir,
+					OnEvent:           in.OnEvent,
+					TamperGuard:       in.TamperGuard,
+					Stall:             vstall,
+				})
+			}()
 			switch vgate.Outcome {
 			case verifyPassed:
 				// Fall through to the review gate below.
@@ -1201,6 +1212,39 @@ func (in SinglePlanInput) stallHook(planID string, iter int, evidenceDir string,
 		})
 	}
 }
+
+// verifyStallIteration is the iteration recorded on a verify-gate stall record.
+// The verify gate is not a story iteration, so a sentinel 0 distinguishes its
+// stalls.jsonl entries from the numbered story-loop iterations.
+const verifyStallIteration = 0
+
+// newVerifyStall builds the shared event-recency stall detector for one verify
+// gate run and starts its watcher. The detector heartbeats on fix-iteration agent
+// events and is suppressed around each verify command run (see verifyGateInput.Stall).
+// A wedge escalates through the same [stallHook] the story loop uses — status,
+// evidence (stalls.jsonl), and the Notifier — and NEVER touches the subprocess.
+//
+// threshold <= 0 disables detection: it returns a nil controller (the gate runs
+// unmonitored, unchanged) and a no-op cancel. When enabled, the caller MUST call
+// the returned cancel to stop the watcher the moment the gate returns, so the
+// detector never leaks into a later, un-heartbeated phase (e.g. the review gate).
+func (in SinglePlanInput) newVerifyStall(planID, evidenceDir string, threshold time.Duration, now func() time.Time, parent context.Context) (stallController, context.CancelFunc) {
+	if threshold <= 0 {
+		return nil, func() {}
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
+	det := stall.New(threshold, now, in.stallHook(planID, verifyStallIteration, evidenceDir, threshold, now))
+	watchCtx, cancel := context.WithCancel(parent)
+	go det.Watch(watchCtx)
+	return det, cancel
+}
+
+// Compile-time proof that the production detector satisfies the gate's narrow
+// stall seam — a method drift in stall.Detector fails the build here, not at a
+// shipped run where the verify gate would silently take the nil-controller path.
+var _ stallController = (*stall.Detector)(nil)
 
 // truncateForError reduces s to at most max runes (NOT bytes), replacing the
 // tail with an ellipsis when truncation happens. Used to inline a short

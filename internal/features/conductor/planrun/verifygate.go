@@ -19,6 +19,16 @@ import (
 // contract with no adapter.
 type verifyCommandFunc func(ctx context.Context, req verify.Request) verify.Result
 
+// stallController is the slice's event-recency stall detector as the verify gate
+// consumes it: the gate heartbeats it (Observe) on every fix-iteration agent event
+// and suppresses it (Suppress) for the duration of each verify command run. It is
+// the narrow read of *stall.Detector — the gate never watches or builds it (the
+// caller owns the watcher lifecycle). Nil disables gate-level stall handling.
+type stallController interface {
+	Observe()
+	Suppress(bool)
+}
+
 // verifyOutcome is the gate's three-way verdict, mirroring reviewOutcome.
 // verifyPassed means the command exited 0; verifyNeedsHuman means the fix-loop
 // exhausted its budget OR two consecutive rounds timed out; verifyErrored means
@@ -71,6 +81,15 @@ type verifyGateInput struct {
 	// loop uses must apply here. The verify command itself is a deterministic
 	// process, not a prompt-injectable agent, so it is NOT guarded.
 	TamperGuard TamperGuard
+	// Stall, when non-nil, is the slice's shared event-recency stall detector. The
+	// gate SUPPRESSES it for the duration of each verify command run — a churning
+	// test suite is a legitimately busy but event-quiet phase that streams nothing
+	// through the agent event path and would otherwise accrue idle time toward a
+	// false wedge — and heartbeats it on every fix-iteration agent event so a
+	// genuinely wedged fix agent is still classified. Nil leaves the gate
+	// unmonitored (stall detection disabled, or a legacy caller that does not wire
+	// it). See [SinglePlanInput.newVerifyStall] for the production construction.
+	Stall stallController
 }
 
 type verifyGateResult struct {
@@ -114,6 +133,21 @@ func runVerifyGate(in verifyGateInput) verifyGateResult {
 		Timeout: in.Timeout,
 	}
 
+	// fixOnEvent heartbeats the shared stall detector on every fix-iteration agent
+	// event before forwarding to the caller's handler, so a churning fix agent
+	// keeps its idle timer fresh and is not misclassified as wedged. Nil detector
+	// (detection disabled) leaves the caller's handler untouched.
+	fixOnEvent := in.OnEvent
+	if in.Stall != nil {
+		inner := in.OnEvent
+		fixOnEvent = func(e coreexec.Event) {
+			in.Stall.Observe()
+			if inner != nil {
+				inner(e)
+			}
+		}
+	}
+
 	consecutiveTimeouts := 0
 
 	for round := 1; ; round++ {
@@ -127,7 +161,18 @@ func runVerifyGate(in verifyGateInput) verifyGateResult {
 		// best-effort progress stamp and does not fail the gate.
 		_ = enterPhase(in.Project, in.PlanID, conductor.PhaseVerifying, "", round, in.Now)
 
+		// The verify command is a legitimately busy but event-quiet phase (a
+		// churning test suite streams nothing through the agent event path), so
+		// suppress wedge classification for its whole duration. Suppress(false)
+		// resets the idle timer on resume so a long suite does not instantly flag
+		// when the fix loop picks back up.
+		if in.Stall != nil {
+			in.Stall.Suppress(true)
+		}
 		res := in.Command(ctx, req)
+		if in.Stall != nil {
+			in.Stall.Suppress(false)
+		}
 		if _, wErr := verify.WriteEvidence(in.EvidenceDir, round, req, res); wErr != nil && in.OnEvent != nil {
 			in.OnEvent(coreexec.Event{Type: coreexec.EventStderr, Data: fmt.Sprintf(
 				"WARN: could not write verify evidence for round %d: %v", round, wErr,
@@ -204,7 +249,7 @@ func runVerifyGate(in verifyGateInput) verifyGateResult {
 			Prompt:            fixPrompt,
 			WorkDir:           in.WorktreeRoot,
 			Env:               in.PortEnv,
-			OnEvent:           in.OnEvent,
+			OnEvent:           fixOnEvent,
 			ExecutionSettings: in.ExecutionSettings,
 		})
 		writeReviewEvidence(in.EvidenceDir, fmt.Sprintf("verify-fix-%d", round), fixPrompt, string(fix.Agent), fix.Events, fix.Err)

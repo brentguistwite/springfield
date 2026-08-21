@@ -31,6 +31,19 @@ occurrence, not a duplicate of the first.
 Detection is scoped to a single dispatch: each agent run gets its own fresh idle
 timer, and a threshold of `0` disables it entirely (see below).
 
+### The verify gate suppresses classification while its command runs
+
+The verify gate is a special case. Its command (e.g. `go test ./...`)
+is a legitimately **busy but event-quiet** phase — a churning test suite streams
+nothing through the agent event path, so a naive idle timer would flag every
+healthy long suite as wedged. So while a verify command is actively running, wedge
+classification is **suppressed**: no idle time accrues toward a wedge, and the idle
+timer is reset when the command finishes so a long suite does not instantly flag as
+the fix loop resumes. Between command runs, the gate's fix-iteration agents are
+monitored normally — a genuinely wedged fix agent is still classified and escalated.
+A hung verify command is instead bounded by its own wall-clock **timeout**, not by
+stall detection.
+
 ## What escalation does
 
 A wedge classification surfaces on three seams, none of which touch the
