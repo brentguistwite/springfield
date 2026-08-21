@@ -162,3 +162,80 @@ func TestSinglePlanEscalatesWedgeOnEverySurface(t *testing.T) {
 		t.Fatalf("Stalled event = %+v, want plan feat / detail 30s / batch batch-9", stalled[0])
 	}
 }
+
+// TestSinglePlanLegacyEscalatesWedge pins that stall detection is wired on the
+// legacy .md dispatch path too, not just the PRD story loop. Detection is
+// advisory-only (never kills/fails the run), so the "no completion oracle"
+// reasoning that keeps the turn cap PRD-only does not apply — a wedged legacy
+// single-shot dispatch must still classify possibly-wedged and escalate on every
+// surface (status, evidence, notify), exactly like the PRD path.
+func TestSinglePlanLegacyEscalatesWedge(t *testing.T) {
+	planID := "alpha"
+	root, _ := projectFixtureLegacy(t, planID)
+
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+
+	notifier := &spyNotifier{}
+	runner := &stallFiringRunner{project: project, planID: planID, fireCount: 2}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentClaude},
+		Runner:       runner,
+		Manager:      &planrun.Manager{Git: newFakeGit()},
+		ProjectRoot:  root,
+		StallConfig:  config.StallConfig{Threshold: "30s"},
+		Notifier:     notifier,
+		BatchID:      "batch-legacy",
+	})
+
+	if res.Err != nil {
+		t.Fatalf("SinglePlan errored: %v", res.Err)
+	}
+
+	// The legacy dispatch must have received the wired threshold + OnStall seam.
+	if !runner.sawOnStall {
+		t.Fatal("legacy SinglePlan did not wire OnStall into the dispatch Request")
+	}
+	if runner.sawThresh != 30*time.Second {
+		t.Fatalf("legacy dispatch StallThreshold = %s, want 30s", runner.sawThresh)
+	}
+
+	// (1) Live status signal: two idle stretches → Occurrences 2.
+	if runner.liveStall == nil {
+		t.Fatal("PlanState.Stall was not set mid-dispatch on the legacy path")
+	}
+	if runner.liveStall.Occurrences != 2 {
+		t.Fatalf("PlanStall.Occurrences = %d, want 2", runner.liveStall.Occurrences)
+	}
+
+	// (2) Evidence: one JSONL record per occurrence in the legacy plan's evidence dir.
+	stallsPath := filepath.Join(planrun.EvidenceRoot(root, planID), "stalls.jsonl")
+	data, err := os.ReadFile(stallsPath)
+	if err != nil {
+		t.Fatalf("read stalls.jsonl: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("stall records = %d, want 2", len(lines))
+	}
+
+	// (3) Notifier seam: one Stalled Event per occurrence, naming plan + staleness.
+	var stalled []notify.Event
+	for _, e := range notifier.events {
+		if e.Kind == notify.Stalled {
+			stalled = append(stalled, e)
+		}
+	}
+	if len(stalled) != 2 {
+		t.Fatalf("Stalled notifications = %d, want 2", len(stalled))
+	}
+	if stalled[0].PlanID != planID || stalled[0].Detail != "30s" || stalled[0].BatchID != "batch-legacy" {
+		t.Fatalf("Stalled event = %+v, want plan %s / detail 30s / batch batch-legacy", stalled[0], planID)
+	}
+}

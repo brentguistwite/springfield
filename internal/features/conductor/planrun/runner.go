@@ -992,6 +992,15 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 	}
 
 	progress(in.Progress, "plan %s: dispatching agent (workdir %s)\n", planID, ctx.WorktreeRoot)
+	// Event-recency stall detection IS forwarded on the legacy path, unlike the
+	// turn cap below. Detection is advisory-only — it heartbeats on stream events,
+	// escalates a silent dispatch as possibly-wedged, and NEVER kills or fails the
+	// run — so the "no completion oracle" reasoning that keeps the turn cap PRD-only
+	// does not apply: a wedged legacy single-shot dispatch is exactly the case this
+	// classifies, with zero risk of demoting a legitimate long run. Zero threshold
+	// disables it (see StallConfig.ThresholdOrDefault).
+	evidenceDir := EvidenceRoot(in.ControlRoot, ctx.PlanKey)
+	stallThreshold := in.StallConfig.ThresholdOrDefault()
 	// Turn-cap is deliberately NOT forwarded on the legacy path. Legacy
 	// plans are single-shot dispatches with no per-story pass markers, so
 	// there is no completion oracle a [WorkCompleteCheck] closure could
@@ -1013,6 +1022,8 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 		Env:               portEnv,
 		OnEvent:           in.OnEvent,
 		ExecutionSettings: in.ExecutionSettings,
+		StallThreshold:    stallThreshold,
+		OnStall:           in.stallHook(planID, legacyStallIteration, evidenceDir, stallThreshold, now),
 	})
 
 	// Detect and recover any control-plane tamper by the agent.
@@ -1034,7 +1045,6 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 		}
 	}
 
-	evidenceDir := EvidenceRoot(in.ControlRoot, ctx.PlanKey)
 	runErr := errorFromResult(result)
 	snap := execution.EvidenceSnapshot{
 		AgentID:   string(result.Agent),
@@ -1217,6 +1227,12 @@ func (in SinglePlanInput) stallHook(planID string, iter int, evidenceDir string,
 // The verify gate is not a story iteration, so a sentinel 0 distinguishes its
 // stalls.jsonl entries from the numbered story-loop iterations.
 const verifyStallIteration = 0
+
+// legacyStallIteration is the iteration recorded on a legacy-path stall record.
+// A legacy `.md` plan is a single-shot dispatch with no story loop, so a sentinel
+// 1 marks its lone dispatch (a legacy plan's evidence never mixes with numbered
+// PRD story-loop iterations, so there is no collision).
+const legacyStallIteration = 1
 
 // newVerifyStall builds the shared event-recency stall detector for one verify
 // gate run and starts its watcher. The detector heartbeats on fix-iteration agent
