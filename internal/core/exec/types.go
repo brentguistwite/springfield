@@ -17,6 +17,24 @@ type Command struct {
 	Dir     string
 	Env     map[string]string
 	Timeout time.Duration // zero means no timeout
+	// Stall, when non-nil, receives a liveness heartbeat on every event Run
+	// emits and watches for event-recency staleness in the background. Run
+	// NEVER signals or kills the subprocess based on it — a stall verdict is
+	// advisory only; the process still runs to its own completion or the
+	// Timeout deadline. Nil disables stall detection.
+	Stall StallMonitor
+}
+
+// StallMonitor observes a running subprocess's liveness so a caller can classify
+// a silent, event-less slice as possibly-wedged well before its wall-clock
+// timeout. It is deliberately narrow: Run only feeds it heartbeats and runs its
+// watcher — it can never reach back and touch the subprocess.
+type StallMonitor interface {
+	// Observe records a liveness heartbeat: one event arrived.
+	Observe()
+	// Watch runs the staleness watcher until ctx is cancelled. Run launches it
+	// in a goroutine for the subprocess's lifetime and cancels it on exit.
+	Watch(ctx context.Context)
 }
 
 // EventType distinguishes stdout from stderr output.

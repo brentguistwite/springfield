@@ -19,6 +19,7 @@ type saveConfig struct {
 	Verify *VerifyConfig `toml:"verify,omitempty"`
 	Setup  *SetupConfig  `toml:"setup,omitempty"`
 	Ports  *PortsConfig  `toml:"ports,omitempty"`
+	Stall  *StallConfig  `toml:"stall,omitempty"`
 }
 
 type saveAgentsConfig struct {
@@ -99,6 +100,10 @@ func newSaveConfig(cfg Config) saveConfig {
 	if cfg.Ports != (PortsConfig{}) {
 		p := cfg.Ports
 		out.Ports = &p
+	}
+	if cfg.Stall != (StallConfig{}) {
+		s := cfg.Stall
+		out.Stall = &s
 	}
 
 	return out

@@ -31,6 +31,9 @@ timeout = "5m"
 
 [ports]
 base = 42000
+
+[stall]
+threshold = "3m"
 `
 	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
@@ -56,6 +59,9 @@ base = 42000
 	}
 	if got, want := reloaded.Config.Ports, loaded.Config.Ports; got != want {
 		t.Errorf("Ports block dropped/changed by Save: got %+v, want %+v", got, want)
+	}
+	if got, want := reloaded.Config.Stall, loaded.Config.Stall; got != want {
+		t.Errorf("Stall block dropped/changed by Save: got %+v, want %+v", got, want)
 	}
 }
 
@@ -128,7 +134,7 @@ agent_priority = ["claude"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, block := range []string{"[setup]", "[ports]", "[verify]"} {
+	for _, block := range []string{"[setup]", "[ports]", "[verify]", "[stall]"} {
 		if got := string(out); strings.Contains(got, block) {
 			t.Errorf("Save emitted %s for unconfigured project:\n%s", block, got)
 		}

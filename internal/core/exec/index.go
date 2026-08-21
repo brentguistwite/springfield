@@ -56,11 +56,26 @@ func Run(ctx context.Context, cmd Command, handler EventHandler) Result {
 		return Result{ExitCode: -1, Err: err}
 	}
 
+	// Stall detection races the wall-clock deadline: the watcher runs for the
+	// subprocess's lifetime and is cancelled the moment Run returns (after
+	// proc.Wait below). It only observes — it never signals or kills the proc.
+	if cmd.Stall != nil {
+		watchCtx, stopWatch := context.WithCancel(ctx)
+		defer stopWatch()
+		go cmd.Stall.Watch(watchCtx)
+	}
+
 	var (
 		events []Event
 		mu     sync.Mutex
 	)
 	emit := func(e Event) {
+		// Heartbeat the stall monitor at the live consumption point: every
+		// stream event resets its idle timer. Kept outside the events mutex —
+		// the monitor guards its own state.
+		if cmd.Stall != nil {
+			cmd.Stall.Observe()
+		}
 		mu.Lock()
 		events = append(events, e)
 		if handler != nil {

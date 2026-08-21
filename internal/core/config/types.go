@@ -52,6 +52,10 @@ type Config struct {
 	// portblock.DefaultBase, so every slice still receives a deterministic
 	// SPRINGFIELD_PORT/SPRINGFIELD_PORT_RANGE assignment. See PortsConfig.
 	Ports PortsConfig `toml:"ports"`
+	// Stall is the [stall] event-recency stall-detection block. Zero value
+	// (Threshold unset) applies DefaultStallThreshold; an explicit "0" disables
+	// detection. See StallConfig.
+	Stall StallConfig `toml:"stall"`
 }
 
 // StartConfig holds settings for the start command.
