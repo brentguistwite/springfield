@@ -102,3 +102,33 @@ func TailTrace(w io.Writer, tracePath string, offset int64, planID string) (int6
 	}
 	return offset + int64(len(complete)), nil
 }
+
+// TraceFollower is the stateful driver over TailTrace for a multi-tick follow
+// loop. It carries the current trace path alongside its consumed offset because
+// the offset is only meaningful relative to the file it was measured against: a
+// batch restart/resume rolls the trace over to a NEW timestamped file (see
+// cmd/start.go openAgentTrace), so an offset advanced into the old file would
+// Seek past the head of the new, shorter one and silently drop its opening
+// events. Tail resets the offset to 0 whenever the path changes, preserving the
+// read-only, no-re-emit, no-drop guarantees of TailTrace within each file.
+type TraceFollower struct {
+	path   string
+	offset int64
+}
+
+// Tail streams planID's new trace lines at tracePath to w, resuming from the
+// prior offset when tracePath is unchanged and restarting from 0 when it rolls
+// over to a new file. It is read-only and delegates the whole-line, lazy-file
+// semantics to TailTrace; only the cross-file offset reset lives here.
+func (f *TraceFollower) Tail(w io.Writer, tracePath, planID string) error {
+	if tracePath != f.path {
+		f.path = tracePath
+		f.offset = 0
+	}
+	off, err := TailTrace(w, tracePath, f.offset, planID)
+	if err != nil {
+		return err
+	}
+	f.offset = off
+	return nil
+}

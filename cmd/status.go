@@ -242,15 +242,17 @@ func runFollow(w io.Writer, root, planID string) error {
 	}
 
 	batchID := v.Batch.ID
-	var offset int64
+	// A restart/resume of this batch rolls the trace over to a new timestamped
+	// file; the follower resets its offset on that path change so the head of
+	// the new stream is not skipped by a stale offset.
+	var follower statusview.TraceFollower
 	for {
 		tracePath, ok, err := statusview.LatestTracePath(root, batchID)
 		if err != nil {
 			return err
 		}
 		if ok {
-			offset, err = statusview.TailTrace(w, tracePath, offset, planID)
-			if err != nil {
+			if err := follower.Tail(w, tracePath, planID); err != nil {
 				return err
 			}
 		}

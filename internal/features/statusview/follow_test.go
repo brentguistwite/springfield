@@ -138,6 +138,57 @@ func TestTailTraceAdvancesOnlyCompleteLines(t *testing.T) {
 	}
 }
 
+// TestTraceFollowerResetsOffsetOnRollover pins the follow-across-restart
+// contract: a batch restart writes a NEW trace file (fresh timestamp), so the
+// follower must reset its offset to 0 when the path changes — otherwise it
+// Seeks the stale, large offset into the new, smaller file and skips the head
+// of the new stream. Tailing the same path resumes; a changed path restarts.
+func TestTraceFollowerResetsOffsetOnRollover(t *testing.T) {
+	dir := t.TempDir()
+	pathA := filepath.Join(dir, "batch-20260820T120000Z.agent-trace.jsonl")
+	pathB := filepath.Join(dir, "batch-20260820T130000Z.agent-trace.jsonl")
+
+	// File A: several complete event lines for plan 01, fully consumed so the
+	// follower's offset advances well past the length of the (shorter) file B.
+	fileA := `{"type":"stdout","time":"t","data":"alpha one","plan":"01"}
+{"type":"stdout","time":"t","data":"alpha two","plan":"01"}
+{"type":"stdout","time":"t","data":"alpha three","plan":"01"}
+`
+	if err := os.WriteFile(pathA, []byte(fileA), 0o644); err != nil {
+		t.Fatalf("write A: %v", err)
+	}
+
+	var fol statusview.TraceFollower
+	var buf bytes.Buffer
+	if err := fol.Tail(&buf, pathA, "01"); err != nil {
+		t.Fatalf("Tail A: %v", err)
+	}
+	if !strings.Contains(buf.String(), "alpha one") || !strings.Contains(buf.String(), "alpha three") {
+		t.Fatalf("file A lines missing:\n%s", buf.String())
+	}
+
+	// File B: the restart's trace, shorter than the consumed offset into A. A
+	// bare offset carried across the switch would Seek past B's head.
+	fileB := `{"type":"stdout","time":"t","data":"bravo one","plan":"01"}
+{"type":"stdout","time":"t","data":"bravo two","plan":"01"}
+`
+	if err := os.WriteFile(pathB, []byte(fileB), 0o644); err != nil {
+		t.Fatalf("write B: %v", err)
+	}
+
+	buf.Reset()
+	if err := fol.Tail(&buf, pathB, "01"); err != nil {
+		t.Fatalf("Tail B: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "bravo one") || !strings.Contains(out, "bravo two") {
+		t.Fatalf("rollover skipped the head of the new trace:\n%s", out)
+	}
+	if strings.Contains(out, "alpha") {
+		t.Fatalf("re-emitted the old trace on rollover:\n%s", out)
+	}
+}
+
 // TestTailTraceMissingFileIsNotAnError pins that a not-yet-created trace (the
 // runner writes it lazily on the first agent event) returns the offset
 // unchanged with no error, so the follow loop keeps polling.
