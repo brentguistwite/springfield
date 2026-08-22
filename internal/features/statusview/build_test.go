@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"springfield/internal/features/batch"
 	"springfield/internal/features/conductor"
@@ -150,8 +151,8 @@ func TestActive_IntegratedCountSplitsMergedAndRetained(t *testing.T) {
 
 func TestIdle_EnvelopeShape(t *testing.T) {
 	v := statusview.Idle()
-	if v.SchemaVersion != 2 {
-		t.Fatalf("schema_version = %d, want 2", v.SchemaVersion)
+	if v.SchemaVersion != 3 {
+		t.Fatalf("schema_version = %d, want 3", v.SchemaVersion)
 	}
 	if v.State != "idle" {
 		t.Fatalf("state = %q, want idle", v.State)
@@ -384,7 +385,7 @@ func TestActive_OnePlanProjection(t *testing.T) {
 	}
 	v := statusview.Active(in)
 
-	if v.State != "active" || v.SchemaVersion != 2 {
+	if v.State != "active" || v.SchemaVersion != 3 {
 		t.Fatalf("envelope = %s/%d", v.State, v.SchemaVersion)
 	}
 	if v.Batch == nil || v.Batch.Title != "Ship feature A" {
@@ -487,6 +488,62 @@ func TestActive_FatalErrorSuppression(t *testing.T) {
 	})
 }
 
+// TestActive_StalledIndicatorInJSON pins the possibly-wedged indicator on the
+// --json plan card: a running plan carrying a persisted PlanStall surfaces a
+// non-null "stall" block (stale_for + occurrences) so an operator polling
+// `springfield status --json` sees the wedge, while an identical stall recorded
+// on a NON-running plan is dropped to null — a stale signal from a prior run
+// must never leak, exactly like the activity card.
+func TestActive_StalledIndicatorInJSON(t *testing.T) {
+	since := time.Date(2026, time.April, 30, 10, 0, 0, 0, time.UTC)
+	stall := &conductor.PlanStall{StaleFor: "5m0s", Since: since, Occurrences: 2}
+
+	t.Run("running_plan_surfaces_stall", func(t *testing.T) {
+		in := statusview.ActiveInput{
+			Batch: batch.Batch{ID: "b1", Title: "T", PlanIDs: []string{"p1"}},
+			Run:   batch.Run{ActiveBatchID: "b1"},
+			State: &conductor.State{Plans: map[string]*conductor.PlanState{
+				"p1": {Status: conductor.StatusRunning, Stall: stall},
+			}},
+			Units: []conductor.PlanUnit{{ID: "p1", Title: "Plan one"}},
+			Live:  true, // a live process owns the lock → the plan reads as running
+		}
+		v := statusview.Active(in)
+		if len(v.Plans) != 1 || v.Plans[0].Stall == nil {
+			t.Fatalf("running plan must surface a stall indicator, got %+v", v.Plans)
+		}
+		sv := v.Plans[0].Stall
+		if sv.StaleFor != "5m0s" || sv.Occurrences != 2 || !sv.Since.Equal(since) {
+			t.Fatalf("stall view = %+v, want stale_for=5m0s occurrences=2 since=%s", sv, since)
+		}
+		out, err := json.MarshalIndent(v, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, key := range []string{`"stall": {`, `"stale_for": "5m0s"`, `"occurrences": 2`} {
+			if !strings.Contains(string(out), key) {
+				t.Errorf("--json missing %q\n--- got ---\n%s", key, out)
+			}
+		}
+	})
+
+	t.Run("non_running_plan_drops_stall", func(t *testing.T) {
+		in := statusview.ActiveInput{
+			Batch: batch.Batch{ID: "b1", Title: "T", PlanIDs: []string{"p1"}},
+			Run:   batch.Run{ActiveBatchID: "b1"},
+			State: &conductor.State{Plans: map[string]*conductor.PlanState{
+				"p1": {Status: conductor.StatusFailed, Stall: stall},
+			}},
+			Units: []conductor.PlanUnit{{ID: "p1", Title: "Plan one"}},
+			Live:  true,
+		}
+		v := statusview.Active(in)
+		if len(v.Plans) != 1 || v.Plans[0].Stall != nil {
+			t.Fatalf("non-running plan must drop the stall indicator (no stale leak), got %+v", v.Plans[0].Stall)
+		}
+	})
+}
+
 func TestActive_JSONShape(t *testing.T) {
 	in := statusview.ActiveInput{
 		Batch: batch.Batch{ID: "b1", Title: "T", PlanIDs: []string{"p1"}},
@@ -500,7 +557,7 @@ func TestActive_JSONShape(t *testing.T) {
 	}
 	// Contract keys that Flightdeck branches on must be present.
 	for _, key := range []string{
-		`"schema_version": 2`, `"state": "active"`, `"plans": [`,
+		`"schema_version": 3`, `"state": "active"`, `"plans": [`,
 		`"id": "p1"`, `"status": "pending"`, `"base_branch": ""`,
 		`"review": {`, `"verdict": null`, `"merge": {`, `"status": null`,
 		`"integration": {`, `"state": "clean"`,

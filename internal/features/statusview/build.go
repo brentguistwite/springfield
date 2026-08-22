@@ -195,6 +195,7 @@ func buildPlan(id, title string, ps *conductor.PlanState, live bool, plan *prd.P
 		Merge:       deriveMerge(ps),
 		Integration: deriveIntegration(ps),
 		Activity:    DeriveActivity(ps, live, plan),
+		Stall:       DeriveStall(ps, live),
 	}
 	if ps != nil {
 		pv.Branch = ps.Branch
@@ -246,6 +247,22 @@ func deriveVerify(ps *conductor.PlanState) VerifyView {
 		vv.Reason = &reason
 	}
 	return vv
+}
+
+// DeriveStall projects the possibly-wedged indicator. Like DeriveActivity it is
+// surfaced ONLY while the plan is running per ComposeStatus, so a stall recorded
+// during a prior run can never leak onto a plan that has since gone terminal (a
+// terminal transition also replaces PlanState wholesale, dropping the signal).
+// A running plan with no recorded wedge yields nil (explicit JSON null).
+func DeriveStall(ps *conductor.PlanState, live bool) *StallView {
+	if ps == nil || ps.Stall == nil || ComposeStatus(ps, live) != StatusRunning {
+		return nil
+	}
+	return &StallView{
+		StaleFor:    ps.Stall.StaleFor,
+		Since:       ps.Stall.Since,
+		Occurrences: ps.Stall.Occurrences,
+	}
 }
 
 // DeriveActivity projects the in-flight progress signal. It is surfaced ONLY

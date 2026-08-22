@@ -52,6 +52,45 @@ func WriteEvidence(dir string, snap EvidenceSnapshot) error {
 	return nil
 }
 
+// StallRecord is one possibly-wedged classification appended to a plan's
+// evidence when event-recency stall detection flags a silent agent. Recording
+// each occurrence (rather than only the current PlanState signal, which a
+// terminal transition overwrites) keeps recurring wedges diagnosable post-hoc.
+type StallRecord struct {
+	PlanID     string    `json:"plan_id"`
+	Iteration  int       `json:"iteration,omitempty"`
+	StaleFor   string    `json:"stale_for"`
+	ObservedAt time.Time `json:"observed_at"`
+}
+
+// stallRecordFile is the append-only JSONL log of wedge occurrences, one record
+// per line, living in the plan's evidence directory beside meta.json.
+const stallRecordFile = "stalls.jsonl"
+
+// AppendStallRecord appends one wedge occurrence to dir/stalls.jsonl, creating
+// the directory and file as needed. It is append-only (O_APPEND) so concurrent
+// or repeated wedges accumulate a full history rather than overwriting; each
+// record is a single JSON line. Called from the stall watcher's escalation
+// callback — advisory only, it never touches the subprocess.
+func AppendStallRecord(dir string, rec StallRecord) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	line, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(filepath.Join(dir, stallRecordFile), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.Write(append(line, '\n')); err != nil {
+		return err
+	}
+	return f.Sync()
+}
+
 type evidenceMeta struct {
 	AgentID        string    `json:"agent_id"`
 	Model          string    `json:"model,omitempty"`

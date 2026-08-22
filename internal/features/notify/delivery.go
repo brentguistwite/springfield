@@ -101,6 +101,7 @@ func eventEnv(e Event) []string {
 	return []string{
 		"SPRINGFIELD_NOTIFY_KIND=" + e.Kind.slug(),
 		"SPRINGFIELD_NOTIFY_BATCH_ID=" + e.BatchID,
+		"SPRINGFIELD_NOTIFY_PLAN_ID=" + e.PlanID,
 		"SPRINGFIELD_NOTIFY_MESSAGE=" + e.message(),
 		fmt.Sprintf("SPRINGFIELD_NOTIFY_SPEND_USD=%.2f", e.SpendUSD),
 		"SPRINGFIELD_NOTIFY_DETAIL=" + e.Detail,
@@ -122,6 +123,11 @@ func (e Event) message() string {
 		return fmt.Sprintf("Batch %s failed", e.BatchID)
 	case CostCapped:
 		return fmt.Sprintf("Batch %s paused at cost cap ($%.2f)", e.BatchID, e.SpendUSD)
+	case Stalled:
+		if e.Detail != "" {
+			return fmt.Sprintf("Plan %s may be wedged: no activity for %s", e.PlanID, e.Detail)
+		}
+		return fmt.Sprintf("Plan %s may be wedged", e.PlanID)
 	default:
 		return fmt.Sprintf("Batch %s reached a terminal state", e.BatchID)
 	}
@@ -138,6 +144,8 @@ func (k Kind) slug() string {
 		return "failed"
 	case CostCapped:
 		return "cost_capped"
+	case Stalled:
+		return "stalled"
 	default:
 		return "unknown"
 	}

@@ -59,6 +59,22 @@ type Request struct {
 	// pattern.
 	WorkCompleteCheck func(events []exec.Event) bool
 
+	// StallThreshold is the event-recency idle ceiling for this dispatch: when
+	// no stream event arrives within it, the agent is classified possibly-wedged
+	// and OnStall fires. Zero (the default) disables stall detection, so callers
+	// that don't opt in keep their prior behavior. Callers pass
+	// config.Config.Stall.ThresholdOrDefault(). ADVISORY ONLY — the runtime never
+	// signals or kills the subprocess based on a stall; the process still runs to
+	// its own completion or the wall-clock Timeout.
+	StallThreshold time.Duration
+
+	// OnStall, when non-nil and StallThreshold > 0, fires at most once per idle
+	// stretch when a dispatch is classified possibly-wedged. It is the caller's
+	// escalation seam (surface in status, notify, record evidence). It MUST NOT
+	// touch the subprocess — it runs on the stall watcher's goroutine while the
+	// dispatch is still live. Nil is a no-op.
+	OnStall func()
+
 	// ReviewerRole marks this as an independent-reviewer run, which is
 	// legitimately tool-free (it reasons over an inline diff with tools
 	// forbidden). The runner passes requireToolAction = !ReviewerRole to

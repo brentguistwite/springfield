@@ -9,6 +9,7 @@ import (
 
 	"springfield/internal/core/agents"
 	"springfield/internal/core/exec"
+	"springfield/internal/core/stall"
 )
 
 // defaultCooldown is the fallback duration installed when a retryable
@@ -158,6 +159,14 @@ func (r *Runner) Run(ctx context.Context, req Request) Result {
 			}
 		}
 		cmd.Timeout = req.Timeout
+		// Event-recency stall detection: a fresh Detector per dispatch (its idle
+		// timer is scoped to this subprocess). exec.Run heartbeats it on every
+		// event and races its watcher against the wall-clock deadline; a stall
+		// verdict fires OnStall for advisory escalation and NEVER kills the proc.
+		// Disabled when the threshold is zero (New returns a no-op detector).
+		if req.StallThreshold > 0 {
+			cmd.Stall = stall.New(req.StallThreshold, r.now, req.OnStall)
+		}
 		// Inject caller env (e.g. the slice's port block) without clobbering
 		// keys the adapter set deliberately — the adapter owns its own control
 		// vars, so an existing key wins over the request's.

@@ -56,11 +56,31 @@ func Run(ctx context.Context, cmd Command, handler EventHandler) Result {
 		return Result{ExitCode: -1, Err: err}
 	}
 
+	// Stall detection races the wall-clock deadline: the watcher runs for the
+	// subprocess's lifetime and is stopped the moment Run returns (after
+	// proc.Wait below). It only observes — it never signals or kills the proc.
+	// Watch invokes its OnStall callback synchronously, so cancelling is not
+	// enough: we JOIN the goroutine before returning, guaranteeing no in-flight
+	// callback outlives the dispatch (otherwise a late escalation could mutate
+	// plan state after the caller has already written the terminal outcome).
+	if cmd.Stall != nil {
+		watchCtx, stopWatch := context.WithCancel(ctx)
+		watchDone := make(chan struct{})
+		go func() { defer close(watchDone); cmd.Stall.Watch(watchCtx) }()
+		defer func() { stopWatch(); <-watchDone }()
+	}
+
 	var (
 		events []Event
 		mu     sync.Mutex
 	)
 	emit := func(e Event) {
+		// Heartbeat the stall monitor at the live consumption point: every
+		// stream event resets its idle timer. Kept outside the events mutex —
+		// the monitor guards its own state.
+		if cmd.Stall != nil {
+			cmd.Stall.Observe()
+		}
 		mu.Lock()
 		events = append(events, e)
 		if handler != nil {

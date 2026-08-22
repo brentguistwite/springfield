@@ -17,9 +17,11 @@ import (
 	"springfield/internal/core/config"
 	"springfield/internal/core/exec"
 	coreruntime "springfield/internal/core/runtime"
+	"springfield/internal/core/stall"
 	"springfield/internal/features/conductor"
 	"springfield/internal/features/cost"
 	"springfield/internal/features/execution"
+	"springfield/internal/features/notify"
 	"springfield/internal/features/portblock"
 	"springfield/internal/features/prd"
 	"springfield/internal/features/verify"
@@ -159,6 +161,20 @@ type SinglePlanInput struct {
 	// the loop breaks with Reason "cost-capped" so the caller (runBatch) can
 	// abort the batch without dispatching further plans. Zero disables.
 	CostCapUSD float64
+	// StallConfig is the project-global [stall] block from springfield.toml. The
+	// resolved threshold (StallConfig.ThresholdOrDefault) is the event-recency
+	// idle ceiling handed to each agent dispatch: a silent agent past it is
+	// classified possibly-wedged and escalated via [Notifier]/status/evidence,
+	// NEVER killed. The zero value applies config.DefaultStallThreshold; an
+	// explicit "0" disables detection. cmd/start passes config.Config.Stall.
+	StallConfig config.StallConfig
+	// Notifier is the escalation seam a possibly-wedged classification fires
+	// through: when event-recency stall detection flags a silent agent, the
+	// dispatch emits a notify.Stalled Event naming the plan and staleness
+	// duration. Nil defaults to notify.Nop (the seam is always invoked, never
+	// nil), matching the opt-in, off-by-default notification policy. cmd/start
+	// passes the operator's configured Notifier.
+	Notifier notify.Notifier
 	// BatchID stamps every cost.json this run writes so cost.ComputeRollup
 	// can scope spend to the live batch and exclude leaked iter-N files from
 	// an earlier batch that reused this plan's evidence dir. The batch path
@@ -385,6 +401,10 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 	projectGuidance := loadProjectGuidance(in.ControlRoot)
 
 	evidenceDir := EvidenceRoot(in.ControlRoot, ctx.PlanKey)
+	// Event-recency stall threshold, resolved once for the run: a silent agent is
+	// classified possibly-wedged past it and escalated (never killed). Zero
+	// disables detection (see StallConfig.ThresholdOrDefault).
+	stallThreshold := in.StallConfig.ThresholdOrDefault()
 	iterCap := in.Project.Config.SingleWorkstreamIterations
 	if iterCap <= 0 {
 		iterCap = 50
@@ -425,28 +445,38 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			if vpr == "" {
 				vpr = in.ControlRoot
 			}
-			vgate := runVerifyGate(verifyGateInput{
-				Ctx:               in.Ctx,
-				Project:           in.Project,
-				PlanID:            planID,
-				Now:               now,
-				Command:           vcmd,
-				Runner:            in.Runner,
-				ImplementerAgents: in.AgentIDs,
-				ExecutionSettings: in.ExecutionSettings,
-				VerifyCommand:     rv.Command,
-				Timeout:           rv.Timeout,
-				MaxIterations:     rv.MaxIterations,
-				PortEnv:           portEnv,
-				WorktreeRoot:      ctx.WorktreeRoot,
-				PRD:               currentPRD,
-				ContextMD:         string(contextMDBytes),
-				ProjectGuidance:   projectGuidance,
-				ProjectRoot:       vpr,
-				EvidenceDir:       evidenceDir,
-				OnEvent:           in.OnEvent,
-				TamperGuard:       in.TamperGuard,
-			})
+			// Build the shared stall detector spanning JUST the verify gate: it
+			// heartbeats on fix-iteration agent events and is suppressed around each
+			// verify command run. The watcher is stopped the moment the gate returns
+			// (the deferred cancel inside the IIFE) so it never leaks into the review
+			// gate — which does not heartbeat it and would falsely flag a wedge.
+			vgate := func() verifyGateResult {
+				vstall, stopStall := in.newVerifyStall(planID, evidenceDir, stallThreshold, now, in.Ctx)
+				defer stopStall()
+				return runVerifyGate(verifyGateInput{
+					Ctx:               in.Ctx,
+					Project:           in.Project,
+					PlanID:            planID,
+					Now:               now,
+					Command:           vcmd,
+					Runner:            in.Runner,
+					ImplementerAgents: in.AgentIDs,
+					ExecutionSettings: in.ExecutionSettings,
+					VerifyCommand:     rv.Command,
+					Timeout:           rv.Timeout,
+					MaxIterations:     rv.MaxIterations,
+					PortEnv:           portEnv,
+					WorktreeRoot:      ctx.WorktreeRoot,
+					PRD:               currentPRD,
+					ContextMD:         string(contextMDBytes),
+					ProjectGuidance:   projectGuidance,
+					ProjectRoot:       vpr,
+					EvidenceDir:       evidenceDir,
+					OnEvent:           in.OnEvent,
+					TamperGuard:       in.TamperGuard,
+					Stall:             vstall,
+				})
+			}()
 			switch vgate.Outcome {
 			case verifyPassed:
 				// Fall through to the review gate below.
@@ -595,6 +625,8 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 			ExecutionSettings:    in.ExecutionSettings,
 			MaxTurnsPerIteration: in.MaxTurnsPerIteration,
 			WorkCompleteCheck:    workCompleteCheck,
+			StallThreshold:       stallThreshold,
+			OnStall:              in.stallHook(planID, iter, evidenceDir, stallThreshold, now),
 		})
 		lastAgent = result.Agent
 
@@ -960,6 +992,15 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 	}
 
 	progress(in.Progress, "plan %s: dispatching agent (workdir %s)\n", planID, ctx.WorktreeRoot)
+	// Event-recency stall detection IS forwarded on the legacy path, unlike the
+	// turn cap below. Detection is advisory-only — it heartbeats on stream events,
+	// escalates a silent dispatch as possibly-wedged, and NEVER kills or fails the
+	// run — so the "no completion oracle" reasoning that keeps the turn cap PRD-only
+	// does not apply: a wedged legacy single-shot dispatch is exactly the case this
+	// classifies, with zero risk of demoting a legitimate long run. Zero threshold
+	// disables it (see StallConfig.ThresholdOrDefault).
+	evidenceDir := EvidenceRoot(in.ControlRoot, ctx.PlanKey)
+	stallThreshold := in.StallConfig.ThresholdOrDefault()
 	// Turn-cap is deliberately NOT forwarded on the legacy path. Legacy
 	// plans are single-shot dispatches with no per-story pass markers, so
 	// there is no completion oracle a [WorkCompleteCheck] closure could
@@ -981,6 +1022,8 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 		Env:               portEnv,
 		OnEvent:           in.OnEvent,
 		ExecutionSettings: in.ExecutionSettings,
+		StallThreshold:    stallThreshold,
+		OnStall:           in.stallHook(planID, legacyStallIteration, evidenceDir, stallThreshold, now),
 	})
 
 	// Detect and recover any control-plane tamper by the agent.
@@ -1002,7 +1045,6 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 		}
 	}
 
-	evidenceDir := EvidenceRoot(in.ControlRoot, ctx.PlanKey)
 	runErr := errorFromResult(result)
 	snap := execution.EvidenceSnapshot{
 		AgentID:   string(result.Agent),
@@ -1125,6 +1167,113 @@ func singlePlanLegacy(in SinglePlanInput, planID string, unit conductor.PlanUnit
 	}
 	return out
 }
+
+// notifier returns the configured escalation seam, defaulting to notify.Nop so
+// the seam is always safe to call (never nil) when notifications are unconfigured.
+func (in SinglePlanInput) notifier() notify.Notifier {
+	if in.Notifier == nil {
+		return notify.Nop{}
+	}
+	return in.Notifier
+}
+
+// stallHook builds the advisory escalation callback the runtime fires when
+// event-recency stall detection classifies this dispatch as possibly-wedged. It
+// escalates on three surfaces and NEVER touches the subprocess:
+//
+//  1. persists a [conductor.PlanStall] onto PlanState so `springfield status`
+//     surfaces the possibly-wedged indicator on the live plan;
+//  2. appends the occurrence to the plan's evidence (stalls.jsonl) so recurring
+//     wedges are diagnosable post-hoc even after a terminal transition clears
+//     the live signal;
+//  3. emits a notify.Stalled Event through the operator's Notifier seam.
+//
+// It runs on the stall watcher's goroutine while the dispatch is still live; all
+// three side effects are best-effort (state/evidence write errors are dropped —
+// a failed advisory escalation must never fail the plan, and the wedge is not a
+// correctness fault to begin with).
+func (in SinglePlanInput) stallHook(planID string, iter int, evidenceDir string, threshold time.Duration, now func() time.Time) func() {
+	staleFor := threshold.String()
+	return func() {
+		ts := now()
+		in.Project.UpdatePlan(planID, func(ps *conductor.PlanState) {
+			if ps.Stall == nil {
+				ps.Stall = &conductor.PlanStall{StaleFor: staleFor, Since: ts, Occurrences: 1}
+				return
+			}
+			// Recurrence: keep the first-observed Since, bump the count so a plan
+			// that recovered and re-wedged is visibly distinguished from a single
+			// stretch.
+			ps.Stall.Occurrences++
+			ps.Stall.StaleFor = staleFor
+		})
+		_ = in.Project.SaveState()
+		_ = execution.AppendStallRecord(evidenceDir, execution.StallRecord{
+			PlanID:     planID,
+			Iteration:  iter,
+			StaleFor:   staleFor,
+			ObservedAt: ts,
+		})
+		in.notifier().Notify(notify.Event{
+			Kind:    notify.Stalled,
+			BatchID: in.BatchID,
+			PlanID:  planID,
+			Detail:  staleFor,
+		})
+	}
+}
+
+// verifyStallIteration is the iteration recorded on a verify-gate stall record.
+// The verify gate is not a story iteration, so a sentinel 0 distinguishes its
+// stalls.jsonl entries from the numbered story-loop iterations.
+const verifyStallIteration = 0
+
+// legacyStallIteration is the iteration recorded on a legacy-path stall record.
+// A legacy `.md` plan is a single-shot dispatch with no story loop, so a sentinel
+// 1 marks its lone dispatch (a legacy plan's evidence never mixes with numbered
+// PRD story-loop iterations, so there is no collision).
+const legacyStallIteration = 1
+
+// newVerifyStall builds the shared event-recency stall detector for one verify
+// gate run and starts its watcher. The detector heartbeats on fix-iteration agent
+// events and is suppressed around each verify command run (see verifyGateInput.Stall).
+// A wedge escalates through the same [stallHook] the story loop uses — status,
+// evidence (stalls.jsonl), and the Notifier — and NEVER touches the subprocess.
+//
+// threshold <= 0 disables detection: it returns a nil controller (the gate runs
+// unmonitored, unchanged) and a no-op stop. When enabled, the caller MUST call
+// the returned stop the moment the gate returns, so the detector never leaks into
+// a later, un-heartbeated phase (e.g. the review gate).
+//
+// stop JOINS the watcher goroutine before returning (cancel + wait), mirroring
+// exec.Run's watcher lifecycle: Watch invokes the escalation callback (stallHook)
+// synchronously, so a bare cancel is not enough — an in-flight callback could
+// outlive the gate and re-stamp PlanState.Stall onto an already-finished plan
+// after the terminal write. Joining guarantees no escalation outlives the gate.
+// It cannot deadlock: stop runs from the gate's deferred cleanup without holding
+// the project lock, so the callback's UpdatePlan/SaveState acquire it freely.
+func (in SinglePlanInput) newVerifyStall(planID, evidenceDir string, threshold time.Duration, now func() time.Time, parent context.Context) (stallController, context.CancelFunc) {
+	if threshold <= 0 {
+		return nil, func() {}
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
+	det := stall.New(threshold, now, in.stallHook(planID, verifyStallIteration, evidenceDir, threshold, now))
+	watchCtx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
+	go func() { defer close(done); det.Watch(watchCtx) }()
+	stop := func() {
+		cancel()
+		<-done
+	}
+	return det, stop
+}
+
+// Compile-time proof that the production detector satisfies the gate's narrow
+// stall seam — a method drift in stall.Detector fails the build here, not at a
+// shipped run where the verify gate would silently take the nil-controller path.
+var _ stallController = (*stall.Detector)(nil)
 
 // truncateForError reduces s to at most max runes (NOT bytes), replacing the
 // tail with an ellipsis when truncation happens. Used to inline a short

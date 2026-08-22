@@ -764,6 +764,11 @@ func runBatchWithContext(ctx context.Context, root string, run *batch.Run, b bat
 		batchBase:        batchBase,
 		costCap:          costCap,
 		batchID:          b.ID,
+		// Build the stall-escalation Notifier from the same git-ignored [notify]
+		// config the batch-terminal notification uses; a disabled/absent block
+		// yields notify.Nop (silent, off by default). progress carries any
+		// delivery-failure warning, mirroring buildNotifier's stderr sink.
+		notifier: notify.New(local.Notify.Enabled, local.Notify.Command, runtime.GOOS, progress),
 	}
 	// Runtime cursor checkpoints: keep run.json's active_plan_ids truthful
 	// while plans are in flight. Both callbacks fire only from the scheduler
@@ -871,6 +876,11 @@ type batchPlanRunner struct {
 	batchBase        string
 	costCap          float64
 	batchID          string
+	// notifier is the escalation seam threaded into every dispatch so an
+	// in-flight possibly-wedged classification fires notify.Stalled through the
+	// operator's [notify] config (Nop when unconfigured — the seam is always
+	// non-nil). It is the SAME seam the batch-terminal notification uses.
+	notifier notify.Notifier
 }
 
 // IsTerminal reports a FULLY INTEGRATED plan (batchexec's terminal contract).
@@ -964,6 +974,8 @@ func (r *batchPlanRunner) RunPlan(ctx context.Context, planID string, info batch
 		MinFreeDiskBytes:     r.loaded.Config.MinFreeDiskBytes(),
 		CostCapUSD:           r.costCap,
 		BatchID:              r.batchID,
+		StallConfig:          r.loaded.Config.Stall,
+		Notifier:             r.notifier,
 	})
 	if res.Reason == "no-eligible-plan" {
 		// The target plan is not registered in the conductor schedule —
@@ -1872,6 +1884,8 @@ func runOnePlan(ctx context.Context, w io.Writer, project *conductor.Project, ro
 		Ctx:                  ctx,
 		MaxTurnsPerIteration: loaded.Config.MaxTurnsPerIteration(),
 		CostCapUSD:           costCap,
+		StallConfig:          loaded.Config.Stall,
+		Notifier:             notify.New(local.Notify.Enabled, local.Notify.Command, runtime.GOOS, w),
 	})
 
 	if res.PlanID == "" && res.Reason == "no-eligible-plan" {

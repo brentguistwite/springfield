@@ -52,6 +52,20 @@ func loadFrom(startDir string) (Loaded, error) {
 			Reason: err.Error(),
 		}
 	}
+	// Reject unknown keys, mirroring the strict local loader (LoadLocalFrom).
+	// springfield.toml is operator-edited; silently dropping a typo like
+	// `[stall]\nthreshhold = "5m"` (misspelled) would leave the intended
+	// setting inert with no diagnostic.
+	if undecoded := metadata.Undecoded(); len(undecoded) > 0 {
+		keys := make([]string, 0, len(undecoded))
+		for _, k := range undecoded {
+			keys = append(keys, k.String())
+		}
+		return Loaded{}, &InvalidConfigError{
+			Path:   configPath,
+			Reason: "unknown keys: " + strings.Join(keys, ", "),
+		}
+	}
 	setPresence(&cfg, metadata)
 	normalize(&cfg)
 
