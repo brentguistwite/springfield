@@ -1241,9 +1241,17 @@ const legacyStallIteration = 1
 // evidence (stalls.jsonl), and the Notifier — and NEVER touches the subprocess.
 //
 // threshold <= 0 disables detection: it returns a nil controller (the gate runs
-// unmonitored, unchanged) and a no-op cancel. When enabled, the caller MUST call
-// the returned cancel to stop the watcher the moment the gate returns, so the
-// detector never leaks into a later, un-heartbeated phase (e.g. the review gate).
+// unmonitored, unchanged) and a no-op stop. When enabled, the caller MUST call
+// the returned stop the moment the gate returns, so the detector never leaks into
+// a later, un-heartbeated phase (e.g. the review gate).
+//
+// stop JOINS the watcher goroutine before returning (cancel + wait), mirroring
+// exec.Run's watcher lifecycle: Watch invokes the escalation callback (stallHook)
+// synchronously, so a bare cancel is not enough — an in-flight callback could
+// outlive the gate and re-stamp PlanState.Stall onto an already-finished plan
+// after the terminal write. Joining guarantees no escalation outlives the gate.
+// It cannot deadlock: stop runs from the gate's deferred cleanup without holding
+// the project lock, so the callback's UpdatePlan/SaveState acquire it freely.
 func (in SinglePlanInput) newVerifyStall(planID, evidenceDir string, threshold time.Duration, now func() time.Time, parent context.Context) (stallController, context.CancelFunc) {
 	if threshold <= 0 {
 		return nil, func() {}
@@ -1253,8 +1261,13 @@ func (in SinglePlanInput) newVerifyStall(planID, evidenceDir string, threshold t
 	}
 	det := stall.New(threshold, now, in.stallHook(planID, verifyStallIteration, evidenceDir, threshold, now))
 	watchCtx, cancel := context.WithCancel(parent)
-	go det.Watch(watchCtx)
-	return det, cancel
+	done := make(chan struct{})
+	go func() { defer close(done); det.Watch(watchCtx) }()
+	stop := func() {
+		cancel()
+		<-done
+	}
+	return det, stop
 }
 
 // Compile-time proof that the production detector satisfies the gate's narrow
