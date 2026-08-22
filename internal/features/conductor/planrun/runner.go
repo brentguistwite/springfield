@@ -501,13 +501,28 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		case reviewNeedsHuman:
 			needsHuman = true
 			exitReason = "review-needs-human"
-			if excerpt := truncateForError(gate.Findings, 200); excerpt != "" {
-				finalRunErr = fmt.Errorf("pre-merge review halted: %s (full findings in evidence)", excerpt)
-			} else {
-				// Reviewer emitted halt with no prose (rare but possible — the
-				// verdict marker line itself is stripped from Findings). Avoid
-				// the awkward "halted:  (…)" double-space.
-				finalRunErr = fmt.Errorf("pre-merge review halted (full findings in evidence)")
+			excerpt := truncateForError(gate.Findings, 200)
+			evidenceNote := "full findings in evidence"
+			switch gate.Cause {
+			case causeExhausted:
+				// The fix-loop never converged: name the round count so the
+				// operator knows the reviewer kept asking for revisions rather
+				// than issuing an explicit stop.
+				if excerpt != "" {
+					finalRunErr = fmt.Errorf("pre-merge review did not converge after %d rounds: %s (%s)", gate.Rounds, excerpt, evidenceNote)
+				} else {
+					finalRunErr = fmt.Errorf("pre-merge review did not converge after %d rounds (%s)", gate.Rounds, evidenceNote)
+				}
+			default:
+				// causeHalt: the reviewer issued an explicit halt verdict.
+				if excerpt != "" {
+					finalRunErr = fmt.Errorf("pre-merge review halted: %s (%s)", excerpt, evidenceNote)
+				} else {
+					// Reviewer emitted halt with no prose (rare but possible — the
+					// verdict marker line itself is stripped from Findings). Avoid
+					// the awkward "halted:  (…)" double-space.
+					finalRunErr = fmt.Errorf("pre-merge review halted (%s)", evidenceNote)
+				}
 			}
 		case reviewErrored:
 			finalRunErr = gate.Err

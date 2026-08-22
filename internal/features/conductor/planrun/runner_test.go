@@ -803,6 +803,12 @@ func TestSinglePlanReviewHaltYieldsNeedsHuman(t *testing.T) {
 	if res.Err == nil {
 		t.Fatalf("Err must be non-nil so the batch loop halts; got nil")
 	}
+	if got := res.Err.Error(); !strings.Contains(got, "pre-merge review halted") {
+		t.Fatalf("halt handoff must say the review halted; got %q", got)
+	}
+	if got := res.Err.Error(); strings.Contains(got, "did not converge") {
+		t.Fatalf("halt handoff must NOT use the did-not-converge wording; got %q", got)
+	}
 	if len(runner.calls) != 2 {
 		t.Fatalf("expected exactly 2 agent calls (story + review halt), got %d", len(runner.calls))
 	}
@@ -829,6 +835,73 @@ func TestSinglePlanReviewHaltYieldsNeedsHuman(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `"terminal_status": "needs-human"`) {
 		t.Fatalf("summary.json must record needs-human, got:\n%s", string(data))
+	}
+}
+
+// TestSinglePlanReviewExhaustionYieldsNeedsHuman is the sibling of the halt
+// test: when the reviewer never issues an explicit halt but keeps asking for
+// revisions until the fix-loop consumes max_review_iterations, the plan still
+// terminates as StatusNeedsHuman — but the operator handoff must say the review
+// did not converge (naming the round count), NOT that it halted.
+func TestSinglePlanReviewExhaustionYieldsNeedsHuman(t *testing.T) {
+	root := projectFixtureWithUnpassedStory(t, "alpha")
+	project, err := conductor.LoadProject(root)
+	if err != nil {
+		t.Fatalf("LoadProject: %v", err)
+	}
+	g := newFakeGit()
+
+	// Call 1: story prompt → mark passed + COMPLETE.
+	// Call 2: review round 1 → revise.
+	// Call 3: fix iteration 1.
+	// Call 4: review round 2 (round==max=2) → revise → exhaustion.
+	runner := &queuedAgentRunner{results: []coreruntime.Result{
+		{
+			Agent:  agents.AgentClaude,
+			Status: coreruntime.StatusPassed,
+			Events: []coreexec.Event{{Type: coreexec.EventStdout, Data: "<story-pass>US-001</story-pass><promise>COMPLETE</promise>"}},
+		},
+		{
+			Agent:  agents.AgentClaude,
+			Status: coreruntime.StatusPassed,
+			Events: []coreexec.Event{{Type: coreexec.EventStdout, Data: "<review-verdict>revise</review-verdict>"}},
+		},
+		{
+			Agent:  agents.AgentClaude,
+			Status: coreruntime.StatusPassed,
+			Events: []coreexec.Event{{Type: coreexec.EventStdout, Data: "<promise>COMPLETE</promise>"}},
+		},
+		{
+			Agent:  agents.AgentClaude,
+			Status: coreruntime.StatusPassed,
+			Events: []coreexec.Event{{Type: coreexec.EventStdout, Data: "<review-verdict>revise</review-verdict>"}},
+		},
+	}}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentClaude},
+		Runner:       runner,
+		Manager:      &planrun.Manager{Git: g},
+		ReviewConfig: config.ReviewConfig{Enabled: true, MaxReviewIterations: 2},
+	})
+
+	if res.Status != conductor.StatusNeedsHuman {
+		t.Fatalf("Status = %v, want StatusNeedsHuman", res.Status)
+	}
+	if res.Err == nil {
+		t.Fatalf("Err must be non-nil so the batch loop halts; got nil")
+	}
+	if got := res.Err.Error(); !strings.Contains(got, "did not converge after 2 rounds") {
+		t.Fatalf("exhaustion handoff must name the round count; got %q", got)
+	}
+	if got := res.Err.Error(); strings.Contains(got, "halted") {
+		t.Fatalf("exhaustion handoff must NOT use the halted wording; got %q", got)
+	}
+	if len(runner.calls) != 4 {
+		t.Fatalf("expected 4 agent calls (story + review + fix + review), got %d", len(runner.calls))
 	}
 }
 
