@@ -778,6 +778,38 @@ func TestStatusFollowUnknownPlanErrorsWithKnownIDs(t *testing.T) {
 	}
 }
 
+// TestFollowInScope pins the follow loop's termination condition: it keeps
+// tailing only while the batch it BEGAN following is still THE active batch. A
+// resume keeps the same batch id (loop continues; rollover handling swaps the
+// trace file), but once that batch leaves active — archived, idle, orphan, or,
+// crucially, REPLACED by a different active batch that started after it finished
+// — the loop must stop rather than tail the old, now-dead trace forever.
+func TestFollowInScope(t *testing.T) {
+	const batchID = "batch-001"
+	active := func(id string) statusview.View {
+		return statusview.View{State: "active", Batch: &statusview.BatchView{ID: id}}
+	}
+	cases := []struct {
+		name string
+		v    statusview.View
+		want bool
+	}{
+		{"same active batch keeps following", active(batchID), true},
+		{"different active batch stops", active("batch-002"), false},
+		{"archived stops", statusview.View{State: "archived", Batch: &statusview.BatchView{ID: batchID}}, false},
+		{"idle stops", statusview.View{State: "idle"}, false},
+		{"orphan stops", statusview.View{State: "orphan", Batch: &statusview.BatchView{ID: batchID}}, false},
+		{"active but nil batch stops", statusview.View{State: "active"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := followInScope(tc.v, batchID); got != tc.want {
+				t.Fatalf("followInScope(%+v, %q) = %v, want %v", tc.v, batchID, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestStatusFollowReadOnly pins that tailing a plan's live trace writes,
 // creates, or locks nothing under .springfield/ — the same byte-identical
 // fixture guarantee as the batch watch (US-001). It drives the real follow tick

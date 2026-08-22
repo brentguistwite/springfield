@@ -256,18 +256,42 @@ func runFollow(w io.Writer, root, planID string) error {
 				return err
 			}
 		}
-		// Stop once the batch leaves the active state — a final tick above has
-		// already drained whatever the trace holds, so there is nothing more to
-		// follow. Re-Poll is read-only, matching the watch loop.
+		// Stop once the batch we began following leaves the active state. Re-Poll
+		// is read-only, matching the watch loop.
 		v, err := statusview.Poll(root)
 		if err != nil {
 			return err
 		}
-		if v.State != "active" {
+		if !followInScope(v, batchID) {
+			// The followed batch is done, so its trace is closed and will not grow
+			// again. Events can still have been appended between this iteration's
+			// Tail above and this Poll (e.g. the plan's terminal exit event racing
+			// the run-cursor clear). Drain that remainder once more so the stream's
+			// final lines are never dropped — the same no-drop guarantee the
+			// follower already provides across rollovers. LatestTracePath is pinned
+			// to batchID, so a different batch becoming active never redirects this
+			// final drain onto the wrong trace.
+			if tracePath, ok, terr := statusview.LatestTracePath(root, batchID); terr == nil && ok {
+				if err := follower.Tail(w, tracePath, planID); err != nil {
+					return err
+				}
+			}
 			return nil
 		}
 		time.Sleep(followInterval)
 	}
+}
+
+// followInScope reports whether a follow loop should keep tailing: the batch it
+// began following (batchID) must still be THE active batch. It stops the loop
+// when that batch has left the active state — archived, idle, or orphan — and,
+// crucially, when a DIFFERENT batch has become active. A new batch that starts
+// after the followed one finishes must not silently capture the loop, which
+// would otherwise tail the old, now-dead trace forever and never exit. A resume
+// of the followed batch keeps the same id (state stays active while a plan is
+// merely stalled), so the loop continues and the rollover handling swaps files.
+func followInScope(v statusview.View, batchID string) bool {
+	return v.State == "active" && v.Batch != nil && v.Batch.ID == batchID
 }
 
 func printBatchStatus(w io.Writer, root string, b batch.Batch, run batch.Run, state *conductor.State, live bool, prds map[string]prd.PRD) error {
