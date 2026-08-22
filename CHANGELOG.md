@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.31.0](https://github.com/brentguistwite/springfield/compare/v0.30.0...v0.31.0) (2026-08-22)
+
+
+### Features
+
+* **reviewgate:** clearer needs-human handoff messaging ([#114](https://github.com/brentguistwite/springfield/issues/114)) ([aeb1116](https://github.com/brentguistwite/springfield/commit/aeb111660701638f860fefd42e5a08d6a778d7fb))
+* **stall:** event-recency stall detection with advisory escalation ([#113](https://github.com/brentguistwite/springfield/issues/113)) ([9558d14](https://github.com/brentguistwite/springfield/commit/9558d14f0936bdb74fd13b703cb7bcb564301e8d))
+* **status:** live batch and per-plan follow view (--watch, --plan) ([#112](https://github.com/brentguistwite/springfield/issues/112)) ([2d7ddcc](https://github.com/brentguistwite/springfield/commit/2d7ddcc4dc9043406a4ec2d5ca041e2393531ec7))
+
 ## [0.30.0](https://github.com/brentguistwite/springfield/compare/v0.29.0...v0.30.0) (2026-08-19)
 
 
