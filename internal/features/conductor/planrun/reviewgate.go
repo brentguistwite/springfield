@@ -25,14 +25,31 @@ const reviewDiffWarnBytes = 256 * 1024
 
 // reviewOutcome is the gate's three-way verdict. reviewPassed means the work
 // satisfies the criteria; reviewNeedsHuman means the reviewer halted OR the
-// fix-loop hit max_review_iterations; reviewErrored means an agent invocation
-// itself failed.
+// fix-loop hit max_review_iterations — reviewGateResult.Cause distinguishes the
+// two so the operator handoff can state which happened; reviewErrored means an
+// agent invocation itself failed.
 type reviewOutcome int
 
 const (
 	reviewPassed reviewOutcome = iota
 	reviewNeedsHuman
 	reviewErrored
+)
+
+// reviewNeedsHumanCause distinguishes why a reviewNeedsHuman outcome escalated,
+// so the operator handoff can say what actually happened rather than conflating
+// the two paths under one "halted" message.
+type reviewNeedsHumanCause int
+
+const (
+	// causeNone is the zero value, carried by every non-needs-human outcome
+	// (pass/errored). It must not be read for a reviewNeedsHuman result.
+	causeNone reviewNeedsHumanCause = iota
+	// causeHalt: the reviewer emitted an explicit <review-verdict>halt</…>.
+	causeHalt
+	// causeExhausted: the fix-loop consumed max_review_iterations rounds
+	// without ever reaching pass (repeated revise / verdict-less reviews).
+	causeExhausted
 )
 
 // reviewGateInput is everything the fix-loop needs. All dependencies (runner,
@@ -83,9 +100,19 @@ type reviewGateInput struct {
 }
 
 type reviewGateResult struct {
-	Outcome  reviewOutcome
-	Findings string
-	Err      error
+	Outcome reviewOutcome
+	// Cause is meaningful only when Outcome == reviewNeedsHuman; it tells the
+	// runner whether to render the halt wording or the did-not-converge wording.
+	Cause reviewNeedsHumanCause
+	// Rounds is the number of review rounds that ran; the runner names it in the
+	// did-not-converge (causeExhausted) message.
+	Rounds int
+	// Excerpt is the marker-adjacent findings snippet (planreview.Verdict.Excerpt)
+	// the runner inlines into the operator handoff. Empty when the reviewer left
+	// no prose before its verdict, in which case the runner uses its bare wording.
+	// The full findings live in per-round evidence, not here.
+	Excerpt string
+	Err     error
 }
 
 // runReviewGate runs the review fix-loop with its OWN counter (independent of
@@ -198,16 +225,20 @@ func runReviewGate(in reviewGateInput) reviewGateResult {
 			return reviewGateResult{Outcome: reviewPassed}
 		}
 		if rev.Found && rev.Verdict.Class == planreview.VerdictHalt {
-			return reviewGateResult{Outcome: reviewNeedsHuman, Findings: rev.Verdict.Findings}
+			return reviewGateResult{Outcome: reviewNeedsHuman, Cause: causeHalt, Rounds: round, Excerpt: rev.Verdict.Excerpt}
 		}
 
-		// revise OR verdict-less → fixable; consume this round.
+		// revise OR verdict-less → fixable; consume this round. findings (full
+		// report) feeds the implementer fix prompt; excerpt (marker-adjacent) is
+		// the operator handoff snippet if this round turns out to be the last.
 		findings := rev.Verdict.Findings
+		excerpt := rev.Verdict.Excerpt
 		if !rev.Found {
 			findings = "The previous review produced no clear verdict. Re-examine the work for correctness, completeness, and test coverage, and harden anything questionable."
+			excerpt = ""
 		}
 		if round >= max {
-			return reviewGateResult{Outcome: reviewNeedsHuman, Findings: findings}
+			return reviewGateResult{Outcome: reviewNeedsHuman, Cause: causeExhausted, Rounds: round, Excerpt: excerpt}
 		}
 
 		fixPrompt, err := BuildReviewFixPrompt(in.PRD, in.ContextMD, in.ProjectGuidance, findings, in.ProjectRoot)

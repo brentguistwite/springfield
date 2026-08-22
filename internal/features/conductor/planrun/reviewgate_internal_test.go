@@ -91,6 +91,9 @@ func TestReviewGateHaltNeedsHuman(t *testing.T) {
 	if got.Outcome != reviewNeedsHuman {
 		t.Fatalf("outcome = %v, want reviewNeedsHuman", got.Outcome)
 	}
+	if got.Cause != causeHalt {
+		t.Fatalf("cause = %v, want causeHalt", got.Cause)
+	}
 }
 
 func TestReviewGateReviseThenPass(t *testing.T) {
@@ -118,6 +121,12 @@ func TestReviewGateCapExhaustionEscalatesToNeedsHuman(t *testing.T) {
 	got := runReviewGate(gateInput(r, 2))
 	if got.Outcome != reviewNeedsHuman {
 		t.Fatalf("outcome = %v, want reviewNeedsHuman (cap)", got.Outcome)
+	}
+	if got.Cause != causeExhausted {
+		t.Fatalf("cause = %v, want causeExhausted", got.Cause)
+	}
+	if got.Rounds != 2 {
+		t.Fatalf("rounds = %d, want 2 (round==max at exhaustion)", got.Rounds)
 	}
 }
 
