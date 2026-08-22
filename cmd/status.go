@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -24,6 +24,8 @@ import (
 func NewStatusCommand() *cobra.Command {
 	var dir string
 	var jsonOut bool
+	var watch bool
+	var planID string
 
 	cmd := &cobra.Command{
 		Use:   "status",
@@ -37,21 +39,39 @@ func NewStatusCommand() *cobra.Command {
 			}
 			root := loaded.RootDir
 
+			// --plan follows a single plan's LIVE agent events, streamed from the
+			// trace pipeline (never the post-hoc evidence events.jsonl). It is a
+			// distinct surface from the batch view, so it takes precedence over the
+			// --watch batch redraw and --json. --watch is accepted alongside it as
+			// the natural "keep streaming" phrasing but adds nothing: follow always
+			// streams. Read-only, like every status surface.
+			if planID != "" {
+				return runFollow(cmd.OutOrStdout(), root, planID)
+			}
+
+			// --watch re-renders the active batch on an interval, polling the
+			// control plane read-only through the SAME statusview.Poll projection
+			// --json emits — never a second view. It takes precedence over --json.
+			if watch {
+				return runWatch(cmd.OutOrStdout(), root)
+			}
+
+			// --json emits the stable view-model. It is built by the single
+			// read-only Poll projection so the JSON and watch surfaces can never
+			// disagree about a batch's state.
+			if jsonOut {
+				v, err := statusview.Poll(root)
+				if err != nil {
+					return err
+				}
+				return emitStatusJSON(cmd.OutOrStdout(), v)
+			}
+
 			run, hasRun, err := batch.ReadRun(root)
 			if err != nil {
 				return err
 			}
 			if !hasRun || run.ActiveBatchID == "" {
-				if jsonOut {
-					// Once the run cursor is cleared, the just-completed batch's
-					// per-ticket results live only in the archive. Surface the
-					// latest archive so a controller can read them back; fall to
-					// idle only when no batch has ever been archived.
-					if entry, ok, archErr := batch.LatestArchive(root); archErr == nil && ok {
-						return emitStatusJSON(cmd.OutOrStdout(), statusview.Archived(entry))
-					}
-					return emitStatusJSON(cmd.OutOrStdout(), statusview.Idle())
-				}
 				return printPlanRegistry(cmd.OutOrStdout(), root)
 			}
 
@@ -62,9 +82,6 @@ func NewStatusCommand() *cobra.Command {
 			b, err := batch.ReadBatch(paths)
 			if err != nil {
 				if batch.IsMissingBatchError(err) {
-					if jsonOut {
-						return emitStatusJSON(cmd.OutOrStdout(), statusview.Orphan(run))
-					}
 					printOrphanStatus(cmd.OutOrStdout(), run)
 					return nil
 				}
@@ -89,52 +106,192 @@ func NewStatusCommand() *cobra.Command {
 			held := lock.Inspect(root)
 			live := held != nil && held.PID != 0
 
-			if jsonOut {
-				rollup, rollupErr := cost.ComputeRollup(root, b.ID)
-				effectiveFatalError := ""
-				if run.FatalError != "" && batchHasFailedPlan(b, state) {
-					effectiveFatalError = run.FatalError
-				}
-				in := statusview.ActiveInput{
-					Batch:      b,
-					Run:        run,
-					State:      state,
-					Units:      units,
-					Rollup:     rollup,
-					HasRollup:  rollupErr == nil && rollup.Iterations > 0,
-					FatalError: effectiveFatalError,
-					Live:       live,
-					PRDs:       loadPlanPRDs(root, units),
-				}
-				return emitStatusJSON(cmd.OutOrStdout(), statusview.Active(in))
-			}
-			return printBatchStatus(cmd.OutOrStdout(), root, b, run, state, live, loadPlanPRDs(root, units))
+			return printBatchStatus(cmd.OutOrStdout(), root, b, run, state, live, statusview.LoadPlanPRDs(root, units))
 		},
 	}
 
 	cmd.Flags().StringVar(&dir, "dir", ".", "project root or nested path inside the Springfield project")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit machine-readable JSON (stable view-model for tooling)")
+	cmd.Flags().BoolVar(&watch, "watch", false, "re-render the active batch on an interval until interrupted (read-only)")
+	cmd.Flags().StringVar(&planID, "plan", "", "follow a single plan's live agent events, filtered from the batch trace (read-only)")
 	return cmd
 }
 
-// loadPlanPRDs reads each plan's persisted prd.json so the projection can derive
-// the in-flight coarse phase (the current story) from durable truth. It is
-// best-effort by design: a legacy .md plan-unit path or a missing/malformed
-// prd.json is simply skipped, so the plan gets no derived current story rather
-// than a fabricated one — the derivation degrades to silence, never a lie.
-func loadPlanPRDs(root string, units []conductor.PlanUnit) map[string]prd.PRD {
-	out := make(map[string]prd.PRD, len(units))
-	for _, u := range units {
-		if filepath.Base(u.Path) != "prd.json" {
-			continue
-		}
-		p, err := prd.ParseFile(filepath.Join(root, u.Path))
+// watchInterval is the redraw cadence for `status --watch`. It is deliberately
+// gentle: the runner persists progress continuously, so a couple seconds keeps
+// the frame fresh without hammering the control-plane files.
+const watchInterval = 2 * time.Second
+
+// runWatch re-renders the active batch status until interrupted (Ctrl-C). Each
+// tick polls the control plane read-only and redraws with a plain terminal
+// clear-and-home escape — no third-party TUI dependency. When no batch is
+// active it prints a one-line idle notice and returns (exit 0) rather than
+// spinning a redraw loop on nothing.
+func runWatch(w io.Writer, root string) error {
+	// seenActive records whether this watch has ever observed the batch in the
+	// active state. It gates the archived final frame: only a batch we actually
+	// watched running should end with its terminal frame (the active->archived
+	// transition). A COLD watch that opens straight onto an archived state — a
+	// prior batch whose run cursor was long cleared, with a new batch not yet
+	// started — has nothing it was watching, so it is idle, not "just finished".
+	seenActive := false
+	for {
+		active, err := watchFrame(w, root, time.Now(), true, seenActive)
 		if err != nil {
-			continue
+			return err
 		}
-		out[u.ID] = p
+		if active {
+			seenActive = true
+		} else {
+			return nil
+		}
+		time.Sleep(watchInterval)
 	}
-	return out
+}
+
+// watchFrame polls once and writes a single watch frame to w, returning whether
+// the batch is still active (the caller keeps looping while true). It is the
+// unit the redraw loop and the read-only watch tests both drive.
+//
+// clear gates the leading screen-clear escape: the live loop passes true so each
+// redraw replaces the last; tests pass false to keep the captured output
+// diffable. Poll is read-only, so ticking never writes under .springfield/.
+//
+// seenActive reports whether the loop has already observed the batch active on a
+// prior tick. It gates the archived final frame (see below); the caller flips it
+// to true after the first active frame.
+//
+// The natural end of a WATCHED batch is the archived state: the runner clears
+// the run cursor and Poll surfaces the just-finished batch from the archive.
+// That frame carries full per-plan rows, so — when the loop actually watched the
+// batch run (seenActive) — it is RENDERED once (not dismissed with a one-liner),
+// so an operator watching a batch to completion sees the terminal result, then
+// the loop exits (false). A COLD watch that opens straight onto an archived
+// state (seenActive false: a prior batch's cursor was long cleared, no new batch
+// started) was watching nothing, so it is treated as idle — the stated
+// no-active-batch semantics — not "just finished". Idle (never started) and
+// orphan (broken cursor) likewise have no batch frame to draw, so they print a
+// one-line notice and exit.
+func watchFrame(w io.Writer, root string, now time.Time, clear, seenActive bool) (bool, error) {
+	v, err := statusview.Poll(root)
+	if err != nil {
+		return false, err
+	}
+	switch {
+	case v.State == "active", v.State == "archived" && seenActive:
+		if clear {
+			// Home cursor + clear screen: plain ANSI, no dependency.
+			fmt.Fprint(w, "\033[H\033[2J")
+		}
+		fmt.Fprint(w, statusview.Render(v, now))
+		// Active keeps the loop alive; archived is the terminal frame, so stop.
+		return v.State == "active", nil
+	default:
+		fmt.Fprintln(w, watchIdleMessage(v))
+		return false, nil
+	}
+}
+
+// watchIdleMessage renders the one-line notice shown when there is no batch
+// frame to draw, tailored to why: never-started (idle), a cold watch that opened
+// onto a long-archived batch (also idle — nothing was being watched), or a
+// broken cursor (orphan). A watched batch that reaches archived is rendered as a
+// final frame by watchFrame, not routed here.
+func watchIdleMessage(v statusview.View) string {
+	switch v.State {
+	case "orphan":
+		return v.Summary + " Nothing to watch."
+	default:
+		return "No active batch to watch."
+	}
+}
+
+// followInterval is the poll cadence for `status --plan <id>`. It matches the
+// watch cadence: the runner appends trace events continuously, so a couple
+// seconds keeps the stream fresh without hammering the log file.
+const followInterval = 2 * time.Second
+
+// runFollow streams a single plan's live agent events until the batch is no
+// longer active (or the process is interrupted). It sources from the live
+// agent-trace stream — the ONLY tail-able per-event source; per-slice evidence
+// events.jsonl is written post-hoc and cannot be followed live — and renders
+// only the selected plan's lines, so concurrent siblings never interleave.
+//
+// The plan id is validated up front against the active batch's known plans: an
+// unknown id fails fast with a message naming the known ids (non-zero exit),
+// rather than silently tailing a stream that will never match. Everything here
+// is read-only against .springfield/.
+func runFollow(w io.Writer, root, planID string) error {
+	v, err := statusview.Poll(root)
+	if err != nil {
+		return err
+	}
+	if v.State != "active" || v.Batch == nil {
+		return fmt.Errorf("no active batch to follow")
+	}
+	known := make([]string, 0, len(v.Plans))
+	found := false
+	for _, p := range v.Plans {
+		known = append(known, p.ID)
+		if p.ID == planID {
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("unknown plan %q; known plans: %s", planID, strings.Join(known, ", "))
+	}
+
+	batchID := v.Batch.ID
+	// A restart/resume of this batch rolls the trace over to a new timestamped
+	// file; the follower resets its offset on that path change so the head of
+	// the new stream is not skipped by a stale offset.
+	var follower statusview.TraceFollower
+	for {
+		tracePath, ok, err := statusview.LatestTracePath(root, batchID)
+		if err != nil {
+			return err
+		}
+		if ok {
+			if err := follower.Tail(w, tracePath, planID); err != nil {
+				return err
+			}
+		}
+		// Stop once the batch we began following leaves the active state. Re-Poll
+		// is read-only, matching the watch loop.
+		v, err := statusview.Poll(root)
+		if err != nil {
+			return err
+		}
+		if !followInScope(v, batchID) {
+			// The followed batch is done, so its trace is closed and will not grow
+			// again. Events can still have been appended between this iteration's
+			// Tail above and this Poll (e.g. the plan's terminal exit event racing
+			// the run-cursor clear). Drain that remainder once more so the stream's
+			// final lines are never dropped — the same no-drop guarantee the
+			// follower already provides across rollovers. LatestTracePath is pinned
+			// to batchID, so a different batch becoming active never redirects this
+			// final drain onto the wrong trace.
+			if tracePath, ok, terr := statusview.LatestTracePath(root, batchID); terr == nil && ok {
+				if err := follower.Tail(w, tracePath, planID); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		time.Sleep(followInterval)
+	}
+}
+
+// followInScope reports whether a follow loop should keep tailing: the batch it
+// began following (batchID) must still be THE active batch. It stops the loop
+// when that batch has left the active state — archived, idle, or orphan — and,
+// crucially, when a DIFFERENT batch has become active. A new batch that starts
+// after the followed one finishes must not silently capture the loop, which
+// would otherwise tail the old, now-dead trace forever and never exit. A resume
+// of the followed batch keeps the same id (state stays active while a plan is
+// merely stalled), so the loop continues and the rollover handling swaps files.
+func followInScope(v statusview.View, batchID string) bool {
+	return v.State == "active" && v.Batch != nil && v.Batch.ID == batchID
 }
 
 func printBatchStatus(w io.Writer, root string, b batch.Batch, run batch.Run, state *conductor.State, live bool, prds map[string]prd.PRD) error {
@@ -153,7 +310,7 @@ func printBatchStatus(w io.Writer, root string, b batch.Batch, run batch.Run, st
 	// run. Once that plan has been recovered (no plan in the batch is failed
 	// anymore), the error is stale — suppress it so it does not sit beside a
 	// fresh "Next:" gate and confuse the operator (D1).
-	if run.FatalError != "" && batchHasFailedPlan(b, state) {
+	if run.FatalError != "" && statusview.BatchHasFailedPlan(b, state) {
 		fmt.Fprintf(w, "Fatal error: %s\n", run.FatalError)
 	}
 	if len(run.LastRetry) > 0 {
@@ -301,31 +458,6 @@ func formatActivity(av *statusview.ActivityView) string {
 		out += fmt.Sprintf(" (round %d)", av.Round)
 	}
 	return out
-}
-
-// batchHasFailedPlan reports whether any plan in the batch is still in a
-// halting state per the conductor snapshot. It gates whether the batch-level
-// fatal error is still relevant: a sequential batch halts on the plan it
-// leaves in StatusFailed OR StatusNeedsHuman (both set FatalError in run.json
-// per cmd/start.go), so as long as either remains the error is still
-// operator-actionable. Once the plan is recovered (e.g. via "springfield
-// recover --plan X" or "--mark-completed") no halting plan remains and the
-// now-stale error is dropped. When state is nil the snapshot is unavailable,
-// so the error cannot be proven stale and is kept.
-func batchHasFailedPlan(b batch.Batch, state *conductor.State) bool {
-	if state == nil {
-		return true
-	}
-	for _, id := range b.PlanIDs {
-		ps, ok := state.Plans[id]
-		if !ok || ps == nil {
-			continue
-		}
-		if ps.Status == conductor.StatusFailed || ps.Status == conductor.StatusNeedsHuman {
-			return true
-		}
-	}
-	return false
 }
 
 // printSpendLine emits an "Est. API cost:" line summarizing per-adapter cost

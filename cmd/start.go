@@ -41,6 +41,7 @@ import (
 	"springfield/internal/features/cost"
 	"springfield/internal/features/notify"
 	"springfield/internal/features/portblock"
+	"springfield/internal/features/statusview"
 	"springfield/internal/features/wakelock"
 	"springfield/internal/features/worktreesetup"
 )
@@ -194,7 +195,7 @@ func NewStartCommand() *cobra.Command {
 				// Pass the loaded plan PRDs (same helper cmd/status.go uses) so the
 				// per-plan in-flight activity lines appear here too, not just in
 				// `springfield status`.
-				printProgressBlock(w, b, project.State, true, loadPlanPRDs(root, project.Config.PlanUnits))
+				printProgressBlock(w, b, project.State, true, statusview.LoadPlanPRDs(root, project.Config.PlanUnits))
 				batchHasProgress = anyPlanStarted(b, project.State)
 			} else {
 				fmt.Fprintf(cmd.ErrOrStderr(), "[warn] could not load project state: %v; progress rollup will be limited.\n", projectErr)

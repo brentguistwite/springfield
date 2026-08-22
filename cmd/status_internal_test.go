@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	coreexec "springfield/internal/core/exec"
 	"springfield/internal/core/lock"
 	"springfield/internal/features/batch"
 	"springfield/internal/features/conductor"
@@ -749,6 +750,161 @@ func TestStatusKeepsFatalErrorWhileAnotherPlanStillFailed(t *testing.T) {
 	}
 }
 
+// TestStatusFollowUnknownPlanErrorsWithKnownIDs pins that following an unknown
+// plan id fails fast (non-zero exit) with a message naming the batch's known
+// plan ids — the operator learns what they could have typed instead of tailing
+// a stream that will never match.
+func TestStatusFollowUnknownPlanErrorsWithKnownIDs(t *testing.T) {
+	root := newStatusRoot(t)
+	writeStatusPlan(t, root, "feature.md")
+	writeStatusConfig(t, root, []map[string]any{
+		{"id": "01", "path": ".springfield/plans/feature.md", "order": 1},
+		{"id": "02", "path": ".springfield/plans/feature.md", "order": 2},
+	})
+	writeActiveBatchN(t, root, "batch-001", "Active Batch", []string{"01", "02"})
+
+	cmd := NewStatusCommand()
+	cmd.SetArgs([]string{"--dir", root, "--watch", "--plan", "nope"})
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("following an unknown plan must error (non-zero exit)")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "nope") || !strings.Contains(msg, "01") || !strings.Contains(msg, "02") {
+		t.Fatalf("error must name the unknown id and the known ids, got: %q", msg)
+	}
+}
+
+// TestFollowInScope pins the follow loop's termination condition: it keeps
+// tailing only while the batch it BEGAN following is still THE active batch. A
+// resume keeps the same batch id (loop continues; rollover handling swaps the
+// trace file), but once that batch leaves active — archived, idle, orphan, or,
+// crucially, REPLACED by a different active batch that started after it finished
+// — the loop must stop rather than tail the old, now-dead trace forever.
+func TestFollowInScope(t *testing.T) {
+	const batchID = "batch-001"
+	active := func(id string) statusview.View {
+		return statusview.View{State: "active", Batch: &statusview.BatchView{ID: id}}
+	}
+	cases := []struct {
+		name string
+		v    statusview.View
+		want bool
+	}{
+		{"same active batch keeps following", active(batchID), true},
+		{"different active batch stops", active("batch-002"), false},
+		{"archived stops", statusview.View{State: "archived", Batch: &statusview.BatchView{ID: batchID}}, false},
+		{"idle stops", statusview.View{State: "idle"}, false},
+		{"orphan stops", statusview.View{State: "orphan", Batch: &statusview.BatchView{ID: batchID}}, false},
+		{"active but nil batch stops", statusview.View{State: "active"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := followInScope(tc.v, batchID); got != tc.want {
+				t.Fatalf("followInScope(%+v, %q) = %v, want %v", tc.v, batchID, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestStatusFollowReadOnly pins that tailing a plan's live trace writes,
+// creates, or locks nothing under .springfield/ — the same byte-identical
+// fixture guarantee as the batch watch (US-001). It drives the real follow tick
+// unit (statusview.TailTrace) against a live trace file several times.
+func TestStatusFollowReadOnly(t *testing.T) {
+	root := newStatusRoot(t)
+	writeStatusPlan(t, root, "feature.md")
+	writeStatusConfig(t, root, []map[string]any{
+		{"id": "01", "path": ".springfield/plans/feature.md", "order": 1},
+		{"id": "02", "path": ".springfield/plans/feature.md", "order": 2},
+	})
+	writeActiveBatchN(t, root, "batch-001", "Active Batch", []string{"01", "02"})
+	// A live trace interleaving both plans' events.
+	logs := filepath.Join(root, ".springfield", "logs")
+	if err := os.MkdirAll(logs, 0o755); err != nil {
+		t.Fatalf("mkdir logs: %v", err)
+	}
+	tracePath := filepath.Join(logs, "batch-001-20260820T120000Z.agent-trace.jsonl")
+	trace := `{"type":"stdout","time":"t","data":"one alpha","plan":"01"}
+{"type":"stdout","time":"t","data":"two bravo","plan":"02"}
+{"type":"stdout","time":"t","data":"three alpha","plan":"01"}
+`
+	if err := os.WriteFile(tracePath, []byte(trace), 0o644); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	sp := filepath.Join(root, ".springfield")
+	before := snapshotDir(t, sp)
+
+	var buf bytes.Buffer
+	var off int64
+	var err error
+	for i := 0; i < 3; i++ {
+		off, err = statusview.TailTrace(&buf, tracePath, off, "01")
+		if err != nil {
+			t.Fatalf("TailTrace: %v", err)
+		}
+	}
+
+	after := snapshotDir(t, sp)
+	if len(before) != len(after) {
+		t.Fatalf("follow changed file set: before=%d after=%d", len(before), len(after))
+	}
+	for rel, data := range before {
+		got, ok := after[rel]
+		if !ok {
+			t.Fatalf("follow removed %s", rel)
+		}
+		if got != data {
+			t.Fatalf("follow mutated %s", rel)
+		}
+	}
+	// Only plan 01's events streamed; plan 02 never interleaved.
+	out := buf.String()
+	if !strings.Contains(out, "one alpha") || !strings.Contains(out, "three alpha") {
+		t.Fatalf("plan 01 events missing:\n%s", out)
+	}
+	if strings.Contains(out, "bravo") {
+		t.Fatalf("plan 02 leaked into plan 01 follow:\n%s", out)
+	}
+}
+
+// TestOpenAgentTraceStampsPlanID pins that the live trace writer attributes
+// every event to its plan — the field per-plan follow filters on. Concurrent
+// plans share one serialized append file, so without this stamp their events
+// would be indistinguishable and follow could not isolate one plan.
+func TestOpenAgentTraceStampsPlanID(t *testing.T) {
+	root := t.TempDir()
+	handlerFor, closer := openAgentTrace(root, "batch-001")
+	if handlerFor == nil {
+		t.Fatalf("openAgentTrace returned nil handler")
+	}
+	handlerFor("01")(coreexec.Event{Type: coreexec.EventStdout, Data: "hello", Time: time.Now()})
+	closer()
+
+	matches, err := filepath.Glob(filepath.Join(root, ".springfield", "logs", "batch-001-*.agent-trace.jsonl"))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("want one trace file, got %v err=%v", matches, err)
+	}
+	data, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatalf("read trace: %v", err)
+	}
+	var ev map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(data), &ev); err != nil {
+		t.Fatalf("trace line not JSON: %v (%s)", err, data)
+	}
+	if ev["plan"] != "01" {
+		t.Fatalf("trace event missing plan attribution, got: %v", ev)
+	}
+	if ev["data"] != "hello" {
+		t.Fatalf("trace event lost data, got: %v", ev)
+	}
+}
+
 // --- helpers ---
 
 func newStatusRoot(t *testing.T) string {
@@ -862,4 +1018,218 @@ func runStatusIn(root string) (string, error) {
 		return buf.String(), err
 	}
 	return buf.String(), nil
+}
+
+// snapshotDir captures the byte contents of every file under dir (relative
+// paths) so a test can assert a code path left the tree byte-identical.
+func snapshotDir(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		rel, relErr := filepath.Rel(dir, path)
+		if relErr != nil {
+			return relErr
+		}
+		out[rel] = string(data)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("snapshot %s: %v", dir, err)
+	}
+	return out
+}
+
+// TestStatusWatchAndJSONRenderSameView pins the core acceptance contract: the
+// --watch path and the --json path render from the SAME statusview.View value,
+// not a second projection. Both funnel through statusview.Poll; this asserts the
+// bytes --json emits equal the bytes Poll's View marshals to (the exact value a
+// watch frame is rendered from).
+func TestStatusWatchAndJSONRenderSameView(t *testing.T) {
+	root := newStatusRoot(t)
+	writeStatusPlan(t, root, "feature.md")
+	writeStatusConfig(t, root, []map[string]any{
+		{"id": "01", "path": ".springfield/plans/feature.md", "order": 1},
+		{"id": "02", "path": ".springfield/plans/feature.md", "order": 2},
+	})
+	writeActiveBatchN(t, root, "batch-001", "Active Batch", []string{"01", "02"})
+	writeStatusState(t, root, map[string]any{
+		"plans": map[string]any{
+			"01": map[string]any{"status": "running", "agent": "claude"},
+		},
+	})
+
+	cmd := NewStatusCommand()
+	cmd.SetArgs([]string{"--dir", root, "--json"})
+	var jsonBuf bytes.Buffer
+	cmd.SetOut(&jsonBuf)
+	cmd.SetErr(&jsonBuf)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("status --json: %v", err)
+	}
+
+	// The View the watch loop renders from is exactly statusview.Poll(root).
+	pollView, err := statusview.Poll(root)
+	if err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+	var pollBuf bytes.Buffer
+	if err := emitStatusJSON(&pollBuf, pollView); err != nil {
+		t.Fatalf("emit poll view: %v", err)
+	}
+
+	if jsonBuf.String() != pollBuf.String() {
+		t.Fatalf("watch/json View diverged.\n--json:\n%s\nPoll:\n%s", jsonBuf.String(), pollBuf.String())
+	}
+}
+
+// TestStatusWatchReadOnly pins that ticking the watch loop against a live
+// control plane writes, creates, or locks nothing under .springfield/ — the
+// directory is byte-identical afterwards.
+func TestStatusWatchReadOnly(t *testing.T) {
+	root := newStatusRoot(t)
+	writeStatusPlan(t, root, "feature.md")
+	writeStatusConfig(t, root, []map[string]any{
+		{"id": "01", "path": ".springfield/plans/feature.md", "order": 1},
+	})
+	writeActiveBatchN(t, root, "batch-001", "Active Batch", []string{"01"})
+	writeStatusState(t, root, map[string]any{
+		"plans": map[string]any{
+			"01": map[string]any{"status": "running", "agent": "claude", "started_at": "2026-08-20T12:00:00Z"},
+		},
+	})
+
+	sp := filepath.Join(root, ".springfield")
+	before := snapshotDir(t, sp)
+
+	var buf bytes.Buffer
+	for i := 0; i < 3; i++ {
+		active, err := watchFrame(&buf, root, time.Date(2026, 8, 20, 12, 5, 0, 0, time.UTC), false, true)
+		if err != nil {
+			t.Fatalf("watchFrame: %v", err)
+		}
+		if !active {
+			t.Fatalf("expected active batch to keep the watch loop running")
+		}
+	}
+
+	after := snapshotDir(t, sp)
+	if len(before) != len(after) {
+		t.Fatalf("watch changed file set: before=%d after=%d", len(before), len(after))
+	}
+	for rel, data := range before {
+		got, ok := after[rel]
+		if !ok {
+			t.Fatalf("watch removed %s", rel)
+		}
+		if got != data {
+			t.Fatalf("watch mutated %s", rel)
+		}
+	}
+	// No live lock is held in the fixture, so the started plan is correctly
+	// classified stalled (not running); the frame still carries its per-plan row.
+	if !strings.Contains(buf.String(), "01  "+statusview.StatusStalled) {
+		t.Fatalf("watch frame missing plan row:\n%s", buf.String())
+	}
+}
+
+// TestStatusWatchNoActiveBatchExitsIdle pins that with no active batch the watch
+// path prints a clear idle notice and returns (exit 0) rather than spinning a
+// redraw loop on nothing.
+func TestStatusWatchNoActiveBatchExitsIdle(t *testing.T) {
+	root := newStatusRoot(t)
+
+	var buf bytes.Buffer
+	if err := runWatch(&buf, root); err != nil {
+		t.Fatalf("runWatch should exit 0 with no batch: %v", err)
+	}
+	if !strings.Contains(buf.String(), "No active batch to watch.") {
+		t.Fatalf("expected idle notice:\n%s", buf.String())
+	}
+}
+
+// TestStatusWatchArchivedRendersFinalFrame pins the natural-end behavior: when a
+// watched batch finishes and its run cursor clears, the watch loop renders the
+// archived batch's final per-plan frame ONCE (so the operator sees the terminal
+// result) and then exits, rather than dismissing it with a bare "nothing to
+// watch" one-liner. seenActive=true models a loop that already observed the
+// batch active — i.e. the active->archived transition of a batch it watched run.
+func TestStatusWatchArchivedRendersFinalFrame(t *testing.T) {
+	root := newStatusRoot(t)
+	// No active run cursor + an archive entry is the just-finished-batch shape:
+	// Poll surfaces it via LatestArchive as state "archived".
+	writeArchive(t, root, "batch-001", 0, 2)
+
+	var buf bytes.Buffer
+	active, err := watchFrame(&buf, root, time.Date(2026, 8, 20, 12, 5, 0, 0, time.UTC), false, true)
+	if err != nil {
+		t.Fatalf("watchFrame: %v", err)
+	}
+	if active {
+		t.Fatalf("archived batch is terminal — watch loop must not keep looping")
+	}
+	out := buf.String()
+	// The final frame carries the archive summary and per-plan rows, not the
+	// dismissive one-liner.
+	if !strings.Contains(out, "Batch batch-001 archived (2 plans)") {
+		t.Fatalf("expected archived summary in final frame:\n%s", out)
+	}
+	if !strings.Contains(out, "  p  ") {
+		t.Fatalf("expected per-plan row in final frame:\n%s", out)
+	}
+	if strings.Contains(out, "nothing to watch") {
+		t.Fatalf("archived batch must render a final frame, not a dismissal:\n%s", out)
+	}
+}
+
+// TestStatusWatchColdArchivedExitsIdle pins the flip side of the final-frame
+// behavior: a COLD watch that opens straight onto an archived state — a prior
+// batch whose run cursor was long cleared, with no new batch started and nothing
+// this watch ever observed active (seenActive=false) — must NOT resurrect that
+// stale batch as a "final frame". It was watching nothing, so it prints the
+// no-active-batch idle notice and exits, matching runWatch's stated semantics.
+func TestStatusWatchColdArchivedExitsIdle(t *testing.T) {
+	root := newStatusRoot(t)
+	writeArchive(t, root, "batch-001", 0, 2)
+
+	var buf bytes.Buffer
+	active, err := watchFrame(&buf, root, time.Date(2026, 8, 20, 12, 5, 0, 0, time.UTC), false, false)
+	if err != nil {
+		t.Fatalf("watchFrame: %v", err)
+	}
+	if active {
+		t.Fatalf("cold archived watch must not keep looping")
+	}
+	out := buf.String()
+	if !strings.Contains(out, "No active batch to watch.") {
+		t.Fatalf("cold archived watch must print the idle notice:\n%s", out)
+	}
+	if strings.Contains(out, "archived (2 plans)") {
+		t.Fatalf("cold watch must not resurrect a stale archived batch as a final frame:\n%s", out)
+	}
+}
+
+// TestRunWatchColdArchivedExitsIdle drives the full runWatch loop (not just one
+// frame) to pin that a cold start on a stale archive threads seenActive=false
+// through and lands on the idle notice — the loop's own gating, end to end.
+func TestRunWatchColdArchivedExitsIdle(t *testing.T) {
+	root := newStatusRoot(t)
+	writeArchive(t, root, "batch-001", 0, 2)
+
+	var buf bytes.Buffer
+	if err := runWatch(&buf, root); err != nil {
+		t.Fatalf("runWatch should exit 0 on a cold archive: %v", err)
+	}
+	if !strings.Contains(buf.String(), "No active batch to watch.") {
+		t.Fatalf("expected idle notice on cold archive:\n%s", buf.String())
+	}
 }
