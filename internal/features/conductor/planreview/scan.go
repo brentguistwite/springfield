@@ -35,7 +35,8 @@ var classBySeverity = []VerdictClass{VerdictPass, VerdictRevise, VerdictHalt}
 // (halt > revise > pass) so an ambiguous review never merges. found is false
 // when no marker appears at all; the caller (runner) owns the policy for a
 // verdict-less review. Findings is the concatenation of all stdout lines —
-// the reviewer's report.
+// the reviewer's report. Excerpt is the marker-adjacent slice of that report
+// (see excerptBeforeMarker) for the operator handoff.
 func ScanReviewVerdict(events []coreexec.Event) (verdict Verdict, found bool) {
 	var stdout []string
 	severity := -1
@@ -53,14 +54,52 @@ func ScanReviewVerdict(events []coreexec.Event) (verdict Verdict, found bool) {
 	if severity < 0 {
 		return Verdict{}, false
 	}
+	joined := strings.Join(stdout, "\n")
+	class := classBySeverity[severity]
 	// Strip bare verdict-marker lines from the findings echo. The marker line
 	// itself is protocol, not analysis — leaving it in Findings risks the
 	// fix-iteration implementer reproducing the line verbatim into a commit
 	// message or file, which a subsequent review's scan could pick up as a
 	// false verdict. The own-line regex anchor bounds this, but defense-in-depth
 	// is cheap here.
-	findings := stripVerdictMarkers(strings.Join(stdout, "\n"))
-	return Verdict{Class: classBySeverity[severity], Findings: findings}, true
+	findings := stripVerdictMarkers(joined)
+	return Verdict{Class: class, Findings: findings, Excerpt: excerptBeforeMarker(joined, class)}, true
+}
+
+// excerptBeforeMarker returns the findings text adjacent to (immediately
+// preceding) the first winning-severity verdict marker in the joined stdout.
+// Reviewers conventionally lead with narration and place their findings in the
+// block right before the verdict line, so the marker-adjacent paragraph is a
+// far better operator-facing snippet than the head of concatenated stdout
+// (which is usually the opening narration). Returns "" when no non-marker text
+// precedes the marker (e.g. a bare marker with no prose), letting the caller
+// fall back to its bare handoff wording. The full report stays in Findings and
+// evidence unchanged.
+func excerptBeforeMarker(joined string, class VerdictClass) string {
+	loc := -1
+	for _, idx := range reviewVerdictRe.FindAllStringSubmatchIndex(joined, -1) {
+		if VerdictClass(joined[idx[2]:idx[3]]) == class {
+			loc = idx[0]
+			break
+		}
+	}
+	if loc < 0 {
+		return ""
+	}
+	before := stripVerdictMarkers(joined[:loc])
+	// Keep only the trailing block of consecutive non-blank lines — the
+	// paragraph nearest the marker — so leading narration (separated from the
+	// findings by a blank line) is dropped.
+	lines := strings.Split(before, "\n")
+	end := len(lines)
+	for end > 0 && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+	start := end
+	for start > 0 && strings.TrimSpace(lines[start-1]) != "" {
+		start--
+	}
+	return strings.TrimSpace(strings.Join(lines[start:end], "\n"))
 }
 
 // stripVerdictMarkers removes lines that consist solely of a verdict marker

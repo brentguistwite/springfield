@@ -106,9 +106,13 @@ type reviewGateResult struct {
 	Cause reviewNeedsHumanCause
 	// Rounds is the number of review rounds that ran; the runner names it in the
 	// did-not-converge (causeExhausted) message.
-	Rounds   int
-	Findings string
-	Err      error
+	Rounds int
+	// Excerpt is the marker-adjacent findings snippet (planreview.Verdict.Excerpt)
+	// the runner inlines into the operator handoff. Empty when the reviewer left
+	// no prose before its verdict, in which case the runner uses its bare wording.
+	// The full findings live in per-round evidence, not here.
+	Excerpt string
+	Err     error
 }
 
 // runReviewGate runs the review fix-loop with its OWN counter (independent of
@@ -221,16 +225,20 @@ func runReviewGate(in reviewGateInput) reviewGateResult {
 			return reviewGateResult{Outcome: reviewPassed}
 		}
 		if rev.Found && rev.Verdict.Class == planreview.VerdictHalt {
-			return reviewGateResult{Outcome: reviewNeedsHuman, Cause: causeHalt, Rounds: round, Findings: rev.Verdict.Findings}
+			return reviewGateResult{Outcome: reviewNeedsHuman, Cause: causeHalt, Rounds: round, Excerpt: rev.Verdict.Excerpt}
 		}
 
-		// revise OR verdict-less → fixable; consume this round.
+		// revise OR verdict-less → fixable; consume this round. findings (full
+		// report) feeds the implementer fix prompt; excerpt (marker-adjacent) is
+		// the operator handoff snippet if this round turns out to be the last.
 		findings := rev.Verdict.Findings
+		excerpt := rev.Verdict.Excerpt
 		if !rev.Found {
 			findings = "The previous review produced no clear verdict. Re-examine the work for correctness, completeness, and test coverage, and harden anything questionable."
+			excerpt = ""
 		}
 		if round >= max {
-			return reviewGateResult{Outcome: reviewNeedsHuman, Cause: causeExhausted, Rounds: round, Findings: findings}
+			return reviewGateResult{Outcome: reviewNeedsHuman, Cause: causeExhausted, Rounds: round, Excerpt: excerpt}
 		}
 
 		fixPrompt, err := BuildReviewFixPrompt(in.PRD, in.ContextMD, in.ProjectGuidance, findings, in.ProjectRoot)

@@ -16,10 +16,14 @@ const (
 	VerdictHalt VerdictClass = "halt"
 )
 
-// Verdict is the parsed result of one review. Findings is the reviewer's prose
-// report (stdout), fed verbatim to the implementer on a revise and surfaced to
-// the operator on a halt.
+// Verdict is the parsed result of one review. Findings is the reviewer's full
+// prose report (all stdout, marker lines stripped), fed verbatim to the
+// implementer on a revise. Excerpt is the marker-adjacent slice of that report
+// — the block immediately preceding the winning verdict marker — and is the
+// operator-facing snippet on a halt/needs-human handoff, where the head of the
+// full report is often just opening narration rather than the actual findings.
 type Verdict struct {
 	Class    VerdictClass
 	Findings string
+	Excerpt  string
 }

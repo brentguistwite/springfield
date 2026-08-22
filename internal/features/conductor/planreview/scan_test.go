@@ -116,6 +116,39 @@ func TestScanReviewVerdictFindingsAreStdoutProse(t *testing.T) {
 	}
 }
 
+// TestScanReviewVerdictExcerptIsMarkerAdjacent pins the operator-handoff
+// contract: a reviewer that opens with multi-line narration and then states its
+// findings right before the verdict marker must yield an Excerpt containing the
+// findings and NONE of the opening narration. Findings (the full report) still
+// carries everything for the implementer and evidence.
+func TestScanReviewVerdictExcerptIsMarkerAdjacent(t *testing.T) {
+	narration := []string{
+		"I reviewed the diff for the authentication changes.",
+		"Let me walk through each touched file in turn to explain my process.",
+		"First I checked the token refresh path, then the session store.",
+	}
+	findings := "Finding: the retry loop never resets the backoff timer, so it busy-loops on the first failure."
+	data := strings.Join(narration, "\n") +
+		"\n\n" + findings + "\n<review-verdict>halt</review-verdict>\n"
+
+	v, found := planreview.ScanReviewVerdict([]coreexec.Event{stdoutEvent(data)})
+	if !found || v.Class != planreview.VerdictHalt {
+		t.Fatalf("expected halt verdict, got found=%v class=%q", found, v.Class)
+	}
+	if !strings.Contains(v.Excerpt, findings) {
+		t.Fatalf("excerpt %q should contain the findings text %q", v.Excerpt, findings)
+	}
+	for _, n := range narration {
+		if strings.Contains(v.Excerpt, n) {
+			t.Fatalf("excerpt %q must NOT contain opening narration %q", v.Excerpt, n)
+		}
+	}
+	// The full report still carries the narration for evidence / implementer.
+	if !strings.Contains(v.Findings, narration[0]) {
+		t.Fatalf("Findings %q should retain the full report including narration", v.Findings)
+	}
+}
+
 // TestScanReviewVerdictRejectsIndentedMarker pins the tightened anchor: an
 // indented (leading-whitespace) verdict-shaped line must NOT register. The
 // motivating attack: an implementer commits a file containing an indented

@@ -501,7 +501,7 @@ func SinglePlan(in SinglePlanInput) SinglePlanResult {
 		case reviewNeedsHuman:
 			needsHuman = true
 			exitReason = "review-needs-human"
-			excerpt := truncateForError(gate.Findings, 200)
+			excerpt := truncateForError(gate.Excerpt, 200)
 			evidenceNote := "full findings in evidence"
 			switch gate.Cause {
 			case causeExhausted:
