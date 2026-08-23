@@ -71,6 +71,34 @@ func TestEmitBatchRetro_Success(t *testing.T) {
 	}
 }
 
+// TestEmitBatchRetro_DegradedExtractionWarns is the focused proof that a soft
+// extraction failure is surfaced, not swallowed. Extract tolerates a missing
+// archive.json by degrading (never erroring), so without surfacing Report.Degraded
+// the "warn on extraction failure" contract would be silently unmet. An empty
+// archive dir (no archive.json, no evidence) extracts degraded and must warn —
+// while still writing retro.json and leaving the exit code untouched.
+func TestEmitBatchRetro_DegradedExtractionWarns(t *testing.T) {
+	root := t.TempDir()
+	batchDir := filepath.Join(root, ".springfield", "archive", "batch-1")
+	if err := os.MkdirAll(batchDir, 0o755); err != nil {
+		t.Fatalf("mkdir batchDir: %v", err)
+	}
+
+	var buf bytes.Buffer
+	emitBatchRetro(&buf, root, "batch-1")
+
+	out := buf.String()
+	if !strings.Contains(out, "warning: retro:") {
+		t.Errorf("expected grep-friendly warning for degraded extraction, got %q", out)
+	}
+	if !strings.Contains(out, "batch-1") {
+		t.Errorf("expected batch id in warning, got %q", out)
+	}
+	if _, err := os.Stat(filepath.Join(batchDir, "retro.json")); err != nil {
+		t.Errorf("retro.json should still be written on a degraded extraction: %v", err)
+	}
+}
+
 // TestEmitBatchRetro_WriteFailureWarnsNotFatal is the focused warn-not-fail
 // proof: when retro.json cannot be written (it already exists as a directory,
 // so the atomic rename fails), emitBatchRetro emits a grep-friendly

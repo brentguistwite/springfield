@@ -38,10 +38,13 @@ type View struct {
 	Flags         *FlagsView    `json:"flags"`
 	Plans         []PlanView    `json:"plans"`
 	// Retro is the batch-level retrospective digest, present only for an archived
-	// batch that carries a readable retro.json. It is explicit null everywhere
-	// else — an active/idle/orphan batch has no retro yet, and an archived batch
-	// whose retro.json is absent or corrupt degrades to silence rather than error.
-	Retro *RetroView `json:"retro"`
+	// batch that carries a readable retro.json. Unlike the core sections above
+	// (which are explicit null when absent), retro is a state-scoped digest and is
+	// omitted entirely everywhere else — an active/idle/orphan batch has no retro
+	// yet, and an archived batch whose retro.json is absent, corrupt, or
+	// findings-less drops the key rather than emitting null or erroring. A consumer
+	// keys on the field's presence, not a null probe.
+	Retro *RetroView `json:"retro,omitempty"`
 }
 
 // RetroView is the compact retrospective summary surfaced for an archived batch,

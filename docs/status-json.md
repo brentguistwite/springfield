@@ -7,7 +7,10 @@ not an internal state dump.
 ## Envelope
 
 Every response carries `schema_version` and a `state` discriminator
-(`active` | `orphan` | `idle` | `archived`). Absent sections are explicit `null`.
+(`active` | `orphan` | `idle` | `archived`). Absent sections are explicit `null`,
+with one exception: the batch-level `retro` digest is a state-scoped section and
+is omitted entirely (the key is absent) outside a readable archived digest — see
+below.
 
 | field | meaning |
 |-------|---------|
@@ -19,7 +22,7 @@ Every response carries `schema_version` and a `state` discriminator
 | `spend` | `{total_usd, per_adapter, iterations, unpriced_runs, skipped_files}` or null |
 | `flags` | `{fatal_error, cost_capped, last_retry}` or null |
 | `plans` | array of per-plan cards (always an array, possibly empty, in `active` and `archived` states); `null` in `idle` and `orphan` states |
-| `retro` | `{findings, top_pattern, top_count}` batch-level retrospective digest, or null — present only in the `archived` state when the batch carries a readable `retro.json` (see below) |
+| `retro` | `{findings, top_pattern, top_count}` batch-level retrospective digest — present (the key appears) only in the `archived` state when the batch carries a readable `retro.json`; the key is **omitted** entirely otherwise (see below) |
 
 ### `archived` state
 
@@ -52,10 +55,11 @@ read `retro.json` directly for the per-finding detail.
 | `top_pattern` | the most-prominent finding's pattern key (the one tripped by the most plans; ties break on the classifiers' stable declaration order); omitted when there are no findings |
 | `top_count` | how many plans tripped `top_pattern`; omitted when zero (a batch-level finding with no plans, e.g. `cost-overrun`) |
 
-`retro` is `null` for any batch with no readable digest: it is absent outside the
-`archived` state (no retro exists yet), when the batch has no `retro.json`, when
-that file is corrupt (the projection degrades to silence, never an error), and
-when the report has zero findings (a clean batch reports nothing extra). The text
+The `retro` key is **omitted** (absent, not `null`) for any batch with no readable
+digest: outside the `archived` state (no retro exists yet), when the batch has no
+`retro.json`, when that file is corrupt (the projection degrades to silence, never
+an error), and when the report has zero findings (a clean batch reports nothing
+extra). Consumers key on the field's presence, not a null probe. The text
 `springfield status` surface renders the same digest as a one-liner —
 `retro: 3 findings (top: verify-nonconvergence x2)` — from the same projection.
 

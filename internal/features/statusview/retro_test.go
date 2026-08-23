@@ -1,6 +1,7 @@
 package statusview_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,6 +62,33 @@ func TestArchivedRetro_AbsentRendersNothing(t *testing.T) {
 	v := statusview.Archived(archiveEntry(), t.TempDir())
 	if v.Retro != nil {
 		t.Fatalf("expected nil Retro for archive without retro.json, got %+v", v.Retro)
+	}
+}
+
+// TestArchivedRetro_JSONKeyOmittedWhenAbsent pins the --json contract: with no
+// readable digest the `retro` key is omitted entirely (not emitted as null), and
+// with a digest the key appears as the documented {findings, top_pattern,
+// top_count} object. AC US-002: "includes a retro object ... and omits it
+// otherwise."
+func TestArchivedRetro_JSONKeyOmittedWhenAbsent(t *testing.T) {
+	absent, err := json.Marshal(statusview.Archived(archiveEntry(), t.TempDir()))
+	if err != nil {
+		t.Fatalf("marshal absent view: %v", err)
+	}
+	if strings.Contains(string(absent), `"retro"`) {
+		t.Fatalf("expected retro key omitted when absent, got %s", absent)
+	}
+
+	root := t.TempDir()
+	writeFixtureRetro(t, root, "batch-1", []retro.Finding{
+		{PatternKey: "verify-nonconvergence", PlanIDs: []string{"US-001", "US-002"}},
+	})
+	present, err := json.Marshal(statusview.Archived(archiveEntry(), root))
+	if err != nil {
+		t.Fatalf("marshal present view: %v", err)
+	}
+	if !strings.Contains(string(present), `"retro"`) {
+		t.Fatalf("expected retro key present with a digest, got %s", present)
 	}
 }
 
