@@ -46,7 +46,7 @@ func TestStatusJSON_ActiveBatch(t *testing.T) {
 	if err := json.Unmarshal([]byte(output), &v); err != nil {
 		t.Fatalf("output is not valid JSON: %v\n%s", err, output)
 	}
-	if v["schema_version"].(float64) != 3 {
+	if v["schema_version"].(float64) != 4 {
 		t.Fatalf("schema_version = %v", v["schema_version"])
 	}
 	if v["state"] != "active" {

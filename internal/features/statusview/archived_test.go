@@ -59,7 +59,7 @@ func TestArchivedViewProjectsEntry(t *testing.T) {
 			{ID: "beta", Title: "Beta", Status: "completed", Branch: "springfield/beta", BaseRef: "develop"},
 		},
 	}
-	v := statusview.Archived(entry)
+	v := statusview.Archived(entry, "")
 
 	if v.State != "archived" {
 		t.Fatalf("state = %q, want archived", v.State)

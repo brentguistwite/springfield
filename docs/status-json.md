@@ -11,7 +11,7 @@ Every response carries `schema_version` and a `state` discriminator
 
 | field | meaning |
 |-------|---------|
-| `schema_version` | contract version (currently `2`; additive changes bump it — v2 added the per-plan `activity` card) |
+| `schema_version` | contract version (currently `4`; additive changes bump it — v2 added the per-plan `activity` card, v3 the per-plan `stall` card, v4 the batch-level `retro` digest) |
 | `state` | `active`, `orphan` (batch.json missing), `idle` (no active batch and no archive), or `archived` (no active batch; the most-recently-archived batch is surfaced) |
 | `summary` | human-readable one-liner, always present |
 | `batch` | `{id, title}` or null. In the `orphan` state `title` is `""` (batch.json is gone, so the title is unrecoverable) — fall back to `id` for display |
@@ -19,6 +19,7 @@ Every response carries `schema_version` and a `state` discriminator
 | `spend` | `{total_usd, per_adapter, iterations, unpriced_runs, skipped_files}` or null |
 | `flags` | `{fatal_error, cost_capped, last_retry}` or null |
 | `plans` | array of per-plan cards (always an array, possibly empty, in `active` and `archived` states); `null` in `idle` and `orphan` states |
+| `retro` | `{findings, top_pattern, top_count}` batch-level retrospective digest, or null — present only in the `archived` state when the batch carries a readable `retro.json` (see below) |
 
 ### `archived` state
 
@@ -37,6 +38,26 @@ for "which branches still need a PR" keys on `retained`. The compact archive
 record carries no merge/cleanup ledger, so `merge`, `review`, and `integration`
 are their empty/clean projections. A repo that has never archived a batch stays
 `idle`.
+
+### `retro` digest
+
+An archived batch that carries a `retro.json` (written on the successful
+completion path to `.springfield/archive/<batch-id>/retro.json`) surfaces a
+compact retrospective digest under `retro`. It is a summary, not the full report —
+read `retro.json` directly for the per-finding detail.
+
+| field | meaning |
+|-------|---------|
+| `findings` | total number of classifier findings in the report |
+| `top_pattern` | the most-prominent finding's pattern key (the one tripped by the most plans; ties break on the classifiers' stable declaration order); omitted when there are no findings |
+| `top_count` | how many plans tripped `top_pattern`; omitted when zero (a batch-level finding with no plans, e.g. `cost-overrun`) |
+
+`retro` is `null` for any batch with no readable digest: it is absent outside the
+`archived` state (no retro exists yet), when the batch has no `retro.json`, when
+that file is corrupt (the projection degrades to silence, never an error), and
+when the report has zero findings (a clean batch reports nothing extra). The text
+`springfield status` surface renders the same digest as a one-liner —
+`retro: 3 findings (top: verify-nonconvergence x2)` — from the same projection.
 
 ### `spend` fields
 

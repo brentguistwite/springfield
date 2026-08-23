@@ -11,7 +11,8 @@ import "time"
 // bump; removing/renaming requires an increment so consumers can branch.
 // v2 added the per-plan in-flight [ActivityView] card (additive).
 // v3 added the per-plan [StallView] possibly-wedged indicator (additive).
-const SchemaVersion = 3
+// v4 added the batch-level [RetroView] summary for archived batches (additive).
+const SchemaVersion = 4
 
 // Public board-status enum. A total projection of conductor.PlanStatus
 // composed with merge outcome.
@@ -36,6 +37,24 @@ type View struct {
 	Spend         *SpendView    `json:"spend"`
 	Flags         *FlagsView    `json:"flags"`
 	Plans         []PlanView    `json:"plans"`
+	// Retro is the batch-level retrospective digest, present only for an archived
+	// batch that carries a readable retro.json. It is explicit null everywhere
+	// else — an active/idle/orphan batch has no retro yet, and an archived batch
+	// whose retro.json is absent or corrupt degrades to silence rather than error.
+	Retro *RetroView `json:"retro"`
+}
+
+// RetroView is the compact retrospective summary surfaced for an archived batch,
+// sourced from .springfield/archive/<batch-id>/retro.json. It is a digest, not
+// the full report: the total finding count plus the most-prominent pattern key
+// and how many plans tripped it, so a consumer sees "what went wrong most" at a
+// glance and reads retro.json directly for the rest.
+type RetroView struct {
+	Findings   int    `json:"findings"`
+	TopPattern string `json:"top_pattern,omitempty"`
+	// TopCount is how many plans tripped TopPattern; omitted when zero (a
+	// batch-level finding with no plans) so a consumer never renders "x0".
+	TopCount int `json:"top_count,omitempty"`
 }
 
 type BatchView struct {
@@ -71,17 +90,17 @@ type FlagsView struct {
 // PlanView is the deliberately-projected per-plan card. Every field maps to
 // persisted PlanState/PlanUnit; see the spec's field source map.
 type PlanView struct {
-	ID           string          `json:"id"`
-	Title        string          `json:"title"`
-	Status       string          `json:"status"`
-	Branch       string          `json:"branch"`
-	BaseBranch   string          `json:"base_branch"`
-	BaseHead     string          `json:"base_head"`
-	Verify       VerifyView      `json:"verify"`
-	Review       ReviewView      `json:"review"`
-	Attempt      int             `json:"attempt"`
-	LastError    *string         `json:"last_error"`
-	EvidencePath string          `json:"evidence_path"`
+	ID           string     `json:"id"`
+	Title        string     `json:"title"`
+	Status       string     `json:"status"`
+	Branch       string     `json:"branch"`
+	BaseBranch   string     `json:"base_branch"`
+	BaseHead     string     `json:"base_head"`
+	Verify       VerifyView `json:"verify"`
+	Review       ReviewView `json:"review"`
+	Attempt      int        `json:"attempt"`
+	LastError    *string    `json:"last_error"`
+	EvidencePath string     `json:"evidence_path"`
 	// Agent is the adapter running the plan (claude / codex / gemini), surfaced
 	// so a live watcher shows which agent holds the plan. Empty (omitted) when
 	// the plan has no recorded agent yet.
@@ -90,9 +109,9 @@ type PlanView struct {
 	// starts. A live watcher renders elapsed time from it — sourced here so the
 	// watch and --json surfaces read the same durable timestamp, never a second
 	// clock.
-	StartedAt *time.Time `json:"started_at,omitempty"`
-	Merge        MergeView       `json:"merge"`
-	Integration  IntegrationView `json:"integration"`
+	StartedAt   *time.Time      `json:"started_at,omitempty"`
+	Merge       MergeView       `json:"merge"`
+	Integration IntegrationView `json:"integration"`
 	// Activity is the in-flight progress card. It is explicit null for any plan
 	// that is not running — the contract degrades to silence rather than show a
 	// stale phase (see [ActivityView]).

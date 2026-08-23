@@ -38,7 +38,7 @@ func Poll(root string) (View, error) {
 		// watcher sees the final frame; fall to idle only when nothing was ever
 		// archived.
 		if entry, ok, archErr := batch.LatestArchive(root); archErr == nil && ok {
-			return Archived(entry), nil
+			return Archived(entry, root), nil
 		}
 		return Idle(), nil
 	}

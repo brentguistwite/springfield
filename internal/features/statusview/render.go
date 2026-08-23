@@ -43,7 +43,31 @@ func Render(v View, now time.Time) string {
 		}
 		fmt.Fprintln(&b)
 	}
+	if v.Retro != nil {
+		fmt.Fprintln(&b, formatRetro(*v.Retro))
+	}
 	return b.String()
+}
+
+// formatRetro renders the batch-level retrospective digest as a one-liner naming
+// the total finding count and the top pattern — e.g.
+// "retro: 3 findings (top: verify-nonconvergence x2)". The plan-spread suffix
+// ("xN") is dropped when the top pattern tripped no plans (a batch-level finding),
+// so the line never reads "x0"; the finding noun is singularized at a count of 1.
+func formatRetro(r RetroView) string {
+	noun := "findings"
+	if r.Findings == 1 {
+		noun = "finding"
+	}
+	out := fmt.Sprintf("retro: %d %s", r.Findings, noun)
+	if r.TopPattern != "" {
+		if r.TopCount > 0 {
+			out += fmt.Sprintf(" (top: %s x%d)", r.TopPattern, r.TopCount)
+		} else {
+			out += fmt.Sprintf(" (top: %s)", r.TopPattern)
+		}
+	}
+	return out
 }
 
 // formatActivity renders an in-flight ActivityView as a compact one-liner: the
