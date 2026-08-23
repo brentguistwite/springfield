@@ -43,12 +43,12 @@ type adapter struct {
 // The runtime discovers capabilities by optional type assertion, so a dropped
 // method would silently disable the capability rather than fail a build. Pin
 // what exists after this section; later sections add their own pins.
-// (ModelProvider is deliberately absent until Section F.)
 var (
 	_ agents.Commander         = (*adapter)(nil)
 	_ agents.ResultValidator   = (*adapter)(nil)
 	_ agents.TranscriptDecoder = (*adapter)(nil)
 	_ agents.ErrorClassifier   = (*adapter)(nil)
+	_ agents.ModelProvider     = (*adapter)(nil)
 )
 
 // New constructs an opencode adapter with default options. Returns an
@@ -85,6 +85,11 @@ func NewWithOptions(lookPath agents.LookPathFunc, opts Options) agents.Commander
 
 func (a *adapter) ID() agents.ID {
 	return agents.AgentOpenCode
+}
+
+// SuggestedModels delegates to the package-level curated list; see models.go.
+func (a *adapter) SuggestedModels() []string {
+	return SuggestedModels()
 }
 
 func (a *adapter) Metadata() agents.Metadata {

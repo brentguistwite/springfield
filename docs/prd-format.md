@@ -208,7 +208,7 @@ A missing `[ports]` block selects the default base — every slice still gets a 
 
 ### `context_md` scope
 
-Each agent prompt is assembled as: header + per-plan `context.md` (verbatim, if present) + project-wide guidance (concatenated `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` from the project root) + footer. Both layers are sent on every iteration.
+Each agent prompt is assembled as: header + per-plan `context.md` (verbatim, if present) + project-wide guidance (concatenated `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` from the project root) + footer. Both layers are sent on every iteration. The guidance set is identical for every supported agent — OpenCode reads `AGENTS.md` natively, so no extra guidance file exists or is needed for it.
 
 Use `context_md` for plan-specific guidance only — the package being built, test patterns local to that subsystem, files the agent should read first. Project-wide conventions (build/lint commands, top-level architecture, repo-wide testing rules) belong in root `AGENTS.md` and are auto-loaded; duplicating them into `context_md` doubles the prompt-token cost of that material on every iteration.
 
