@@ -22,9 +22,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"springfield/internal/core/agents"
-	"springfield/internal/core/agents/claude"
-	"springfield/internal/core/agents/codex"
-	"springfield/internal/core/agents/gemini"
+	"springfield/internal/core/agents/catalog"
 	"springfield/internal/core/config"
 	coreexec "springfield/internal/core/exec"
 	"springfield/internal/core/lock"
@@ -696,11 +694,7 @@ func runBatchWithContext(ctx context.Context, root string, run *batch.Run, b bat
 		return BatchRunResult{Error: e.Error()}, e
 	}
 
-	registry := agents.NewRegistry(
-		claude.New(exec.LookPath),
-		codex.New(exec.LookPath),
-		gemini.New(exec.LookPath),
-	)
+	registry := agents.NewRegistry(catalog.DefaultAdapters(exec.LookPath)...)
 	agentIDs := make([]agents.ID, 0, len(loaded.Config.Project.AgentPriority))
 	for _, id := range loaded.Config.Project.AgentPriority {
 		if id != "" {
@@ -1212,7 +1206,7 @@ func snapshotPlanTree(planDir string) (map[string][]byte, error) {
 
 // enumeratePlanTreeRaw lists every file under planDir (relpath keys, forward
 // slashes) without reading bytes and without rejecting non-regular entries.
-// Used by restoreControlPlane to find stray nodes — including non-regular
+// Used by planDirTamperGuard.Restore to find stray nodes — including non-regular
 // ones planted by the agent — so they can be unlinked before restore
 // rewrites. No basename is excluded: any ".tmp-*" entry visible at restore
 // time is an agent artifact and must be cleaned up.
@@ -1430,11 +1424,7 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 		}
 	}
 
-	registry := agents.NewRegistry(
-		claude.New(exec.LookPath),
-		codex.New(exec.LookPath),
-		gemini.New(exec.LookPath),
-	)
+	registry := agents.NewRegistry(catalog.DefaultAdapters(exec.LookPath)...)
 	if len(loaded.Config.Project.AgentPriority) == 0 {
 		return false, fmt.Errorf("project has no agents configured: agent_priority is empty. Run \"springfield init\" to select agents")
 	}
@@ -1789,9 +1779,8 @@ func shortSHA(s string) string {
 
 // planDirTamperGuard implements planrun.TamperGuard for the single-plan-unit
 // path. It snapshots every file under .springfield/plans/ AND .springfield/run.json
-// before each agent invocation and restores them on detected tamper. This mirrors
-// the semantics of the legacy batch path's snapshotControlPlane/detectAndRecoverTamper,
-// adapted for the plan-unit (non-batch) control plane layout.
+// before each agent invocation and restores them on detected tamper, adapted for
+// the plan-unit (non-batch) control plane layout.
 type planDirTamperGuard struct {
 	planDir     string
 	controlRoot string            // project root; used to locate run.json

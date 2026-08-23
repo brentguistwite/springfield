@@ -44,3 +44,51 @@ func TestArchitectureDocTracksWiring(t *testing.T) {
 		t.Errorf(`docs/architecture.md references "package.go"; the module's entry-file convention is index.go / doc.go`)
 	}
 }
+
+// TestAdapterAssemblyConfinedToCatalog pins the architecture map's claim that
+// agent adapters are assembled only in core/agents/catalog: production code
+// outside internal/core/agents may not construct an agents.Registry itself.
+// A hand-assembled registry bypasses the canonical order and capability set
+// catalog.DefaultAdapters guarantees while docs/architecture.md still promises
+// single-point assembly. Direct imports of the per-agent subpackages remain
+// allowed for narrow exported helpers (e.g. claude.ExtractCost) and tests.
+func TestAdapterAssemblyConfinedToCatalog(t *testing.T) {
+	root := repoRoot(t)
+
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		name := d.Name()
+		if d.IsDir() {
+			switch name {
+			case ".git", ".worktrees", ".claude", ".springfield", "node_modules":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			return nil
+		}
+		relToRoot, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if strings.HasPrefix(filepath.ToSlash(relToRoot), "internal/core/agents/") {
+			return nil // adapters and their catalog are allowed to know each other
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for i, line := range strings.Split(string(data), "\n") {
+			if strings.Contains(line, "agents.NewRegistry(") && !strings.Contains(line, "catalog.DefaultAdapters") {
+				t.Errorf("%s:%d constructs agents.NewRegistry directly outside internal/core/agents; assembly must go through core/agents/catalog.DefaultAdapters", relToRoot, i+1)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk repo: %v", err)
+	}
+}
