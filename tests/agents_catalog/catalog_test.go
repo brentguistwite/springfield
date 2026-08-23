@@ -61,3 +61,38 @@ func TestDefaultAdaptersUsesProvidedLookPath(t *testing.T) {
 		}
 	}
 }
+
+// TestDefaultAdaptersCarryRequiredCapabilities pins the capability set the
+// runtime discovers by type assertion (AGENTS.md Principle 5). The assembly-
+// point check in catalog panics on gaps; this boundary test documents the
+// expectation per agent — including codex/gemini's deliberate lack of
+// Cooldowner — so a change to either side fails loudly here too.
+func TestDefaultAdaptersCarryRequiredCapabilities(t *testing.T) {
+	adapters := catalog.DefaultAdapters(nil)
+
+	for _, a := range adapters {
+		_, hasValidator := a.(agents.ResultValidator)
+		_, hasClassifier := a.(agents.ErrorClassifier)
+		_, hasModels := a.(agents.ModelProvider)
+		_, hasTranscript := a.(agents.TranscriptDecoder)
+		_, hasCooldown := a.(agents.Cooldowner)
+
+		switch a.ID() {
+		case agents.AgentClaude:
+			if !hasValidator || !hasClassifier || !hasModels || !hasTranscript || !hasCooldown {
+				t.Errorf("%s: validator=%t classifier=%t models=%t transcript=%t cooldown=%t; claude must carry all five",
+					a.ID(), hasValidator, hasClassifier, hasModels, hasTranscript, hasCooldown)
+			}
+		case agents.AgentCodex, agents.AgentGemini:
+			if !hasValidator || !hasClassifier || !hasModels || !hasTranscript {
+				t.Errorf("%s: validator=%t classifier=%t models=%t transcript=%t; must carry all four",
+					a.ID(), hasValidator, hasClassifier, hasModels, hasTranscript)
+			}
+			if hasCooldown {
+				t.Errorf("%s implements Cooldowner but is documented as cooldown-free; update the capability expectations if that changed deliberately", a.ID())
+			}
+		default:
+			t.Errorf("unexpected adapter id %q in default set", a.ID())
+		}
+	}
+}

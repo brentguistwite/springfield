@@ -1,6 +1,10 @@
 package docs_test
 
 import (
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,11 +51,12 @@ func TestArchitectureDocTracksWiring(t *testing.T) {
 
 // TestAdapterAssemblyConfinedToCatalog pins the architecture map's claim that
 // agent adapters are assembled only in core/agents/catalog: production code
-// outside internal/core/agents may not construct an agents.Registry itself.
-// A hand-assembled registry bypasses the canonical order and capability set
-// catalog.DefaultAdapters guarantees while docs/architecture.md still promises
-// single-point assembly. Direct imports of the per-agent subpackages remain
-// allowed for narrow exported helpers (e.g. claude.ExtractCost) and tests.
+// outside internal/core/agents may only construct an agents.Registry as
+// exactly `agents.NewRegistry(catalog.DefaultAdapters(<lookPath>)...)`.
+// Matching happens on the AST, so trailing comments and wrapper expressions
+// like append(catalog.DefaultAdapters(lp), custom.New(lp)...) don't sneak past
+// a substring check. Direct imports of per-agent subpackages remain allowed
+// for narrow exported helpers (e.g. claude.ExtractCost) and tests.
 func TestAdapterAssemblyConfinedToCatalog(t *testing.T) {
 	root := repoRoot(t)
 
@@ -77,18 +82,56 @@ func TestAdapterAssemblyConfinedToCatalog(t *testing.T) {
 		if strings.HasPrefix(filepath.ToSlash(relToRoot), "internal/core/agents/") {
 			return nil // adapters and their catalog are allowed to know each other
 		}
-		data, err := os.ReadFile(path)
+
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
-			return err
+			return fmt.Errorf("parse %s: %w", relToRoot, err)
 		}
-		for i, line := range strings.Split(string(data), "\n") {
-			if strings.Contains(line, "agents.NewRegistry(") && !strings.Contains(line, "catalog.DefaultAdapters") {
-				t.Errorf("%s:%d constructs agents.NewRegistry directly outside internal/core/agents; assembly must go through core/agents/catalog.DefaultAdapters", relToRoot, i+1)
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
 			}
-		}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			pkgIdent, ok := sel.X.(*ast.Ident)
+			// Matches the conventional (unaliased) agents import; an aliased
+			// import would be its own review-worthy oddity.
+			if !ok || pkgIdent.Name != "agents" || sel.Sel.Name != "NewRegistry" {
+				return true
+			}
+			if isDefaultAdaptersSpread(call) {
+				return true
+			}
+			t.Errorf("%s:%d assembles agents.NewRegistry outside catalog.DefaultAdapters; assembly must go through core/agents/catalog",
+				filepath.ToSlash(relToRoot), fset.Position(call.Pos()).Line)
+			return true
+		})
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("walk repo: %v", err)
 	}
+}
+
+// isDefaultAdaptersSpread reports whether call has the exact sanctioned shape
+// agents.NewRegistry(catalog.DefaultAdapters(...)...) — one argument, spread,
+// sourced from catalog.DefaultAdapters.
+func isDefaultAdaptersSpread(call *ast.CallExpr) bool {
+	if len(call.Args) != 1 || !call.Ellipsis.IsValid() {
+		return false
+	}
+	inner, ok := call.Args[0].(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	sel, ok := inner.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	pkgIdent, ok := sel.X.(*ast.Ident)
+	return ok && pkgIdent.Name == "catalog" && sel.Sel.Name == "DefaultAdapters"
 }
