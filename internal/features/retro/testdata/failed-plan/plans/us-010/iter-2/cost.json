@@ -1,0 +1,9 @@
+{
+  "adapter": "codex",
+  "model": "gpt-5.4",
+  "input_tokens": 25000,
+  "output_tokens": 8000,
+  "cost_usd": 2.00,
+  "captured_at": "2026-08-21T13:56:00Z",
+  "batch_id": "batch-failed-1"
+}

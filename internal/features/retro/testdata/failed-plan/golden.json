@@ -1,0 +1,54 @@
+{
+  "batch_id": "batch-failed-1",
+  "title": "Wire up flaky feature",
+  "archived_at": "2026-08-21T14:00:00Z",
+  "reason": "completed",
+  "batch_mode": "per-plan",
+  "total_usd": 3.1,
+  "plans": [
+    {
+      "id": "US-010",
+      "title": "Flaky feature",
+      "status": "failed",
+      "branch": "springfield/us-010",
+      "base_ref": "main",
+      "iteration_count": 2,
+      "terminal_status": "failed",
+      "exit_reason": "iteration cap reached without completion marker",
+      "iterations": [
+        {
+          "index": 1,
+          "agent_id": "claude",
+          "model": "claude-opus-4-8",
+          "exit_code": 1,
+          "classification": "error",
+          "error": "tests still red",
+          "adapter": "claude",
+          "cost_usd": 1.1
+        },
+        {
+          "index": 2,
+          "agent_id": "codex",
+          "model": "gpt-5.4",
+          "exit_code": 1,
+          "classification": "error",
+          "error": "still failing after fallback",
+          "adapter": "codex",
+          "cost_usd": 2,
+          "attempts": [
+            "claude",
+            "codex"
+          ]
+        }
+      ],
+      "stalls": 2,
+      "verify_rounds": [
+        {
+          "round": 1,
+          "exit_code": 1
+        }
+      ],
+      "evidence_source": "archive"
+    }
+  ]
+}

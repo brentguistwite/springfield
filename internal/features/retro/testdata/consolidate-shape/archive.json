@@ -1,0 +1,22 @@
+{
+  "batch_id": "batch-consolidate-1",
+  "title": "Two-plan consolidate run",
+  "archived_at": "2026-08-19T08:00:00Z",
+  "reason": "completed",
+  "batch_mode": "consolidate",
+  "total_usd": 0.80,
+  "plans": [
+    {
+      "id": "US-020",
+      "title": "First plan",
+      "status": "completed",
+      "evidence_path": ".springfield/archive/batch-consolidate-1/plans/us-020"
+    },
+    {
+      "id": "US-021",
+      "title": "Second plan",
+      "status": "completed",
+      "evidence_path": ".springfield/archive/batch-consolidate-1/plans/us-021"
+    }
+  ]
+}

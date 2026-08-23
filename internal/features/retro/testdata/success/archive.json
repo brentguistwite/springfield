@@ -1,0 +1,18 @@
+{
+  "batch_id": "batch-success-1",
+  "title": "Add retro extraction core",
+  "archived_at": "2026-08-20T10:00:00Z",
+  "reason": "completed",
+  "batch_mode": "per-plan",
+  "total_usd": 1.42,
+  "plans": [
+    {
+      "id": "US-001",
+      "title": "Types + Extract",
+      "status": "completed",
+      "branch": "springfield/us-001",
+      "base_ref": "main",
+      "evidence_path": ".springfield/archive/batch-success-1/plans/us-001"
+    }
+  ]
+}

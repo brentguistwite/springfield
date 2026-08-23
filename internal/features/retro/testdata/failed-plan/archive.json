@@ -1,0 +1,18 @@
+{
+  "batch_id": "batch-failed-1",
+  "title": "Wire up flaky feature",
+  "archived_at": "2026-08-21T14:00:00Z",
+  "reason": "completed",
+  "batch_mode": "per-plan",
+  "total_usd": 3.10,
+  "plans": [
+    {
+      "id": "US-010",
+      "title": "Flaky feature",
+      "status": "failed",
+      "branch": "springfield/us-010",
+      "base_ref": "main",
+      "evidence_path": ".springfield/archive/batch-failed-1/plans/us-010"
+    }
+  ]
+}

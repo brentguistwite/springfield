@@ -1,0 +1,5 @@
+{
+  "iteration_count": 2,
+  "terminal_status": "failed",
+  "exit_reason": "iteration cap reached without completion marker"
+}

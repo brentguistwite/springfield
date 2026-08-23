@@ -1,0 +1,9 @@
+{
+  "adapter": "claude",
+  "model": "claude-opus-4-8",
+  "input_tokens": 12000,
+  "output_tokens": 3000,
+  "cost_usd": 0.51,
+  "captured_at": "2026-08-20T09:52:00Z",
+  "batch_id": "batch-success-1"
+}

@@ -1,0 +1,50 @@
+{
+  "batch_id": "batch-consolidate-1",
+  "title": "Two-plan consolidate run",
+  "archived_at": "2026-08-19T08:00:00Z",
+  "reason": "completed",
+  "batch_mode": "consolidate",
+  "total_usd": 0.8,
+  "plans": [
+    {
+      "id": "US-020",
+      "title": "First plan",
+      "status": "completed",
+      "iteration_count": 1,
+      "terminal_status": "completed",
+      "exit_reason": "all stories passed",
+      "iterations": [
+        {
+          "index": 1,
+          "agent_id": "claude",
+          "model": "claude-opus-4-8",
+          "exit_code": 0,
+          "classification": "ok",
+          "adapter": "claude",
+          "cost_usd": 0.4
+        }
+      ],
+      "evidence_source": "archive"
+    },
+    {
+      "id": "US-021",
+      "title": "Second plan",
+      "status": "completed",
+      "iteration_count": 1,
+      "terminal_status": "completed",
+      "exit_reason": "all stories passed",
+      "iterations": [
+        {
+          "index": 1,
+          "agent_id": "claude",
+          "model": "claude-opus-4-8",
+          "exit_code": 0,
+          "classification": "ok",
+          "adapter": "claude",
+          "cost_usd": 0.4
+        }
+      ],
+      "evidence_source": "archive"
+    }
+  ]
+}

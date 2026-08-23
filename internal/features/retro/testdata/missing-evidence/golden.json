@@ -1,0 +1,29 @@
+{
+  "batch_id": "batch-missing-1",
+  "title": "Relocation was skipped",
+  "archived_at": "2026-08-18T12:00:00Z",
+  "reason": "completed",
+  "batch_mode": "per-plan",
+  "plans": [
+    {
+      "id": "US-030",
+      "title": "No evidence relocated",
+      "status": "completed",
+      "branch": "springfield/us-030",
+      "base_ref": "main",
+      "evidence_missing": true
+    },
+    {
+      "id": "US-031",
+      "title": "Also no evidence",
+      "status": "failed",
+      "branch": "springfield/us-031",
+      "base_ref": "main",
+      "evidence_missing": true
+    }
+  ],
+  "degraded": [
+    "plan US-030: evidence missing",
+    "plan US-031: evidence missing"
+  ]
+}

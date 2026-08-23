@@ -1,0 +1,51 @@
+{
+  "batch_id": "batch-success-1",
+  "title": "Add retro extraction core",
+  "archived_at": "2026-08-20T10:00:00Z",
+  "reason": "completed",
+  "batch_mode": "per-plan",
+  "total_usd": 1.42,
+  "plans": [
+    {
+      "id": "US-001",
+      "title": "Types + Extract",
+      "status": "completed",
+      "branch": "springfield/us-001",
+      "base_ref": "main",
+      "iteration_count": 2,
+      "terminal_status": "completed",
+      "exit_reason": "all stories passed",
+      "iterations": [
+        {
+          "index": 1,
+          "agent_id": "claude",
+          "model": "claude-opus-4-8",
+          "exit_code": 0,
+          "classification": "ok",
+          "adapter": "claude",
+          "cost_usd": 0.51
+        },
+        {
+          "index": 2,
+          "agent_id": "claude",
+          "model": "claude-opus-4-8",
+          "exit_code": 0,
+          "classification": "ok",
+          "adapter": "claude",
+          "cost_usd": 0.91
+        }
+      ],
+      "verify_rounds": [
+        {
+          "round": 1,
+          "exit_code": 1
+        },
+        {
+          "round": 2,
+          "exit_code": 0
+        }
+      ],
+      "evidence_source": "archive"
+    }
+  ]
+}

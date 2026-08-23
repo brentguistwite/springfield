@@ -1,0 +1,7 @@
+{
+  "command": "go test ./...",
+  "cwd": "/repo",
+  "exit_code": 1,
+  "duration_ms": 4200,
+  "timed_out": false
+}
