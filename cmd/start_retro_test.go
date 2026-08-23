@@ -7,7 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"springfield/internal/core/config"
 )
+
+func boolPtr(b bool) *bool { return &b }
 
 // writeRetroArchiveFixture lays down a finished-batch archive dir at
 // .springfield/archive/<batchID>/ with an archive.json header and one plan's
@@ -40,6 +44,40 @@ func writeRetroArchiveFixture(t *testing.T, root, batchID string) string {
 		t.Fatalf("write summary.json: %v", err)
 	}
 	return batchDir
+}
+
+// TestRunRetro_DisabledSkipsEverything is the call-site gating AC: with
+// [retro] enabled = false, the completion path performs NO retro work — no
+// retro.json is persisted beside the archived batch and no warning is emitted —
+// even though a real, extractable archive is sitting on disk.
+func TestRunRetro_DisabledSkipsEverything(t *testing.T) {
+	root := t.TempDir()
+	batchDir := writeRetroArchiveFixture(t, root, "batch-1")
+
+	var buf bytes.Buffer
+	runRetro(&buf, config.RetroConfig{Enabled: boolPtr(false)}, root, "batch-1")
+
+	if _, err := os.Stat(filepath.Join(batchDir, "retro.json")); !os.IsNotExist(err) {
+		t.Errorf("retro.json must not be written when retro is disabled (stat err = %v)", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("disabled retro must be silent, got %q", buf.String())
+	}
+}
+
+// TestRunRetro_DefaultEnabledPersists confirms the default (nil Enabled) still
+// runs the per-batch extraction: retro.json lands beside the archive. Filing
+// stays off because no items_dir is configured.
+func TestRunRetro_DefaultEnabledPersists(t *testing.T) {
+	root := t.TempDir()
+	batchDir := writeRetroArchiveFixture(t, root, "batch-1")
+
+	var buf bytes.Buffer
+	runRetro(&buf, config.RetroConfig{}, root, "batch-1")
+
+	if _, err := os.Stat(filepath.Join(batchDir, "retro.json")); err != nil {
+		t.Errorf("retro.json should be written when retro defaults on: %v", err)
+	}
 }
 
 // TestEmitBatchRetro_Success confirms the happy path writes retro.json beside

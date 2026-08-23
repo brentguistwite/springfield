@@ -262,6 +262,12 @@ Archived batches retain a `total_usd` field; when the `claude -p` billing warnin
 
 When that warning is active, silence it per-operator with `SPRINGFIELD_SUPPRESS_CLAUDE_BILLING_WARNING=1`. The warning is dormant by default while `claude -p` is subscription-billed.
 
+## Retrospectives
+
+Where cost visibility answers "what did this batch spend?", the **retro loop** answers "what keeps going wrong?" When a batch completes, Springfield replays its finalized archive, classifies the run into a small set of stable pattern keys, and writes a `retro.json` beside the archive entry. Set `items_dir` in `[retro]` and it also rolls those findings up across every batch and project on the machine, filing a vault ticket for any pattern that recurs past the threshold (`>= 3` occurrences across `>= 2` batches). Retro is finalize-time and completion-path only, and strictly warning-only — it never changes a batch outcome or exit code. Disable it with `enabled = false`.
+
+See [`docs/retro.md`](docs/retro.md) for the artifact layout, pattern-key taxonomy, thresholds, config reference, the human-owned triage contract, and v1 limits.
+
 ## Recommended Workflow
 
 Springfield runs each plan in an isolated git worktree, then ff-merges the result back into a base branch on your **local** clone. Nothing is pushed and no PR is opened — that step is yours.
@@ -495,6 +501,7 @@ cat .springfield/run.json
 | `.springfield/plans/<batch-id>/source.md` | no | Frozen plan source for the batch |
 | `.springfield/execution/plans/<plan-id>/evidence/iter-<N>/` | no | Per-iteration agent output: `meta.json`, `events.jsonl`, `assistant_text.txt`, `prompt.txt` |
 | `.springfield/archive/<batch-id>.json` | no | Compact summary written when a batch completes or is replaced |
+| `.springfield/archive/<batch-id>/retro.json` | no | Per-batch [retrospective](docs/retro.md): classified findings over the finalized archive |
 | `.springfield/execution/config.json` | no | Internal conductor config (derived from `springfield.toml`) |
 | `.springfield/.lock` | no | Process lock for the active run |
 
