@@ -1,0 +1,1 @@
+{"agent_id":"claude","model":"claude-opus-4-8","exit_code":2,"classification":"limit","started_at":"2026-08-21T14:30:00Z","ended_at":"2026-08-21T14:32:00Z","error":"usage limit reached"}

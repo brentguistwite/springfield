@@ -1,0 +1,18 @@
+{
+  "batch_id": "batch-storm-1",
+  "title": "Batch that kept falling back",
+  "archived_at": "2026-08-21T15:00:00Z",
+  "reason": "completed",
+  "batch_mode": "per-plan",
+  "total_usd": 9.40,
+  "plans": [
+    {
+      "id": "US-030",
+      "title": "Storm-prone plan",
+      "status": "failed",
+      "branch": "springfield/us-030",
+      "base_ref": "main",
+      "evidence_path": ".springfield/archive/batch-storm-1/plans/us-030"
+    }
+  ]
+}
