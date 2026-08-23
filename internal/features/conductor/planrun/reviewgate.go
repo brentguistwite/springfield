@@ -42,9 +42,9 @@ const (
 type reviewNeedsHumanCause int
 
 const (
-	// causeNone is the zero value, carried by every non-needs-human outcome
+	// The zero value is carried by every non-needs-human outcome
 	// (pass/errored). It must not be read for a reviewNeedsHuman result.
-	causeNone reviewNeedsHumanCause = iota
+	_ reviewNeedsHumanCause = iota
 	// causeHalt: the reviewer emitted an explicit <review-verdict>halt</…>.
 	causeHalt
 	// causeExhausted: the fix-loop consumed max_review_iterations rounds
@@ -80,13 +80,13 @@ type reviewGateInput struct {
 	// does not sandbox tools; handing it the block is defense-in-depth so a
 	// reviewer that does run a port-binding command cannot collide with a
 	// concurrently running slice. Nil leaves both environments untouched.
-	PortEnv map[string]string
-	PRD               prd.PRD
-	ContextMD         string
-	ProjectGuidance   string
-	ProjectRoot       string
-	EvidenceDir       string
-	OnEvent           coreexec.EventHandler
+	PortEnv         map[string]string
+	PRD             prd.PRD
+	ContextMD       string
+	ProjectGuidance string
+	ProjectRoot     string
+	EvidenceDir     string
+	OnEvent         coreexec.EventHandler
 	// TamperGuard, when non-nil, wraps BOTH the reviewer agent run AND the
 	// fix-iteration agent run. The reviewer is read-only "by contract" but the
 	// contract is only as strong as the underlying agent's compliance: under

@@ -132,7 +132,7 @@ func TestLoadRegistryStatusLeavesRunningWhenLockHeld(t *testing.T) {
 	if err != nil {
 		t.Fatalf("acquire lock: %v", err)
 	}
-	defer lk.Release()
+	defer func() { _ = lk.Release() }()
 
 	rs, err := execution.LoadRegistryStatus(root)
 	if err != nil {
@@ -193,7 +193,7 @@ func TestLoadRegistryStatusFallsBackWhenLiveRunStateReadIsPartial(t *testing.T) 
 	if err != nil {
 		t.Fatalf("acquire lock: %v", err)
 	}
-	defer lk.Release()
+	defer func() { _ = lk.Release() }()
 
 	statePath := filepath.Join(root, ".springfield", "execution", "state.json")
 	if err := os.WriteFile(statePath, []byte("{"), 0o644); err != nil {

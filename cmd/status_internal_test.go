@@ -667,7 +667,7 @@ func TestStatusDoesNotRewriteRunningPlanWhileStartLockHeld(t *testing.T) {
 	if err != nil {
 		t.Fatalf("acquire lock: %v", err)
 	}
-	defer lk.Release()
+	defer func() { _ = lk.Release() }()
 
 	out, err := runStatusIn(root)
 	if err != nil {

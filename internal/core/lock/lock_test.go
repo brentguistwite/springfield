@@ -26,7 +26,7 @@ func TestLockAcquireReleaseRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Acquire after release: %v", err)
 	}
-	defer lk2.Release()
+	defer func() { _ = lk2.Release() }()
 }
 
 func TestLockConflictReturnsErrLockHeldWithPid(t *testing.T) {
@@ -36,7 +36,7 @@ func TestLockConflictReturnsErrLockHeldWithPid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Acquire: %v", err)
 	}
-	defer lk.Release()
+	defer func() { _ = lk.Release() }()
 
 	_, err = lock.Acquire(root)
 	if err == nil {
@@ -62,7 +62,7 @@ func TestLockConflictHandlesTornFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Acquire: %v", err)
 	}
-	defer lk.Release()
+	defer func() { _ = lk.Release() }()
 
 	// Truncate the lock file to empty (torn write simulation).
 	lockPath := filepath.Join(root, ".springfield", ".lock")
@@ -117,7 +117,7 @@ func TestLockFileContainsPidAndTimestamp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
-	defer lk.Release()
+	defer func() { _ = lk.Release() }()
 
 	lockPath := filepath.Join(root, ".springfield", ".lock")
 	data, err := os.ReadFile(lockPath)
@@ -155,7 +155,7 @@ func TestInspectTreatsMalformedSentinelUnderHeldLockAsHeld(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
-	defer lk.Release()
+	defer func() { _ = lk.Release() }()
 
 	lockPath := filepath.Join(root, ".springfield", ".lock")
 	if err := os.WriteFile(lockPath, []byte("{"), 0o600); err != nil {
@@ -203,7 +203,7 @@ func TestInspectWorksOnReadOnlyLockFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
-	defer lk.Release()
+	defer func() { _ = lk.Release() }()
 
 	// Drop write permission to model a caller that can read but not write the
 	// lock file. The probe must not require write access.
@@ -228,7 +228,7 @@ func TestInspectSeesRealHeldFlockWithParseableMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Acquire: %v", err)
 	}
-	defer lk.Release()
+	defer func() { _ = lk.Release() }()
 
 	held := lock.Inspect(root)
 	if held == nil {

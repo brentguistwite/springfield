@@ -48,14 +48,14 @@ func emitClaudeBillingWarning(w io.Writer, root string, agentPriority []string) 
 		estimate = fmt.Sprintf("Estimated cost per plan: ~$%.2f–$%.2f (mean of last %d batches; multiply by your plan count for a total)", low, high, batches)
 	}
 
-	fmt.Fprintln(w, "[!] claude is in agent_priority, and `claude -p` headless invocations are")
-	fmt.Fprintln(w, "    currently metered separately from your Claude Max/Pro subscription:")
-	fmt.Fprintln(w, "    they draw from a Console-account credit pool, then either bill at API")
-	fmt.Fprintln(w, "    rates (if API billing is configured) or rate-limit mid-batch (if not).")
-	fmt.Fprintf(w, "    %s\n", estimate)
-	fmt.Fprintln(w, "")
-	fmt.Fprintln(w, "    To use subscription-friendly agents only: remove \"claude\" from")
-	fmt.Fprintln(w, "    agent_priority in springfield.toml.")
-	fmt.Fprintf(w, "    To silence this warning: %s=1.\n", suppressClaudeBillingWarningEnv)
+	_, _ = fmt.Fprintln(w, "[!] claude is in agent_priority, and `claude -p` headless invocations are")
+	_, _ = fmt.Fprintln(w, "    currently metered separately from your Claude Max/Pro subscription:")
+	_, _ = fmt.Fprintln(w, "    they draw from a Console-account credit pool, then either bill at API")
+	_, _ = fmt.Fprintln(w, "    rates (if API billing is configured) or rate-limit mid-batch (if not).")
+	_, _ = fmt.Fprintf(w, "    %s\n", estimate)
+	_, _ = fmt.Fprintln(w, "")
+	_, _ = fmt.Fprintln(w, "    To use subscription-friendly agents only: remove \"claude\" from")
+	_, _ = fmt.Fprintln(w, "    agent_priority in springfield.toml.")
+	_, _ = fmt.Fprintf(w, "    To silence this warning: %s=1.\n", suppressClaudeBillingWarningEnv)
 	return true
 }

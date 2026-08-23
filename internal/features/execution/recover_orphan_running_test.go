@@ -74,7 +74,7 @@ func TestResolveActiveBatchLivenessTreatsUnreadableLockAsRecoverable(t *testing.
 	if err != nil {
 		t.Fatalf("acquire lock: %v", err)
 	}
-	defer lk.Release()
+	defer func() { _ = lk.Release() }()
 	if err := os.WriteFile(filepath.Join(root, ".springfield", ".lock"), []byte("garbage-no-newline"), 0o600); err != nil {
 		t.Fatalf("garble lock: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestResolveActiveBatchLivenessLeavesLiveBatchUntouched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("acquire lock: %v", err)
 	}
-	defer lk.Release()
+	defer func() { _ = lk.Release() }()
 
 	live, err := execution.ResolveActiveBatchLiveness(root, true)
 	if err != nil {

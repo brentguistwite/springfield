@@ -46,7 +46,7 @@ func FinalizeBatch(rootDir string, b Batch, project *conductor.Project, rollup *
 	}
 	warn := func(format string, args ...any) {
 		if warnW != nil {
-			fmt.Fprintf(warnW, format, args...)
+			_, _ = fmt.Fprintf(warnW, format, args...)
 		}
 	}
 
@@ -277,7 +277,7 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
@@ -291,14 +291,14 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
+		_ = out.Close()
 		return err
 	}
 	// fsync before the caller removes the source: on the EXDEV path
 	// os.RemoveAll(src) deletes the only other copy, so an unsynced dst could
 	// be truncated/empty after a power loss between write and flush.
 	if err := out.Sync(); err != nil {
-		out.Close()
+		_ = out.Close()
 		return err
 	}
 	return out.Close()

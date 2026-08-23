@@ -196,7 +196,7 @@ func Activate(in Input, out io.Writer) (*Activation, error) {
 		// batch base (via BaseForBatch) resumes accumulation onto it. If the
 		// ref was deleted, the manager's base-ref preflight rejects it with a
 		// clear error, so no existence check is needed here.
-		fmt.Fprintf(out, "auto-branch resume: slice work continues on %s; you stay on %s\n",
+		_, _ = fmt.Fprintf(out, "auto-branch resume: slice work continues on %s; you stay on %s\n",
 			in.PriorAutoBranchName, in.PriorOriginalBranch)
 		return &Activation{
 			OriginalBranch: in.PriorOriginalBranch,
@@ -242,9 +242,9 @@ func Activate(in Input, out io.Writer) (*Activation, error) {
 		return nil, fmt.Errorf("git branch %s %s: %w", name, current, err)
 	}
 
-	fmt.Fprintf(out, "auto-cut branch %s from %s\n", name, current)
-	fmt.Fprintf(out, "  → slice work merges here; you stay on %s\n", current)
-	fmt.Fprintf(out, "  → push + open PR by hand when the batch finishes\n")
+	_, _ = fmt.Fprintf(out, "auto-cut branch %s from %s\n", name, current)
+	_, _ = fmt.Fprintf(out, "  → slice work merges here; you stay on %s\n", current)
+	_, _ = fmt.Fprintf(out, "  → push + open PR by hand when the batch finishes\n")
 
 	return &Activation{
 		OriginalBranch: current,
@@ -280,14 +280,14 @@ func Restore(a *Activation, outcome Outcome, out io.Writer) {
 	}
 	switch outcome {
 	case OutcomeSuccess:
-		fmt.Fprintf(out, "batch complete on %s (you are on %s)\n", a.BranchName, a.OriginalBranch)
-		fmt.Fprintf(out, "push + open PR:\n")
-		fmt.Fprintf(out, "  git push -u origin %s\n", a.BranchName)
-		fmt.Fprintf(out, "  gh pr create\n")
+		_, _ = fmt.Fprintf(out, "batch complete on %s (you are on %s)\n", a.BranchName, a.OriginalBranch)
+		_, _ = fmt.Fprintf(out, "push + open PR:\n")
+		_, _ = fmt.Fprintf(out, "  git push -u origin %s\n", a.BranchName)
+		_, _ = fmt.Fprintf(out, "  gh pr create\n")
 	case OutcomeFailed:
-		fmt.Fprintf(out, "batch failed on %s (you are on %s); auto-branch preserved for inspection:\n", a.BranchName, a.OriginalBranch)
-		fmt.Fprintf(out, "  git switch %s\n", a.BranchName)
+		_, _ = fmt.Fprintf(out, "batch failed on %s (you are on %s); auto-branch preserved for inspection:\n", a.BranchName, a.OriginalBranch)
+		_, _ = fmt.Fprintf(out, "  git switch %s\n", a.BranchName)
 	case OutcomeInterrupted:
-		fmt.Fprintf(out, "batch interrupted on %s (you are on %s); rerun \"springfield start\" to resume on %s\n", a.BranchName, a.OriginalBranch, a.BranchName)
+		_, _ = fmt.Fprintf(out, "batch interrupted on %s (you are on %s); rerun \"springfield start\" to resume on %s\n", a.BranchName, a.OriginalBranch, a.BranchName)
 	}
 }

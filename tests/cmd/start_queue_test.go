@@ -270,7 +270,7 @@ esac
 
 func removePlanSpecificAgent(t *testing.T, binDir, planID string) {
 	t.Helper()
-	os.RemoveAll(filepath.Join(binDir, "fail-"+planID))
+	_ = os.RemoveAll(filepath.Join(binDir, "fail-"+planID))
 }
 
 func readQueueStateFile(t *testing.T, root string) struct {

@@ -527,12 +527,12 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	cleanup := func() { _ = os.Remove(tmpName) }
 
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		cleanup()
 		return fmt.Errorf("write temp for %s: %w", path, err)
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		cleanup()
 		return fmt.Errorf("fsync temp for %s: %w", path, err)
 	}

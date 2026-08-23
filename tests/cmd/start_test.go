@@ -352,7 +352,7 @@ func TestStartCommandRejectsSecondInvocationWithPid(t *testing.T) {
 
 	// Exactly one should fail with lock-held message.
 	lockErrRe := regexp.MustCompile(`another springfield start is already running \(pid \d+ since .+\)`)
-	var lockFailIdx int = -1
+	lockFailIdx := -1
 	for i, r := range results {
 		if r.err != nil && lockErrRe.MatchString(r.out) {
 			lockFailIdx = i

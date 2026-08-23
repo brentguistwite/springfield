@@ -14,10 +14,7 @@ import (
 func TestClaudeAdapterProducesRunnableCommandSpec(t *testing.T) {
 	adapter := claude.New(exec.LookPath)
 
-	commander, ok := adapter.(agents.Commander)
-	if !ok {
-		t.Fatal("claude adapter does not implement Commander")
-	}
+	commander := adapter
 
 	cmd, err := commander.Command(agents.CommandInput{
 		Prompt:  "implement the login feature",
@@ -47,10 +44,7 @@ func TestClaudeAdapterProducesRunnableCommandSpec(t *testing.T) {
 func TestCodexAdapterProducesRunnableCommandSpec(t *testing.T) {
 	adapter := codex.New(exec.LookPath)
 
-	commander, ok := adapter.(agents.Commander)
-	if !ok {
-		t.Fatal("codex adapter does not implement Commander")
-	}
+	commander := adapter
 
 	cmd, err := commander.Command(agents.CommandInput{
 		Prompt:  "fix the auth bug",
@@ -125,7 +119,7 @@ func assertArgsContain(t *testing.T, args []string, flag, value string) {
 
 func TestClaudeAdapterOmitsPermissionModeByDefault(t *testing.T) {
 	adapter := claude.New(exec.LookPath)
-	commander := adapter.(agents.Commander)
+	commander := adapter
 
 	cmd, err := commander.Command(agents.CommandInput{
 		Prompt:  "implement the login feature",
@@ -140,7 +134,7 @@ func TestClaudeAdapterOmitsPermissionModeByDefault(t *testing.T) {
 
 func TestClaudeAdapterAppendsPermissionModeWhenConfigured(t *testing.T) {
 	adapter := claude.New(exec.LookPath)
-	commander := adapter.(agents.Commander)
+	commander := adapter
 
 	cmd, err := commander.Command(agents.CommandInput{
 		Prompt:  "implement the login feature",
@@ -158,7 +152,7 @@ func TestClaudeAdapterAppendsPermissionModeWhenConfigured(t *testing.T) {
 
 func TestClaudeAdapterOmitsModelByDefault(t *testing.T) {
 	adapter := claude.New(exec.LookPath)
-	commander := adapter.(agents.Commander)
+	commander := adapter
 
 	cmd, err := commander.Command(agents.CommandInput{
 		Prompt:  "implement the login feature",
@@ -173,7 +167,7 @@ func TestClaudeAdapterOmitsModelByDefault(t *testing.T) {
 
 func TestClaudeAdapterAppendsModelWhenConfigured(t *testing.T) {
 	adapter := claude.New(exec.LookPath)
-	commander := adapter.(agents.Commander)
+	commander := adapter
 
 	cmd, err := commander.Command(agents.CommandInput{
 		Prompt:  "implement the login feature",
@@ -198,7 +192,7 @@ func TestClaudeAdapterAppendsModelWhenConfigured(t *testing.T) {
 // someone wires flag pass-through, this test is the canary to update.
 func TestClaudeAdapterDoesNotPassUnsupportedMaxTurns(t *testing.T) {
 	adapter := claude.New(exec.LookPath)
-	commander := adapter.(agents.Commander)
+	commander := adapter
 
 	cmd, err := commander.Command(agents.CommandInput{
 		Prompt:  "implement the login feature",
@@ -213,7 +207,7 @@ func TestClaudeAdapterDoesNotPassUnsupportedMaxTurns(t *testing.T) {
 
 func TestCodexAdapterUsesExecJsonByDefault(t *testing.T) {
 	adapter := codex.New(exec.LookPath)
-	commander := adapter.(agents.Commander)
+	commander := adapter
 
 	cmd, err := commander.Command(agents.CommandInput{
 		Prompt:  "fix the auth bug",
@@ -236,7 +230,7 @@ func TestCodexAdapterUsesExecJsonByDefault(t *testing.T) {
 // trust prompt in a fresh worktree with no way to answer it).
 func TestCodexAdapterMapsNeverApprovalToBypassFlag(t *testing.T) {
 	adapter := codex.New(exec.LookPath)
-	commander := adapter.(agents.Commander)
+	commander := adapter
 
 	cmd, err := commander.Command(agents.CommandInput{
 		Prompt:  "fix the auth bug",
@@ -261,7 +255,7 @@ func TestCodexAdapterMapsNeverApprovalToBypassFlag(t *testing.T) {
 // (codex 0.136.0 has no `-a` on `exec`; -c is the config-override path).
 func TestCodexAdapterForwardsNonNeverApprovalViaConfigOverride(t *testing.T) {
 	adapter := codex.New(exec.LookPath)
-	commander := adapter.(agents.Commander)
+	commander := adapter
 
 	cmd, err := commander.Command(agents.CommandInput{
 		Prompt:  "fix the auth bug",
@@ -285,7 +279,7 @@ func TestCodexAdapterForwardsNonNeverApprovalViaConfigOverride(t *testing.T) {
 
 func TestCodexAdapterAppendsModelWhenConfigured(t *testing.T) {
 	adapter := codex.New(exec.LookPath)
-	commander := adapter.(agents.Commander)
+	commander := adapter
 
 	cmd, err := commander.Command(agents.CommandInput{
 		Prompt:  "fix the auth bug",

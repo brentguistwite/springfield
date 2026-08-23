@@ -64,7 +64,7 @@ func newPlansAddCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Registered plan %q (order %d) at %s\n", plan.ID, plan.Order, plan.Path)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Registered plan %q (order %d) at %s\n", plan.ID, plan.Order, plan.Path)
 			return nil
 		},
 	}
@@ -130,7 +130,7 @@ func newPlansRemoveCommand() *cobra.Command {
 			if err := execution.RemovePlan(loaded.RootDir, target); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Removed plan %q.\n", target)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Removed plan %q.\n", target)
 			return nil
 		},
 	}
@@ -153,7 +153,7 @@ func newPlansReorderCommand() *cobra.Command {
 			if err := execution.ReorderPlans(loaded.RootDir, args); err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), "Reordered plan units.")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Reordered plan units.")
 			return nil
 		},
 	}
@@ -163,7 +163,7 @@ func newPlansReorderCommand() *cobra.Command {
 
 func renderPlanList(w io.Writer, plans []execution.Plan) {
 	if len(plans) == 0 {
-		fmt.Fprintln(w, "No plan units configured. Run \"springfield plans add\" to register one.")
+		_, _ = fmt.Fprintln(w, "No plan units configured. Run \"springfield plans add\" to register one.")
 		return
 	}
 	for i, p := range plans {
@@ -171,7 +171,7 @@ func renderPlanList(w io.Writer, plans []execution.Plan) {
 		if title == "" {
 			title = p.ID
 		}
-		fmt.Fprintf(w, "%d. %s — %s\n", i+1, p.ID, title)
-		fmt.Fprintf(w, "   path: %s\n", p.Path)
+		_, _ = fmt.Fprintf(w, "%d. %s — %s\n", i+1, p.ID, title)
+		_, _ = fmt.Fprintf(w, "   path: %s\n", p.Path)
 	}
 }

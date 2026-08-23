@@ -49,7 +49,7 @@ func NewRuntimeRunner(root string, lookPath func(string) (string, error), onEven
 	}
 	if len(loaded.Config.Project.AgentPriority) == 0 {
 		return Runner{}, fmt.Errorf(
-			"project has no agents configured: agent_priority is empty. Run \"springfield init\" to select agents.")
+			"project has no agents configured: agent_priority is empty. Run \"springfield init\" to select agents")
 	}
 
 	registry := agents.NewRegistry(
@@ -422,7 +422,7 @@ func readProjectGuidance(root string) (string, error) {
 		}
 		// Read one byte beyond the cap to detect truncation.
 		data, readErr := io.ReadAll(io.LimitReader(f, int64(maxGuidanceFileBytes)+1))
-		f.Close()
+		_ = f.Close()
 		if readErr != nil {
 			return "", fmt.Errorf("read project guidance %s: %w", name, readErr)
 		}

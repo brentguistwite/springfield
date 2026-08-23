@@ -247,8 +247,6 @@ func TestComposeStatus_Totality(t *testing.T) {
 	}
 }
 
-func strp(s string) *string { return &s }
-
 func TestBuildPlan_HaltAndBase(t *testing.T) {
 	ps := &conductor.PlanState{
 		Status:       conductor.StatusNeedsHuman,

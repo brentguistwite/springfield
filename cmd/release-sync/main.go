@@ -56,9 +56,9 @@ func main() {
 	}
 
 	if *check && len(changed) > 0 {
-		fmt.Fprintln(os.Stderr, "release-sync: -check failed; the following files would change:")
+		_, _ = fmt.Fprintln(os.Stderr, "release-sync: -check failed; the following files would change:")
 		for _, p := range changed {
-			fmt.Fprintln(os.Stderr, "  "+p)
+			_, _ = fmt.Fprintln(os.Stderr, "  "+p)
 		}
 		os.Exit(1)
 	}
@@ -120,6 +120,6 @@ func syncManifestVersion(path, version string, dryRun bool) (bool, error) {
 }
 
 func fail(err error) {
-	fmt.Fprintf(os.Stderr, "release-sync: %v\n", err)
+	_, _ = fmt.Fprintf(os.Stderr, "release-sync: %v\n", err)
 	os.Exit(1)
 }

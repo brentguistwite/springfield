@@ -36,9 +36,9 @@ func NewInstallCommand() *cobra.Command {
 			}
 
 			w := cmd.OutOrStdout()
-			fmt.Fprintln(w, "Synced Springfield local host artifacts:")
+			_, _ = fmt.Fprintln(w, "Synced Springfield local host artifacts:")
 			for _, item := range installed {
-				fmt.Fprintf(w, "  %s  %s\n", item.Host.Name, item.Path)
+				_, _ = fmt.Fprintf(w, "  %s  %s\n", item.Host.Name, item.Path)
 			}
 			return nil
 		},

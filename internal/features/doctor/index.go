@@ -56,7 +56,7 @@ func buildSummary(total, available int, healthy bool) string {
 		return fmt.Sprintf("All %d agent(s) available. Ready to go.", total)
 	}
 	if available == 0 {
-		return fmt.Sprintf("No agents detected. Install at least one supported agent CLI to use Springfield.")
+		return "No agents detected. Install at least one supported agent CLI to use Springfield."
 	}
 	return fmt.Sprintf("%d/%d agent(s) available. Springfield can operate with the available agent(s).", available, total)
 }
