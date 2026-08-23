@@ -7,6 +7,7 @@ import (
 
 	"springfield/internal/core/agents/claude"
 	"springfield/internal/core/agents/codex"
+	"springfield/internal/core/agents/opencode"
 	coreexec "springfield/internal/core/exec"
 	"springfield/internal/testsupport/fixtures"
 )
@@ -71,5 +72,39 @@ func TestClaudeExtractCostResolvesModelFromAssistantEnvelope(t *testing.T) {
 
 	if got.Model != "claude-opus-5" {
 		t.Fatalf("Model = %q, want %q", got.Model, "claude-opus-5")
+	}
+}
+
+// OpenCode reports provider-computed cost itself (part.cost on every
+// step_finish), so no pricing table backs this adapter — the token sums
+// below come straight off the captured bytes. Each step_finish carries that
+// step's own usage (never cumulative), so all three finishes must count.
+func TestOpencodeExtractCostFromRealCapture(t *testing.T) {
+	events := fixtures.LoadEvents(t, filepath.Join("..", "realcaptures", "opencode", "success.jsonl"))
+
+	got := opencode.ExtractCost(events, "opencode/x-preview-f-free", time.Now())
+
+	if got.InputTokens != 16653 || got.OutputTokens != 159 {
+		t.Fatalf("tokens = %d/%d, want 16653/159 summed across the three step_finish events",
+			got.InputTokens, got.OutputTokens)
+	}
+	if got.CostUSD != 0 {
+		t.Fatalf("CostUSD = %v, want 0 (free-model capture reports part.cost 0)", got.CostUSD)
+	}
+	if got.Model != "opencode/x-preview-f-free" {
+		t.Fatalf("Model = %q, want configured %q (the stream carries no model id)", got.Model, "opencode/x-preview-f-free")
+	}
+}
+
+// A failed tool call does not suppress usage reporting: every step still
+// closes with a finish event carrying tokens/cost.
+func TestOpencodeExtractCostFromToolErrorCapture(t *testing.T) {
+	events := fixtures.LoadEvents(t, filepath.Join("..", "realcaptures", "opencode", "tool-error.jsonl"))
+
+	got := opencode.ExtractCost(events, "opencode/x-preview-f-free", time.Now())
+
+	if got.InputTokens != 6393 || got.OutputTokens != 110 {
+		t.Fatalf("tokens = %d/%d, want 6393/110 summed across both step_finish events",
+			got.InputTokens, got.OutputTokens)
 	}
 }

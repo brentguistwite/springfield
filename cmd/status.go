@@ -474,9 +474,10 @@ func printSpendLine(w io.Writer, root, batchID string) {
 
 // formatTotalSpendLine renders the end-of-batch "Est. API-equivalent cost:"
 // line shown after Status: completed. Same structure as formatSpendLine but
-// with the batch-total label, an unpriced hint that names gemini as the most
-// likely culprit (the only adapter without cost capture in v1), and a trailing
-// note that subscription usage carries no per-run charge.
+// with the batch-total label, a neutral unpriced count (more than one adapter
+// can lack a computable price — gemini has no cost capture, and opencode on
+// a free model reports $0), and a trailing note that subscription usage
+// carries no per-run charge.
 func formatTotalSpendLine(r cost.Rollup) string {
 	adapters := make([]string, 0, len(r.PerAdapter))
 	for name, amount := range r.PerAdapter {
@@ -497,7 +498,7 @@ func formatTotalSpendLine(r cost.Rollup) string {
 		out += " (" + strings.Join(parts, ", ") + ")"
 	}
 	if r.UnpricedRuns > 0 {
-		out += fmt.Sprintf(" (%d unpriced — likely gemini)", r.UnpricedRuns)
+		out += fmt.Sprintf(" (%d unpriced)", r.UnpricedRuns)
 	}
 	if r.SkippedFiles > 0 {
 		noun := "files"

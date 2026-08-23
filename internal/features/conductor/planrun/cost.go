@@ -6,6 +6,7 @@ import (
 	"springfield/internal/core/agents"
 	"springfield/internal/core/agents/claude"
 	"springfield/internal/core/agents/codex"
+	"springfield/internal/core/agents/opencode"
 	coreexec "springfield/internal/core/exec"
 	"springfield/internal/features/cost"
 )
@@ -22,6 +23,8 @@ func extractCost(agentID agents.ID, events []coreexec.Event, model string, now t
 		return claude.ExtractCost(events, model, now)
 	case agents.AgentCodex:
 		return codex.ExtractCost(events, model, now)
+	case agents.AgentOpenCode:
+		return opencode.ExtractCost(events, model, now)
 	default:
 		if now.IsZero() {
 			now = time.Now().UTC()

@@ -235,7 +235,7 @@ Springfield captures per-iteration spend for Claude and Codex and surfaces it in
 - **Per iteration:** every agent dispatch writes `cost.json` alongside `meta.json` under `.springfield/execution/plans/<plan-id>/evidence/iter-<N>/`. Fields: `adapter`, `model`, `input_tokens`, `output_tokens`, `cost_usd`, `captured_at`. Token counts come from the agent's own stream events; USD is computed against a static pricing table (`internal/features/cost/pricing.go`). Claude's terminal `total_cost_usd` wins over the table when present, so prompt-caching discounts are reflected.
 - **Live rollup:** `springfield status` prints a `Spend: $X.YZ (claude $A.BC, codex $D.EF)` line for the active batch. `springfield start` prints a `Total spend:` line after `Status: completed`.
 
-Gemini cost capture is not implemented (the CLI does not expose a token usage surface today). Gemini iterations contribute zero cost; when present they appear as `(N unpriced — likely gemini)`.
+Runs whose price cannot be computed still record their tokens and appear as `(N unpriced)` — a Codex model missing from the pricing table, or an OpenCode iteration on a free model that reports `$0` from its own stream. Gemini has no cost capture at all (the CLI does not expose a token usage surface today): its iterations contribute zero cost.
 
 ### Capping spend
 
