@@ -218,6 +218,63 @@ func TestFile_ConcurrentCreateRace(t *testing.T) {
 	}
 }
 
+func TestFile_ConcurrentDistinctKeysGetUniqueIDs(t *testing.T) {
+	dir := t.TempDir()
+	cfg := retro.Config{ItemsDir: dir}
+
+	// Each key files to its own path, so O_EXCL never contends. The hazard is id
+	// allocation: nextID scans sibling files, and a racer's file may exist (via
+	// O_EXCL) with no body/id written yet, so two distinct items can be handed the
+	// same SPG id unless allocation is serialized.
+	const n = 12
+	keys := make([]string, n)
+	for i := range keys {
+		keys[i] = "pattern-" + itoa(i)
+	}
+
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			item := retro.Item{
+				Key:         keys[i],
+				Occurrences: []retro.Occurrence{occ("batch-a", "proj-x", 2026, 8, 10, 3)},
+			}
+			_, errs[i] = cfg.File(item)
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	for i := 0; i < n; i++ {
+		if errs[i] != nil {
+			t.Fatalf("goroutine %d: File: %v", i, errs[i])
+		}
+	}
+
+	// Every filed item must carry a distinct SPG id.
+	ids := map[string]string{} // id -> file that owns it
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		body := readFile(t, filepath.Join(dir, e.Name()))
+		id := extractID(t, body, e.Name())
+		if prev, dup := ids[id]; dup {
+			t.Errorf("duplicate id %s allocated to both %q and %q", id, prev, e.Name())
+		}
+		ids[id] = e.Name()
+	}
+	if len(ids) != n {
+		t.Errorf("allocated %d distinct ids, want %d", len(ids), n)
+	}
+}
+
 func TestFile_RefusesPathEscape(t *testing.T) {
 	dir := t.TempDir()
 	cfg := retro.Config{ItemsDir: dir}
@@ -263,6 +320,18 @@ func readFile(t *testing.T, path string) string {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return string(b)
+}
+
+// extractID pulls the "id: SPG-<n>" value out of an item's frontmatter.
+func extractID(t *testing.T, body, name string) string {
+	t.Helper()
+	for _, ln := range strings.Split(body, "\n") {
+		if strings.HasPrefix(ln, "id: ") {
+			return strings.TrimSpace(strings.TrimPrefix(ln, "id: "))
+		}
+	}
+	t.Fatalf("file %q has no id line:\n%s", name, body)
+	return ""
 }
 
 // writeItem drops a minimal convention-compliant item file carrying id SPG-<n>

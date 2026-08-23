@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -74,6 +75,11 @@ const acceptanceHeading = "## Acceptance Criteria"
 // frontmatter are left byte-for-byte intact.
 const occurrencesHeading = "## Occurrences"
 
+// idLockName is the flock file that serializes id allocation across concurrent
+// File calls. It lives inside ItemsDir but is never a .md item, so nextID skips
+// it; a key can never collide with it because itemPath rejects "/" and "..".
+const idLockName = ".spg-id.lock"
+
 // raceRetries bounds the create/update contention loop. A losing racer re-reads
 // and takes the update path; the winner writes the whole file in one Write, so a
 // few short backoffs cover the window where the file exists but is not yet
@@ -114,8 +120,10 @@ func (c Config) Enabled() bool { return strings.TrimSpace(c.ItemsDir) != "" }
 //
 // Create uses O_EXCL: if a concurrent call wins the create race, this one re-reads
 // and takes the update path, so concurrent Files over the same item resolve to
-// exactly one create plus updates. File writes ONLY inside ItemsDir; a key that
-// would escape it is rejected.
+// exactly one create plus updates. Concurrent Files over DISTINCT items serialize
+// their id allocation under an flock (ItemsDir/.spg-id.lock) so every ticket gets
+// a unique SPG id even when creates overlap. File writes ONLY inside ItemsDir; a
+// key that would escape it is rejected.
 func (c Config) File(item Item) (FileResult, error) {
 	if !c.Enabled() {
 		return FileResult{}, errors.New("retro: filer disabled (empty ItemsDir)")
@@ -176,7 +184,21 @@ func (c Config) itemPath(key string, oldest time.Time) (string, error) {
 
 // create writes a brand-new ticket via O_EXCL so exactly one concurrent caller
 // wins. On a create race the loser sees os.ErrExist here and falls back to update.
+//
+// The whole critical section — O_EXCL create, id allocation, body write — runs
+// under an flock on ItemsDir/.spg-id.lock. O_EXCL alone only serializes creates
+// of the SAME path; distinct keys write distinct files and never contend there,
+// so without the flock two concurrent creates would each run nextID over a
+// directory where the other's file already exists (via O_EXCL) but carries no id
+// yet, and both would allocate the same SPG id. Holding the flock across the
+// write guarantees nextID only ever scans fully-written siblings.
 func (c Config) create(path string, item Item) (FileResult, error) {
+	unlock, err := c.lockIDs()
+	if err != nil {
+		return FileResult{}, err
+	}
+	defer unlock()
+
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return FileResult{}, err // may be os.ErrExist — the caller detects and updates
@@ -201,6 +223,36 @@ func (c Config) create(path string, item Item) (FileResult, error) {
 		return FileResult{}, fmt.Errorf("retro: close item %s: %w", path, err)
 	}
 	return FileResult{Path: path, Created: true}, nil
+}
+
+// lockIDs takes an exclusive flock on ItemsDir/.spg-id.lock, serializing id
+// allocation across concurrent File calls — goroutines in one process and
+// separate processes alike, since flock excludes per inode system-wide. It spins
+// with the same bounded backoff as the create/update loop; the returned closure
+// drops the lock. The lock file inode is intentionally left in place (never
+// removed) so contenders always collapse onto a single inode.
+func (c Config) lockIDs() (func(), error) {
+	lockPath := filepath.Join(c.ItemsDir, idLockName)
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("retro: open id lock: %w", err)
+	}
+	for attempt := 0; attempt < raceRetries; attempt++ {
+		lerr := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if lerr == nil {
+			return func() {
+				_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+				_ = f.Close()
+			}, nil
+		}
+		if !errors.Is(lerr, syscall.EWOULDBLOCK) {
+			f.Close()
+			return nil, fmt.Errorf("retro: acquire id lock: %w", lerr)
+		}
+		time.Sleep(raceBackoff)
+	}
+	f.Close()
+	return nil, fmt.Errorf("retro: gave up acquiring id lock after %d attempts", raceRetries)
 }
 
 // update rewrites only the Occurrences section, merging new receipts (dedup by
