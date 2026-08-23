@@ -50,7 +50,15 @@ export const SpringfieldGuard = async () => {
             input: payload,
             encoding: "utf8",
         })
+        // Fail CLOSED on transport failure: ONLY an unambiguous "guard ran
+        // and allowed" (exit status 0) permits. A spawn error (hook binary
+        // unresolvable/not executable), a null/undefined status (killed by
+        // a signal), or any unexpected exit code throws a deny error — an
+        // unguarded tool call must never slip through.
+        if (proc.error) throw new Error("springfield-guard: hook transport failed (" + proc.error + ") — denying")
+        if (proc.status === 0) return
         if (proc.status === 2) throw new Error(proc.stderr || "springfield-guard: blocked")
+        throw new Error("springfield-guard: hook transport failed (unexpected exit status " + proc.status + ") — denying")
     }
     // Fail CLOSED: for a known-mutating tool, if we cannot extract the
     // path/command arg (wrong/renamed opencode key), throw rather than

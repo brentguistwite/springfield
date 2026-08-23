@@ -176,6 +176,32 @@ model = "openai/gpt-5.4"
 	}
 }
 
+func TestLoadFromRejectsUnknownAgentMixedIntoPriority(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+[project]
+agent_priority = ["claude", "not-an-agent"]
+`)
+
+	_, err := config.LoadFrom(root)
+	if err == nil {
+		t.Fatal("expected invalid config error")
+	}
+
+	var invalidErr *config.InvalidConfigError
+	if !errors.As(err, &invalidErr) {
+		t.Fatalf("expected InvalidConfigError, got %T", err)
+	}
+
+	if !strings.Contains(err.Error(), "not an execution-supported agent") {
+		t.Fatalf("expected execution-supported rejection, got %q", err.Error())
+	}
+
+	if !strings.Contains(err.Error(), filepath.Join(root, config.FileName)) {
+		t.Fatalf("expected error to mention config path, got %q", err.Error())
+	}
+}
+
 func TestLoadParsesClaudeExecutionConfig(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `

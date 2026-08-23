@@ -34,6 +34,12 @@ func TestOpencodeClassifyError(t *testing.T) {
 			wantClass: agents.ErrorClassFatal,
 		},
 		{
+			name:      "clean exit is fatal even when error text carries a retryable needle",
+			exitCode:  0,
+			err:       assertErr("rate limit hit while validating"),
+			wantClass: agents.ErrorClassFatal,
+		},
+		{
 			name:      "missing cli is retryable",
 			exitCode:  -1,
 			err:       osexec.ErrNotFound,

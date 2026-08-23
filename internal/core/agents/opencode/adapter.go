@@ -298,19 +298,20 @@ func (a *adapter) AssistantText(events []coreexec.Event) string {
 
 // ClassifyError normalizes a failed opencode run into retryable-vs-fatal so
 // the runtime can fall back to the next agent in priority. Mirrors the gemini
-// needle-list shape: scan process error text, stderr lines, and decoded
-// top-level error-event messages for transient-failure needles. Binary-not-
-// found is retryable (install-time problem, not plan-fatal); a clean exit is
-// fatal (a validator rejection is a real verdict, not a transport blip).
+// adapter's precedence exactly: a clean exit is fatal FIRST (a validator
+// rejection is a real verdict, not a transport blip — no needle can rescue
+// it), then binary-not-found is retryable (install-time problem, not
+// plan-fatal), then the needle list scans process error text, stderr lines,
+// and decoded top-level error-event messages for transient-failure needles.
 func (a *adapter) ClassifyError(events []coreexec.Event, exitCode int, err error) agents.ErrorClass {
+	if exitCode == 0 {
+		return agents.ErrorClassFatal
+	}
 	if errors.Is(err, osexec.ErrNotFound) {
 		return agents.ErrorClassRetryable
 	}
 	if opencodeRetryableText(errorString(err)) {
 		return agents.ErrorClassRetryable
-	}
-	if exitCode == 0 {
-		return agents.ErrorClassFatal
 	}
 	for _, event := range events {
 		if opencodeRetryableEvent(event) {

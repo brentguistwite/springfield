@@ -198,6 +198,66 @@ console.log("OK: " + denied + " unextractable mutating calls denied")
 	}
 }
 
+// TestOpenCodeGuardPluginFailsClosedOnHookTransportFailure drives the ACTUAL
+// installed plugin bytes through a JS runtime: when the hook binary cannot be
+// resolved/executed (SPRINGFIELD_HOOK_BIN points nowhere), tool.execute.before
+// must DENY (throw) a benign bash call instead of silently allowing it because
+// the guard never ran. A hook binary that runs and exits 0 still permits.
+func TestOpenCodeGuardPluginFailsClosedOnHookTransportFailure(t *testing.T) {
+	runtime, ok := jsRuntime()
+	if !ok {
+		t.Skip("no bun/node JS runtime on PATH; fail-closed JS behavior pinned only where a runtime exists")
+	}
+
+	plugin := guardPluginSource(t)
+	dir := t.TempDir()
+	pluginPath := filepath.Join(dir, "springfield-guard.js")
+	if err := os.WriteFile(pluginPath, []byte(plugin), 0o600); err != nil {
+		t.Fatalf("write plugin copy: %v", err)
+	}
+
+	// Driver: import the real plugin, invoke tool.execute.before with a
+	// benign bash command under the ambient SPRINGFIELD_HOOK_BIN, and print
+	// ALLOWED (guard permitted) or DENIED (guard threw).
+	driver := `
+import { pathToFileURL } from "node:url"
+const mod = await import(pathToFileURL(process.argv[2]).href)
+const guard = await mod.SpringfieldGuard({})
+try {
+    await guard["tool.execute.before"]({ tool: "bash" }, { args: { command: "echo hi" } })
+    console.log("ALLOWED")
+} catch (err) {
+    console.log("DENIED: " + String(err))
+}
+`
+	driverPath := filepath.Join(dir, "guard-transport-driver.mjs")
+	if err := os.WriteFile(driverPath, []byte(driver), 0o600); err != nil {
+		t.Fatalf("write driver: %v", err)
+	}
+
+	runDriver := func(hookBin string) string {
+		t.Helper()
+		cmd := exec.Command(runtime, driverPath, pluginPath)
+		cmd.Env = append(os.Environ(), "SPRINGFIELD_HOOK_BIN="+hookBin)
+		out, _ := cmd.CombinedOutput()
+		return string(out)
+	}
+
+	allowHook := filepath.Join(dir, "allow-hook")
+	if err := os.WriteFile(allowHook, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write allow hook: %v", err)
+	}
+
+	if out := runDriver(allowHook); !strings.Contains(out, "ALLOWED") {
+		t.Fatalf("status-0 hook must permit the call; got:\n%s", out)
+	}
+
+	out := runDriver("/nonexistent/springfield-path")
+	if strings.Contains(out, "ALLOWED") || !strings.Contains(out, "DENIED") {
+		t.Fatalf("hook-transport failure must DENY (throw), not fail open; got:\n%s", out)
+	}
+}
+
 func jsRuntime() (string, bool) {
 	for _, name := range []string{"bun", "node"} {
 		if path, err := exec.LookPath(name); err == nil {
