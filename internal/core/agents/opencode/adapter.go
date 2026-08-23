@@ -5,6 +5,7 @@ package opencode
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -42,7 +43,13 @@ type adapter struct {
 // The runtime discovers capabilities by optional type assertion, so a dropped
 // method would silently disable the capability rather than fail a build. Pin
 // what exists after this section; later sections add their own pins.
-var _ agents.Commander = (*adapter)(nil)
+// (ModelProvider is deliberately absent until Section F.)
+var (
+	_ agents.Commander         = (*adapter)(nil)
+	_ agents.ResultValidator   = (*adapter)(nil)
+	_ agents.TranscriptDecoder = (*adapter)(nil)
+	_ agents.ErrorClassifier   = (*adapter)(nil)
+)
 
 // New constructs an opencode adapter with default options. Returns an
 // agents.Commander so the runtime can build runnable commands.
@@ -140,6 +147,239 @@ func (a *adapter) Command(input agents.CommandInput) (coreexec.Command, error) {
 		Dir:   input.WorkDir,
 		Env:   env,
 	}, nil
+}
+
+// Positive-signal contract: ValidateResult returns nil only when the
+// transcript carries an explicit success marker — at least one tool_use event
+// whose part.state.status reports "completed". Text-only runs, all-tools-
+// errored runs, and non-zero exits all fail validation.
+//
+// Field shapes below are CONFIRMED against real captures (opencode CLI
+// v1.18.21, free default model, 2026-08-22; fixtures-of-record under
+// tests/realcaptures/opencode/):
+//
+//   - stdout is NDJSON, one JSON object per line:
+//     {"type","timestamp","sessionID","part"}.
+//   - Dual tagging: outer snake_case "type" ("step_start", "step_finish",
+//     "tool_use", "text", "error") diverges from part.type camelCase
+//     ("step-start", "step-finish", "tool", "text"). Decode the OUTER type.
+//   - A tool call and its result are ONE unified event (no paired
+//     call/result events): part.tool names the tool, part.state.status is
+//     "completed" or "error" (both observed in captures), part.state.input /
+//     part.state.output carry payload.
+//   - Tool arg key names in part.state.input (guard-translation contract,
+//     pinned by tests/agents/opencode_guard_args_test.go):
+//     write → filePath,content; edit → filePath,oldString,newString;
+//     bash → command; read → filePath.
+//   - Final assistant text lives at part.text on type:"text" events;
+//     part.time.end is set once the text is finalized.
+//   - step_finish.part.reason: "tool-calls" (mid-run) or "stop" (final);
+//     there is no dedicated done event. Secondary signal only.
+//   - Hard failure emits a top-level error event ON STDOUT (stderr empty)
+//     with exit code 1:
+//     {"type":"error",...,"error":{"name":"UnknownError","data":{"message":...,"ref":...}}}.
+//   - Every step_finish carries part.cost (provider-computed USD) and
+//     part.tokens {total,input,output,reasoning,cache:{write,read}}; cost
+//     read 0 on the free-tier model used for capture (non-zero dollar
+//     values unverified).
+//   - No reasoning or task/subagent events appeared in any capture.
+func (a *adapter) ValidateResult(result coreexec.Result, requireToolAction bool) error {
+	if result.ExitCode != 0 {
+		if msg := lastErrorMessage(result.Events); msg != "" {
+			return fmt.Errorf("opencode exited with non-zero code %d: %s", result.ExitCode, msg)
+		}
+		return fmt.Errorf("opencode exited with non-zero code %d", result.ExitCode)
+	}
+
+	// Tool-free reviewer: past the exit-code guard, a clean exit is a valid
+	// completion even with no tool work; the verdict scanner judges substance.
+	if !requireToolAction {
+		return nil
+	}
+
+	sawCompletedToolUse := false
+	for _, e := range result.Events {
+		if e.Type != coreexec.EventStdout {
+			continue
+		}
+		var ev opencodeStreamEvent
+		if err := json.Unmarshal([]byte(e.Data), &ev); err != nil {
+			continue
+		}
+		if ev.Type == "tool_use" && ev.Part.State.Status == "completed" {
+			sawCompletedToolUse = true
+		}
+	}
+
+	if sawCompletedToolUse {
+		return nil
+	}
+	return errors.New("opencode exited without completing tool work")
+}
+
+// opencodeStreamEvent mirrors only the fields the transcript parsers consume.
+// The outer "type" is authoritative (see ValidateResult doc comment); part
+// fields are addressed through Part.
+type opencodeStreamEvent struct {
+	Type string              `json:"type"`
+	Part opencodeMessagePart `json:"part"`
+	Err  *struct {
+		Name string `json:"name"`
+		Data struct {
+			Message string `json:"message"`
+		} `json:"data"`
+	} `json:"error"`
+}
+
+type opencodeMessagePart struct {
+	Type string `json:"type"`
+	Tool string `json:"tool"`
+	Text string `json:"text"`
+	Time *struct {
+		Start int64 `json:"start"`
+		End   int64 `json:"end"`
+	} `json:"time"`
+	State struct {
+		Status string          `json:"status"`
+		Input  json.RawMessage `json:"input"`
+		Output json.RawMessage `json:"output"`
+	} `json:"state"`
+}
+
+// lastErrorMessage returns the message of the LAST decoded top-level error
+// event in the stream (opencode emits one terminal error line on failure).
+func lastErrorMessage(events []coreexec.Event) string {
+	msg := ""
+	for _, e := range events {
+		if e.Type != coreexec.EventStdout {
+			continue
+		}
+		var ev opencodeStreamEvent
+		if err := json.Unmarshal([]byte(e.Data), &ev); err != nil {
+			continue
+		}
+		if ev.Type == "error" && ev.Err != nil && ev.Err.Data.Message != "" {
+			msg = ev.Err.Data.Message
+		}
+	}
+	return msg
+}
+
+// AssistantText decodes the reviewer's plain text out of opencode's NDJSON
+// stream so the review gate scans real newlines, not the raw JSON transport
+// (BUG-1). Joins part.text from type:"text" events whose time.end is set —
+// unfinalized streaming dregs are excluded (see ValidateResult doc comment
+// for the confirmed field shapes).
+func (a *adapter) AssistantText(events []coreexec.Event) string {
+	var parts []string
+	for _, e := range events {
+		if e.Type != coreexec.EventStdout {
+			continue
+		}
+		var ev opencodeStreamEvent
+		if err := json.Unmarshal([]byte(e.Data), &ev); err != nil {
+			continue
+		}
+		if ev.Type != "text" || ev.Part.Text == "" {
+			continue
+		}
+		if ev.Part.Time == nil || ev.Part.Time.End == 0 {
+			continue
+		}
+		parts = append(parts, ev.Part.Text)
+	}
+	return strings.Join(parts, "\n")
+}
+
+// ClassifyError normalizes a failed opencode run into retryable-vs-fatal so
+// the runtime can fall back to the next agent in priority. Mirrors the gemini
+// needle-list shape: scan process error text, stderr lines, and decoded
+// top-level error-event messages for transient-failure needles. Binary-not-
+// found is retryable (install-time problem, not plan-fatal); a clean exit is
+// fatal (a validator rejection is a real verdict, not a transport blip).
+func (a *adapter) ClassifyError(events []coreexec.Event, exitCode int, err error) agents.ErrorClass {
+	if errors.Is(err, osexec.ErrNotFound) {
+		return agents.ErrorClassRetryable
+	}
+	if opencodeRetryableText(errorString(err)) {
+		return agents.ErrorClassRetryable
+	}
+	if exitCode == 0 {
+		return agents.ErrorClassFatal
+	}
+	for _, event := range events {
+		if opencodeRetryableEvent(event) {
+			return agents.ErrorClassRetryable
+		}
+	}
+	return agents.ErrorClassFatal
+}
+
+var opencodeRetryableNeedles = []string{
+	"rate limit",
+	"rate-limit",
+	"too many requests",
+	"429",
+	"quota exceeded",
+	"resource exhausted",
+	"unauthorized",
+	"unauthenticated",
+	"invalid_token",
+	"401",
+	"timed out",
+	"timeout",
+	"temporary failure",
+	"temporarily unavailable",
+	"service unavailable",
+	"connection reset",
+	"connection refused",
+	"econnreset",
+	"econnrefused",
+	"503",
+	"500",
+	"overloaded",
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func opencodeRetryableText(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return false
+	}
+	for _, needle := range opencodeRetryableNeedles {
+		if strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// opencodeRetryableEvent scans stderr verbatim; stdout lines must decode as a
+// top-level error event before their message is needle-scanned (plain model
+// chatter and tool output on stdout never trip the list).
+func opencodeRetryableEvent(event coreexec.Event) bool {
+	if event.Type == coreexec.EventStderr {
+		return opencodeRetryableText(event.Data)
+	}
+	if event.Type != coreexec.EventStdout {
+		return false
+	}
+
+	var ev opencodeStreamEvent
+	if err := json.Unmarshal([]byte(event.Data), &ev); err != nil {
+		return false
+	}
+	if ev.Type != "error" || ev.Err == nil {
+		return false
+	}
+
+	return opencodeRetryableText(ev.Err.Data.Message)
 }
 
 // maybeEmitAuthWarning warns once (per adapter instance) when no opencode auth
