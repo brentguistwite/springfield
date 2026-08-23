@@ -72,6 +72,6 @@ Migrate the plan to PRD format to get cap coverage.
 > no `--max-turns` option (verified via `claude --help`; it offers only
 > `--max-budget-usd`). Passing an unsupported flag would abort every run, so the
 > cap is enforced from the stream-json output instead. Agents that don't report
-> `num_turns` (Codex, Gemini) are never tripped by this monitor. If a future CLI
+> `num_turns` (Codex, Gemini, OpenCode) are never tripped by this monitor. If a future CLI
 > adds `--max-turns`, the flag can be wired as a complementary first line of
 > defense without changing this monitor.

@@ -257,8 +257,8 @@ func (r *Runner) Run(ctx context.Context, req Request) Result {
 		}
 		r.emitLog(req.OnEvent, fmt.Sprintf("springfield: %s failure is retryable — falling through to the next agent in the chain", agentID))
 		// Only install a cooldown for adapters that opted into Cooldowner.
-		// Adapters without it (currently codex, gemini) fall through to the
-		// next agent without being penalized for a single transient failure
+		// Adapters without it (currently codex, gemini, opencode) fall
+		// through to the next agent without being penalized for a single transient failure
 		// — only the agent that knows how to recognize its own rate-limit
 		// gets cooled down.
 		if cd, ok := resolved.Adapter.(agents.Cooldowner); ok {

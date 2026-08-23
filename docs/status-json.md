@@ -84,7 +84,7 @@ are their empty/clean projections. A repo that has never archived a batch stays
 - `branch` is the per-plan worktree branch (deleted on merge success).
   **`base_branch` is the durable integration target — push this to open the PR.**
 - `agent` (omitted when unset) is the adapter running the plan (`claude` /
-  `codex` / `gemini`); `started_at` (omitted until the plan starts) is when the
+  `codex` / `gemini` / `opencode`); `started_at` (omitted until the plan starts) is when the
   current attempt began. Both are surfaced so a live watcher (`status --watch`)
   shows which agent holds each plan and its elapsed time from the same
   projection — never a second source.
