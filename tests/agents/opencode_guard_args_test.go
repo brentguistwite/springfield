@@ -2,6 +2,7 @@ package agents_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -138,26 +139,30 @@ func keysOf(m map[string]any) []string {
 }
 
 // TestOpenCodeGuardPluginDeniesUnextractableMutatingCall drives the ACTUAL
-// installed plugin bytes through a JS runtime: SpringfieldGuard's
-// tool.execute.before must THROW for a known-mutating call whose arg shape
-// yields no path/command (fail closed), never fall through to allow.
+// installed plugin bytes through EVERY JS runtime available (bun AND node —
+// local dev and CI must exercise the same code paths, not whichever runtime
+// happens to sort first on PATH): SpringfieldGuard's tool.execute.before must
+// THROW for a known-mutating call whose arg shape yields no path/command
+// (fail closed), never fall through to allow.
 func TestOpenCodeGuardPluginDeniesUnextractableMutatingCall(t *testing.T) {
-	runtime, ok := jsRuntime()
-	if !ok {
+	runtimes := jsRuntimes()
+	if len(runtimes) == 0 {
 		t.Skip("no bun/node JS runtime on PATH; fail-closed JS behavior pinned only where a runtime exists")
 	}
-
 	plugin := guardPluginSource(t)
-	dir := t.TempDir()
-	pluginPath := filepath.Join(dir, "springfield-guard.js")
-	if err := os.WriteFile(pluginPath, []byte(plugin), 0o600); err != nil {
-		t.Fatalf("write plugin copy: %v", err)
-	}
 
-	// Driver: import the real plugin, invoke tool.execute.before with
-	// synthetic known-mutating calls whose args contain no extractable
-	// path/command. Pass iff every call THROWS (deny).
-	driver := `
+	for _, rt := range runtimes {
+		t.Run(rt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			pluginPath := filepath.Join(dir, "springfield-guard.js")
+			if err := os.WriteFile(pluginPath, []byte(plugin), 0o600); err != nil {
+				t.Fatalf("write plugin copy: %v", err)
+			}
+
+			// Driver: import the real plugin, invoke tool.execute.before with
+			// synthetic known-mutating calls whose args contain no extractable
+			// path/command. Pass iff every call THROWS (deny).
+			driver := `
 import { pathToFileURL } from "node:url"
 const mod = await import(pathToFileURL(process.argv[2]).href)
 const guard = await mod.SpringfieldGuard({})
@@ -183,86 +188,187 @@ for (const [tool, args] of [
 }
 console.log("OK: " + denied + " unextractable mutating calls denied")
 `
-	driverPath := filepath.Join(dir, "guard-deny-driver.mjs")
-	if err := os.WriteFile(driverPath, []byte(driver), 0o600); err != nil {
-		t.Fatalf("write driver: %v", err)
-	}
+			driverPath := filepath.Join(dir, "guard-deny-driver.mjs")
+			if err := os.WriteFile(driverPath, []byte(driver), 0o600); err != nil {
+				t.Fatalf("write driver: %v", err)
+			}
 
-	cmd := exec.Command(runtime, driverPath, pluginPath)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("JS harness failed (%v):\n%s", err, out)
-	}
-	if !strings.Contains(string(out), "OK: 4 unextractable mutating calls denied") {
-		t.Fatalf("unexpected harness output:\n%s", out)
+			cmd := exec.Command(rt.path, driverPath, pluginPath)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("JS harness failed (%v):\n%s", err, out)
+			}
+			if !strings.Contains(string(out), "OK: 4 unextractable mutating calls denied") {
+				t.Fatalf("unexpected harness output:\n%s", out)
+			}
+		})
 	}
 }
 
 // TestOpenCodeGuardPluginFailsClosedOnHookTransportFailure drives the ACTUAL
-// installed plugin bytes through a JS runtime: when the hook binary cannot be
-// resolved/executed (SPRINGFIELD_HOOK_BIN points nowhere), tool.execute.before
-// must DENY (throw) a benign bash call instead of silently allowing it because
-// the guard never ran. A hook binary that runs and exits 0 still permits.
+// installed plugin bytes through EVERY available JS runtime (see the deny
+// test above — local and CI must not exercise different runtimes). Scenarios:
+//
+//  1. hook binary unresolvable → tool.execute.before must DENY (throw), never
+//     silently allow because the guard never ran.
+//  2. hook runs and exits 0 → must PERMIT, even when it exits without
+//     draining stdin. The oversized payload (far larger than the OS pipe
+//     buffer) makes the undrained-stdin EPIPE deterministic instead of a
+//     scheduler race: spawnSync must still honor the child's exit-0 verdict.
 func TestOpenCodeGuardPluginFailsClosedOnHookTransportFailure(t *testing.T) {
-	runtime, ok := jsRuntime()
-	if !ok {
+	runtimes := jsRuntimes()
+	if len(runtimes) == 0 {
 		t.Skip("no bun/node JS runtime on PATH; fail-closed JS behavior pinned only where a runtime exists")
 	}
-
 	plugin := guardPluginSource(t)
-	dir := t.TempDir()
-	pluginPath := filepath.Join(dir, "springfield-guard.js")
-	if err := os.WriteFile(pluginPath, []byte(plugin), 0o600); err != nil {
-		t.Fatalf("write plugin copy: %v", err)
-	}
 
-	// Driver: import the real plugin, invoke tool.execute.before with a
-	// benign bash command under the ambient SPRINGFIELD_HOOK_BIN, and print
-	// ALLOWED (guard permitted) or DENIED (guard threw).
-	driver := `
+	for _, rt := range runtimes {
+		t.Run(rt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			pluginPath := filepath.Join(dir, "springfield-guard.js")
+			if err := os.WriteFile(pluginPath, []byte(plugin), 0o600); err != nil {
+				t.Fatalf("write plugin copy: %v", err)
+			}
+
+			// Driver: import the real plugin, invoke tool.execute.before with
+			// the bash command from argv[3], and print ALLOWED (guard
+			// permitted) or DENIED (guard threw).
+			driver := `
 import { pathToFileURL } from "node:url"
 const mod = await import(pathToFileURL(process.argv[2]).href)
 const guard = await mod.SpringfieldGuard({})
+const command = process.argv[3] || "echo hi"
 try {
-    await guard["tool.execute.before"]({ tool: "bash" }, { args: { command: "echo hi" } })
+    await guard["tool.execute.before"]({ tool: "bash" }, { args: { command } })
     console.log("ALLOWED")
 } catch (err) {
     console.log("DENIED: " + String(err))
 }
 `
-	driverPath := filepath.Join(dir, "guard-transport-driver.mjs")
-	if err := os.WriteFile(driverPath, []byte(driver), 0o600); err != nil {
-		t.Fatalf("write driver: %v", err)
-	}
+			driverPath := filepath.Join(dir, "guard-transport-driver.mjs")
+			if err := os.WriteFile(driverPath, []byte(driver), 0o600); err != nil {
+				t.Fatalf("write driver: %v", err)
+			}
 
-	runDriver := func(hookBin string) string {
-		t.Helper()
-		cmd := exec.Command(runtime, driverPath, pluginPath)
-		cmd.Env = append(os.Environ(), "SPRINGFIELD_HOOK_BIN="+hookBin)
-		out, _ := cmd.CombinedOutput()
-		return string(out)
-	}
+			runDriver := func(hookBin, command string) string {
+				t.Helper()
+				cmd := exec.Command(rt.path, driverPath, pluginPath, command)
+				cmd.Env = append(os.Environ(), "SPRINGFIELD_HOOK_BIN="+hookBin)
+				out, _ := cmd.CombinedOutput()
+				return string(out)
+			}
 
-	allowHook := filepath.Join(dir, "allow-hook")
-	if err := os.WriteFile(allowHook, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write allow hook: %v", err)
-	}
+			allowHook := filepath.Join(dir, "allow-hook")
+			if err := os.WriteFile(allowHook, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+				t.Fatalf("write allow hook: %v", err)
+			}
 
-	if out := runDriver(allowHook); !strings.Contains(out, "ALLOWED") {
-		t.Fatalf("status-0 hook must permit the call; got:\n%s", out)
-	}
+			if out := runDriver(allowHook, "echo hi"); !strings.Contains(out, "ALLOWED") {
+				t.Fatalf("status-0 hook must permit the call; got:\n%s", out)
+			}
 
-	out := runDriver("/nonexistent/springfield-path")
-	if strings.Contains(out, "ALLOWED") || !strings.Contains(out, "DENIED") {
-		t.Fatalf("hook-transport failure must DENY (throw), not fail open; got:\n%s", out)
+			out := runDriver("/nonexistent/springfield-path", "echo hi")
+			if strings.Contains(out, "ALLOWED") || !strings.Contains(out, "DENIED") {
+				t.Fatalf("hook-transport failure must DENY (throw), not fail open; got:\n%s", out)
+			}
+		})
 	}
 }
 
-func jsRuntime() (string, bool) {
-	for _, name := range []string{"bun", "node"} {
-		if path, err := exec.LookPath(name); err == nil {
-			return path, true
-		}
+// TestOpenCodeGuardPluginHookVerdictTruthTable pins hookVerdict's full
+// decision table with synthetic spawnSync results across EVERY available JS
+// runtime. This is the layer where exotic transport states are pinned
+// deterministically: the CI failure this guards against (node on ubuntu
+// reports proc.error=EPIPE alongside status=0 when a fast-exiting hook
+// doesn't drain stdin) cannot be reproduced on demand through real pipes —
+// it's a scheduler race, and forcing it with oversized payloads SIGPIPE-kills
+// the driver instead of returning in-band data.
+func TestOpenCodeGuardPluginHookVerdictTruthTable(t *testing.T) {
+	runtimes := jsRuntimes()
+	if len(runtimes) == 0 {
+		t.Skip("no bun/node JS runtime on PATH; fail-closed JS behavior pinned only where a runtime exists")
 	}
-	return "", false
+	plugin := guardPluginSource(t)
+
+	cases := []struct {
+		name string
+		proc string // JS object literal for the synthetic spawnSync result
+		want string // expected outcome field
+	}{
+		{"clean-exit-0-allows", `{ status: 0, stderr: "" }`, "allow"},
+		// The exact CI shape: benign write-side EPIPE + clean exit verdict.
+		{"epipe-with-exit-0-still-allows", `{ error: new Error("spawnSync allow-hook EPIPE"), status: 0, stderr: null }`, "allow"},
+		{"exit-2-blocks", `{ status: 2, stderr: "blocked: .springfield is protected" }`, "blocked"},
+		{"unresolvable-binary-denies", `{ error: new Error("spawnSync ENOENT"), status: null }`, "transport-failed"},
+		{"signal-death-denies", `{ error: null, status: null, signal: "SIGKILL" }`, "transport-failed"},
+		{"unexpected-code-denies", `{ error: null, status: 1 }`, "transport-failed"},
+	}
+
+	for _, rt := range runtimes {
+		t.Run(rt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			pluginPath := filepath.Join(dir, "springfield-guard.js")
+			if err := os.WriteFile(pluginPath, []byte(plugin), 0o600); err != nil {
+				t.Fatalf("write plugin copy: %v", err)
+			}
+
+			var b strings.Builder
+			b.WriteString(`
+import { pathToFileURL } from "node:url"
+const mod = await import(pathToFileURL(process.argv[2]).href)
+const cases = [
+`)
+			for _, tc := range cases {
+				fmt.Fprintf(&b, "    { name: %q, proc: %s, want: %q },\n", tc.name, tc.proc, tc.want)
+			}
+			b.WriteString(`]
+let failures = 0
+for (const { name, proc, want } of cases) {
+    const got = mod.hookVerdict(proc)
+    if (got.outcome !== want) {
+        console.log("MISMATCH " + name + ": want=" + want + " got=" + JSON.stringify(got))
+        failures++
+    }
+}
+if (failures > 0) {
+    console.log("FAILED " + failures + "/" + cases.length)
+} else {
+    console.log("OK: " + cases.length + " verdict cases")
+}
+`)
+			driverPath := filepath.Join(dir, "guard-verdict-driver.mjs")
+			if err := os.WriteFile(driverPath, []byte(b.String()), 0o600); err != nil {
+				t.Fatalf("write driver: %v", err)
+			}
+
+			cmd := exec.Command(rt.path, driverPath, pluginPath)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("JS harness failed (%v):\n%s", err, out)
+			}
+			if !strings.Contains(string(out), fmt.Sprintf("OK: %d verdict cases", len(cases))) {
+				t.Fatalf("hookVerdict truth table regressed under %s:\n%s", rt.name, out)
+			}
+		})
+	}
+}
+
+type jsRuntime struct{ name, path string }
+
+// jsRuntimes returns EVERY distinct JS runtime available. The guard-plugin
+// tests deliberately matrix across all of them: picking only the first match
+// let local dev (bun) pass while CI (node-only) failed on runtime-specific
+// spawn semantics.
+func jsRuntimes() []jsRuntime {
+	var found []jsRuntime
+	seen := map[string]bool{}
+	for _, name := range []string{"bun", "node"} {
+		path, err := exec.LookPath(name)
+		if err != nil || seen[path] {
+			continue
+		}
+		seen[path] = true
+		found = append(found, jsRuntime{name: name, path: path})
+	}
+	return found
 }

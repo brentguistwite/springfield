@@ -40,28 +40,40 @@ func buildPluginSource() string {
 // spawnSync is Node-stdlib, so the plugin stays dependency-free, and argv-array
 // spawning is correct for binary paths containing spaces.
 import { spawnSync } from "node:child_process"
+
+// hookVerdict maps a spawnSync result onto the guard's three outcomes.
+// Exported so tests can pin the full truth table with synthetic results —
+// reproducing exotic transport states through real pipes is a scheduler race
+// (and oversized payloads get this process SIGPIPE-killed instead of
+// returning an in-band error).
+//
+// Fail CLOSED: ONLY an unambiguous "guard ran and allowed" (exit status 0)
+// permits. Status is checked FIRST — a clean exit 0 is the allow verdict even
+// when proc.error is set: a hook that exits without draining our stdin yields
+// a benign EPIPE on the write side (observed under node on CI, where /bin/sh
+// exits faster than the payload write lands). Everything else — death by
+// signal (null status), binary unresolvable/not executable, exit 2 (policy
+// deny), or any unexpected code — denies. An unguarded tool call must never
+// slip through.
+export const hookVerdict = (proc) => {
+    if (proc.status === 0) return { outcome: "allow" }
+    if (proc.status === 2) return { outcome: "blocked", detail: proc.stderr || "springfield-guard: blocked" }
+    return { outcome: "transport-failed", detail: String(proc.error || "unexpected exit status " + proc.status) }
+}
+
 export const SpringfieldGuard = async () => {
     const bin = process.env.SPRINGFIELD_HOOK_BIN || "springfield"
     const runGuard = (toolInput) => {
         const payload = JSON.stringify({ tool_input: toolInput })
         // --block-reentry: subagent context — block all springfield
         // start/plan/recover (see cmd/hook_guard.go).
-        const proc = spawnSync(bin, ["hook-guard", "--block-reentry"], {
+        const v = hookVerdict(spawnSync(bin, ["hook-guard", "--block-reentry"], {
             input: payload,
             encoding: "utf8",
-        })
-        // Fail CLOSED on transport failure: ONLY an unambiguous "guard ran
-        // and allowed" (exit status 0) permits. Check STATUS FIRST — a clean
-        // exit 0 is the allow verdict even when proc.error is set: a hook
-        // that exits without draining our stdin yields a benign EPIPE on the
-        // write side (observed under node on CI, where /bin/sh exits faster
-        // than the payload write lands). Everything else — a spawn error
-        // where no status exists (binary unresolvable/not executable), death
-        // by signal (null status), exit 2 (deny), or any unexpected code —
-        // denies. An unguarded tool call must never slip through.
-        if (proc.status === 0) return
-        if (proc.status === 2) throw new Error(proc.stderr || "springfield-guard: blocked")
-        throw new Error("springfield-guard: hook transport failed (" + (proc.error || "unexpected exit status " + proc.status) + ") — denying")
+        }))
+        if (v.outcome === "allow") return
+        if (v.outcome === "blocked") throw new Error(v.detail)
+        throw new Error("springfield-guard: hook transport failed (" + v.detail + ") — denying")
     }
     // Fail CLOSED: for a known-mutating tool, if we cannot extract the
     // path/command arg (wrong/renamed opencode key), throw rather than
