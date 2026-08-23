@@ -22,8 +22,13 @@ jobs:
       - name: go vet
         run: go vet ./...
 
-      - name: go test
-        run: go test ./...
+      - name: golangci-lint (config in .golangci.yml)
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b "$(go env GOPATH)/bin" v2.13.1
+          "$(go env GOPATH)/bin/golangci-lint" run
+
+      - name: go test (race detector enabled)
+        run: go test -race ./...
 
       - name: release-sync idempotency (manifest mode)
         run: go run ./cmd/release-sync -check
