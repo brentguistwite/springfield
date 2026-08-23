@@ -432,6 +432,13 @@ func NewStartCommand() *cobra.Command {
 				return fmt.Errorf("finalize completed batch %q: %w", b.ID, finErr)
 			}
 
+			// Retrospective (completion path only): extract + classify + persist
+			// retro.json beside the freshly archived batch. Warning-only — a
+			// failure here never alters the batch outcome or exit code, and the
+			// interrupt/cost-cap/failure branches (which stay resumable and
+			// unarchived) are deliberately left untouched.
+			emitBatchRetro(cmd.ErrOrStderr(), root, b.ID)
+
 			// Batch is durably archived + the cursor cleared: only now is the
 			// "completed" outcome final, so fire the notification here — a
 			// finalize failure above already notified failure and returned.
