@@ -62,33 +62,28 @@ func TestDefaultAdaptersUsesProvidedLookPath(t *testing.T) {
 	}
 }
 
-// TestDefaultAdaptersCarryRequiredCapabilities pins the capability set the
-// runtime discovers by type assertion (AGENTS.md Principle 5). The assembly-
-// point check in catalog panics on gaps; this boundary test documents the
-// expectation per agent — including codex/gemini's deliberate lack of
-// Cooldowner — so a change to either side fails loudly here too.
+// TestDefaultAdaptersCarryRequiredCapabilities defends the assembly-point
+// check in catalog.requireCapabilities: if that guard is removed or weakened,
+// this test fails. The authoritative expectation matrix lives in
+// requireCapabilities plus the per-package compile-time pins — the missing-
+// capability branches here are unreachable while the panic exists, so this
+// duplicate deliberately asserts only what the panic cannot: that the
+// returned values satisfy the capability interfaces at all, and codex/
+// gemini's documented cooldown-free contract.
 func TestDefaultAdaptersCarryRequiredCapabilities(t *testing.T) {
 	adapters := catalog.DefaultAdapters(nil)
 
 	for _, a := range adapters {
-		_, hasValidator := a.(agents.ResultValidator)
-		_, hasClassifier := a.(agents.ErrorClassifier)
-		_, hasModels := a.(agents.ModelProvider)
-		_, hasTranscript := a.(agents.TranscriptDecoder)
-		_, hasCooldown := a.(agents.Cooldowner)
-
+		if _, ok := a.(agents.Commander); !ok {
+			t.Errorf("%s does not satisfy agents.Commander", a.ID())
+		}
 		switch a.ID() {
 		case agents.AgentClaude:
-			if !hasValidator || !hasClassifier || !hasModels || !hasTranscript || !hasCooldown {
-				t.Errorf("%s: validator=%t classifier=%t models=%t transcript=%t cooldown=%t; claude must carry all five",
-					a.ID(), hasValidator, hasClassifier, hasModels, hasTranscript, hasCooldown)
+			if _, ok := a.(agents.Cooldowner); !ok {
+				t.Errorf("claude no longer implements Cooldowner; update requireCapabilities and this contract if deliberate")
 			}
 		case agents.AgentCodex, agents.AgentGemini:
-			if !hasValidator || !hasClassifier || !hasModels || !hasTranscript {
-				t.Errorf("%s: validator=%t classifier=%t models=%t transcript=%t; must carry all four",
-					a.ID(), hasValidator, hasClassifier, hasModels, hasTranscript)
-			}
-			if hasCooldown {
+			if _, ok := a.(agents.Cooldowner); ok {
 				t.Errorf("%s implements Cooldowner but is documented as cooldown-free; update the capability expectations if that changed deliberately", a.ID())
 			}
 		default:

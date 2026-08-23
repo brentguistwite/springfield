@@ -51,6 +51,7 @@ type adapter struct {
 // escaped stream-json (BUG-1) rather than fail a test. The runtime consumes the
 // capabilities pinned below through the same optional-assertion pattern with
 // silent fallbacks, so production satisfaction is enforced at compile time.
+var _ agents.Commander = (*adapter)(nil)
 var _ agents.TranscriptDecoder = (*adapter)(nil)
 var _ agents.ResultValidator = (*adapter)(nil)
 var _ agents.ErrorClassifier = (*adapter)(nil)

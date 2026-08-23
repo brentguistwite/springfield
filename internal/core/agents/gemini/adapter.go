@@ -43,6 +43,7 @@ type adapter struct {
 // capabilities pinned below through the same optional-assertion pattern with
 // silent fallbacks, so production satisfaction is enforced at compile time.
 // Cooldown is intentionally absent for gemini (see runtime runner cooldown handling).
+var _ agents.Commander = (*adapter)(nil)
 var _ agents.TranscriptDecoder = (*adapter)(nil)
 var _ agents.ResultValidator = (*adapter)(nil)
 var _ agents.ErrorClassifier = (*adapter)(nil)

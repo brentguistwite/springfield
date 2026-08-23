@@ -135,3 +135,37 @@ func isDefaultAdaptersSpread(call *ast.CallExpr) bool {
 	pkgIdent, ok := sel.X.(*ast.Ident)
 	return ok && pkgIdent.Name == "catalog" && sel.Sel.Name == "DefaultAdapters"
 }
+
+// TestDefaultAdaptersSpreadMatcher exercises the assembly-shape decision on
+// synthetic snippets so a future loosening of the matcher fails this test
+// instead of failing open against the real tree.
+func TestDefaultAdaptersSpreadMatcher(t *testing.T) {
+	cases := []struct {
+		name       string
+		expr       string
+		sanctioned bool
+	}{
+		{"sanctioned spread", `agents.NewRegistry(catalog.DefaultAdapters(lp)...)`, true},
+		{"bare registry, no adapters", `agents.NewRegistry()`, false},
+		{"hand-assembled list", `agents.NewRegistry(claude.New(lp), codex.New(lp), gemini.New(lp))`, false},
+		{"default set without spread", `agents.NewRegistry(catalog.DefaultAdapters(lp))`, false},
+		{"extended via append", `agents.NewRegistry(append(catalog.DefaultAdapters(lp), custom.New(lp))...)`, false},
+		{"wrapped then spread", `agents.NewRegistry(wrap(catalog.DefaultAdapters(lp))...)`, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			expr, err := parser.ParseExpr(tc.expr)
+			if err != nil {
+				t.Fatalf("parse %q: %v", tc.expr, err)
+			}
+			call, ok := expr.(*ast.CallExpr)
+			if !ok {
+				t.Fatalf("%q is not a call expression", tc.expr)
+			}
+			if got := isDefaultAdaptersSpread(call); got != tc.sanctioned {
+				t.Errorf("isDefaultAdaptersSpread(%q) = %t, want %t", tc.expr, got, tc.sanctioned)
+			}
+		})
+	}
+}

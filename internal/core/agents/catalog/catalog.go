@@ -38,6 +38,12 @@ func DefaultAdapters(lookPath agents.LookPathFunc) []agents.Adapter {
 // cooldown semantics — see the runtime runner's cooldown handling). The
 // default branch forces new adapters to extend this check rather than skip it.
 func requireCapabilities(a agents.Adapter) {
+	// Commander is required of every adapter: the runtime discovers it by
+	// type assertion and refuses to run plans without it.
+	if _, hasCommand := a.(agents.Commander); !hasCommand {
+		panic(fmt.Sprintf("%s adapter missing required capability: Commander", a.ID()))
+	}
+
 	_, hasValidator := a.(agents.ResultValidator)
 	_, hasClassifier := a.(agents.ErrorClassifier)
 	_, hasModels := a.(agents.ModelProvider)
