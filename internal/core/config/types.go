@@ -56,6 +56,10 @@ type Config struct {
 	// (Threshold unset) applies DefaultStallThreshold; an explicit "0" disables
 	// detection. See StallConfig.
 	Stall StallConfig `toml:"stall"`
+	// Retro is the [retro] retrospective-loop block. Zero value leaves the loop
+	// on (Enabled defaults true) with filing disabled (empty ItemsDir). See
+	// RetroConfig.
+	Retro RetroConfig `toml:"retro"`
 }
 
 // StartConfig holds settings for the start command.

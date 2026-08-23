@@ -20,6 +20,7 @@ type saveConfig struct {
 	Setup  *SetupConfig  `toml:"setup,omitempty"`
 	Ports  *PortsConfig  `toml:"ports,omitempty"`
 	Stall  *StallConfig  `toml:"stall,omitempty"`
+	Retro  *RetroConfig  `toml:"retro,omitempty"`
 }
 
 type saveAgentsConfig struct {
@@ -104,6 +105,10 @@ func newSaveConfig(cfg Config) saveConfig {
 	if cfg.Stall != (StallConfig{}) {
 		s := cfg.Stall
 		out.Stall = &s
+	}
+	if cfg.Retro != (RetroConfig{}) {
+		r := cfg.Retro
+		out.Retro = &r
 	}
 
 	return out

@@ -178,6 +178,13 @@ func validate(cfg Config) error {
 		return err
 	}
 
+	// A configured retro items_dir must be absolute: the filer runs unattended
+	// at finalize time, so a relative path resolving against the process cwd
+	// would file items somewhere unpredictable.
+	if dir := cfg.Retro.ItemsDir; dir != "" && !filepath.IsAbs(dir) {
+		return fmt.Errorf("retro.items_dir must be an absolute path, got %q", dir)
+	}
+
 	return nil
 }
 
@@ -201,6 +208,7 @@ func normalize(cfg *Config) {
 	cfg.Agents.Gemini.ApprovalMode = strings.TrimSpace(cfg.Agents.Gemini.ApprovalMode)
 	cfg.Agents.Gemini.SandboxMode = strings.TrimSpace(cfg.Agents.Gemini.SandboxMode)
 	cfg.Agents.Gemini.Model = strings.TrimSpace(cfg.Agents.Gemini.Model)
+	cfg.Retro.ItemsDir = strings.TrimSpace(cfg.Retro.ItemsDir)
 }
 
 func setPresence(cfg *Config, metadata toml.MetaData) {
