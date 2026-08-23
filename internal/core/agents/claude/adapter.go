@@ -48,8 +48,14 @@ type adapter struct {
 // New constructs a claude adapter with default options.
 // The review gate discovers transcript decoding by an optional type assertion,
 // so dropping AssistantText here would silently regress the verdict scan to raw
-// escaped stream-json (BUG-1) rather than fail a test. Pin it at compile time.
+// escaped stream-json (BUG-1) rather than fail a test. The runtime consumes the
+// capabilities pinned below through the same optional-assertion pattern with
+// silent fallbacks, so production satisfaction is enforced at compile time.
 var _ agents.TranscriptDecoder = (*adapter)(nil)
+var _ agents.ResultValidator = (*adapter)(nil)
+var _ agents.ErrorClassifier = (*adapter)(nil)
+var _ agents.Cooldowner = (*adapter)(nil)
+var _ agents.ModelProvider = (*adapter)(nil)
 
 func New(lookPath agents.LookPathFunc) agents.Commander {
 	return NewWithOptions(lookPath, Options{})
@@ -357,7 +363,7 @@ func defaultPluginDisables() map[string]bool {
 // one warning.
 func (a *adapter) emitSettingsWarning(errMsg string) {
 	a.warnOnce.Do(func() {
-		fmt.Fprintf(a.warnBuf,
+		_, _ = fmt.Fprintf(a.warnBuf,
 			"springfield: cannot read ~/.claude/settings.json: %s — applying default plugin-disable IDs; subagent may still see plugin if installed under a different marketplace slug\n",
 			errMsg,
 		)
