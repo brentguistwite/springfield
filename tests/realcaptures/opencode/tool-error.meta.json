@@ -1,0 +1,14 @@
+{
+  "tool": "opencode",
+  "tool_version": "1.18.21",
+  "scenario": "tool-error",
+  "command_args": [
+    "run",
+    "--format",
+    "json",
+    "--auto"
+  ],
+  "captured_at": "2026-08-22T21:55:00Z",
+  "sha256": "7e424ed156610ad9dd09238bb536ff63fa62588112f51254af2461c1abc82a66",
+  "notes": "read tool_use on a nonexistent path reports part.state.status error while the run still exits 0 — pins the all-tools-errored negative case"
+}

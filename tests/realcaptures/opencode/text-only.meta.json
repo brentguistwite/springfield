@@ -1,0 +1,14 @@
+{
+  "tool": "opencode",
+  "tool_version": "1.18.21",
+  "scenario": "text-only",
+  "command_args": [
+    "run",
+    "--format",
+    "json",
+    "--auto"
+  ],
+  "captured_at": "2026-08-22T21:50:00Z",
+  "sha256": "e81ec1c4045a1fc6533a35b5a0d77f945fac944b8b21d1a747bcd4870b94ef2b",
+  "notes": "text-only reply (SPRINGFIELD_OK marker), zero tool_use events — the implementer-mode negative case; exit 0"
+}
