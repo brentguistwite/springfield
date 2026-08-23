@@ -3,6 +3,7 @@ package batchexec_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"springfield/internal/features/batch"
@@ -12,7 +13,10 @@ import (
 // fakeRunner is a scripted PlanRunner. Each RunPlan call records the plan ID
 // and returns the scripted outcome (zero Outcome when unscripted). Terminal
 // plans are skipped by Execute and marked terminal on successful settle.
+// Parallel phases call RunPlan and IsTerminal concurrently, so mutable state
+// is mutex-guarded; -race exercises this via TestExecuteHardFailureOutranksNeedsHuman.
 type fakeRunner struct {
+	mu         sync.Mutex
 	dispatched []string
 	outcomes   map[string]batchexec.Outcome
 	terminal   map[string]bool
@@ -23,6 +27,8 @@ func newFakeRunner() *fakeRunner {
 }
 
 func (f *fakeRunner) RunPlan(_ context.Context, planID string, _ batchexec.RunInfo) batchexec.Outcome {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.dispatched = append(f.dispatched, planID)
 	out := f.outcomes[planID]
 	if out.Err == nil && !out.CostCapped && !out.NoEligiblePlan {
@@ -31,7 +37,11 @@ func (f *fakeRunner) RunPlan(_ context.Context, planID string, _ batchexec.RunIn
 	return out
 }
 
-func (f *fakeRunner) IsTerminal(planID string) bool { return f.terminal[planID] }
+func (f *fakeRunner) IsTerminal(planID string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.terminal[planID]
+}
 
 func twoPhaseBatch() batch.Batch {
 	return batch.Batch{
