@@ -155,6 +155,18 @@ func Init(dir string, priority []string, opts InitOptions) (InitResult, error) {
 			changed = true
 		}
 
+		if slices.Contains(priority, string(agents.AgentOpenCode)) &&
+			!loaded.Config.Agents.OpenCode.isPresent &&
+			loaded.Config.Agents.OpenCode.Model == "" {
+			// Recommended opencode settings are the zero value (no
+			// approval/sandbox axis; model never guessed), so this backfill
+			// fills nothing — it only marks the block present. A pre-existing
+			// [agents.opencode] block is left untouched via the isPresent guard.
+			loaded.Config.Agents.OpenCode.Model = rec.OpenCode.Model
+			loaded.Config.Agents.OpenCode.isPresent = true
+			changed = true
+		}
+
 		if opts.Models != nil {
 			if slices.Contains(priority, string(agents.AgentClaude)) {
 				if loaded.Config.Agents.Claude.Model != opts.Models[string(agents.AgentClaude)] {
@@ -171,6 +183,12 @@ func Init(dir string, priority []string, opts InitOptions) (InitResult, error) {
 			if slices.Contains(priority, string(agents.AgentGemini)) {
 				if loaded.Config.Agents.Gemini.Model != opts.Models[string(agents.AgentGemini)] {
 					loaded.Config.Agents.Gemini.Model = opts.Models[string(agents.AgentGemini)]
+					changed = true
+				}
+			}
+			if slices.Contains(priority, string(agents.AgentOpenCode)) {
+				if loaded.Config.Agents.OpenCode.Model != opts.Models[string(agents.AgentOpenCode)] {
+					loaded.Config.Agents.OpenCode.Model = opts.Models[string(agents.AgentOpenCode)]
 					changed = true
 				}
 			}
@@ -266,6 +284,16 @@ func buildScaffold(priority []string, opts InitOptions) string {
 		model := rec.Gemini.Model
 		if models != nil {
 			model = models[string(agents.AgentGemini)]
+		}
+		if model != "" {
+			base += fmt.Sprintf("model = %q\n", model)
+		}
+	}
+	if slices.Contains(priority, string(agents.AgentOpenCode)) {
+		base += "\n[agents.opencode]\n"
+		model := rec.OpenCode.Model
+		if models != nil {
+			model = models[string(agents.AgentOpenCode)]
 		}
 		if model != "" {
 			base += fmt.Sprintf("model = %q\n", model)

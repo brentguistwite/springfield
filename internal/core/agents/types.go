@@ -11,9 +11,10 @@ import (
 type ID string
 
 const (
-	AgentClaude ID = "claude"
-	AgentCodex  ID = "codex"
-	AgentGemini ID = "gemini"
+	AgentClaude   ID = "claude"
+	AgentCodex    ID = "codex"
+	AgentGemini   ID = "gemini"
+	AgentOpenCode ID = "opencode"
 )
 
 type Capability string
@@ -72,9 +73,10 @@ type Resolved struct {
 // ExecutionSettings carries adapter-specific execution configuration across the
 // runtime boundary.
 type ExecutionSettings struct {
-	Claude ClaudeExecutionSettings
-	Codex  CodexExecutionSettings
-	Gemini GeminiExecutionSettings
+	Claude   ClaudeExecutionSettings
+	Codex    CodexExecutionSettings
+	Gemini   GeminiExecutionSettings
+	OpenCode OpenCodeExecutionSettings
 }
 
 type ClaudeExecutionSettings struct {
@@ -99,6 +101,15 @@ type GeminiExecutionSettings struct {
 	ApprovalMode string
 	SandboxMode  string
 	Model        string
+}
+
+// OpenCodeExecutionSettings carries opencode CLI execution settings.
+//
+//   - Model maps to --model in opencode's "provider/model" form
+//     (e.g. "openai/gpt-5.4"). Empty delegates to opencode's own
+//     configured default.
+type OpenCodeExecutionSettings struct {
+	Model string
 }
 
 // CommandInput provides the parameters needed to build an agent CLI invocation.

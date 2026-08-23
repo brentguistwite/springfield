@@ -21,8 +21,8 @@ func TestSupportedForExecutionOrdering(t *testing.T) {
 		metered bool
 		want    []agents.ID
 	}{
-		{"not-metered default: claude leads", false, []agents.ID{agents.AgentClaude, agents.AgentCodex, agents.AgentGemini}},
-		{"metered: codex leads", true, []agents.ID{agents.AgentCodex, agents.AgentClaude, agents.AgentGemini}},
+		{"not-metered default: claude leads", false, []agents.ID{agents.AgentClaude, agents.AgentCodex, agents.AgentGemini, agents.AgentOpenCode}},
+		{"metered: codex leads", true, []agents.ID{agents.AgentCodex, agents.AgentClaude, agents.AgentGemini, agents.AgentOpenCode}},
 	}
 
 	for _, tc := range cases {
@@ -52,6 +52,7 @@ func TestIsExecutionSupported(t *testing.T) {
 		{agents.AgentClaude, true},
 		{agents.AgentCodex, true},
 		{agents.AgentGemini, true},
+		{agents.AgentOpenCode, true},
 		{agents.ID("unknown"), false},
 	}
 
