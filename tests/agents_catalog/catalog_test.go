@@ -13,11 +13,11 @@ func TestDefaultAdaptersReturnsThreeAdaptersInOrder(t *testing.T) {
 	// but we only call Metadata() here, not Detect().
 	adapters := catalog.DefaultAdapters(nil)
 
-	if len(adapters) != 3 {
-		t.Fatalf("expected 3 adapters, got %d", len(adapters))
+	if len(adapters) != 4 {
+		t.Fatalf("expected 4 adapters, got %d", len(adapters))
 	}
 
-	want := []agents.ID{agents.AgentClaude, agents.AgentCodex, agents.AgentGemini}
+	want := []agents.ID{agents.AgentClaude, agents.AgentCodex, agents.AgentGemini, agents.AgentOpenCode}
 	for i, id := range want {
 		got := adapters[i].ID()
 		if got != id {
@@ -34,8 +34,8 @@ func TestDefaultAdaptersUsesProvidedLookPath(t *testing.T) {
 	}
 
 	adapters := catalog.DefaultAdapters(lookPath)
-	if len(adapters) != 3 {
-		t.Fatalf("expected 3 adapters, got %d", len(adapters))
+	if len(adapters) != 4 {
+		t.Fatalf("expected 4 adapters, got %d", len(adapters))
 	}
 
 	// Call Detect on each adapter to exercise lookPath.
@@ -47,7 +47,7 @@ func TestDefaultAdaptersUsesProvidedLookPath(t *testing.T) {
 		t.Fatal("lookPath was never called; expected it to be invoked during Detect")
 	}
 
-	want := []string{"claude", "codex", "gemini"}
+	want := []string{"claude", "codex", "gemini", "opencode"}
 	for _, binary := range want {
 		found := false
 		for _, c := range called {

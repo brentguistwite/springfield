@@ -28,6 +28,7 @@ import (
 	"springfield/internal/core/agents/claude"
 	"springfield/internal/core/agents/codex"
 	"springfield/internal/core/agents/gemini"
+	"springfield/internal/core/agents/opencode"
 	"springfield/internal/core/config"
 	coreexec "springfield/internal/core/exec"
 	"springfield/internal/core/lock"
@@ -703,6 +704,7 @@ func runBatchWithContext(ctx context.Context, root string, run *batch.Run, b bat
 		claude.New(exec.LookPath),
 		codex.New(exec.LookPath),
 		gemini.New(exec.LookPath),
+		opencode.New(exec.LookPath),
 	)
 	agentIDs := make([]agents.ID, 0, len(loaded.Config.Project.AgentPriority))
 	for _, id := range loaded.Config.Project.AgentPriority {
@@ -1738,6 +1740,7 @@ func tryRunSinglePlanUnit(cmd *cobra.Command, root string, loaded config.Loaded,
 		claude.New(exec.LookPath),
 		codex.New(exec.LookPath),
 		gemini.New(exec.LookPath),
+		opencode.New(exec.LookPath),
 	)
 	if len(loaded.Config.Project.AgentPriority) == 0 {
 		return false, fmt.Errorf("project has no agents configured: agent_priority is empty. Run \"springfield init\" to select agents.")

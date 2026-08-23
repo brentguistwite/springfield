@@ -10,6 +10,7 @@ import (
 	"springfield/internal/core/agents/claude"
 	"springfield/internal/core/agents/codex"
 	"springfield/internal/core/agents/gemini"
+	"springfield/internal/core/agents/opencode"
 	"springfield/internal/core/config"
 	coreexec "springfield/internal/core/exec"
 	"springfield/internal/core/runtime"
@@ -32,6 +33,7 @@ func (r RuntimeRunner) Run(prompt string) (string, error) {
 		claude.New(r.lookPath),
 		codex.New(r.lookPath),
 		gemini.New(r.lookPath),
+		opencode.New(r.lookPath),
 	)
 	priority, settings, err := r.loadConfig()
 	if err != nil {

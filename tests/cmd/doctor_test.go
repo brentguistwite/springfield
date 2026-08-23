@@ -14,7 +14,7 @@ func TestDoctorReportsAgentDetection(t *testing.T) {
 	}
 
 	// Doctor must mention all supported agent binaries
-	for _, binary := range []string{"claude", "codex", "gemini"} {
+	for _, binary := range []string{"claude", "codex", "gemini", "opencode"} {
 		if !strings.Contains(output, binary) {
 			t.Errorf("expected doctor to mention %s, got:\n%s", binary, output)
 		}

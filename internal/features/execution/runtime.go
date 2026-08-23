@@ -13,6 +13,7 @@ import (
 	"springfield/internal/core/agents/claude"
 	"springfield/internal/core/agents/codex"
 	"springfield/internal/core/agents/gemini"
+	"springfield/internal/core/agents/opencode"
 	"springfield/internal/core/config"
 	coreexec "springfield/internal/core/exec"
 	coreruntime "springfield/internal/core/runtime"
@@ -56,6 +57,7 @@ func NewRuntimeRunner(root string, lookPath func(string) (string, error), onEven
 		claude.New(lookPath),
 		codex.New(lookPath),
 		gemini.New(lookPath),
+		opencode.New(lookPath),
 	)
 	runtimeRunner := coreruntime.NewRunner(registry)
 	agentIDs := priorityAgentIDs(loaded.Config.Project.AgentPriority)
