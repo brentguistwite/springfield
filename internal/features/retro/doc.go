@@ -13,6 +13,7 @@
 //
 // The exported surface is small: [Extract] over a batch archive directory
 // yields a *[Report]; the report carries a batch header, one [PlanRetro] per
-// plan, and (once classifiers land) a slice of [Finding]. Everything else is an
-// internal detail of how the finalized archive layout is walked.
+// plan, and (once classifiers land) a slice of [Finding]. [WriteReport] persists
+// that report atomically back beside the archive as retro.json. Everything else
+// is an internal detail of how the finalized archive layout is walked.
 package retro
