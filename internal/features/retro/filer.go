@@ -97,6 +97,11 @@ var receiptLine = regexp.MustCompile("^- `([^`]+)` — (\\d{4}-\\d{2}-\\d{2}) �
 // idLine matches an item's frontmatter id (e.g. "id: SPG-11") for max-id scans.
 var idLine = regexp.MustCompile(`(?m)^id:\s*` + itemIDPrefix + `-(\d+)\s*$`)
 
+// datePrefix matches the exact YYYY-MM-DD stem that precedes a key in an item
+// filename, so findExisting keys dedup off the whole key and never mistakes a
+// suffix-sharing sibling (e.g. "-recap-auto.md" for key "cap") for a match.
+var datePrefix = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+
 // Enabled reports whether the filer has an items directory to write into. A
 // caller checks this and skips filing when false.
 func (c Config) Enabled() bool { return strings.TrimSpace(c.ItemsDir) != "" }
@@ -104,10 +109,14 @@ func (c Config) Enabled() bool { return strings.TrimSpace(c.ItemsDir) != "" }
 // File creates or updates the vault ticket for one above-threshold item under
 // ItemsDir and reports what it did.
 //
-// The target filename is <ItemsDir>/YYYY-MM-DD-<key>-auto.md, where the date is
-// the OLDEST contributing occurrence's date in UTC. This stable-per-pattern name
-// is the dedup key: a pattern always maps to the same file, so a later batch that
-// trips the same key updates that ticket instead of spawning a new one.
+// Dedup keys off the stable pattern KEY, not the date. A fresh ticket is created
+// as <ItemsDir>/YYYY-MM-DD-<key>-auto.md, where the date is the OLDEST
+// contributing occurrence's date in UTC. But a later batch that trips the same
+// key updates the EXISTING ticket for that key whatever date prefix it already
+// carries — even if the occurrence window has slid forward and dropped the batch
+// that originally anchored the date. Keying dedup off the current window's oldest
+// date instead would mint a second ticket for the same pattern; findExisting
+// prevents that.
 //
 // Create mirrors the vault item template: frontmatter (type: item, a freshly
 // allocated SPG id, status: todo, tags), the project backlink pointer, a
@@ -136,12 +145,24 @@ func (c Config) File(item Item) (FileResult, error) {
 		return FileResult{}, fmt.Errorf("retro: item %q has no occurrences", key)
 	}
 
-	path, err := c.itemPath(key, oldestDate(item.Occurrences))
+	// createPath is the fall-back name for a brand-new ticket, anchored to the
+	// oldest occurrence; itemPath also rejects a key that would escape ItemsDir.
+	createPath, err := c.itemPath(key, oldestDate(item.Occurrences))
 	if err != nil {
 		return FileResult{}, err
 	}
 	if err := os.MkdirAll(c.ItemsDir, 0o755); err != nil {
 		return FileResult{}, fmt.Errorf("retro: create items dir: %w", err)
+	}
+
+	// Dedup off the stable key: if a ticket for this pattern already exists under
+	// ANY date prefix, target it for update rather than mint a duplicate when the
+	// occurrence window has slid forward.
+	path := createPath
+	if existing, err := c.findExisting(key); err != nil {
+		return FileResult{}, err
+	} else if existing != "" {
+		path = existing
 	}
 
 	for attempt := 0; attempt < raceRetries; attempt++ {
@@ -180,6 +201,43 @@ func (c Config) itemPath(key string, oldest time.Time) (string, error) {
 		return "", fmt.Errorf("retro: item key %q would escape ItemsDir", key)
 	}
 	return full, nil
+}
+
+// findExisting returns the path of an already-filed ticket for this pattern key,
+// regardless of the date prefix in its filename, or "" if none exists. Item
+// filenames follow YYYY-MM-DD-<key>-auto.md; dedup keys off the stable <key>, not
+// the date, so a later batch whose occurrence window has slid forward (dropping
+// the batch that originally anchored the date) still resolves to the original
+// ticket instead of minting a duplicate under a newer date. If several match
+// (should not happen), the lexically-first name — the oldest date — wins, so the
+// choice is stable.
+func (c Config) findExisting(key string) (string, error) {
+	entries, err := os.ReadDir(c.ItemsDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		return "", fmt.Errorf("retro: scan items dir: %w", err)
+	}
+	suffix := "-" + key + "-auto.md"
+	best := ""
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		stem := strings.TrimSuffix(name, suffix)
+		if stem == name || !datePrefix.MatchString(stem) {
+			continue // no key match, or the stem isn't a bare date
+		}
+		if best == "" || name < best {
+			best = name
+		}
+	}
+	if best == "" {
+		return "", nil
+	}
+	return filepath.Join(c.ItemsDir, best), nil
 }
 
 // create writes a brand-new ticket via O_EXCL so exactly one concurrent caller

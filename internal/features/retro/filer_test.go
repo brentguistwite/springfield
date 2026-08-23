@@ -173,6 +173,60 @@ func TestFile_DedupUpdatePreservesStatus(t *testing.T) {
 	}
 }
 
+func TestFile_DedupAcrossShiftedWindow(t *testing.T) {
+	dir := t.TempDir()
+	cfg := retro.Config{ItemsDir: dir}
+
+	// First run: oldest contributing batch is batch-a on 2026-08-10, so the ticket
+	// is anchored to that date.
+	res, err := cfg.File(sampleItem())
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	wantBase := "2026-08-10-iteration-cap-auto.md"
+	if got := filepath.Base(res.Path); got != wantBase {
+		t.Fatalf("first filename = %q, want %q", got, wantBase)
+	}
+
+	// A later run trips the same pattern, but the occurrence window has slid
+	// forward: batch-a has aged out, so the OLDEST date the caller reports is now
+	// 2026-08-12. Dedup must key off the pattern key, not this shifted date, and
+	// update the original ticket rather than mint a second one under a new date.
+	shifted := retro.Item{
+		Key: "iteration-cap",
+		Occurrences: []retro.Occurrence{
+			occ("batch-b", "proj-y", 2026, 8, 12, 1),
+			occ("batch-c", "proj-x", 2026, 8, 14, 2),
+			occ("batch-d", "proj-z", 2026, 8, 20, 3), // new
+		},
+	}
+	res2, err := cfg.File(shifted)
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if res2.Created {
+		t.Errorf("shifted window minted a duplicate: Created=true, want false (update)")
+	}
+	if res2.Path != res.Path {
+		t.Errorf("shifted window broke stable-per-pattern dedup: %q != %q", res2.Path, res.Path)
+	}
+
+	// Exactly one ticket exists on disk, and it carries the new receipt.
+	entries, _ := os.ReadDir(dir)
+	mdCount := 0
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".md") {
+			mdCount++
+		}
+	}
+	if mdCount != 1 {
+		t.Errorf("shifted window left %d .md tickets, want 1", mdCount)
+	}
+	if body := readFile(t, res.Path); !strings.Contains(body, "batch-d") {
+		t.Errorf("update did not append the new batch-d receipt:\n%s", body)
+	}
+}
+
 func TestFile_ConcurrentCreateRace(t *testing.T) {
 	dir := t.TempDir()
 	cfg := retro.Config{ItemsDir: dir}
