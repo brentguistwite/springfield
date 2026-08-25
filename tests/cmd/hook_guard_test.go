@@ -228,6 +228,32 @@ func TestHookGuardPathAwareness(t *testing.T) {
 			stdin:    `{"tool_input":{"command":"echo hi > notes.txt"}}`,
 			wantExit: 0,
 		},
+		// --- case-slip hardening (F3): macOS APFS is case-insensitive, so a
+		// case-folded path REALLY hits the control plane. Must deny. ---
+		{
+			name:     "uppercase .SPRINGFIELD rm blocked",
+			stdin:    `{"tool_input":{"command":"rm -rf .SPRINGFIELD/*"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "mixed-case file_path blocked",
+			stdin:    `{"tool_input":{"file_path":".Springfield/run.json"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "mixed-case redirect blocked",
+			stdin:    `{"tool_input":{"command":"echo pwn > .SpringField/x"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			// Reads stay reads regardless of case.
+			name:     "read of uppercase .SPRINGFIELD path allowed",
+			stdin:    `{"tool_input":{"command":"cat .SPRINGFIELD/run.json"}}`,
+			wantExit: 0,
+		},
 		{
 			name:     "malformed json fails open",
 			stdin:    `not json`,

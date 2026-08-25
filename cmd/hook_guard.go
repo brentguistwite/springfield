@@ -22,9 +22,9 @@ const hookGuardToken = ".springfield"
 // from `.opencode/plugins/` at BOOT — ahead of any tool-call hook — so a
 // planted plugin is itself the bypass; same for an agent-written
 // `opencode.json`, whose keys survive our OPENCODE_CONFIG_CONTENT override via
-// config deep-merge. Matching is CASE-INSENSITIVE (realistic typo/case-slip;
-// near-zero false-positive risk) — the single shared mechanism below covers
-// both these tokens and (since the F3 hardening) `.springfield`.
+// config deep-merge. Matching is CASE-INSENSITIVE: all protected tokens share
+// the single mechanism in hookGuardTargetsProtectedPath (see the F3 note
+// there).
 var hookGuardHarnessTokens = []string{".opencode", "opencode.json"}
 
 // hookGuardBlockMessage is written to stderr when the guard blocks a call.
@@ -125,7 +125,7 @@ var (
 	// mistaken for a file target.
 	hookGuardRedirectRegex = regexp.MustCompile(
 		`(\d*>>?|&>>?|>\||>&)[ \t]*["']?[^ \t"'|;&<>()` + "`" + `]*` +
-			`(?:\.springfield|(?i:\.opencode|opencode\.json))`)
+			`(?i:\.springfield|\.opencode|opencode\.json)`)
 
 	// hookGuardMutationCmdRegex matches a state-mutating command at shell
 	// command-position (start-of-string or after a separator, env-prefix and
@@ -156,10 +156,22 @@ var (
 // Known residuals (real control-plane mutations this guard does NOT block):
 //   - in-place edits: `sed -i ... .springfield/x`, `perl -i ...`
 //   - interpreter scriptlets: `python -c "open('.springfield/x','w')..."`,
-//     `node -e ...`, `ruby -e ...` (an interpreter can write any path)
+//     `node -e "writeFileSync('.springfield/x',...)"`, `ruby -e ...`
+//     (an interpreter can write any path)
 //   - VCS restores: `git restore .springfield/x`, `git checkout -- .springfield/x`
 //   - sync/wrappers: `rsync`, `bash -c "..."`, `env`, `sudo`, `xargs`
 //   - exotic redirects: `<>` read-write open
+//   - glob truncation: `rm -rf .spri*` (token split across the expansion)
+//   - concat splitting: `D='.spr''ingfield'; rm -rf "$D"` (no shell parser to
+//     rejoin the pieces)
+//   - var-indirect redirects: `D=.springfield; echo pwn > $D/run.json`
+//     (the target only materializes at expansion time)
+//   - symlink aliasing: two-step link/glob aliasing that renames the target
+//     out from under the literal-token match
+//
+// FIXED, previously residual: case-folding — `.SPRINGFIELD/*` really deletes
+// on case-insensitive APFS; all protected tokens now match case-insensitively
+// via hookGuardTargetsProtectedPath.
 //
 // These regressed from the prior naive substring check; the trade is deliberate
 // — that check false-positived on every commit body, grep, and read mentioning
@@ -288,16 +300,14 @@ func hookGuardShouldBlock(toolInput map[string]any) bool {
 }
 
 // hookGuardTargetsProtectedPath reports whether a path-bearing string touches
-// a guarded surface: the `.springfield` control plane (substring, legacy
-// case-sensitive form) or an agent-harness config surface from
-// hookGuardHarnessTokens (matched case-insensitively — one shared mechanism
-// for both path families).
+// a guarded surface: the `.springfield` control plane or an agent-harness
+// config surface from hookGuardHarnessTokens. ALL tokens match
+// case-insensitively through this one shared mechanism (F3 hardening): macOS
+// APFS is case-insensitive, so `rm -rf .SPRINGFIELD` really deletes the
+// control plane.
 func hookGuardTargetsProtectedPath(s string) bool {
-	if strings.Contains(s, hookGuardToken) {
-		return true
-	}
 	folded := strings.ToLower(s)
-	for _, tok := range hookGuardHarnessTokens {
+	for _, tok := range append([]string{hookGuardToken}, hookGuardHarnessTokens...) {
 		if strings.Contains(folded, tok) {
 			return true
 		}
