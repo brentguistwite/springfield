@@ -64,16 +64,18 @@ const hookGuardStartSentinel = "SPRINGFIELD_ALLOW_START="
 // still catching real invocations — including env-prefixed ones, so a bare
 // `FOO=1 springfield plan` cannot evade it.
 //
-// Residuals that would require a shell parser are intentionally NOT caught:
-// any wrapper that puts `springfield` in argument position rather than command
-// position — `bash -c "springfield plan"`, `sh -c ...`, `env springfield
-// plan`, `command springfield plan`, `sudo springfield plan`, `xargs`, etc. —
-// and env values containing whitespace (`FOO="a b" springfield plan`). The
-// wrapper list is open-ended, so a complete fix needs a shell parser; that is
-// deliberately out of scope. The guard stays a simple, dependency-free,
-// fail-open regex, and subagents are covered by two further layers
-// (permissions.deny strips Task/Workflow; the springfield plugin is disabled;
-// the executionPrompt carries an anti-recursion contract).
+// Residuals that would require a shell parser are intentionally NOT caught.
+// Known wrapper heads (sh/bash/zsh/env/command/exec/sudo/nohup/timeout/nice)
+// DO get caught via ONE bounded unwrap level — see hookGuardUnwrapOnce — but
+// deeper chains (`bash -c "sh -c '...'"`), wrappers appearing AFTER a shell
+// separator (`cd x && sudo springfield plan`), env values containing
+// whitespace (`FOO="a b" springfield plan`), and the open-ended tail of the
+// wrapper list (`xargs`, process substitution, ...) all remain residual; a
+// complete fix needs a shell parser and is deliberately out of scope. The
+// guard stays a simple, dependency-free, fail-open regex, and subagents are
+// covered by two further layers (permissions.deny strips Task/Workflow; the
+// springfield plugin is disabled; the executionPrompt carries an
+// anti-recursion contract).
 func hookGuardRecursionRegex(verbs string) *regexp.Regexp {
 	return regexp.MustCompile(hookGuardSep + hookGuardEnv + hookGuardBinSpringfield + `[ \t]+(` + verbs + `)\b`)
 }
@@ -90,6 +92,9 @@ func hookGuardRecursionRegex(verbs string) *regexp.Regexp {
 //     and `'springfield'` are recognized, not just bare `springfield`.
 const (
 	hookGuardSep = "(^|[;&|(){}" + "`" + `\n])[ \t]*`
+	// hookGuardSepChars mirrors the separator set in hookGuardSep as a plain
+	// string, for first-segment splitting in hookGuardUnwrapOnce.
+	hookGuardSepChars = ";&|(){}" + "`" + "\n"
 	// Env names follow shell grammar ([A-Za-z_]\w*) so a non-assignment word
 	// like `123=val` isn't mistaken for an env prefix.
 	hookGuardEnv = `([A-Za-z_]\w*=\S*[ \t]+)*`
@@ -162,7 +167,7 @@ var (
 //   - sync/wrappers: `rsync`, `bash -c "..."`, `env`, `sudo`, `xargs`
 //   - exotic redirects: `<>` read-write open
 //   - glob truncation: `rm -rf .spri*` (token split across the expansion)
-//   - concat splitting: `D='.spr''ingfield'; rm -rf "$D"` (no shell parser to
+//   - concat splitting: `D='.spr”ingfield'; rm -rf "$D"` (no shell parser to
 //     rejoin the pieces)
 //   - var-indirect redirects: `D=.springfield; echo pwn > $D/run.json`
 //     (the target only materializes at expansion time)
@@ -242,7 +247,7 @@ func runHookGuard(stdin io.Reader, stderr io.Writer, blockReentry bool) error {
 
 	cmd, _ := payload.ToolInput["command"].(string)
 	if blockReentry {
-		if hookGuardReentryRegex.MatchString(cmd) {
+		if hookGuardCommandReenters(cmd) {
 			fmt.Fprintln(stderr, hookGuardRecursionMessage)
 			os.Exit(2)
 		}
@@ -257,6 +262,90 @@ func runHookGuard(stdin io.Reader, stderr io.Writer, blockReentry bool) error {
 	}
 	return nil
 }
+
+// hookGuardCommandReenters reports whether a Bash command invokes springfield
+// start/plan/recover — either at a shell command position (the level-0
+// anchored match) or behind ONE bounded level of common wrapper (see
+// hookGuardUnwrapOnce). Deeper chains and mid-command wrappers stay residual
+// per the documented boundary on hookGuardRecursionRegex.
+func hookGuardCommandReenters(cmd string) bool {
+	if hookGuardReentryRegex.MatchString(cmd) {
+		return true
+	}
+	rest, ok := hookGuardUnwrapOnce(cmd)
+	if !ok {
+		return false
+	}
+	return hookGuardReentryRegex.MatchString(rest)
+}
+
+// hookGuardReentryWrappers are the shell/exec wrapper binaries whose FIRST
+// positional payload this guard is willing to unwrap, one level deep. The
+// list is deliberately closed-ended: each entry's arg grammar is simple
+// enough for the skippable-token rules below to stay predictable.
+var hookGuardReentryWrappers = map[string]bool{
+	"sh": true, "bash": true, "zsh": true,
+	"env": true, "command": true, "exec": true,
+	"sudo": true, "nohup": true, "timeout": true, "nice": true,
+}
+
+// hookGuardUnwrapOnce strips ONE wrapper layer from cmd: when the first token
+// of the command's first segment is a known wrapper (hookGuardReentryWrappers),
+// skip its leading flags (`-c`, `-lc`), env assignments (`FOO=1`), and bare
+// numeric args (`timeout 30`, `nice 5`), and return the remaining words as the
+// wrapped payload. The caller re-runs the anchored re-entry regex over that
+// payload. Returns false when there is no known wrapper to unwrap.
+//
+// This is a heuristic bound, not a parser: exactly one level is unwrapped, and
+// only from the first segment — deeper chains and wrappers after a separator
+// remain documented residuals.
+func hookGuardUnwrapOnce(cmd string) (string, bool) {
+	seg := cmd
+	if idx := strings.IndexAny(seg, hookGuardSepChars); idx >= 0 {
+		seg = seg[:idx]
+	}
+	fields := strings.Fields(seg)
+	// Leading env assignments (`FOO=1 sudo ...`) are position-neutral, same
+	// as the level-0 regex's env-prefix; skip them before wrapper detection.
+	for len(fields) > 0 && hookGuardEnvAssignmentRegex.MatchString(fields[0]) {
+		fields = fields[1:]
+	}
+	if len(fields) == 0 || !hookGuardReentryWrappers[fields[0]] {
+		return "", false
+	}
+	i := 1
+	for i < len(fields) && hookGuardSkippableWrapperArg(fields[i]) {
+		i++
+	}
+	if i >= len(fields) {
+		return "", false
+	}
+	// A quoted payload leaves its opening quote glued to the first word
+	// (`bash -c "springfield ...`); strip leading quotes so the anchored
+	// regex can match the payload at start-of-string. Trailing quotes are
+	// already tolerated by the bin/verb patterns.
+	return strings.TrimLeft(strings.Join(fields[i:], " "), `"'`), true
+}
+
+var hookGuardEnvAssignmentRegex = regexp.MustCompile(`^[A-Za-z_]\w*=`)
+
+// hookGuardSkippableWrapperArg reports whether a wrapper argument carries no
+// payload semantics: flags (-c), VAR=1 assignments (env), or bare numbers
+// (timeout 30 / nice 5). The first non-skippable word begins the payload.
+func hookGuardSkippableWrapperArg(f string) bool {
+	switch {
+	case strings.HasPrefix(f, "-"):
+		return true
+	case regexpDigitsOnly.MatchString(f):
+		return true
+	case hookGuardEnvAssignmentRegex.MatchString(f):
+		return true
+	default:
+		return false
+	}
+}
+
+var regexpDigitsOnly = regexp.MustCompile(`^[0-9]+$`)
 
 // hookGuardShouldBlock returns true when a tool call would mutate the
 // .springfield control plane or plant/mutate an agent-harness config surface

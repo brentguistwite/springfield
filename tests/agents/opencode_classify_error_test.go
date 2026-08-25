@@ -71,6 +71,15 @@ func TestOpencodeClassifyError(t *testing.T) {
 			wantClass: agents.ErrorClassRetryable,
 		},
 		{
+			// Parity with gemini (geminiRetryableNeedles carries the bare
+			// "authentication" needle): "authentication failed" provider
+			// errors must retry, not go fatal.
+			name:      "authentication failed stderr is retryable",
+			events:    []coreexec.Event{{Type: coreexec.EventStderr, Data: "provider error: authentication failed"}},
+			exitCode:  1,
+			wantClass: agents.ErrorClassRetryable,
+		},
+		{
 			name:      "overloaded stderr is retryable",
 			events:    []coreexec.Event{{Type: coreexec.EventStderr, Data: "provider overloaded, try again"}},
 			exitCode:  1,

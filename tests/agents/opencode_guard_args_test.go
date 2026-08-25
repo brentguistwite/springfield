@@ -145,10 +145,7 @@ func keysOf(m map[string]any) []string {
 // THROW for a known-mutating call whose arg shape yields no path/command
 // (fail closed), never fall through to allow.
 func TestOpenCodeGuardPluginDeniesUnextractableMutatingCall(t *testing.T) {
-	runtimes := jsRuntimes()
-	if len(runtimes) == 0 {
-		t.Skip("no bun/node JS runtime on PATH; fail-closed JS behavior pinned only where a runtime exists")
-	}
+	runtimes := requireJSRuntimes(t)
 	plugin := guardPluginSource(t)
 
 	for _, rt := range runtimes {
@@ -194,6 +191,7 @@ console.log("OK: " + denied + " unextractable mutating calls denied")
 			}
 
 			cmd := exec.Command(rt.path, driverPath, pluginPath)
+			cmd.Env = guardDriverEnv("")
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("JS harness failed (%v):\n%s", err, out)
@@ -216,10 +214,7 @@ console.log("OK: " + denied + " unextractable mutating calls denied")
 //     buffer) makes the undrained-stdin EPIPE deterministic instead of a
 //     scheduler race: spawnSync must still honor the child's exit-0 verdict.
 func TestOpenCodeGuardPluginFailsClosedOnHookTransportFailure(t *testing.T) {
-	runtimes := jsRuntimes()
-	if len(runtimes) == 0 {
-		t.Skip("no bun/node JS runtime on PATH; fail-closed JS behavior pinned only where a runtime exists")
-	}
+	runtimes := requireJSRuntimes(t)
 	plugin := guardPluginSource(t)
 
 	for _, rt := range runtimes {
@@ -253,7 +248,7 @@ try {
 			runDriver := func(hookBin, command string) string {
 				t.Helper()
 				cmd := exec.Command(rt.path, driverPath, pluginPath, command)
-				cmd.Env = append(os.Environ(), "SPRINGFIELD_HOOK_BIN="+hookBin)
+				cmd.Env = guardDriverEnv(hookBin)
 				out, _ := cmd.CombinedOutput()
 				return string(out)
 			}
@@ -284,10 +279,7 @@ try {
 // it's a scheduler race, and forcing it with oversized payloads SIGPIPE-kills
 // the driver instead of returning in-band data.
 func TestOpenCodeGuardPluginHookVerdictTruthTable(t *testing.T) {
-	runtimes := jsRuntimes()
-	if len(runtimes) == 0 {
-		t.Skip("no bun/node JS runtime on PATH; fail-closed JS behavior pinned only where a runtime exists")
-	}
+	runtimes := requireJSRuntimes(t)
 	plugin := guardPluginSource(t)
 
 	cases := []struct {
@@ -342,6 +334,7 @@ if (failures > 0) {
 			}
 
 			cmd := exec.Command(rt.path, driverPath, pluginPath)
+			cmd.Env = guardDriverEnv("")
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("JS harness failed (%v):\n%s", err, out)
@@ -355,6 +348,10 @@ if (failures > 0) {
 
 type jsRuntime struct{ name, path string }
 
+// jsRuntimeLookPath is the binary resolver behind jsRuntimes, injectable so
+// tests can simulate a machine with no JS runtime.
+var jsRuntimeLookPath = exec.LookPath
+
 // jsRuntimes returns EVERY distinct JS runtime available. The guard-plugin
 // tests deliberately matrix across all of them: picking only the first match
 // let local dev (bun) pass while CI (node-only) failed on runtime-specific
@@ -363,7 +360,7 @@ func jsRuntimes() []jsRuntime {
 	var found []jsRuntime
 	seen := map[string]bool{}
 	for _, name := range []string{"bun", "node"} {
-		path, err := exec.LookPath(name)
+		path, err := jsRuntimeLookPath(name)
 		if err != nil || seen[path] {
 			continue
 		}
@@ -371,4 +368,94 @@ func jsRuntimes() []jsRuntime {
 		found = append(found, jsRuntime{name: name, path: path})
 	}
 	return found
+}
+
+// requireJSRuntimes resolves the runtime matrix for guard-plugin tests or
+// declares why they won't run. Silent-skip tripwire: with no runtime AND
+// CI=true it FAILS instead of skipping — the hookVerdict fail-closed layer
+// must never ship unpinned on CI behind a green checkmark. Locally (no CI)
+// a missing runtime stays a plain skip.
+func requireJSRuntimes(tb testing.TB) []jsRuntime {
+	runtimes := jsRuntimes()
+	if len(runtimes) > 0 {
+		return runtimes
+	}
+	if os.Getenv("CI") == "true" {
+		tb.Fatalf("no bun/node JS runtime on PATH in CI — the hookVerdict fail-closed guard layer would run unpinned; install node in the CI image")
+	}
+	tb.Skip("no bun/node JS runtime on PATH; fail-closed JS behavior pinned only where a runtime exists")
+	return nil
+}
+
+// guardDriverEnv builds the MINIMAL environment for guard-plugin driver
+// processes. Drivers used to inherit os.Environ(), so ambient machine state
+// like NODE_OPTIONS='--require poison.js' killed every node-driven case
+// (demonstrated: red locally, green CI — the inverse of the original bug).
+// Only what the drivers and runtimes actually need passes through: PATH for
+// binary resolution, HOME/TMPDIR for runtime caches and temp files, and
+// SPRINGFIELD_HOOK_BIN pointing at the guard binary under test.
+func guardDriverEnv(hookBin string) []string {
+	env := []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + os.Getenv("HOME"),
+		"TMPDIR=" + os.Getenv("TMPDIR"),
+	}
+	if hookBin != "" {
+		env = append(env, "SPRINGFIELD_HOOK_BIN="+hookBin)
+	}
+	return env
+}
+
+// recTB is a recording testing.TB fake so the CI tripwire branch of
+// requireJSRuntimes can be pinned without spawning a test subprocess.
+type recTB struct {
+	testing.TB
+	fatals []string
+	skips  bool
+}
+
+func (r *recTB) Helper() {}
+func (r *recTB) Fatal(args ...any) {
+	r.fatals = append(r.fatals, fmt.Sprint(args...))
+}
+func (r *recTB) Fatalf(format string, args ...any) {
+	r.fatals = append(r.fatals, fmt.Sprintf(format, args...))
+}
+func (r *recTB) Skip(args ...any) { r.skips = true }
+func (r *recTB) Skipf(format string, args ...any) {
+	r.skips = true
+}
+
+// TestRequireJSRuntimesFailsLoudlyInCIWithoutRuntime pins the silent-skip
+// tripwire: with NO JS runtime resolvable AND CI=true, requireJSRuntimes must
+// FAIL rather than skip — a silent skip would leave the entire hookVerdict
+// fail-closed layer unpinned on CI behind a green checkmark.
+func TestRequireJSRuntimesFailsLoudlyInCIWithoutRuntime(t *testing.T) {
+	t.Run("no runtime in CI fails loudly", func(t *testing.T) {
+		t.Setenv("CI", "true")
+		origLookPath := jsRuntimeLookPath
+		jsRuntimeLookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+		t.Cleanup(func() { jsRuntimeLookPath = origLookPath })
+
+		tb := &recTB{TB: t}
+		got := requireJSRuntimes(tb)
+		if len(got) != 0 {
+			t.Fatalf("expected no runtimes, got %v", got)
+		}
+		if len(tb.fatals) == 0 {
+			t.Fatal("requireJSRuntimes neither failed nor returned runtimes in CI with no JS runtime")
+		}
+	})
+	t.Run("no runtime locally still skips", func(t *testing.T) {
+		origLookPath := jsRuntimeLookPath
+		jsRuntimeLookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+		t.Cleanup(func() { jsRuntimeLookPath = origLookPath })
+		t.Setenv("CI", "")
+
+		tb := &recTB{TB: t}
+		got := requireJSRuntimes(tb)
+		if len(got) != 0 || !tb.skips || len(tb.fatals) != 0 {
+			t.Fatalf("local no-runtime should plain-skip; got runtimes=%v skips=%v fatals=%v", got, tb.skips, tb.fatals)
+		}
+	})
 }

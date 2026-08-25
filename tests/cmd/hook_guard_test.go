@@ -544,22 +544,119 @@ func TestHookGuardRecursionGuard(t *testing.T) {
 			wantExit: 0,
 		},
 		{
-			// ACCEPTED RESIDUAL: bash -c hides the real invocation behind an
-			// arg string; catching it needs a shell parser. Pinned as allowed
-			// so the boundary is explicit (backed by plugin-disable +
-			// anti-recursion prompt for subagents).
-			name:     "subagent allows bash -c residual",
+			// BOUNDED UNWRAP (F4): sh/bash/zsh -c puts springfield in arg
+			// position behind a known wrapper; one unwrap level catches it.
+			name:     "subagent blocks bash -c wrapper",
 			flags:    []string{"--block-reentry"},
 			stdin:    `{"tool_input":{"command":"bash -c \"springfield plan\""}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks sh -c start",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"sh -c \"springfield start\""}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks zsh -c recover",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"zsh -c 'springfield recover'"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks env wrapper",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"env springfield start"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks env wrapper with assignment",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"env FOO=1 springfield plan"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks command wrapper",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"command springfield plan"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks exec wrapper",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"exec springfield recover"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks sudo wrapper",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"sudo springfield plan"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks sudo with path-prefixed binary",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"sudo /usr/local/bin/springfield recover"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks nohup wrapper",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"nohup springfield plan"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks timeout with duration arg",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"timeout 30 springfield plan"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks nice with -n value",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"nice -n 5 springfield plan"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks wrapper with leading assignment",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"FOO=1 sudo springfield plan"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			// DOCUMENTED RESIDUAL: the bounded unwrap applies ONE extra level.
+			// A wrapper chain nested inside the payload still hides the verb.
+			name:     "subagent allows deeper wrapper chain residual",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"bash -c \"sh -c 'springfield plan'\""}}`,
 			wantExit: 0,
 		},
 		{
-			// ACCEPTED RESIDUAL: command wrappers that put springfield in arg
-			// position (sudo/env/command/...) need a shell parser. Pinned to
-			// document the boundary — open-ended wrapper list, out of scope.
-			name:     "subagent allows sudo wrapper residual",
+			// DOCUMENTED RESIDUAL: only the FIRST token's wrapper is unwrapped;
+			// wrappers after a separator stay hidden (needs a shell parser).
+			name:     "subagent allows mid-command wrapper after separator residual",
 			flags:    []string{"--block-reentry"},
-			stdin:    `{"tool_input":{"command":"sudo springfield plan"}}`,
+			stdin:    `{"tool_input":{"command":"cd x && sudo springfield plan"}}`,
+			wantExit: 0,
+		},
+		{
+			// Wrappers wrapping NON-springfield work must not block.
+			name:     "subagent allows bash -c around benign command",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"bash -c \"echo hi\""}}`,
 			wantExit: 0,
 		},
 		{

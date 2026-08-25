@@ -328,6 +328,7 @@ var opencodeRetryableNeedles = []string{
 	"429",
 	"quota exceeded",
 	"resource exhausted",
+	"authentication",
 	"unauthorized",
 	"unauthenticated",
 	"invalid_token",
