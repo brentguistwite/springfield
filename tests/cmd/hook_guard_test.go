@@ -166,6 +166,68 @@ func TestHookGuardPathAwareness(t *testing.T) {
 			wantExit: 2,
 			wantErr:  "off-limits",
 		},
+		// --- agent-harness config surfaces (.opencode/, opencode.json) ---
+		// Planting a project plugin or config is itself the bypass: opencode
+		// loads both at boot, executing attacker JS ahead of any tool-call
+		// hook. Writes into these surfaces are blocked outright.
+		{
+			name:     "write planted plugin into project .opencode blocked",
+			stdin:    `{"tool_input":{"file_path":".opencode/plugins/helpers.js","content":"pwned"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "nested .opencode path blocked",
+			stdin:    `{"tool_input":{"file_path":"/abs/worktree/.opencode/config.json"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "notebook_path into .opencode blocked",
+			stdin:    `{"tool_input":{"notebook_path":".opencode/nb.ipynb"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "multiedit edits array into .opencode blocked",
+			stdin:    `{"tool_input":{"edits":[{"file_path":".opencode/agent.md"}]}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "redirect into project opencode.json blocked",
+			stdin:    `{"tool_input":{"command":"echo x > opencode.json"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "rm -rf .opencode blocked",
+			stdin:    `{"tool_input":{"command":"rm -rf .opencode"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "mutation of .opencode file via mv blocked",
+			stdin:    `{"tool_input":{"command":"mv evil.js .opencode/plugins/helpers.js"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			// Reads and mentions stay allowed — same posture as .springfield.
+			name:     "reading .opencode plugin allowed",
+			stdin:    `{"tool_input":{"command":"cat .opencode/plugins/helpers.js"}}`,
+			wantExit: 0,
+		},
+		{
+			name:     "benign path merely containing 'opencode' allowed",
+			stdin:    `{"tool_input":{"file_path":"src/opencode-notes.md"}}`,
+			wantExit: 0,
+		},
+		{
+			name:     "benign command writing elsewhere allowed",
+			stdin:    `{"tool_input":{"command":"echo hi > notes.txt"}}`,
+			wantExit: 0,
+		},
 		{
 			name:     "malformed json fails open",
 			stdin:    `not json`,

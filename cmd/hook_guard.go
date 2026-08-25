@@ -16,6 +16,17 @@ import (
 // substring causes the hook to block the tool call.
 const hookGuardToken = ".springfield"
 
+// hookGuardHarnessTokens are the agent-harness config surfaces that must not
+// be planted or mutated by an agent: the project `.opencode/` directory (any
+// depth) and the project `opencode.json` file. opencode loads project plugins
+// from `.opencode/plugins/` at BOOT — ahead of any tool-call hook — so a
+// planted plugin is itself the bypass; same for an agent-written
+// `opencode.json`, whose keys survive our OPENCODE_CONFIG_CONTENT override via
+// config deep-merge. Matching is CASE-INSENSITIVE (realistic typo/case-slip;
+// near-zero false-positive risk) — the single shared mechanism below covers
+// both these tokens and (since the F3 hardening) `.springfield`.
+var hookGuardHarnessTokens = []string{".opencode", "opencode.json"}
+
 // hookGuardBlockMessage is written to stderr when the guard blocks a call.
 // Claude's PreToolUse contract treats stderr + exit 2 as a deny with reason.
 const hookGuardBlockMessage = "Springfield control plane is off-limits"
@@ -113,7 +124,8 @@ var (
 	// path char-class excludes `()` so bash process-substitution `>(...)` is not
 	// mistaken for a file target.
 	hookGuardRedirectRegex = regexp.MustCompile(
-		`(\d*>>?|&>>?|>\||>&)[ \t]*["']?[^ \t"'|;&<>()` + "`" + `]*\.springfield`)
+		`(\d*>>?|&>>?|>\||>&)[ \t]*["']?[^ \t"'|;&<>()` + "`" + `]*` +
+			`(?:\.springfield|(?i:\.opencode|opencode\.json))`)
 
 	// hookGuardMutationCmdRegex matches a state-mutating command at shell
 	// command-position (start-of-string or after a separator, env-prefix and
@@ -235,10 +247,11 @@ func runHookGuard(stdin io.Reader, stderr io.Writer, blockReentry bool) error {
 }
 
 // hookGuardShouldBlock returns true when a tool call would mutate the
-// .springfield control plane. File-path fields (Write/Edit/MultiEdit) are
-// inherently writes, so a `.springfield` substring there blocks unconditionally.
+// .springfield control plane or plant/mutate an agent-harness config surface
+// (.opencode/, opencode.json). File-path fields (Write/Edit/MultiEdit) are
+// inherently writes, so a protected-path substring there blocks unconditionally.
 // The Bash `command` field is different: it is blocked only when it MUTATES a
-// .springfield path (redirect target or a mutation command), not when it merely
+// protected path (redirect target or a mutation command), not when it merely
 // mentions one — so ordinary commit bodies, greps, and reads that reference the
 // path are no longer false-positived (see hookGuardCommandMutatesControlPlane).
 // No shell parser is involved, so a mutation verb sitting at a separator/line
@@ -249,9 +262,9 @@ func hookGuardShouldBlock(toolInput map[string]any) bool {
 	if toolInput == nil {
 		return false
 	}
-	// Write/Edit path fields: any .springfield path is a mutation.
+	// Write/Edit path fields: any protected path is a mutation.
 	for _, key := range []string{"file_path", "notebook_path"} {
-		if s, ok := toolInput[key].(string); ok && strings.Contains(s, hookGuardToken) {
+		if s, ok := toolInput[key].(string); ok && hookGuardTargetsProtectedPath(s) {
 			return true
 		}
 	}
@@ -266,7 +279,7 @@ func hookGuardShouldBlock(toolInput map[string]any) bool {
 			if !ok {
 				continue
 			}
-			if s, ok := entry["file_path"].(string); ok && strings.Contains(s, hookGuardToken) {
+			if s, ok := entry["file_path"].(string); ok && hookGuardTargetsProtectedPath(s) {
 				return true
 			}
 		}
@@ -274,13 +287,32 @@ func hookGuardShouldBlock(toolInput map[string]any) bool {
 	return false
 }
 
+// hookGuardTargetsProtectedPath reports whether a path-bearing string touches
+// a guarded surface: the `.springfield` control plane (substring, legacy
+// case-sensitive form) or an agent-harness config surface from
+// hookGuardHarnessTokens (matched case-insensitively — one shared mechanism
+// for both path families).
+func hookGuardTargetsProtectedPath(s string) bool {
+	if strings.Contains(s, hookGuardToken) {
+		return true
+	}
+	folded := strings.ToLower(s)
+	for _, tok := range hookGuardHarnessTokens {
+		if strings.Contains(folded, tok) {
+			return true
+		}
+	}
+	return false
+}
+
 // hookGuardCommandMutatesControlPlane reports whether a Bash command string
-// writes to or deletes a .springfield path, as opposed to merely mentioning one
-// (in a commit/PR body, a grep pattern, or a read). It requires a `.springfield`
-// substring AND either a redirection into such a path or a mutation command at
-// shell command-position. Reads (cat/ls/grep) and prose mentions return false.
+// writes to or deletes a protected path (see hookGuardShouldBlock), as opposed
+// to merely mentioning one (in a commit/PR body, a grep pattern, or a read).
+// It requires a protected-path substring AND either a redirection into such a
+// path or a mutation command at shell command-position. Reads (cat/ls/grep)
+// and prose mentions return false.
 func hookGuardCommandMutatesControlPlane(cmd string) bool {
-	if !strings.Contains(cmd, hookGuardToken) {
+	if !hookGuardTargetsProtectedPath(cmd) {
 		return false
 	}
 	if hookGuardRedirectRegex.MatchString(cmd) || hookGuardMutationCmdRegex.MatchString(cmd) {
