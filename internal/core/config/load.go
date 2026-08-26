@@ -201,10 +201,12 @@ func normalize(cfg *Config) {
 	cfg.Agents.Gemini.ApprovalMode = strings.TrimSpace(cfg.Agents.Gemini.ApprovalMode)
 	cfg.Agents.Gemini.SandboxMode = strings.TrimSpace(cfg.Agents.Gemini.SandboxMode)
 	cfg.Agents.Gemini.Model = strings.TrimSpace(cfg.Agents.Gemini.Model)
+	cfg.Agents.OpenCode.Model = strings.TrimSpace(cfg.Agents.OpenCode.Model)
 }
 
 func setPresence(cfg *Config, metadata toml.MetaData) {
 	cfg.Agents.Claude.isPresent = metadata.IsDefined("agents", "claude")
 	cfg.Agents.Codex.isPresent = metadata.IsDefined("agents", "codex")
 	cfg.Agents.Gemini.isPresent = metadata.IsDefined("agents", "gemini")
+	cfg.Agents.OpenCode.isPresent = metadata.IsDefined("agents", "opencode")
 }

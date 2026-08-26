@@ -29,9 +29,10 @@ const (
 )
 
 type AgentExecutionModes struct {
-	Claude ExecutionMode
-	Codex  ExecutionMode
-	Gemini ExecutionMode
+	Claude   ExecutionMode
+	Codex    ExecutionMode
+	Gemini   ExecutionMode
+	OpenCode ExecutionMode
 }
 
 // Config is the shared project configuration loaded from springfield.toml.
@@ -254,6 +255,10 @@ func (c Config) ExecutionSettingsForAgent(agentID string) agents.ExecutionSettin
 		return agents.ExecutionSettings{
 			Gemini: settings.Gemini,
 		}
+	case string(agents.AgentOpenCode):
+		return agents.ExecutionSettings{
+			OpenCode: settings.OpenCode,
+		}
 	default:
 		return agents.ExecutionSettings{}
 	}
@@ -276,13 +281,16 @@ func (c Config) ExecutionSettings() agents.ExecutionSettings {
 			SandboxMode:  c.Agents.Gemini.SandboxMode,
 			Model:        c.Agents.Gemini.Model,
 		},
+		OpenCode: agents.OpenCodeExecutionSettings{
+			Model: c.Agents.OpenCode.Model,
+		},
 	}
 }
 
 // RecommendedExecutionSettings returns the default per-agent execution settings
 // `springfield init` applies when the operator picks the recommended profile.
 //
-// Model is intentionally unset across all three agent blocks below. Pinning a
+// Model is intentionally unset across every agent block below. Pinning a
 // model couples Springfield's release cadence to each vendor's; we defer to the
 // underlying CLI's evolving default. Operators override per-agent via
 // `springfield init`.
@@ -299,14 +307,18 @@ func RecommendedExecutionSettings() agents.ExecutionSettings {
 			ApprovalMode: "yolo",
 			SandboxMode:  "sandbox-exec",
 		},
+		// No recommended profile for opencode: there is no approval/sandbox
+		// axis to preset, and Model stays empty — never guess a provider.
+		OpenCode: agents.OpenCodeExecutionSettings{},
 	}
 }
 
 func (c Config) ExecutionModes() AgentExecutionModes {
 	return AgentExecutionModes{
-		Claude: executionModeForClaude(c.Agents.Claude),
-		Codex:  executionModeForCodex(c.Agents.Codex),
-		Gemini: executionModeForGemini(c.Agents.Gemini),
+		Claude:   executionModeForClaude(c.Agents.Claude),
+		Codex:    executionModeForCodex(c.Agents.Codex),
+		Gemini:   executionModeForGemini(c.Agents.Gemini),
+		OpenCode: executionModeForOpenCode(c.Agents.OpenCode),
 	}
 }
 
@@ -314,6 +326,7 @@ func (c Config) HasAnyExecutionSettings() bool {
 	return c.Agents.Claude.isPresent ||
 		c.Agents.Codex.isPresent ||
 		c.Agents.Gemini.isPresent ||
+		c.Agents.OpenCode.isPresent ||
 		c.Agents.Claude.Model != "" ||
 		c.Agents.Claude.PermissionMode != "" ||
 		c.Agents.Codex.Model != "" ||
@@ -321,7 +334,8 @@ func (c Config) HasAnyExecutionSettings() bool {
 		c.Agents.Codex.ApprovalPolicy != "" ||
 		c.Agents.Gemini.ApprovalMode != "" ||
 		c.Agents.Gemini.SandboxMode != "" ||
-		c.Agents.Gemini.Model != ""
+		c.Agents.Gemini.Model != "" ||
+		c.Agents.OpenCode.Model != ""
 }
 
 func (c *Config) ApplyRecommendedExecutionDefaults() {
@@ -334,6 +348,7 @@ func (c *Config) ApplyRecommendedExecutionDefaults() {
 	c.Agents.Gemini.ApprovalMode = recommended.Gemini.ApprovalMode
 	c.Agents.Gemini.SandboxMode = recommended.Gemini.SandboxMode
 	c.Agents.Gemini.Model = recommended.Gemini.Model
+	c.Agents.OpenCode.Model = recommended.OpenCode.Model
 }
 
 func (c *Config) ApplyExecutionMode(agentID string, mode ExecutionMode) {
@@ -378,6 +393,16 @@ func (c *Config) ApplyExecutionMode(agentID string, mode ExecutionMode) {
 			c.Agents.Gemini.SandboxMode = ""
 			c.Agents.Gemini.Model = ""
 		}
+	case string(agents.AgentOpenCode):
+		switch mode {
+		case ExecutionModeRecommended:
+			c.Agents.OpenCode.isPresent = true
+			recommended := RecommendedExecutionSettings().OpenCode
+			c.Agents.OpenCode.Model = recommended.Model
+		case ExecutionModeOff:
+			c.Agents.OpenCode.isPresent = true
+			c.Agents.OpenCode.Model = ""
+		}
 	}
 }
 
@@ -412,6 +437,16 @@ func executionModeForGemini(cfg GeminiAgentConfig) ExecutionMode {
 	return ExecutionModeCustom
 }
 
+// executionModeForOpenCode has no "recommended" shape: opencode exposes no
+// approval/sandbox axis to preset, so an empty model is off and any
+// configured model (free-form "provider/model") is custom.
+func executionModeForOpenCode(cfg OpenCodeAgentConfig) ExecutionMode {
+	if cfg.Model != "" {
+		return ExecutionModeCustom
+	}
+	return ExecutionModeOff
+}
+
 // PlanConfig stores per-plan overrides.
 type PlanConfig struct {
 	Agent string `toml:"agent"`
@@ -419,9 +454,10 @@ type PlanConfig struct {
 
 // AgentsConfig stores adapter-specific execution settings.
 type AgentsConfig struct {
-	Claude ClaudeAgentConfig `toml:"claude"`
-	Codex  CodexAgentConfig  `toml:"codex"`
-	Gemini GeminiAgentConfig `toml:"gemini"`
+	Claude   ClaudeAgentConfig   `toml:"claude"`
+	Codex    CodexAgentConfig    `toml:"codex"`
+	Gemini   GeminiAgentConfig   `toml:"gemini"`
+	OpenCode OpenCodeAgentConfig `toml:"opencode"`
 }
 
 // ClaudeAgentConfig stores supported Claude execution settings.
@@ -445,6 +481,13 @@ type GeminiAgentConfig struct {
 	SandboxMode  string `toml:"sandbox_mode,omitempty"`
 	Model        string `toml:"model,omitempty"`
 	isPresent    bool   `toml:"-"`
+}
+
+// OpenCodeAgentConfig stores supported OpenCode execution settings. Model is
+// free-form "provider/model" — deliberately no enum validation.
+type OpenCodeAgentConfig struct {
+	Model     string `toml:"model,omitempty"`
+	isPresent bool   `toml:"-"`
 }
 
 // Loaded is the stable public result of a config load.

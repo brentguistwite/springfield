@@ -82,9 +82,9 @@ type PlanView struct {
 	Attempt      int        `json:"attempt"`
 	LastError    *string    `json:"last_error"`
 	EvidencePath string     `json:"evidence_path"`
-	// Agent is the adapter running the plan (claude / codex / gemini), surfaced
-	// so a live watcher shows which agent holds the plan. Empty (omitted) when
-	// the plan has no recorded agent yet.
+	// Agent is the adapter running the plan (claude / codex / gemini /
+	// opencode), surfaced so a live watcher shows which agent holds the plan.
+	// Empty (omitted) when the plan has no recorded agent yet.
 	Agent string `json:"agent,omitempty"`
 	// StartedAt is when the current attempt began; nil (omitted) until the plan
 	// starts. A live watcher renders elapsed time from it — sourced here so the

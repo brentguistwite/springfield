@@ -1,5 +1,5 @@
 // Package catalog assembles the full set of agent adapters. It is the only
-// package that imports all three agent subpackages together, allowing the
+// package that imports all four agent subpackages together, allowing the
 // parent agents package to stay free of circular import dependencies.
 package catalog
 
@@ -10,11 +10,12 @@ import (
 	"springfield/internal/core/agents/claude"
 	"springfield/internal/core/agents/codex"
 	"springfield/internal/core/agents/gemini"
+	"springfield/internal/core/agents/opencode"
 )
 
 // DefaultAdapters returns all detectable agent adapters in canonical order:
-// claude, codex, gemini. All three adapters are executable — gemini joined
-// in 2026-04.
+// claude, codex, gemini, opencode. All four adapters are executable — gemini
+// joined in 2026-04, opencode joined in 2026-08.
 //
 // Capabilities are enforced here, at the assembly point, per AGENTS.md
 // Principle 5: the compile-time pins beside each adapter constructor cover
@@ -26,6 +27,7 @@ func DefaultAdapters(lookPath agents.LookPathFunc) []agents.Adapter {
 		claude.New(lookPath),
 		codex.New(lookPath),
 		gemini.New(lookPath),
+		opencode.New(lookPath),
 	}
 	for _, a := range adapters {
 		requireCapabilities(a)
@@ -34,7 +36,7 @@ func DefaultAdapters(lookPath agents.LookPathFunc) []agents.Adapter {
 }
 
 // requireCapabilities panics if a is missing any capability its agent must
-// provide. Cooldown is claude-only by design (codex and gemini have no
+// provide. Cooldown is claude-only by design (codex, gemini, and opencode have no
 // cooldown semantics — see the runtime runner's cooldown handling). The
 // default branch forces new adapters to extend this check rather than skip it.
 func requireCapabilities(a agents.Adapter) {
@@ -62,7 +64,7 @@ func requireCapabilities(a agents.Adapter) {
 		if !hasValidator || !hasClassifier || !hasModels || !hasTranscript || !hasCooldown {
 			panic(missing())
 		}
-	case agents.AgentCodex, agents.AgentGemini:
+	case agents.AgentCodex, agents.AgentGemini, agents.AgentOpenCode:
 		if !hasValidator || !hasClassifier || !hasModels || !hasTranscript {
 			panic(missing())
 		}

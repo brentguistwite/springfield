@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"springfield/internal/core/agents"
 	"springfield/internal/core/config"
 )
 
@@ -225,6 +226,35 @@ agent_priority = ["claude", "codex", "gemini"]
 	}
 	if got := reloaded.Config.ExecutionSettingsForAgent("gemini").Gemini.Model; got != "gemini-pro" {
 		t.Fatalf("gemini model: want gemini-pro, got %q", got)
+	}
+}
+
+func TestSaveRoundTripsOpenCodeExecutionConfig(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+[project]
+agent_priority = ["claude"]
+`)
+
+	loaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	loaded.Config.Agents.OpenCode.Model = "openai/gpt-5.4"
+	if err := config.Save(loaded); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	reloaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := reloaded.Config.Agents.OpenCode.Model; got != "openai/gpt-5.4" {
+		t.Fatalf("model: got %q", got)
+	}
+	if got := reloaded.Config.ExecutionSettingsForAgent(string(agents.AgentOpenCode)).OpenCode.Model; got != "openai/gpt-5.4" {
+		t.Fatalf("resolved opencode model: want openai/gpt-5.4, got %q", got)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"springfield/internal/core/agents/claude"
 	"springfield/internal/core/agents/codex"
 	"springfield/internal/core/agents/gemini"
+	"springfield/internal/core/agents/opencode"
 	"springfield/internal/features/doctor"
 )
 
@@ -81,6 +82,31 @@ func TestRunGeminiMissingGuidanceHasNoDetectionOnlyNote(t *testing.T) {
 	}
 	if strings.Contains(guidance, "Detection only") {
 		t.Fatalf("expected no 'Detection only' note, got %q", guidance)
+	}
+}
+
+// TestRunOpencodeMissingGuidanceHasNoDetectionOnlyNote mirrors the gemini
+// migration lock: missing-opencode guidance is install-only, no detection-only
+// caveat, and carries the canonical install command.
+func TestRunOpencodeMissingGuidanceHasNoDetectionOnlyNote(t *testing.T) {
+	lookPath := func(binary string) (string, error) {
+		return "", exec.ErrNotFound
+	}
+	registry := agents.NewRegistry(opencode.New(lookPath))
+	report := doctor.Run(context.Background(), registry)
+	if len(report.Checks) != 1 {
+		t.Fatalf("expected 1 check, got %d", len(report.Checks))
+	}
+	guidance := report.Checks[0].Guidance
+	if guidance == "" {
+		t.Fatal("expected install guidance for missing opencode")
+	}
+	if strings.Contains(guidance, "Detection only") {
+		t.Fatalf("expected no 'Detection only' note, got %q", guidance)
+	}
+	want := "Install OpenCode: curl -fsSL https://opencode.ai/install | bash (see https://opencode.ai/docs)"
+	if guidance != want {
+		t.Fatalf("guidance = %q, want %q", guidance, want)
 	}
 }
 

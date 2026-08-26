@@ -1596,6 +1596,8 @@ func modelForAgent(id agents.ID, s agents.ExecutionSettings) string {
 		return s.Codex.Model
 	case agents.AgentGemini:
 		return s.Gemini.Model
+	case agents.AgentOpenCode:
+		return s.OpenCode.Model
 	default:
 		return ""
 	}

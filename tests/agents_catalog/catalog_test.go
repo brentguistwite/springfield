@@ -13,11 +13,11 @@ func TestDefaultAdaptersReturnsThreeAdaptersInOrder(t *testing.T) {
 	// but we only call Metadata() here, not Detect().
 	adapters := catalog.DefaultAdapters(nil)
 
-	if len(adapters) != 3 {
-		t.Fatalf("expected 3 adapters, got %d", len(adapters))
+	if len(adapters) != 4 {
+		t.Fatalf("expected 4 adapters, got %d", len(adapters))
 	}
 
-	want := []agents.ID{agents.AgentClaude, agents.AgentCodex, agents.AgentGemini}
+	want := []agents.ID{agents.AgentClaude, agents.AgentCodex, agents.AgentGemini, agents.AgentOpenCode}
 	for i, id := range want {
 		got := adapters[i].ID()
 		if got != id {
@@ -34,8 +34,8 @@ func TestDefaultAdaptersUsesProvidedLookPath(t *testing.T) {
 	}
 
 	adapters := catalog.DefaultAdapters(lookPath)
-	if len(adapters) != 3 {
-		t.Fatalf("expected 3 adapters, got %d", len(adapters))
+	if len(adapters) != 4 {
+		t.Fatalf("expected 4 adapters, got %d", len(adapters))
 	}
 
 	// Call Detect on each adapter to exercise lookPath.
@@ -47,7 +47,7 @@ func TestDefaultAdaptersUsesProvidedLookPath(t *testing.T) {
 		t.Fatal("lookPath was never called; expected it to be invoked during Detect")
 	}
 
-	want := []string{"claude", "codex", "gemini"}
+	want := []string{"claude", "codex", "gemini", "opencode"}
 	for _, binary := range want {
 		found := false
 		for _, c := range called {
@@ -69,7 +69,7 @@ func TestDefaultAdaptersUsesProvidedLookPath(t *testing.T) {
 // capability branches here are unreachable while the panic exists, so this
 // duplicate deliberately asserts only what the panic cannot: that the
 // returned values satisfy the capability interfaces at all, and codex/
-// gemini's documented cooldown-free contract.
+// gemini and opencode's documented cooldown-free contract.
 func TestDefaultAdaptersCarryRequiredCapabilities(t *testing.T) {
 	adapters := catalog.DefaultAdapters(nil)
 
@@ -82,7 +82,7 @@ func TestDefaultAdaptersCarryRequiredCapabilities(t *testing.T) {
 			if _, ok := a.(agents.Cooldowner); !ok {
 				t.Errorf("claude no longer implements Cooldowner; update requireCapabilities and this contract if deliberate")
 			}
-		case agents.AgentCodex, agents.AgentGemini:
+		case agents.AgentCodex, agents.AgentGemini, agents.AgentOpenCode:
 			if _, ok := a.(agents.Cooldowner); ok {
 				t.Errorf("%s implements Cooldowner but is documented as cooldown-free; update the capability expectations if that changed deliberately", a.ID())
 			}

@@ -4,9 +4,9 @@
 
 Local-state conductor for multi-agent code work, distributed as a Claude Code (and Codex) marketplace plugin.
 
-Springfield turns a plan (file or prompt) into a phase-ordered batch of agent runs — phases run in declared order, and in per-plan-branches mode a parallel phase's plans execute concurrently (up to `[project] max_parallel`, default 3) while consolidate mode stays sequential — executes each slice in an isolated git worktree, captures per-slice evidence, and falls through `agent_priority` (default: Claude → opt-in Codex → opt-in Gemini) when a run is retryable. State lives under `.springfield/` in the repo; install ships through Claude Code and Codex marketplace plugins.
+Springfield turns a plan (file or prompt) into a phase-ordered batch of agent runs — phases run in declared order, and in per-plan-branches mode a parallel phase's plans execute concurrently (up to `[project] max_parallel`, default 3) while consolidate mode stays sequential — executes each slice in an isolated git worktree, captures per-slice evidence, and falls through `agent_priority` (default: Claude → opt-in Codex → opt-in Gemini → opt-in OpenCode) when a run is retryable. State lives under `.springfield/` in the repo; install ships through Claude Code and Codex marketplace plugins.
 
-> **Vendor economics:** `claude -p` headless invocations count against the Claude Max/Pro subscription, so Springfield defaults to Claude (Codex and Gemini are opt-in). Anthropic briefly metered `claude -p` separately (2026-05-14) before reverting; Springfield keeps that response — a Codex-led default plus a `springfield start` billing warning — one flag flip away (`ClaudeHeadlessMetered` in `internal/core/agents`) for if it returns. `--cost-cap $X` aborts the batch when spend hits the threshold regardless.
+> **Vendor economics:** `claude -p` headless invocations count against the Claude Max/Pro subscription, so Springfield defaults to Claude (Codex, Gemini, and OpenCode are opt-in). Anthropic briefly metered `claude -p` separately (2026-05-14) before reverting; Springfield keeps that response — a Codex-led default plus a `springfield start` billing warning — one flag flip away (`ClaudeHeadlessMetered` in `internal/core/agents`) for if it returns. `--cost-cap $X` aborts the batch when spend hits the threshold regardless.
 
 > "Plugin-distributed" here means Springfield is *installed via* the marketplace plugin flow. Springfield does not currently expose a plugin or extension API of its own.
 
@@ -14,7 +14,7 @@ When you run `springfield start`, the conductor will:
 
 1. Load the next plan from the compiled batch.
 2. Cut an isolated worktree on `springfield/<plan-id>` so the host clone stays untouched.
-3. Dispatch the first id in `agent_priority` (default: Claude; Codex/Gemini opt-in) against the plan envelope.
+3. Dispatch the first id in `agent_priority` (default: Claude; Codex/Gemini/OpenCode opt-in) against the plan envelope.
 4. Stream the agent's output to `.springfield/execution/plans/<plan-id>/evidence/iter-<N>/` and watch for the runner-sole-writer markers that signal pass/fail.
 5. Fast-forward merge the plan back into your base branch on success; fall through to the next agent on a retryable failure.
 6. Move to the next plan, repeating until the batch is complete or a fatal failure stops it.
@@ -28,6 +28,7 @@ When you run `springfield start`, the conductor will:
   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`npm install -g @anthropic-ai/claude-code`)
   - [Codex CLI](https://github.com/openai/codex)
   - [Gemini CLI](https://github.com/google-gemini/gemini-cli) (opt-in; set `GEMINI_API_KEY` or sign in headless)
+  - [OpenCode CLI](https://opencode.ai) (opt-in; authenticate each provider you plan to run — `opencode auth login` or provider env keys)
 - macOS (amd64/arm64) for the `brew` install path. Linux/Windows install the CLI via [Alternate Install Paths](#alternate-install-paths).
 - Go 1.26+ if you're building the CLI from source (`go install .`); not needed for the brew install path.
 
@@ -51,6 +52,9 @@ Supported agents (all fully executable):
 - Claude Code
 - Codex CLI
 - Gemini CLI (opt-in via `--agents ...,gemini` or by adding `"gemini"` to `agent_priority`; set `GEMINI_API_KEY` or sign in to the Gemini CLI before running headless)
+- OpenCode CLI (opt-in via `--agents ...,opencode` or by adding `"opencode"` to `agent_priority`)
+
+OpenCode runs whatever provider/model pair your install supports: models take the `provider/model` form (e.g. `openai/gpt-5.6`, `google/gemini-2.5-pro`) and auth is **per-provider** — run `opencode auth login` once per provider, or export that provider's API key env var (`OPENAI_API_KEY`, `GEMINI_API_KEY`, …). Springfield never touches your user or project opencode config: the control-plane guard is injected fresh into every invocation via environment variables (`OPENCODE_CONFIG_DIR` / `OPENCODE_CONFIG_CONTENT`), leaving `~/.config/opencode/` and any project `opencode.json` untouched.
 
 ## Install
 
@@ -195,9 +199,9 @@ permission_mode = "bypassPermissions"
 
 Notes:
 
-- `springfield init` runs an interactive TUI: multi-select agents (Claude is pre-checked; Codex and Gemini are opt-in), pick a model per agent (or take the adapter default), then confirm a summary before write. Shift+Tab navigates back; Esc edits any answer. For non-interactive installs, pass `--agents claude,codex` and optionally `--model claude=<id>,codex=<id>,gemini=<id>` — or pipe answers on stdin and Springfield falls through to huh's accessible plain-text mode.
+- `springfield init` runs an interactive TUI: multi-select agents (Claude is pre-checked; Codex, Gemini, and OpenCode are opt-in), pick a model per agent (or take the adapter default), then confirm a summary before write. Shift+Tab navigates back; Esc edits any answer. For non-interactive installs, pass `--agents claude,codex` and optionally `--model claude=<id>,codex=<id>,gemini=<id>,opencode=<provider/model>` — or pipe answers on stdin and Springfield falls through to huh's accessible plain-text mode.
 - `springfield init` scaffolds `springfield.toml` + `.springfield/` with recommended execution settings for each selected agent.
-- Gemini is execution-supported but opt-in. Pass `--agents claude,codex,gemini` (or edit `agent_priority`) to include it. See [`docs/release.md`](docs/release.md#2026-04-gemini-cli-execution-support) for the migration note.
+- Gemini is execution-supported but opt-in. Pass `--agents claude,codex,gemini` (or edit `agent_priority`) to include it. See [`docs/release.md`](docs/release.md#2026-04-gemini-cli-execution-support) for the migration note. OpenCode is likewise opt-in; see [Supported agents](#public-cli) for its per-provider auth and guard-injection notes.
 - Primary install is two pieces: the CLI via Homebrew (or tarball/source on non-mac) and the plugin via the Claude or Codex marketplace — see [Install](#install).
 - `springfield install` is an additive local-host sync (writes slash-command/skill helpers into `~/.claude/` and `~/.agents/`); use it when the plugin install flow isn't available, or as a fallback.
 - Re-running `init` preserves existing config, only filling in missing recommended defaults and agent priority. Use `springfield init --reset` when `springfield.toml` has drifted (stale agent blocks, manual edits you want gone): it backs up the current `springfield.toml` and regenerates it from your `--agents`/`--model` selection. `--reset` rewrites `springfield.toml` and updates the execution config's primary tool to match your new agent priority; your registered plans are preserved.
@@ -216,8 +220,8 @@ Notes:
 
 **Failover triggers, evaluated in this order:**
 
-1. **Rate-limit cooldown** — the Claude adapter (only) implements the `Cooldowner` interface and, on a rate-limited response, extracts a "do-not-retry-before" timestamp from the error. Claude is then skipped on subsequent plan dispatches until that timestamp passes. The parsed cooldown is capped at 24h beyond "now". Codex and Gemini do not implement `Cooldowner`, so neither is ever skipped on cooldown.
-2. **Retryable error** — all three adapters (Claude, Codex, Gemini) implement `ErrorClassifier` and classify their own retryable patterns (rate-limit without an extractable cooldown, transient API errors, etc.). When `ClassifyError` returns `retryable`, the runner advances to the next id in `agent_priority` for the same plan.
+1. **Rate-limit cooldown** — the Claude adapter (only) implements the `Cooldowner` interface and, on a rate-limited response, extracts a "do-not-retry-before" timestamp from the error. Claude is then skipped on subsequent plan dispatches until that timestamp passes. The parsed cooldown is capped at 24h beyond "now". Codex, Gemini, and OpenCode do not implement `Cooldowner`, so none of them is ever skipped on cooldown.
+2. **Retryable error** — all four adapters (Claude, Codex, Gemini, OpenCode) implement `ErrorClassifier` and classify their own retryable patterns (rate-limit without an extractable cooldown, transient API errors, etc.). When `ClassifyError` returns `retryable`, the runner advances to the next id in `agent_priority` for the same plan.
 3. **Fatal error** — when `ClassifyError` returns `fatal` (the default), the batch stops; no further fallback. The plan is left in `failed` state and the run records the error.
 
 **What it is NOT:**
@@ -230,12 +234,12 @@ Notes:
 
 ## Cost visibility
 
-Springfield captures per-iteration spend for Claude and Codex and surfaces it in two places:
+Springfield captures per-iteration spend for Claude, Codex, and OpenCode and surfaces it in two places:
 
-- **Per iteration:** every agent dispatch writes `cost.json` alongside `meta.json` under `.springfield/execution/plans/<plan-id>/evidence/iter-<N>/`. Fields: `adapter`, `model`, `input_tokens`, `output_tokens`, `cost_usd`, `captured_at`. Token counts come from the agent's own stream events; USD is computed against a static pricing table (`internal/features/cost/pricing.go`). Claude's terminal `total_cost_usd` wins over the table when present, so prompt-caching discounts are reflected.
+- **Per iteration:** every agent dispatch writes `cost.json` alongside `meta.json` under `.springfield/execution/plans/<plan-id>/evidence/iter-<N>/`. Fields: `adapter`, `model`, `input_tokens`, `output_tokens`, `cost_usd`, `captured_at`. Token counts come from the agent's own stream events; USD is computed against a static pricing table (`internal/features/cost/pricing.go`). Claude's terminal `total_cost_usd` wins over the table when present, so prompt-caching discounts are reflected. OpenCode reports a provider-computed cost in its own stream (`step_finish` events), which Springfield trusts outright — there is no pricing table for its cross-provider catalog.
 - **Live rollup:** `springfield status` prints a `Spend: $X.YZ (claude $A.BC, codex $D.EF)` line for the active batch. `springfield start` prints a `Total spend:` line after `Status: completed`.
 
-Gemini cost capture is not implemented (the CLI does not expose a token usage surface today). Gemini iterations contribute zero cost; when present they appear as `(N unpriced — likely gemini)`.
+Runs whose price cannot be computed still record their tokens and appear as `(N unpriced)` — a Codex model missing from the pricing table, or an OpenCode iteration on a free model that reports `$0` from its own stream. Gemini has no cost capture at all (the CLI does not expose a token usage surface today): its iterations contribute zero cost.
 
 ### Capping spend
 

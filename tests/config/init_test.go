@@ -440,6 +440,129 @@ func TestInitFreshScaffoldOmitsGeminiWhenNotInPriority(t *testing.T) {
 	}
 }
 
+func TestInitFreshScaffoldIncludesOpenCodeWhenInPriority(t *testing.T) {
+	dir := t.TempDir()
+
+	_, err := config.Init(dir, []string{"claude", "opencode"}, config.InitOptions{})
+	if err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, config.FileName))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "[agents.opencode]") {
+		t.Fatalf("expected [agents.opencode] section, got:\n%s", text)
+	}
+	// Recommended profile is empty (never guess a provider): no model line
+	// unless the operator picked one.
+	if strings.Contains(text, "model =") {
+		t.Fatalf("expected no model line in bare opencode scaffold, got:\n%s", text)
+	}
+}
+
+func TestInitFreshScaffoldOmitsOpenCodeWhenNotInPriority(t *testing.T) {
+	dir := t.TempDir()
+
+	_, err := config.Init(dir, []string{"claude", "codex"}, config.InitOptions{})
+	if err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, config.FileName))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	text := string(data)
+	if strings.Contains(text, "[agents.opencode]") {
+		t.Fatalf("unexpected [agents.opencode] section, got:\n%s", text)
+	}
+}
+
+func TestInitWritesSelectedOpenCodeModel(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := config.Init(
+		dir,
+		[]string{"opencode"},
+		config.InitOptions{
+			Models: map[string]string{
+				"opencode": "openai/gpt-5.4",
+			},
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, config.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(raw)
+	if !strings.Contains(s, `[agents.opencode]`) || !strings.Contains(s, `model = "openai/gpt-5.4"`) {
+		t.Fatalf("expected opencode model line:\n%s", s)
+	}
+}
+
+func TestInitMergeBackfillFillsNothingForOpenCode(t *testing.T) {
+	dir := t.TempDir()
+
+	configPath := filepath.Join(dir, config.FileName)
+	original := `[project]
+agent_priority = ["opencode"]
+`
+	if err := os.WriteFile(configPath, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Recommended opencode settings are the zero value (no approval/sandbox
+	// axis; model never guessed), so the merge backfill has nothing to fill —
+	// it must not error and must not invent values.
+	if _, err := config.Init(dir, []string{"opencode"}, config.InitOptions{}); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	text := string(data)
+	if strings.Contains(text, "model =") {
+		t.Fatalf("backfill must not invent an opencode model, got:\n%s", text)
+	}
+}
+
+func TestInitMergePreservesCustomOpenCodeModel(t *testing.T) {
+	dir := t.TempDir()
+
+	configPath := filepath.Join(dir, config.FileName)
+	original := `[project]
+agent_priority = ["claude"]
+
+[agents.opencode]
+model = "openai/gpt-5.4"
+`
+	if err := os.WriteFile(configPath, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Re-init (merge mode) with opencode now in priority: the existing custom
+	// block is present, so backfill must leave it untouched — no error, no
+	// clobber.
+	if _, err := config.Init(dir, []string{"claude", "opencode"}, config.InitOptions{}); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	loaded, err := config.LoadFrom(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := loaded.Config.Agents.OpenCode.Model; got != "openai/gpt-5.4" {
+		t.Errorf("opencode model: want openai/gpt-5.4 preserved, got %q", got)
+	}
+}
+
 func TestInitMergeDoesNotBackfillGeminiWhenNotInPriority(t *testing.T) {
 	dir := t.TempDir()
 
@@ -479,6 +602,48 @@ approval_policy = "never"
 	}
 	if strings.Contains(string(data), "[agents.gemini]") {
 		t.Errorf("unexpected [agents.gemini] section in TOML:\n%s", string(data))
+	}
+}
+
+func TestInitMergeDoesNotBackfillOpenCodeWhenNotInPriority(t *testing.T) {
+	dir := t.TempDir()
+
+	configPath := filepath.Join(dir, config.FileName)
+	original := `[project]
+agent_priority = ["claude", "codex"]
+
+[agents.claude]
+permission_mode = "bypassPermissions"
+
+[agents.codex]
+sandbox_mode = "danger-full-access"
+approval_policy = "never"
+`
+	if err := os.WriteFile(configPath, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := config.Init(dir, []string{"claude", "codex"}, config.InitOptions{})
+	if err != nil {
+		t.Fatalf("init: %v", err)
+	}
+
+	loaded, err := config.LoadFrom(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if loaded.Config.Agents.OpenCode.Model != "" {
+		t.Errorf("expected opencode fields empty, got model=%q",
+			loaded.Config.Agents.OpenCode.Model)
+	}
+
+	// Also confirm the TOML on disk doesn't have a [agents.opencode] section.
+	data, err := os.ReadFile(filepath.Join(dir, config.FileName))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if strings.Contains(string(data), "[agents.opencode]") {
+		t.Errorf("unexpected [agents.opencode] section in TOML:\n%s", string(data))
 	}
 }
 

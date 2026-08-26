@@ -166,6 +166,94 @@ func TestHookGuardPathAwareness(t *testing.T) {
 			wantExit: 2,
 			wantErr:  "off-limits",
 		},
+		// --- agent-harness config surfaces (.opencode/, opencode.json) ---
+		// Planting a project plugin or config is itself the bypass: opencode
+		// loads both at boot, executing attacker JS ahead of any tool-call
+		// hook. Writes into these surfaces are blocked outright.
+		{
+			name:     "write planted plugin into project .opencode blocked",
+			stdin:    `{"tool_input":{"file_path":".opencode/plugins/helpers.js","content":"pwned"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "nested .opencode path blocked",
+			stdin:    `{"tool_input":{"file_path":"/abs/worktree/.opencode/config.json"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "notebook_path into .opencode blocked",
+			stdin:    `{"tool_input":{"notebook_path":".opencode/nb.ipynb"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "multiedit edits array into .opencode blocked",
+			stdin:    `{"tool_input":{"edits":[{"file_path":".opencode/agent.md"}]}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "redirect into project opencode.json blocked",
+			stdin:    `{"tool_input":{"command":"echo x > opencode.json"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "rm -rf .opencode blocked",
+			stdin:    `{"tool_input":{"command":"rm -rf .opencode"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "mutation of .opencode file via mv blocked",
+			stdin:    `{"tool_input":{"command":"mv evil.js .opencode/plugins/helpers.js"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			// Reads and mentions stay allowed — same posture as .springfield.
+			name:     "reading .opencode plugin allowed",
+			stdin:    `{"tool_input":{"command":"cat .opencode/plugins/helpers.js"}}`,
+			wantExit: 0,
+		},
+		{
+			name:     "benign path merely containing 'opencode' allowed",
+			stdin:    `{"tool_input":{"file_path":"src/opencode-notes.md"}}`,
+			wantExit: 0,
+		},
+		{
+			name:     "benign command writing elsewhere allowed",
+			stdin:    `{"tool_input":{"command":"echo hi > notes.txt"}}`,
+			wantExit: 0,
+		},
+		// --- case-slip hardening (F3): macOS APFS is case-insensitive, so a
+		// case-folded path REALLY hits the control plane. Must deny. ---
+		{
+			name:     "uppercase .SPRINGFIELD rm blocked",
+			stdin:    `{"tool_input":{"command":"rm -rf .SPRINGFIELD/*"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "mixed-case file_path blocked",
+			stdin:    `{"tool_input":{"file_path":".Springfield/run.json"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			name:     "mixed-case redirect blocked",
+			stdin:    `{"tool_input":{"command":"echo pwn > .SpringField/x"}}`,
+			wantExit: 2,
+			wantErr:  "off-limits",
+		},
+		{
+			// Reads stay reads regardless of case.
+			name:     "read of uppercase .SPRINGFIELD path allowed",
+			stdin:    `{"tool_input":{"command":"cat .SPRINGFIELD/run.json"}}`,
+			wantExit: 0,
+		},
 		{
 			name:     "malformed json fails open",
 			stdin:    `not json`,
@@ -456,22 +544,119 @@ func TestHookGuardRecursionGuard(t *testing.T) {
 			wantExit: 0,
 		},
 		{
-			// ACCEPTED RESIDUAL: bash -c hides the real invocation behind an
-			// arg string; catching it needs a shell parser. Pinned as allowed
-			// so the boundary is explicit (backed by plugin-disable +
-			// anti-recursion prompt for subagents).
-			name:     "subagent allows bash -c residual",
+			// BOUNDED UNWRAP (F4): sh/bash/zsh -c puts springfield in arg
+			// position behind a known wrapper; one unwrap level catches it.
+			name:     "subagent blocks bash -c wrapper",
 			flags:    []string{"--block-reentry"},
 			stdin:    `{"tool_input":{"command":"bash -c \"springfield plan\""}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks sh -c start",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"sh -c \"springfield start\""}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks zsh -c recover",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"zsh -c 'springfield recover'"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks env wrapper",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"env springfield start"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks env wrapper with assignment",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"env FOO=1 springfield plan"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks command wrapper",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"command springfield plan"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks exec wrapper",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"exec springfield recover"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks sudo wrapper",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"sudo springfield plan"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks sudo with path-prefixed binary",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"sudo /usr/local/bin/springfield recover"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks nohup wrapper",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"nohup springfield plan"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks timeout with duration arg",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"timeout 30 springfield plan"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks nice with -n value",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"nice -n 5 springfield plan"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			name:     "subagent blocks wrapper with leading assignment",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"FOO=1 sudo springfield plan"}}`,
+			wantExit: 2,
+			wantErr:  "Nested springfield CLI invocation blocked",
+		},
+		{
+			// DOCUMENTED RESIDUAL: the bounded unwrap applies ONE extra level.
+			// A wrapper chain nested inside the payload still hides the verb.
+			name:     "subagent allows deeper wrapper chain residual",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"bash -c \"sh -c 'springfield plan'\""}}`,
 			wantExit: 0,
 		},
 		{
-			// ACCEPTED RESIDUAL: command wrappers that put springfield in arg
-			// position (sudo/env/command/...) need a shell parser. Pinned to
-			// document the boundary — open-ended wrapper list, out of scope.
-			name:     "subagent allows sudo wrapper residual",
+			// DOCUMENTED RESIDUAL: only the FIRST token's wrapper is unwrapped;
+			// wrappers after a separator stay hidden (needs a shell parser).
+			name:     "subagent allows mid-command wrapper after separator residual",
 			flags:    []string{"--block-reentry"},
-			stdin:    `{"tool_input":{"command":"sudo springfield plan"}}`,
+			stdin:    `{"tool_input":{"command":"cd x && sudo springfield plan"}}`,
+			wantExit: 0,
+		},
+		{
+			// Wrappers wrapping NON-springfield work must not block.
+			name:     "subagent allows bash -c around benign command",
+			flags:    []string{"--block-reentry"},
+			stdin:    `{"tool_input":{"command":"bash -c \"echo hi\""}}`,
 			wantExit: 0,
 		},
 		{

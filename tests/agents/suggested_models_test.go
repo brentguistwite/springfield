@@ -9,6 +9,7 @@ import (
 	"springfield/internal/core/agents/claude"
 	"springfield/internal/core/agents/codex"
 	"springfield/internal/core/agents/gemini"
+	"springfield/internal/core/agents/opencode"
 	"springfield/internal/features/cost"
 )
 
@@ -17,12 +18,14 @@ func TestAdaptersImplementModelProvider(t *testing.T) {
 		claude.New(exec.LookPath),
 		codex.New(exec.LookPath),
 		gemini.New(exec.LookPath),
+		opencode.New(exec.LookPath),
 	)
 
 	for _, agentID := range []agents.ID{
 		agents.AgentClaude,
 		agents.AgentCodex,
 		agents.AgentGemini,
+		agents.AgentOpenCode,
 	} {
 		t.Run(string(agentID), func(t *testing.T) {
 			resolved, err := registry.Resolve(agents.ResolveInput{ProjectDefault: agentID})
@@ -84,6 +87,38 @@ func TestClaudeSuggestedModelsAreTierAliasesOnly(t *testing.T) {
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("SuggestedModels() = %v, want %v", got, want)
+		}
+	}
+}
+
+// The picker offers one stable hosted flagship per major non-Anthropic
+// provider, in opencode's "provider/model" form. Exact-pin: adding an entry
+// here is a curation decision (verified against `opencode models`), not an
+// accident of the catalog.
+func TestOpenCodeSuggestedModelsAreStableHostedIDsOnly(t *testing.T) {
+	got := opencode.SuggestedModels()
+	want := []string{
+		"openai/gpt-5.6",
+		"google/gemini-2.5-pro",
+		"xai/grok-4.6",
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("SuggestedModels() = %v, want exactly %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("SuggestedModels() = %v, want %v", got, want)
+		}
+	}
+}
+
+// The opencode/* Zen/free-preview slugs churn too fast to hardcode; a pinned
+// slug that vanishes would hand init users a dead model id.
+func TestOpenCodeSuggestedModelsExcludeVolatileFreePreviewSlugs(t *testing.T) {
+	for _, model := range opencode.SuggestedModels() {
+		if strings.HasPrefix(model, "opencode/") {
+			t.Fatalf("SuggestedModels() contains volatile opencode-prefixed slug %q; got %v", model, opencode.SuggestedModels())
 		}
 	}
 }

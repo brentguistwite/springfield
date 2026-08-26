@@ -16,6 +16,17 @@ import (
 // substring causes the hook to block the tool call.
 const hookGuardToken = ".springfield"
 
+// hookGuardHarnessTokens are the agent-harness config surfaces that must not
+// be planted or mutated by an agent: the project `.opencode/` directory (any
+// depth) and the project `opencode.json` file. opencode loads project plugins
+// from `.opencode/plugins/` at BOOT — ahead of any tool-call hook — so a
+// planted plugin is itself the bypass; same for an agent-written
+// `opencode.json`, whose keys survive our OPENCODE_CONFIG_CONTENT override via
+// config deep-merge. Matching is CASE-INSENSITIVE: all protected tokens share
+// the single mechanism in hookGuardTargetsProtectedPath (see the F3 note
+// there).
+var hookGuardHarnessTokens = []string{".opencode", "opencode.json"}
+
 // hookGuardBlockMessage is written to stderr when the guard blocks a call.
 // Claude's PreToolUse contract treats stderr + exit 2 as a deny with reason.
 const hookGuardBlockMessage = "Springfield control plane is off-limits"
@@ -53,16 +64,18 @@ const hookGuardStartSentinel = "SPRINGFIELD_ALLOW_START="
 // still catching real invocations — including env-prefixed ones, so a bare
 // `FOO=1 springfield plan` cannot evade it.
 //
-// Residuals that would require a shell parser are intentionally NOT caught:
-// any wrapper that puts `springfield` in argument position rather than command
-// position — `bash -c "springfield plan"`, `sh -c ...`, `env springfield
-// plan`, `command springfield plan`, `sudo springfield plan`, `xargs`, etc. —
-// and env values containing whitespace (`FOO="a b" springfield plan`). The
-// wrapper list is open-ended, so a complete fix needs a shell parser; that is
-// deliberately out of scope. The guard stays a simple, dependency-free,
-// fail-open regex, and subagents are covered by two further layers
-// (permissions.deny strips Task/Workflow; the springfield plugin is disabled;
-// the executionPrompt carries an anti-recursion contract).
+// Residuals that would require a shell parser are intentionally NOT caught.
+// Known wrapper heads (sh/bash/zsh/env/command/exec/sudo/nohup/timeout/nice)
+// DO get caught via ONE bounded unwrap level — see hookGuardUnwrapOnce — but
+// deeper chains (`bash -c "sh -c '...'"`), wrappers appearing AFTER a shell
+// separator (`cd x && sudo springfield plan`), env values containing
+// whitespace (`FOO="a b" springfield plan`), and the open-ended tail of the
+// wrapper list (`xargs`, process substitution, ...) all remain residual; a
+// complete fix needs a shell parser and is deliberately out of scope. The
+// guard stays a simple, dependency-free, fail-open regex, and subagents are
+// covered by two further layers (permissions.deny strips Task/Workflow; the
+// springfield plugin is disabled; the executionPrompt carries an
+// anti-recursion contract).
 func hookGuardRecursionRegex(verbs string) *regexp.Regexp {
 	return regexp.MustCompile(hookGuardSep + hookGuardEnv + hookGuardBinSpringfield + `[ \t]+(` + verbs + `)\b`)
 }
@@ -79,6 +92,9 @@ func hookGuardRecursionRegex(verbs string) *regexp.Regexp {
 //     and `'springfield'` are recognized, not just bare `springfield`.
 const (
 	hookGuardSep = "(^|[;&|(){}" + "`" + `\n])[ \t]*`
+	// hookGuardSepChars mirrors the separator set in hookGuardSep as a plain
+	// string, for first-segment splitting in hookGuardUnwrapOnce.
+	hookGuardSepChars = ";&|(){}" + "`" + "\n"
 	// Env names follow shell grammar ([A-Za-z_]\w*) so a non-assignment word
 	// like `123=val` isn't mistaken for an env prefix.
 	hookGuardEnv = `([A-Za-z_]\w*=\S*[ \t]+)*`
@@ -113,7 +129,8 @@ var (
 	// path char-class excludes `()` so bash process-substitution `>(...)` is not
 	// mistaken for a file target.
 	hookGuardRedirectRegex = regexp.MustCompile(
-		`(\d*>>?|&>>?|>\||>&)[ \t]*["']?[^ \t"'|;&<>()` + "`" + `]*\.springfield`)
+		`(\d*>>?|&>>?|>\||>&)[ \t]*["']?[^ \t"'|;&<>()` + "`" + `]*` +
+			`(?i:\.springfield|\.opencode|opencode\.json)`)
 
 	// hookGuardMutationCmdRegex matches a state-mutating command at shell
 	// command-position (start-of-string or after a separator, env-prefix and
@@ -144,10 +161,22 @@ var (
 // Known residuals (real control-plane mutations this guard does NOT block):
 //   - in-place edits: `sed -i ... .springfield/x`, `perl -i ...`
 //   - interpreter scriptlets: `python -c "open('.springfield/x','w')..."`,
-//     `node -e ...`, `ruby -e ...` (an interpreter can write any path)
+//     `node -e "writeFileSync('.springfield/x',...)"`, `ruby -e ...`
+//     (an interpreter can write any path)
 //   - VCS restores: `git restore .springfield/x`, `git checkout -- .springfield/x`
 //   - sync/wrappers: `rsync`, `bash -c "..."`, `env`, `sudo`, `xargs`
 //   - exotic redirects: `<>` read-write open
+//   - glob truncation: `rm -rf .spri*` (token split across the expansion)
+//   - concat splitting: `D='.spr”ingfield'; rm -rf "$D"` (no shell parser to
+//     rejoin the pieces)
+//   - var-indirect redirects: `D=.springfield; echo pwn > $D/run.json`
+//     (the target only materializes at expansion time)
+//   - symlink aliasing: two-step link/glob aliasing that renames the target
+//     out from under the literal-token match
+//
+// FIXED, previously residual: case-folding — `.SPRINGFIELD/*` really deletes
+// on case-insensitive APFS; all protected tokens now match case-insensitively
+// via hookGuardTargetsProtectedPath.
 //
 // These regressed from the prior naive substring check; the trade is deliberate
 // — that check false-positived on every commit body, grep, and read mentioning
@@ -218,7 +247,7 @@ func runHookGuard(stdin io.Reader, stderr io.Writer, blockReentry bool) error {
 
 	cmd, _ := payload.ToolInput["command"].(string)
 	if blockReentry {
-		if hookGuardReentryRegex.MatchString(cmd) {
+		if hookGuardCommandReenters(cmd) {
 			_, _ = fmt.Fprintln(stderr, hookGuardRecursionMessage)
 			os.Exit(2)
 		}
@@ -234,11 +263,96 @@ func runHookGuard(stdin io.Reader, stderr io.Writer, blockReentry bool) error {
 	return nil
 }
 
+// hookGuardCommandReenters reports whether a Bash command invokes springfield
+// start/plan/recover — either at a shell command position (the level-0
+// anchored match) or behind ONE bounded level of common wrapper (see
+// hookGuardUnwrapOnce). Deeper chains and mid-command wrappers stay residual
+// per the documented boundary on hookGuardRecursionRegex.
+func hookGuardCommandReenters(cmd string) bool {
+	if hookGuardReentryRegex.MatchString(cmd) {
+		return true
+	}
+	rest, ok := hookGuardUnwrapOnce(cmd)
+	if !ok {
+		return false
+	}
+	return hookGuardReentryRegex.MatchString(rest)
+}
+
+// hookGuardReentryWrappers are the shell/exec wrapper binaries whose FIRST
+// positional payload this guard is willing to unwrap, one level deep. The
+// list is deliberately closed-ended: each entry's arg grammar is simple
+// enough for the skippable-token rules below to stay predictable.
+var hookGuardReentryWrappers = map[string]bool{
+	"sh": true, "bash": true, "zsh": true,
+	"env": true, "command": true, "exec": true,
+	"sudo": true, "nohup": true, "timeout": true, "nice": true,
+}
+
+// hookGuardUnwrapOnce strips ONE wrapper layer from cmd: when the first token
+// of the command's first segment is a known wrapper (hookGuardReentryWrappers),
+// skip its leading flags (`-c`, `-lc`), env assignments (`FOO=1`), and bare
+// numeric args (`timeout 30`, `nice 5`), and return the remaining words as the
+// wrapped payload. The caller re-runs the anchored re-entry regex over that
+// payload. Returns false when there is no known wrapper to unwrap.
+//
+// This is a heuristic bound, not a parser: exactly one level is unwrapped, and
+// only from the first segment — deeper chains and wrappers after a separator
+// remain documented residuals.
+func hookGuardUnwrapOnce(cmd string) (string, bool) {
+	seg := cmd
+	if idx := strings.IndexAny(seg, hookGuardSepChars); idx >= 0 {
+		seg = seg[:idx]
+	}
+	fields := strings.Fields(seg)
+	// Leading env assignments (`FOO=1 sudo ...`) are position-neutral, same
+	// as the level-0 regex's env-prefix; skip them before wrapper detection.
+	for len(fields) > 0 && hookGuardEnvAssignmentRegex.MatchString(fields[0]) {
+		fields = fields[1:]
+	}
+	if len(fields) == 0 || !hookGuardReentryWrappers[fields[0]] {
+		return "", false
+	}
+	i := 1
+	for i < len(fields) && hookGuardSkippableWrapperArg(fields[i]) {
+		i++
+	}
+	if i >= len(fields) {
+		return "", false
+	}
+	// A quoted payload leaves its opening quote glued to the first word
+	// (`bash -c "springfield ...`); strip leading quotes so the anchored
+	// regex can match the payload at start-of-string. Trailing quotes are
+	// already tolerated by the bin/verb patterns.
+	return strings.TrimLeft(strings.Join(fields[i:], " "), `"'`), true
+}
+
+var hookGuardEnvAssignmentRegex = regexp.MustCompile(`^[A-Za-z_]\w*=`)
+
+// hookGuardSkippableWrapperArg reports whether a wrapper argument carries no
+// payload semantics: flags (-c), VAR=1 assignments (env), or bare numbers
+// (timeout 30 / nice 5). The first non-skippable word begins the payload.
+func hookGuardSkippableWrapperArg(f string) bool {
+	switch {
+	case strings.HasPrefix(f, "-"):
+		return true
+	case regexpDigitsOnly.MatchString(f):
+		return true
+	case hookGuardEnvAssignmentRegex.MatchString(f):
+		return true
+	default:
+		return false
+	}
+}
+
+var regexpDigitsOnly = regexp.MustCompile(`^[0-9]+$`)
+
 // hookGuardShouldBlock returns true when a tool call would mutate the
-// .springfield control plane. File-path fields (Write/Edit/MultiEdit) are
-// inherently writes, so a `.springfield` substring there blocks unconditionally.
+// .springfield control plane or plant/mutate an agent-harness config surface
+// (.opencode/, opencode.json). File-path fields (Write/Edit/MultiEdit) are
+// inherently writes, so a protected-path substring there blocks unconditionally.
 // The Bash `command` field is different: it is blocked only when it MUTATES a
-// .springfield path (redirect target or a mutation command), not when it merely
+// protected path (redirect target or a mutation command), not when it merely
 // mentions one — so ordinary commit bodies, greps, and reads that reference the
 // path are no longer false-positived (see hookGuardCommandMutatesControlPlane).
 // No shell parser is involved, so a mutation verb sitting at a separator/line
@@ -249,9 +363,9 @@ func hookGuardShouldBlock(toolInput map[string]any) bool {
 	if toolInput == nil {
 		return false
 	}
-	// Write/Edit path fields: any .springfield path is a mutation.
+	// Write/Edit path fields: any protected path is a mutation.
 	for _, key := range []string{"file_path", "notebook_path"} {
-		if s, ok := toolInput[key].(string); ok && strings.Contains(s, hookGuardToken) {
+		if s, ok := toolInput[key].(string); ok && hookGuardTargetsProtectedPath(s) {
 			return true
 		}
 	}
@@ -266,7 +380,7 @@ func hookGuardShouldBlock(toolInput map[string]any) bool {
 			if !ok {
 				continue
 			}
-			if s, ok := entry["file_path"].(string); ok && strings.Contains(s, hookGuardToken) {
+			if s, ok := entry["file_path"].(string); ok && hookGuardTargetsProtectedPath(s) {
 				return true
 			}
 		}
@@ -274,13 +388,30 @@ func hookGuardShouldBlock(toolInput map[string]any) bool {
 	return false
 }
 
+// hookGuardTargetsProtectedPath reports whether a path-bearing string touches
+// a guarded surface: the `.springfield` control plane or an agent-harness
+// config surface from hookGuardHarnessTokens. ALL tokens match
+// case-insensitively through this one shared mechanism (F3 hardening): macOS
+// APFS is case-insensitive, so `rm -rf .SPRINGFIELD` really deletes the
+// control plane.
+func hookGuardTargetsProtectedPath(s string) bool {
+	folded := strings.ToLower(s)
+	for _, tok := range append([]string{hookGuardToken}, hookGuardHarnessTokens...) {
+		if strings.Contains(folded, tok) {
+			return true
+		}
+	}
+	return false
+}
+
 // hookGuardCommandMutatesControlPlane reports whether a Bash command string
-// writes to or deletes a .springfield path, as opposed to merely mentioning one
-// (in a commit/PR body, a grep pattern, or a read). It requires a `.springfield`
-// substring AND either a redirection into such a path or a mutation command at
-// shell command-position. Reads (cat/ls/grep) and prose mentions return false.
+// writes to or deletes a protected path (see hookGuardShouldBlock), as opposed
+// to merely mentioning one (in a commit/PR body, a grep pattern, or a read).
+// It requires a protected-path substring AND either a redirection into such a
+// path or a mutation command at shell command-position. Reads (cat/ls/grep)
+// and prose mentions return false.
 func hookGuardCommandMutatesControlPlane(cmd string) bool {
-	if !strings.Contains(cmd, hookGuardToken) {
+	if !hookGuardTargetsProtectedPath(cmd) {
 		return false
 	}
 	if hookGuardRedirectRegex.MatchString(cmd) || hookGuardMutationCmdRegex.MatchString(cmd) {

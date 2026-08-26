@@ -23,9 +23,10 @@ type saveConfig struct {
 }
 
 type saveAgentsConfig struct {
-	Claude *ClaudeAgentConfig `toml:"claude,omitempty"`
-	Codex  *CodexAgentConfig  `toml:"codex,omitempty"`
-	Gemini *GeminiAgentConfig `toml:"gemini,omitempty"`
+	Claude   *ClaudeAgentConfig   `toml:"claude,omitempty"`
+	Codex    *CodexAgentConfig    `toml:"codex,omitempty"`
+	Gemini   *GeminiAgentConfig   `toml:"gemini,omitempty"`
+	OpenCode *OpenCodeAgentConfig `toml:"opencode,omitempty"`
 }
 
 type saveStartConfig struct {
@@ -78,6 +79,14 @@ func newSaveConfig(cfg Config) saveConfig {
 			ApprovalMode: cfg.Agents.Gemini.ApprovalMode,
 			SandboxMode:  cfg.Agents.Gemini.SandboxMode,
 			Model:        cfg.Agents.Gemini.Model,
+		}
+	}
+	if cfg.Agents.OpenCode.isPresent || cfg.Agents.OpenCode.Model != "" {
+		if agentsCfg == nil {
+			agentsCfg = &saveAgentsConfig{}
+		}
+		agentsCfg.OpenCode = &OpenCodeAgentConfig{
+			Model: cfg.Agents.OpenCode.Model,
 		}
 	}
 	out.Agents = agentsCfg

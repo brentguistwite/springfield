@@ -74,6 +74,7 @@ var parserPkgs = []string{
 	"../../internal/core/agents/claude",
 	"../../internal/core/agents/codex",
 	"../../internal/core/agents/gemini",
+	"../../internal/core/agents/opencode",
 	"../../internal/core/runtime",
 	"../../internal/features/conductor/planreview",
 	"../../internal/features/conductor/planrun",
@@ -82,11 +83,16 @@ var parserPkgs = []string{
 // coveredParsers are exercised against a real capture (here or in a sibling
 // real-capture test). Keyed by function/method name.
 var coveredParsers = map[string]bool{
-	"ValidateResult":    true, // reviewer_validation_test + above (real captures)
-	"AssistantText":     true, // transcript_decoder_test + above (claude+codex captures)
+	"ValidateResult":    true, // reviewer_validation_test + opencode_validate_test + above (real captures)
+	"AssistantText":     true, // transcript_decoder_test + opencode_assistant_text_test + above (claude+codex captures)
 	"ScanReviewVerdict": true, // transcript_decoder_test + above (decoded real text)
 	"ScanMarkers":       true, // above (real implementer-story-pass transcript)
-	"ExtractCost":       true, // cost_resolved_model_test (real implementer-story-pass transcript)
+	"ExtractCost":       true, // cost_resolved_model_test (real implementer-story-pass + opencode captures)
+
+	// opencode helper behind ValidateResult's error surfacing; decodes the
+	// top-level error event off the REAL hard-error capture via
+	// TestOpencodeValidateResultSurfacesErrorEventMessage.
+	"lastErrorMessage": true,
 }
 
 // exemptParsersByPkg is checked BEFORE the bare-name maps, keyed by

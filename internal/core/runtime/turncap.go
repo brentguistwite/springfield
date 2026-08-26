@@ -18,8 +18,8 @@ const TurnCapExceededReason = "iteration-turn-cap-exceeded"
 // resultTurnEvent is the subset of an agent's stream-json terminal "result"
 // event that the turn-cap monitor reads. Claude Code reports num_turns there
 // under --output-format stream-json. Agents that do not emit the field (codex,
-// gemini) decode to 0 and are therefore never capped by this monitor — the cap
-// only fires on evidence of real thrash.
+// gemini, opencode) decode to 0 and are therefore never capped by this
+// monitor — the cap only fires on evidence of real thrash.
 type resultTurnEvent struct {
 	Type     string `json:"type"`
 	NumTurns int    `json:"num_turns"`

@@ -216,6 +216,61 @@ func TestSinglePlanWritesPerAgentEvidenceOnFallthrough(t *testing.T) {
 	}
 }
 
+// TestSinglePlanStampsOpenCodeModelInEvidenceMeta pins that an opencode
+// attempt's per-iteration evidence meta.json carries the configured model.
+// modelForAgent is duplicated between planrun and execution runtimes; this
+// guards the planrun copy (the execution copy has its own test).
+func TestSinglePlanStampsOpenCodeModelInEvidenceMeta(t *testing.T) {
+	p := prd.PRD{
+		ID:    "feat",
+		Title: "Feature Plan",
+		UserStories: []prd.UserStory{
+			{ID: "US-001", Title: "Story 1", Priority: 1, Passes: false},
+		},
+	}
+	root, project := projectFixtureWithPRD(t, "feat", p)
+	g := newFakeGit()
+
+	opencodePass := makePassAndCompleteResult("US-001")
+	opencodePass.Agent = agents.AgentOpenCode
+	runner := &iterScriptRunner{replies: []coreruntime.Result{opencodePass}}
+
+	res := planrun.SinglePlan(planrun.SinglePlanInput{
+		Project:      project,
+		ControlRoot:  root,
+		WorktreeBase: ".worktrees",
+		AgentIDs:     []agents.ID{agents.AgentOpenCode},
+		Runner:       runner,
+		Manager:      &planrun.Manager{Git: g},
+		ProjectRoot:  root,
+		ExecutionSettings: agents.ExecutionSettings{
+			OpenCode: agents.OpenCodeExecutionSettings{Model: "openai/gpt-5.4"},
+		},
+	})
+	if res.Err != nil {
+		t.Fatalf("SinglePlan: %v", res.Err)
+	}
+
+	metaPath := filepath.Join(planrun.EvidenceRoot(root, "feat"), "iter-1", "meta.json")
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("read meta.json: %v", err)
+	}
+	var meta struct {
+		AgentID string `json:"agent_id"`
+		Model   string `json:"model"`
+	}
+	if err := json.Unmarshal(data, &meta); err != nil {
+		t.Fatalf("Unmarshal(meta.json): %v", err)
+	}
+	if meta.AgentID != string(agents.AgentOpenCode) {
+		t.Fatalf("meta agent_id = %q, want opencode", meta.AgentID)
+	}
+	if meta.Model != "openai/gpt-5.4" {
+		t.Fatalf("meta model = %q, want openai/gpt-5.4", meta.Model)
+	}
+}
+
 func TestSinglePlanIterationThreeStoryFullPass(t *testing.T) {
 	p := prd.PRD{
 		ID:    "feat",

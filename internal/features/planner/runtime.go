@@ -72,10 +72,18 @@ func (r RuntimeRunner) loadConfig() ([]agents.ID, agents.ExecutionSettings, erro
 
 	var missing *config.MissingConfigError
 	if errors.As(err, &missing) {
-		return []agents.ID{agents.AgentClaude, agents.AgentCodex, agents.AgentGemini}, agents.ExecutionSettings{}, nil
+		return missingConfigFallbackPriority(), agents.ExecutionSettings{}, nil
 	}
 
 	return nil, agents.ExecutionSettings{}, err
+}
+
+// missingConfigFallbackPriority is the agent_priority assumed when a project
+// has no springfield.toml at all: every registered execution adapter in
+// canonical order. Opencode rides last (opt-in tail), matching init's
+// canonical ordering.
+func missingConfigFallbackPriority() []agents.ID {
+	return []agents.ID{agents.AgentClaude, agents.AgentCodex, agents.AgentGemini, agents.AgentOpenCode}
 }
 
 func priorityAgentIDs(priority []string) []agents.ID {

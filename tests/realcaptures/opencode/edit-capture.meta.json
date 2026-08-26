@@ -1,0 +1,14 @@
+{
+  "tool": "opencode",
+  "tool_version": "1.18.21",
+  "scenario": "edit-capture",
+  "command_args": [
+    "run",
+    "--format",
+    "json",
+    "--auto"
+  ],
+  "captured_at": "2026-08-22T22:05:00Z",
+  "sha256": "de3480b6eaff68674e5ab9934e1eb316cce0dfbf86b683c3df8c16669a4d9d28",
+  "notes": "edit tool_use (filePath/oldString/newString) + read tool_use — pins the camelCase arg keys the guard plugin translates; exit 0"
+}

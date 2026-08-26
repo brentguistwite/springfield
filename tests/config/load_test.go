@@ -157,6 +157,51 @@ func TestLoadFromAcceptsEmptyPriority(t *testing.T) {
 	}
 }
 
+func TestLoadFromAcceptsOpenCodeInPriority(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+[project]
+agent_priority = ["claude", "opencode"]
+
+[agents.opencode]
+model = "openai/gpt-5.4"
+`)
+
+	loaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("expected opencode to pass config validation once execution-supported, got %v", err)
+	}
+	if got := loaded.Config.AgentForPlan("anything"); got != "claude" {
+		t.Fatalf("AgentForPlan = %q, want claude (lead)", got)
+	}
+}
+
+func TestLoadFromRejectsUnknownAgentMixedIntoPriority(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+[project]
+agent_priority = ["claude", "not-an-agent"]
+`)
+
+	_, err := config.LoadFrom(root)
+	if err == nil {
+		t.Fatal("expected invalid config error")
+	}
+
+	var invalidErr *config.InvalidConfigError
+	if !errors.As(err, &invalidErr) {
+		t.Fatalf("expected InvalidConfigError, got %T", err)
+	}
+
+	if !strings.Contains(err.Error(), "not an execution-supported agent") {
+		t.Fatalf("expected execution-supported rejection, got %q", err.Error())
+	}
+
+	if !strings.Contains(err.Error(), filepath.Join(root, config.FileName)) {
+		t.Fatalf("expected error to mention config path, got %q", err.Error())
+	}
+}
+
 func TestLoadParsesClaudeExecutionConfig(t *testing.T) {
 	root := t.TempDir()
 	writeConfigFile(t, root, `
@@ -324,6 +369,47 @@ model = "pro"
 	}
 }
 
+func TestLoadParsesOpenCodeSection(t *testing.T) {
+	dir := t.TempDir()
+	tomlContent := `[project]
+agent_priority = ["claude","codex"]
+[agents.opencode]
+model = "openai/gpt-5.4"
+`
+	if err := os.WriteFile(filepath.Join(dir, "springfield.toml"), []byte(tomlContent), 0o644); err != nil {
+		t.Fatalf("write toml: %v", err)
+	}
+	loaded, err := config.LoadFrom(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := loaded.Config.Agents.OpenCode.Model; got != "openai/gpt-5.4" {
+		t.Fatalf("model: want openai/gpt-5.4, got %q", got)
+	}
+	settings := loaded.Config.ExecutionSettingsForAgent(string(agents.AgentOpenCode))
+	if settings.OpenCode.Model != "openai/gpt-5.4" {
+		t.Fatalf("resolved opencode model: want openai/gpt-5.4, got %q", settings.OpenCode.Model)
+	}
+}
+
+func TestLoadTrimsOpenCodeModelWhitespace(t *testing.T) {
+	root := t.TempDir()
+	writeConfigFile(t, root, `
+[project]
+agent_priority = ["claude"]
+
+[agents.opencode]
+model = "  openai/gpt-5.4  "
+`)
+	loaded, err := config.LoadFrom(root)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := loaded.Config.Agents.OpenCode.Model; got != "openai/gpt-5.4" {
+		t.Fatalf("trimmed model: got %q", got)
+	}
+}
+
 func TestLoadRejectsUnknownGeminiApprovalMode(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "springfield.toml"), []byte(
@@ -418,6 +504,64 @@ func TestHasAnyExecutionSettingsTrueWhenGeminiSet(t *testing.T) {
 	}
 	if !cfg.HasAnyExecutionSettings() {
 		t.Fatal("expected HasAnyExecutionSettings true when gemini approval_mode set")
+	}
+}
+
+func TestExecutionModesReturnsOffForEmptyOpenCode(t *testing.T) {
+	cfg := config.Config{}
+	if got := cfg.ExecutionModes().OpenCode; got != config.ExecutionModeOff {
+		t.Fatalf("opencode mode: want %q, got %q", config.ExecutionModeOff, got)
+	}
+}
+
+func TestExecutionModesReturnsCustomForOpenCodeModel(t *testing.T) {
+	cfg := config.Config{
+		Agents: config.AgentsConfig{
+			OpenCode: config.OpenCodeAgentConfig{Model: "openai/gpt-5.4"},
+		},
+	}
+	if got := cfg.ExecutionModes().OpenCode; got != config.ExecutionModeCustom {
+		t.Fatalf("opencode mode: want %q, got %q", config.ExecutionModeCustom, got)
+	}
+}
+
+func TestExecutionModesNeverReturnsRecommendedForOpenCode(t *testing.T) {
+	// opencode has no approval/sandbox axis, so no configuration shape maps
+	// to recommended — off or custom only.
+	cfg := config.Config{}
+	if got := cfg.ExecutionModes().OpenCode; got == config.ExecutionModeRecommended {
+		t.Fatalf("empty opencode config must not map to recommended")
+	}
+	cfg = config.Config{
+		Agents: config.AgentsConfig{
+			OpenCode: config.OpenCodeAgentConfig{Model: "openai/gpt-5.4"},
+		},
+	}
+	if got := cfg.ExecutionModes().OpenCode; got == config.ExecutionModeRecommended {
+		t.Fatalf("configured opencode model must not map to recommended")
+	}
+}
+
+func TestHasAnyExecutionSettingsTrueWhenOpenCodeSet(t *testing.T) {
+	cfg := config.Config{
+		Agents: config.AgentsConfig{
+			OpenCode: config.OpenCodeAgentConfig{Model: "openai/gpt-5.4"},
+		},
+	}
+	if !cfg.HasAnyExecutionSettings() {
+		t.Fatal("expected HasAnyExecutionSettings true when opencode model set")
+	}
+}
+
+func TestApplyExecutionModeOffClearsOpenCodeModel(t *testing.T) {
+	cfg := config.Config{
+		Agents: config.AgentsConfig{
+			OpenCode: config.OpenCodeAgentConfig{Model: "openai/gpt-5.4"},
+		},
+	}
+	cfg.ApplyExecutionMode("opencode", config.ExecutionModeOff)
+	if cfg.Agents.OpenCode.Model != "" {
+		t.Fatalf("expected opencode fields cleared, got %+v", cfg.Agents.OpenCode)
 	}
 }
 

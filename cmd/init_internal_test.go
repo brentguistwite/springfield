@@ -67,6 +67,9 @@ func TestNewModelSuggesterReturnsNilWhenAdapterHasNoModelProvider(t *testing.T) 
 func TestPreservedOrderUsesCanonicalAgentOrdering(t *testing.T) {
 	claudeFirst := []agents.ID{agents.AgentClaude, agents.AgentCodex, agents.AgentGemini}
 	codexFirst := []agents.ID{agents.AgentCodex, agents.AgentClaude, agents.AgentGemini}
+	// Canonical order since 2026-08: opencode appended last (opt-in) — its
+	// tail position must survive preservation regardless of toggle order.
+	opencodeTail := []agents.ID{agents.AgentClaude, agents.AgentCodex, agents.AgentGemini, agents.AgentOpenCode}
 
 	cases := []struct {
 		name      string
@@ -80,6 +83,8 @@ func TestPreservedOrderUsesCanonicalAgentOrdering(t *testing.T) {
 		// Metered canonical (ClaudeHeadlessMetered=true): the result follows
 		// the codex-first canonical, not the operator's toggle order.
 		{"metered-canonical", codexFirst, []string{"claude", "codex"}, []string{"codex", "claude"}},
+		{"opencode-toggle-first-still-tail", opencodeTail, []string{"opencode", "claude", "codex", "gemini"}, []string{"claude", "codex", "gemini", "opencode"}},
+		{"opencode-solo-selection", opencodeTail, []string{"opencode"}, []string{"opencode"}},
 	}
 
 	for _, tc := range cases {

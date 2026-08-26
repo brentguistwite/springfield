@@ -32,6 +32,8 @@ func installGuidance(id agents.ID) string {
 		return "Install Codex CLI: npm install -g @openai/codex"
 	case agents.AgentGemini:
 		return "Install Gemini CLI: see https://github.com/google-gemini/gemini-cli"
+	case agents.AgentOpenCode:
+		return "Install OpenCode: curl -fsSL https://opencode.ai/install | bash (see https://opencode.ai/docs)"
 	default:
 		return "Agent binary not found. Check installation docs."
 	}

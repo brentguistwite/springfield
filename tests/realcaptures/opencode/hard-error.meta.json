@@ -1,0 +1,16 @@
+{
+  "tool": "opencode",
+  "tool_version": "1.18.21",
+  "scenario": "hard-error",
+  "command_args": [
+    "run",
+    "--format",
+    "json",
+    "--auto",
+    "--model",
+    "nonexistent/nope"
+  ],
+  "captured_at": "2026-08-22T21:53:00Z",
+  "sha256": "1524f3f059743b65b2b3a201b0807dd5e94f4159654c00a9e78bb72d9b97c633",
+  "notes": "single top-level {type:error} line on stdout (stderr empty), exit code 1; error message at .error.data.message"
+}

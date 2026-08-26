@@ -10,6 +10,7 @@ import (
 	"springfield/internal/core/agents/claude"
 	"springfield/internal/core/agents/codex"
 	"springfield/internal/core/agents/gemini"
+	"springfield/internal/core/agents/opencode"
 	coreexec "springfield/internal/core/exec"
 	"springfield/internal/testsupport/fixtures"
 )
@@ -42,6 +43,7 @@ func TestValidateMatrix(t *testing.T) {
 	claudeAdapter := claude.New(exec.LookPath)
 	codexAdapter := codex.New(exec.LookPath)
 	geminiAdapter := gemini.New(exec.LookPath)
+	opencodeAdapter := opencode.New(exec.LookPath)
 
 	cases := []adapterCase{
 		{
@@ -89,6 +91,17 @@ func TestValidateMatrix(t *testing.T) {
 				{name: "hard-error", fixture: "hard-error.json", exitCode: 1, expectNil: false},
 				{name: "exit-53-turn-limit", fixture: "exit-53-turn-limit.json", exitCode: 53, expectNil: false},
 				{name: "exit-42-rejected-input", fixture: "exit-42-rejected-input.json", exitCode: 42, expectNil: false},
+			},
+		},
+		{
+			name:      "opencode",
+			validator: mustValidator(t, opencodeAdapter),
+			dir:       "fixtures/opencode",
+			rows: []row{
+				{name: "success", fixture: "success.jsonl", expectNil: true},
+				{name: "success-text-only", fixture: "text-only.jsonl", expectNil: false},
+				{name: "tool-error-all", fixture: "tool-error.jsonl", expectNil: false},
+				{name: "hard-error", fixture: "hard-error.jsonl", exitCode: 1, expectNil: false},
 			},
 		},
 	}

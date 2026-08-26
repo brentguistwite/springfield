@@ -1,0 +1,14 @@
+{
+  "tool": "opencode",
+  "tool_version": "1.18.21",
+  "scenario": "success",
+  "command_args": [
+    "run",
+    "--format",
+    "json",
+    "--auto"
+  ],
+  "captured_at": "2026-08-22T21:47:00Z",
+  "sha256": "fabcc012b4e9c27b6217d527f2191b586f9c9ab04c37a89fa7613d803df5e94d",
+  "notes": "write+bash tool_use events with part.state.status completed, final text at part.text, step_finish reason tool-calls/stop — the implementer-mode positive case; exit 0"
+}

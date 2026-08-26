@@ -2,6 +2,7 @@ package execution
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,6 +46,49 @@ func testRuntimeRegistry() agents.Registry {
 
 func fakeRuntimeLookPath(name string) (string, error) {
 	return "/usr/local/bin/" + name, nil
+}
+
+// TestWriteEvidenceBestEffortStampsOpenCodeModel pins that an opencode
+// attempt's evidence meta.json carries the configured model. modelForAgent is
+// duplicated between planrun and execution runtimes; this guards the execution
+// copy (the planrun copy has its own test).
+func TestWriteEvidenceBestEffortStampsOpenCodeModel(t *testing.T) {
+	root := t.TempDir()
+	work := Work{
+		ID:    "batch-01-01",
+		Title: "Execution seam",
+		Split: "single",
+		Workstreams: []Workstream{
+			{Name: "01", Title: "Adapter"},
+		},
+	}
+	result := coreruntime.Result{
+		Agent:    agents.AgentOpenCode,
+		ExitCode: 0,
+	}
+
+	writeEvidenceBestEffort(root, work, work.Workstreams[0], "prompt", result, nil, agents.ExecutionSettings{
+		OpenCode: agents.OpenCodeExecutionSettings{Model: "openai/gpt-5.4"},
+	})
+
+	metaPath := filepath.Join(root, ".springfield", "plans", "batch-01", "evidence", "01", "meta.json")
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		t.Fatalf("read meta.json: %v", err)
+	}
+	var meta struct {
+		AgentID string `json:"agent_id"`
+		Model   string `json:"model"`
+	}
+	if err := json.Unmarshal(data, &meta); err != nil {
+		t.Fatalf("Unmarshal(meta.json): %v", err)
+	}
+	if meta.AgentID != string(agents.AgentOpenCode) {
+		t.Fatalf("meta agent_id = %q, want opencode", meta.AgentID)
+	}
+	if meta.Model != "openai/gpt-5.4" {
+		t.Fatalf("meta model = %q, want openai/gpt-5.4", meta.Model)
+	}
 }
 
 func TestRuntimeSingleExecutorRunPassesWorkstreamThroughSharedRuntime(t *testing.T) {
