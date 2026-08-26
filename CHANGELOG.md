@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.32.0](https://github.com/brentguistwite/springfield/compare/v0.31.0...v0.32.0) (2026-08-26)
+
+
+### Features
+
+* **agents/opencode:** add OpenCode as a fourth executable agent ([#116](https://github.com/brentguistwite/springfield/issues/116)) ([9fedd6f](https://github.com/brentguistwite/springfield/commit/9fedd6f910b8ff138a365d1fd918aebb5da4f45a))
+
 ## [0.31.0](https://github.com/brentguistwite/springfield/compare/v0.30.0...v0.31.0) (2026-08-22)
 
 
