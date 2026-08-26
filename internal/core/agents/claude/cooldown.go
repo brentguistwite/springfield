@@ -101,14 +101,10 @@ func parseCooldown(events []coreexec.Event, exitCode int, err error, now time.Ti
 func collectLines(events []coreexec.Event, err error) []string {
 	var lines []string
 	for _, e := range events {
-		for _, l := range strings.Split(e.Data, "\n") {
-			lines = append(lines, l)
-		}
+		lines = append(lines, strings.Split(e.Data, "\n")...)
 	}
 	if err != nil {
-		for _, l := range strings.Split(err.Error(), "\n") {
-			lines = append(lines, l)
-		}
+		lines = append(lines, strings.Split(err.Error(), "\n")...)
 	}
 	return lines
 }

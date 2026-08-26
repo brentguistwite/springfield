@@ -50,42 +50,6 @@ func singleSlicePlan(t *testing.T, bin, dir, title string, extraArgs ...string) 
 	return planWithPRD(t, bin, dir, string(data), extraArgs...)
 }
 
-// planWithSlices compiles a single-plan PRD envelope where each sliceTitles[i]
-// becomes a UserStory with id="US-00<i+1>", title=sliceTitles[i],
-// description=sliceTitles[i], one acceptance_criterion, priority=1.
-func planWithSlices(t *testing.T, bin, dir, title, source string, sliceTitles []string, extraArgs ...string) (string, error) {
-	t.Helper()
-	stories := make([]prd.UserStory, 0, len(sliceTitles))
-	for i, st := range sliceTitles {
-		stories = append(stories, prd.UserStory{
-			ID:                 fmt.Sprintf("US-%03d", i+1),
-			Title:              st,
-			Description:        st,
-			AcceptanceCriteria: []string{"passes"},
-			Priority:           1,
-		})
-	}
-	env := prd.BatchPRDEnvelope{
-		Title:  title,
-		Source: source,
-		Phases: []prd.PhasePRD{{Mode: "serial", Plans: []string{"plan-1"}}},
-		Plans: []prd.BatchPRDPlan{
-			{
-				PRD: prd.PRD{
-					ID:          "plan-1",
-					Title:       title,
-					UserStories: stories,
-				},
-			},
-		},
-	}
-	data, err := json.MarshalIndent(env, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal planWithSlices envelope: %v", err)
-	}
-	return planWithPRD(t, bin, dir, string(data), extraArgs...)
-}
-
 func repoRoot(t *testing.T) string {
 	t.Helper()
 

@@ -515,11 +515,15 @@ The Homebrew formula (`springfield.rb`) and the tap consume these tarballs; `bre
 ## Development
 
 ```bash
-go test ./...
+go vet ./...             # static analysis (CI gate)
+golangci-lint run        # lint; config in .golangci.yml (CI gate)
+go test -race ./...      # full suite with race detector (CI runs this)
 go run . --help
 go run . install --help
-go run ./cmd/regen        # regenerate skills/*/SKILL.md + commands/*.md from internal/features/skills/types.go
+go run ./cmd/regen       # regenerate skills/*/SKILL.md + commands/*.md from internal/features/skills/types.go
 ```
+
+Test layout, transcript-fixture workflow (`cmd/capture-fixture`), and the generated-surfaces pipeline are documented in [docs/testing.md](docs/testing.md). The architecture map — layers, `start` execution path, and recipes for adding commands or feature packages — lives in [docs/architecture.md](docs/architecture.md).
 
 ### Pre-commit hook
 

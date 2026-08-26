@@ -209,7 +209,7 @@ func runHookGuard(stdin io.Reader, stderr io.Writer, blockReentry bool) error {
 	}
 
 	if hookGuardShouldBlock(payload.ToolInput) {
-		fmt.Fprintln(stderr, hookGuardBlockMessage)
+		_, _ = fmt.Fprintln(stderr, hookGuardBlockMessage)
 		// Exit 2 is the PreToolUse "deny" signal. Using os.Exit here (vs. a
 		// RunE error) keeps stdout clean: cobra would otherwise write the
 		// usage/err message and exit 1.
@@ -219,7 +219,7 @@ func runHookGuard(stdin io.Reader, stderr io.Writer, blockReentry bool) error {
 	cmd, _ := payload.ToolInput["command"].(string)
 	if blockReentry {
 		if hookGuardReentryRegex.MatchString(cmd) {
-			fmt.Fprintln(stderr, hookGuardRecursionMessage)
+			_, _ = fmt.Fprintln(stderr, hookGuardRecursionMessage)
 			os.Exit(2)
 		}
 		return nil
@@ -228,7 +228,7 @@ func runHookGuard(stdin io.Reader, stderr io.Writer, blockReentry bool) error {
 	// sentinel sits in the env-prefix of the actual `springfield start`
 	// invocation (not merely somewhere in the command string).
 	if hookGuardStartRegex.MatchString(cmd) && !hookGuardAuthorizedStartRegex.MatchString(cmd) {
-		fmt.Fprintln(stderr, hookGuardStartMessage)
+		_, _ = fmt.Fprintln(stderr, hookGuardStartMessage)
 		os.Exit(2)
 	}
 	return nil

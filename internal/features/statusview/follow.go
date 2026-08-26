@@ -83,7 +83,7 @@ func TailTrace(w io.Writer, tracePath string, offset int64, planID string) (int6
 		}
 		return offset, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err := f.Seek(offset, io.SeekStart); err != nil {
 		return offset, err

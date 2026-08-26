@@ -92,7 +92,7 @@ func NewStatusCommand() *cobra.Command {
 			var units []conductor.PlanUnit
 			project, loadErr := conductor.LoadProjectRaw(root)
 			if loadErr != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "[warn] could not load project state: %v; progress rollup will be limited.\n", loadErr)
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "[warn] could not load project state: %v; progress rollup will be limited.\n", loadErr)
 			} else {
 				state = project.State
 				units = project.Config.PlanUnits
@@ -181,13 +181,13 @@ func watchFrame(w io.Writer, root string, now time.Time, clear, seenActive bool)
 	case v.State == "active", v.State == "archived" && seenActive:
 		if clear {
 			// Home cursor + clear screen: plain ANSI, no dependency.
-			fmt.Fprint(w, "\033[H\033[2J")
+			_, _ = fmt.Fprint(w, "\033[H\033[2J")
 		}
-		fmt.Fprint(w, statusview.Render(v, now))
+		_, _ = fmt.Fprint(w, statusview.Render(v, now))
 		// Active keeps the loop alive; archived is the terminal frame, so stop.
 		return v.State == "active", nil
 	default:
-		fmt.Fprintln(w, watchIdleMessage(v))
+		_, _ = fmt.Fprintln(w, watchIdleMessage(v))
 		return false, nil
 	}
 }
@@ -295,8 +295,8 @@ func followInScope(v statusview.View, batchID string) bool {
 }
 
 func printBatchStatus(w io.Writer, root string, b batch.Batch, run batch.Run, state *conductor.State, live bool, prds map[string]prd.PRD) error {
-	fmt.Fprintf(w, "Batch: %s\n", b.ID)
-	fmt.Fprintf(w, "Title: %s\n", b.Title)
+	_, _ = fmt.Fprintf(w, "Batch: %s\n", b.ID)
+	_, _ = fmt.Fprintf(w, "Title: %s\n", b.Title)
 
 	if state != nil {
 		printProgressBlock(w, b, state, live, prds)
@@ -304,25 +304,25 @@ func printBatchStatus(w io.Writer, root string, b batch.Batch, run batch.Run, st
 	}
 
 	if run.CostCapped {
-		fmt.Fprintln(w, "Status: cost-capped")
+		_, _ = fmt.Fprintln(w, "Status: cost-capped")
 	}
 	// The batch-level fatal error is a post-mortem of the plan that halted the
 	// run. Once that plan has been recovered (no plan in the batch is failed
 	// anymore), the error is stale — suppress it so it does not sit beside a
 	// fresh "Next:" gate and confuse the operator (D1).
 	if run.FatalError != "" && statusview.BatchHasFailedPlan(b, state) {
-		fmt.Fprintf(w, "Fatal error: %s\n", run.FatalError)
+		_, _ = fmt.Fprintf(w, "Fatal error: %s\n", run.FatalError)
 	}
 	if len(run.LastRetry) > 0 {
-		fmt.Fprintln(w, "Recent retries:")
+		_, _ = fmt.Fprintln(w, "Recent retries:")
 		for _, r := range run.LastRetry {
-			fmt.Fprintf(w, "  - %s\n", r)
+			_, _ = fmt.Fprintf(w, "  - %s\n", r)
 		}
 	}
 	if len(b.PlanIDs) > 0 {
-		fmt.Fprintln(w, "Plans:")
+		_, _ = fmt.Fprintln(w, "Plans:")
 		for _, id := range b.PlanIDs {
-			fmt.Fprintf(w, "  %s\n", id)
+			_, _ = fmt.Fprintf(w, "  %s\n", id)
 		}
 	}
 	return nil
@@ -344,9 +344,9 @@ func printBatchStatus(w io.Writer, root string, b batch.Batch, run batch.Run, st
 // entry simply yields no activity line (truthful silence).
 func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State, live bool, prds map[string]prd.PRD) {
 	p := batch.ComputeProgress(b, state)
-	fmt.Fprintf(w, "Plans: %d/%d integrated\n", p.DonePlans, p.TotalPlans)
+	_, _ = fmt.Fprintf(w, "Plans: %d/%d integrated\n", p.DonePlans, p.TotalPlans)
 	if p.AllDone {
-		fmt.Fprintln(w, "Status: complete")
+		_, _ = fmt.Fprintln(w, "Status: complete")
 		return
 	}
 
@@ -396,7 +396,7 @@ func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State, live
 		if statusview.ParallelInFlight(b, state, live) {
 			label = "parallel"
 		}
-		fmt.Fprintf(w, "Current: %s (%s)\n", strings.Join(running, ", "), label)
+		_, _ = fmt.Fprintf(w, "Current: %s (%s)\n", strings.Join(running, ", "), label)
 		// In-flight activity, one line per running plan that has a derivable
 		// current-activity. Routed through statusview.DeriveActivity so the text
 		// line and the JSON `activity` card are the same projection — never a
@@ -412,20 +412,20 @@ func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State, live
 				plan = &p
 			}
 			if av := statusview.DeriveActivity(ps, live, plan); av != nil {
-				fmt.Fprintf(w, "  %s: %s\n", id, formatActivity(av))
+				_, _ = fmt.Fprintf(w, "  %s: %s\n", id, formatActivity(av))
 			}
 		}
 	case len(stalled) > 0:
-		fmt.Fprintf(w, "Stalled: %s (no running springfield process — run \"springfield recover\")\n", strings.Join(stalled, ", "))
+		_, _ = fmt.Fprintf(w, "Stalled: %s (no running springfield process — run \"springfield recover\")\n", strings.Join(stalled, ", "))
 	}
 	if len(failed) > 0 {
-		fmt.Fprintf(w, "Failed: %s\n", strings.Join(failed, ", "))
+		_, _ = fmt.Fprintf(w, "Failed: %s\n", strings.Join(failed, ", "))
 	}
 	if len(needsHuman) > 0 {
-		fmt.Fprintf(w, "Needs human: %s\n", strings.Join(needsHuman, ", "))
+		_, _ = fmt.Fprintf(w, "Needs human: %s\n", strings.Join(needsHuman, ", "))
 	}
 	if len(done) > 0 {
-		fmt.Fprintf(w, "Done (not integrated): %s\n", strings.Join(done, ", "))
+		_, _ = fmt.Fprintf(w, "Done (not integrated): %s\n", strings.Join(done, ", "))
 	}
 	// "Next:" hints at what the queue runs next. It is meaningful only when the
 	// queue can actually advance: when something is running (the next plan is
@@ -438,7 +438,7 @@ func printProgressBlock(w io.Writer, b batch.Batch, state *conductor.State, live
 	// is not actually next.
 	blocked := len(stalled) > 0 || len(failed) > 0 || len(needsHuman) > 0 || len(done) > 0
 	if len(pending) > 0 && (len(running) > 0 || !blocked) {
-		fmt.Fprintf(w, "Next: %s\n", pending[0])
+		_, _ = fmt.Fprintf(w, "Next: %s\n", pending[0])
 	}
 }
 
@@ -469,7 +469,7 @@ func printSpendLine(w io.Writer, root, batchID string) {
 	if err != nil || r.Iterations == 0 {
 		return
 	}
-	fmt.Fprintln(w, formatSpendLine(r))
+	_, _ = fmt.Fprintln(w, formatSpendLine(r))
 }
 
 // formatTotalSpendLine renders the end-of-batch "Est. API-equivalent cost:"
@@ -556,24 +556,24 @@ func printPlanRegistry(w io.Writer, root string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprint(w, rendered)
+	_, _ = fmt.Fprint(w, rendered)
 	return nil
 }
 
 func printOrphanStatus(w io.Writer, run batch.Run) {
-	fmt.Fprintf(w, "Batch: %s (orphaned — batch.json missing)\n", run.ActiveBatchID)
+	_, _ = fmt.Fprintf(w, "Batch: %s (orphaned — batch.json missing)\n", run.ActiveBatchID)
 	if run.CostCapped {
 		// Spend figure intentionally omitted: batch.json is gone so
 		// ComputeRollup cannot resolve the evidence path. Operator must
 		// run recover before resuming.
-		fmt.Fprintln(w, "Status: cost-capped")
+		_, _ = fmt.Fprintln(w, "Status: cost-capped")
 	}
 	if run.FatalError != "" {
-		fmt.Fprintf(w, "Fatal error: %s\n", run.FatalError)
+		_, _ = fmt.Fprintf(w, "Fatal error: %s\n", run.FatalError)
 	}
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Run \"springfield recover\" to archive the orphan and clear state,")
-	fmt.Fprintln(w, "then \"springfield plan\" to start fresh.")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Run \"springfield recover\" to archive the orphan and clear state,")
+	_, _ = fmt.Fprintln(w, "then \"springfield plan\" to start fresh.")
 }
 
 // emitStatusJSON marshals the status view-model with a trailing newline so

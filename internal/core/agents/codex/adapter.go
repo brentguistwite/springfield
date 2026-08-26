@@ -18,8 +18,15 @@ type adapter struct {
 
 // The review gate discovers transcript decoding by an optional type assertion,
 // so dropping AssistantText here would silently regress the verdict scan to raw
-// escaped stream-json (BUG-1) rather than fail a test. Pin it at compile time.
+// escaped stream-json (BUG-1) rather than fail a test. The runtime consumes the
+// capabilities pinned below through the same optional-assertion pattern with
+// silent fallbacks, so production satisfaction is enforced at compile time.
+// Cooldown is intentionally absent for codex (see runtime runner cooldown handling).
+var _ agents.Commander = (*adapter)(nil)
 var _ agents.TranscriptDecoder = (*adapter)(nil)
+var _ agents.ResultValidator = (*adapter)(nil)
+var _ agents.ErrorClassifier = (*adapter)(nil)
+var _ agents.ModelProvider = (*adapter)(nil)
 
 func New(lookPath agents.LookPathFunc) agents.Commander {
 	if lookPath == nil {

@@ -265,7 +265,7 @@ func TestExecutionPromptConcatenatesAgentsClaudeGemini(t *testing.T) {
 	agentsIdx := strings.Index(prompt, "agents-content")
 	claudeIdx := strings.Index(prompt, "claude-content")
 	geminiIdx := strings.Index(prompt, "gemini-content")
-	if !(agentsIdx < claudeIdx && claudeIdx < geminiIdx) {
+	if agentsIdx >= claudeIdx || claudeIdx >= geminiIdx {
 		t.Fatalf("expected AGENTS.md before CLAUDE.md before GEMINI.md in prompt, got indices %d %d %d", agentsIdx, claudeIdx, geminiIdx)
 	}
 }
@@ -468,7 +468,7 @@ func TestRuntimeSingleExecutorRejectsUnreadableGuidanceFile(t *testing.T) {
 	if err := os.Chmod(guidancePath, 0o000); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
-	t.Cleanup(func() { os.Chmod(guidancePath, 0o644) })
+	t.Cleanup(func() { _ = os.Chmod(guidancePath, 0o644) })
 
 	executor := runtimeSingleExecutor{
 		runner:  coreruntime.NewTestRunner(testRuntimeRegistry(), fakeRuntimeSuccess, time.Now),

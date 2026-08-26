@@ -18,7 +18,7 @@ Design cohesive chunks of functionality that encapsulate complex internals behin
 The filesystem reflects the logical mental map of features. Each feature is a self-contained directory. Don't jumble unrelated concerns together.
 
 ### 3. Progressive Disclosure of Complexity
-Each module should expose a small, obvious public surface through idiomatic Go package entry files such as `package.go`, `doc.go`, or a tight set of top-level exported types and functions. A developer (or AI) should be able to inspect the package's public API and trust what it does without reading every internal file.
+Each module should expose a small, obvious public surface through an idiomatic Go package entry file — `index.go` holding the primary exported API (the dominant convention here: agents, config, exec, conductor, doctor, storage), a `doc.go` package comment, or a tight set of top-level exported types and functions. A developer (or AI) should be able to inspect the package's public API and trust what it does without reading every internal file.
 
 Keep file and package names idiomatic for Go. Prefer clear package boundaries, exported contracts, and internal helpers that stay hidden behind those boundaries.
 
@@ -35,6 +35,18 @@ A capability that production correctness depends on belongs in a **required** in
 - In Go, prefer small cohesive packages with explicit exported APIs over grab-bag utility packages.
 - Prefer stable project-local state over hidden global machine state.
 - Keep docs and examples good enough for a teammate with no prior Springfield context.
+- Editing skill/command definitions in `internal/features/skills/types.go` requires regenerating the rendered surfaces: `go run ./cmd/regen` (updates `skills/*/SKILL.md` and `commands/*.md`; drift is caught by tests).
+
+## Testing Conventions
+
+Full walkthrough: `docs/testing.md`. The rules agents violate most:
+
+- Unit tests live beside the code (`foo_test.go`, external `foo_test` package by default).
+- White-box tests needing internals use the `_internal_test.go` suffix (same package); test-only exports go in `export_test.go`.
+- Black-box CLI/integration tests live in `tests/`, mirroring the feature tree; they build and drive the real binary.
+- Stdlib `testing` only — no testify/gomock. Table-driven with `t.Run`.
+- Replay captured agent transcripts via `testsupport/fixtures.LoadEvents`. Real captures live under `tests/realcaptures/` guarded by sha256 integrity checks — changing transcript parsing requires regenerating them with `go run ./cmd/capture-fixture`; never hand-edit `.jsonl` fixtures.
+- Gates: `go vet ./...`, `golangci-lint run` (config: `.golangci.yml`), `go test -race ./...` — all enforced in CI.
 
 ## Plan Skill and PRD Envelopes
 

@@ -123,7 +123,7 @@ func TestTailTraceAdvancesOnlyCompleteLines(t *testing.T) {
 	if _, err := f.WriteString(rest); err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	f.Close()
+	_ = f.Close()
 
 	buf.Reset()
 	if _, err := statusview.TailTrace(&buf, path, off, "01"); err != nil {
@@ -223,7 +223,7 @@ func TestTraceFollowerDrainsOldTailOnRollover(t *testing.T) {
 	if _, err := fa.WriteString(`{"type":"stdout","time":"t","data":"alpha two","plan":"01"}` + "\n"); err != nil {
 		t.Fatalf("append A: %v", err)
 	}
-	fa.Close()
+	_ = fa.Close()
 	if err := os.WriteFile(pathB, []byte(`{"type":"stdout","time":"t","data":"bravo one","plan":"01"}`+"\n"), 0o644); err != nil {
 		t.Fatalf("write B: %v", err)
 	}

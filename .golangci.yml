@@ -1,0 +1,19 @@
+version: "2"
+
+run:
+  timeout: 15m
+
+issues:
+  # Never cap repeated findings: a masked duplicate class is how a backlog
+  # silently accumulates. CI must see every issue.
+  max-same-issues: 0
+
+linters:
+  # Standard set: errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  exclusions:
+    generated: lax
+
+formatters:
+  enable:
+    - gofmt

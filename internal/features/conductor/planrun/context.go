@@ -136,7 +136,7 @@ func hashPlanFile(h io.Writer, label, path string, unit conductor.PlanUnit) erro
 		// digest semantics. Same behavior as the pre-fix hashRequiredFile.
 		return hashRequiredFile(h, label, path, unit)
 	}
-	fmt.Fprintf(h, "%s\n", label)
+	_, _ = fmt.Fprintf(h, "%s\n", label)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -162,12 +162,12 @@ func hashPlanFile(h io.Writer, label, path string, unit conductor.PlanUnit) erro
 	if _, err := h.Write(canonical); err != nil {
 		return fmt.Errorf("digest %s: %w", path, err)
 	}
-	fmt.Fprintf(h, "\nendfile\n")
+	_, _ = fmt.Fprintf(h, "\nendfile\n")
 	return nil
 }
 
 func hashRequiredFile(h io.Writer, label, path string, unit conductor.PlanUnit) error {
-	fmt.Fprintf(h, "%s\n", label)
+	_, _ = fmt.Fprintf(h, "%s\n", label)
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -175,29 +175,29 @@ func hashRequiredFile(h io.Writer, label, path string, unit conductor.PlanUnit) 
 		}
 		return fmt.Errorf("digest %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := io.Copy(h, f); err != nil {
 		return fmt.Errorf("digest %s: %w", path, err)
 	}
-	fmt.Fprintf(h, "\nendfile\n")
+	_, _ = fmt.Fprintf(h, "\nendfile\n")
 	return nil
 }
 
 func hashOptionalFile(h io.Writer, label, path string) error {
-	fmt.Fprintf(h, "%s\n", label)
+	_, _ = fmt.Fprintf(h, "%s\n", label)
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Fprintf(h, "missing\n")
+			_, _ = fmt.Fprintf(h, "missing\n")
 			return nil
 		}
 		return fmt.Errorf("digest %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := io.Copy(h, f); err != nil {
 		return fmt.Errorf("digest %s: %w", path, err)
 	}
-	fmt.Fprintf(h, "\nendfile\n")
+	_, _ = fmt.Fprintf(h, "\nendfile\n")
 	return nil
 }
 

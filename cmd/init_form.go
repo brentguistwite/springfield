@@ -41,7 +41,7 @@ func runInitForm(
 	// form's bufio buffer bytes that the second form then can't see —
 	// every byte read past form 1's last prompt would be stranded when
 	// form 1's reader is discarded.
-	var formIn io.Reader = in
+	formIn := in
 	if accessible && in != nil {
 		formIn = &lineByLineReader{r: bufio.NewReader(in)}
 	}
@@ -190,7 +190,7 @@ func renderInitSummary(priority []string, models map[string]string) string {
 		if model == "" {
 			model = "(adapter default)"
 		}
-		fmt.Fprintf(&b, "  %s = %s\n", id, model)
+		_, _ = fmt.Fprintf(&b, "  %s = %s\n", id, model)
 	}
 	return b.String()
 }
@@ -293,7 +293,7 @@ func (l *lineByLineReader) Read(p []byte) (int, error) {
 				if l.onExhaust != nil {
 					l.onExhaust()
 				} else {
-					fmt.Fprintln(os.Stderr, "init: stdin exhausted before form completed — pass --agents or pipe enough answers for every prompt")
+					_, _ = fmt.Fprintln(os.Stderr, "init: stdin exhausted before form completed — pass --agents or pipe enough answers for every prompt")
 					os.Exit(2)
 				}
 			}

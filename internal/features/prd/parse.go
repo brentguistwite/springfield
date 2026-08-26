@@ -30,7 +30,7 @@ func ParseFile(path string) (PRD, error) {
 	if err != nil {
 		return PRD{}, fmt.Errorf("open %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	dec := json.NewDecoder(f)
 	dec.DisallowUnknownFields()

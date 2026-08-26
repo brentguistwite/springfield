@@ -84,7 +84,7 @@ func AppendStallRecord(dir string, rec StallRecord) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.Write(append(line, '\n')); err != nil {
 		return err
 	}

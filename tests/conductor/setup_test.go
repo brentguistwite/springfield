@@ -77,7 +77,9 @@ func TestSetup_ReusesExistingValidConfig(t *testing.T) {
 	// Verify original config is preserved
 	rt, _ := storage.FromRoot(root)
 	var cfg conductor.Config
-	rt.ReadJSON("execution/config.json", &cfg)
+	if err := rt.ReadJSON("execution/config.json", &cfg); err != nil {
+		t.Fatalf("ReadJSON execution/config.json: %v", err)
+	}
 
 	if cfg.Tool != "claude" {
 		t.Errorf("Tool = %q, want original %q", cfg.Tool, "claude")

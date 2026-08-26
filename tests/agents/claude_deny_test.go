@@ -17,7 +17,7 @@ import (
 // forcing outputStyle to the neutral "Default" overrides any inherited value.
 func TestClaudeAdapterNeutralizesInheritedOutputStyle(t *testing.T) {
 	a := claude.New(exec.LookPath)
-	commander := a.(agents.Commander)
+	commander := a
 
 	cmd, err := commander.Command(agents.CommandInput{
 		Prompt:  "do work",
@@ -43,7 +43,7 @@ func TestClaudeAdapterNeutralizesInheritedOutputStyle(t *testing.T) {
 // that a lexical deny list would miss.
 func TestClaudeAdapterInjectsControlPlaneHookSettings(t *testing.T) {
 	a := claude.New(exec.LookPath)
-	commander := a.(agents.Commander)
+	commander := a
 
 	cmd, err := commander.Command(agents.CommandInput{
 		Prompt:  "do work",
@@ -124,7 +124,7 @@ func TestClaudeAdapterInjectsControlPlaneHookSettings(t *testing.T) {
 // it enforces protection regardless of permission mode.
 func TestClaudeAdapterHookSettingsCoexistWithBypassPermissions(t *testing.T) {
 	adapter := claude.New(exec.LookPath)
-	commander := adapter.(agents.Commander)
+	commander := adapter
 
 	cmd, err := commander.Command(agents.CommandInput{
 		Prompt:  "do work",

@@ -51,7 +51,7 @@ func (o osaNotifier) Notify(e Event) {
 	script := fmt.Sprintf("display notification %s with title %s",
 		osaQuote(e.message()), osaQuote("Springfield"))
 	if err := o.run(exec.Command("osascript", "-e", script)); err != nil {
-		fmt.Fprintf(o.logw, "warning: notify osascript delivery failed: %v\n", err)
+		_, _ = fmt.Fprintf(o.logw, "warning: notify osascript delivery failed: %v\n", err)
 	}
 }
 
@@ -73,7 +73,7 @@ func (c cmdNotifier) Notify(e Event) {
 	// this event's. Stripping makes the exported set deterministic.
 	cmd.Env = append(envWithoutNotifyVars(os.Environ()), eventEnv(e)...)
 	if err := c.run(cmd); err != nil {
-		fmt.Fprintf(c.logw, "warning: notify command failed: %v\n", err)
+		_, _ = fmt.Fprintf(c.logw, "warning: notify command failed: %v\n", err)
 	}
 }
 

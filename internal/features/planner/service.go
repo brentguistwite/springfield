@@ -129,10 +129,7 @@ func summarizePlan(resp Response) PlanResult {
 
 	workstreams := make([]WorkstreamSummary, 0, len(resp.Workstreams))
 	for _, workstream := range resp.Workstreams {
-		workstreams = append(workstreams, WorkstreamSummary{
-			Name:  workstream.Name,
-			Title: workstream.Title,
-		})
+		workstreams = append(workstreams, WorkstreamSummary(workstream))
 	}
 
 	return PlanResult{

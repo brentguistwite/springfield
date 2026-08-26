@@ -25,7 +25,7 @@ func init() {
 	if err != nil {
 		os.Exit(1)
 	}
-	os.Stdout.WriteString("ready\n")
+	_, _ = os.Stdout.WriteString("ready\n")
 	time.Sleep(60 * time.Second)
 	os.Exit(0)
 }
@@ -67,18 +67,18 @@ func TestLockKernelReleaseOnProcessDeath(t *testing.T) {
 	cmd.Stdout = pw
 	cmd.Env = append(os.Environ(), "LOCK_TEST_HELPER_ROOT="+root)
 	if err := cmd.Start(); err != nil {
-		pw.Close()
-		pr.Close()
+		_ = pw.Close()
+		_ = pr.Close()
 		t.Fatalf("start helper: %v", err)
 	}
-	pw.Close()
+	_ = pw.Close()
 
 	// Wait for "ready".
 	readyCh := make(chan struct{}, 1)
 	go func() {
 		buf := make([]byte, 16)
 		n, _ := pr.Read(buf)
-		pr.Close()
+		_ = pr.Close()
 		if n > 0 {
 			readyCh <- struct{}{}
 		}
@@ -86,7 +86,7 @@ func TestLockKernelReleaseOnProcessDeath(t *testing.T) {
 	select {
 	case <-readyCh:
 	case <-time.After(10 * time.Second):
-		cmd.Process.Kill()
+		_ = cmd.Process.Kill()
 		t.Fatal("helper did not signal ready in time")
 	}
 
@@ -94,7 +94,7 @@ func TestLockKernelReleaseOnProcessDeath(t *testing.T) {
 	if err := cmd.Process.Kill(); err != nil {
 		t.Fatalf("kill helper: %v", err)
 	}
-	cmd.Wait()
+	_ = cmd.Wait()
 
 	// Kernel releases flock on process death; parent should acquire quickly.
 	deadline := time.Now().Add(2 * time.Second)
@@ -103,7 +103,7 @@ func TestLockKernelReleaseOnProcessDeath(t *testing.T) {
 		var lk *lock.Lock
 		lk, acquireErr = lock.Acquire(root)
 		if acquireErr == nil {
-			lk.Release()
+			_ = lk.Release()
 			return
 		}
 		time.Sleep(50 * time.Millisecond)

@@ -359,7 +359,7 @@ func resyncSourceCheckout(g Git, controlRoot, targetRef, baseHead, newSHA string
 		return "failed", fmt.Errorf("source dirty check before resync: %w", derr)
 	}
 	if dirty {
-		return "failed", fmt.Errorf("source checkout has user changes since recorded base_head; refusing reset --hard to avoid silent data loss. Commit or stash, then run \"springfield start\" to retry source resync.")
+		return "failed", fmt.Errorf("source checkout has user changes since recorded base_head; refusing reset --hard to avoid silent data loss. Commit or stash, then run \"springfield start\" to retry source resync")
 	}
 	if err := g.ResetHard(controlRoot, newSHA); err != nil {
 		return "failed", err
@@ -597,7 +597,7 @@ func progress(w io.Writer, format string, args ...any) {
 	if w == nil {
 		return
 	}
-	fmt.Fprintf(w, format, args...)
+	_, _ = fmt.Fprintf(w, format, args...)
 }
 
 // IsRefused reports whether result records a refused merge. Convenience for

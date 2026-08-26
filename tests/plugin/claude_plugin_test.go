@@ -100,10 +100,6 @@ func assertRequiredSkillsExist(t *testing.T, root string) {
 		}
 
 		text := string(readFile(t, root, rel))
-		name := strings.TrimSuffix(filepath.Base(filepath.Dir(path)), filepath.Ext(filepath.Base(path)))
-		if filepath.Base(filepath.Dir(path)) != name {
-			name = filepath.Base(filepath.Dir(path))
-		}
 		for _, marker := range []string{
 			"---\n",
 			"name: " + filepath.Base(filepath.Dir(path)),

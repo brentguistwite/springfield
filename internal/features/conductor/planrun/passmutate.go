@@ -62,7 +62,7 @@ func AppendProgress(progressPath string, entry string) error {
 	if err != nil {
 		return fmt.Errorf("AppendProgress: open %s: %w", progressPath, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.WriteString(line); err != nil {
 		return fmt.Errorf("AppendProgress: write %s: %w", progressPath, err)
 	}
@@ -85,12 +85,12 @@ func writeFileAtomicPlanrun(path string, data []byte, perm os.FileMode) error {
 	cleanup := func() { _ = os.Remove(tmpName) }
 
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		cleanup()
 		return fmt.Errorf("write temp for %s: %w", path, err)
 	}
 	if err := tmp.Sync(); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		cleanup()
 		return fmt.Errorf("fsync temp for %s: %w", path, err)
 	}
