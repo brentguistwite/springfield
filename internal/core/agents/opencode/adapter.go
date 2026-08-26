@@ -405,7 +405,7 @@ func (a *adapter) maybeEmitAuthWarning() {
 		}
 	}
 	a.authWarnOnce.Do(func() {
-		fmt.Fprintln(a.warnBuf,
+		_, _ = fmt.Fprintln(a.warnBuf,
 			"springfield: no provider API key env vars set and no stored opencode auth at ~/.local/share/opencode/auth.json — subprocess may fail to reach a model",
 		)
 	})

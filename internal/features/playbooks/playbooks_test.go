@@ -115,7 +115,7 @@ func TestRenderIncludesSectionsInOrder(t *testing.T) {
 	if builtinIndex == -1 || projectIndex == -1 || taskIndex == -1 {
 		t.Fatalf("expected builtin, project, and task sections in prompt, got:\n%s", out.Prompt)
 	}
-	if !(builtinIndex < projectIndex && projectIndex < taskIndex) {
+	if builtinIndex >= projectIndex || projectIndex >= taskIndex {
 		t.Fatalf("expected stable builtin -> project -> task order, got:\n%s", out.Prompt)
 	}
 	assertNoLegacyEngineNames(t, out.Prompt)

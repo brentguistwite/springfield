@@ -114,7 +114,7 @@ func runBatchAbort(w io.Writer, root string) error {
 			continue
 		}
 		if err := git.WorktreeRemoveForce(root, ps.WorktreePath); err != nil {
-			fmt.Fprintf(w, "[warn] removing worktree for plan %q (%s): %v — git worktree prune may be needed before the same plan ID is reused\n",
+			_, _ = fmt.Fprintf(w, "[warn] removing worktree for plan %q (%s): %v — git worktree prune may be needed before the same plan ID is reused\n",
 				planID, ps.WorktreePath, err)
 		}
 	}
@@ -150,7 +150,7 @@ func runBatchAbort(w io.Writer, root string) error {
 		return fmt.Errorf("save execution config (re-run \"springfield plan --replace --prd ...\" to rebuild the registry — \"springfield recover\" will no-op without run.json): %w", err)
 	}
 
-	fmt.Fprintf(w, "Aborted batch %q: archived to .springfield/archive/ and cleared run state.\n", b.ID)
-	fmt.Fprintln(w, "Invoke the springfield:plan skill to compile a new batch.")
+	_, _ = fmt.Fprintf(w, "Aborted batch %q: archived to .springfield/archive/ and cleared run state.\n", b.ID)
+	_, _ = fmt.Fprintln(w, "Invoke the springfield:plan skill to compile a new batch.")
 	return nil
 }

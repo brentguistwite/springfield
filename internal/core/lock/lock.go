@@ -84,16 +84,16 @@ func Acquire(root string) (*Lock, error) {
 	// or named pipes that slipped through O_NOFOLLOW on unusual filesystems.
 	fdStat, err := f.Stat()
 	if err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, fmt.Errorf("stat lock file fd: %w", err)
 	}
 	if !fdStat.Mode().IsRegular() {
-		f.Close()
+		_ = f.Close()
 		return nil, fmt.Errorf(".springfield/.lock is not a regular file (mode %s); remove it before running springfield start", fdStat.Mode())
 	}
 
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		f.Close()
+		_ = f.Close()
 		// Another process holds the lock. Try to read pid+ts from the file.
 		held := readHeld(path)
 		return nil, held
@@ -104,21 +104,21 @@ func Acquire(root string) (*Lock, error) {
 	// flock is on an orphaned inode and the real holder is unidentifiable.
 	fStat, err := f.Stat()
 	if err != nil {
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		f.Close()
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
 		return nil, &ErrLockHeld{}
 	}
 	pathStat, err := os.Stat(path)
 	if err != nil {
 		// File gone — flock is on a deleted inode; real holder unknown.
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		f.Close()
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
 		return nil, &ErrLockHeld{}
 	}
 	if !os.SameFile(fStat, pathStat) {
 		// Different inode — another process recreated the file.
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		f.Close()
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
 		return nil, &ErrLockHeld{}
 	}
 
@@ -127,8 +127,8 @@ func Acquire(root string) (*Lock, error) {
 	ts := time.Now().UTC().Format(time.RFC3339)
 	content := fmt.Sprintf("%012d\n%s\n", pid, ts)
 	if _, err := f.WriteAt([]byte(content), 0); err != nil {
-		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		f.Close()
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
 		return nil, fmt.Errorf("write lock file: %w", err)
 	}
 
@@ -198,7 +198,7 @@ func probeHeldLock(path string) *ErrLockHeld {
 		}
 		return &ErrLockHeld{}
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err == nil {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)

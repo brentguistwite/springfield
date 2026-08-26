@@ -75,22 +75,22 @@ func NewInitCommand() *cobra.Command {
 			}
 
 			if result.BackupPath != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "Backed up previous %s to %s\n", config.FileName, result.BackupPath)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Backed up previous %s to %s\n", config.FileName, result.BackupPath)
 			}
 
 			switch {
 			case result.ConfigCreated || result.BackupPath != "":
-				fmt.Fprintln(cmd.OutOrStdout(), "Created "+config.FileName)
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Created "+config.FileName)
 			case result.ConfigUpdated:
-				fmt.Fprintln(cmd.OutOrStdout(), "Updated "+config.FileName+" with recommended defaults")
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Updated "+config.FileName+" with recommended defaults")
 			default:
-				fmt.Fprintln(cmd.OutOrStdout(), config.FileName+" already up to date")
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), config.FileName+" already up to date")
 			}
 
 			if result.RuntimeDirCreated {
-				fmt.Fprintln(cmd.OutOrStdout(), "Created .springfield/")
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Created .springfield/")
 			} else {
-				fmt.Fprintln(cmd.OutOrStdout(), ".springfield/ already exists, skipping")
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), ".springfield/ already exists, skipping")
 			}
 
 			// Bootstrap the execution config so the project is immediately
@@ -121,9 +121,9 @@ func NewInitCommand() *cobra.Command {
 			// exclude writer skips when dir is not yet a git repo).
 			if trackedGitignoreFlag {
 				if added, err := ensureSpringfieldGitignore(dir); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to update .gitignore: %v\n", err)
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to update .gitignore: %v\n", err)
 				} else if added {
-					fmt.Fprintln(cmd.OutOrStdout(), "Added Springfield patterns to .gitignore")
+					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Added Springfield patterns to .gitignore")
 				}
 			} else {
 				// Default mode never edits a tracked .gitignore, but a
@@ -133,19 +133,19 @@ func NewInitCommand() *cobra.Command {
 				// knows about the second, unmanaged source of truth — we still
 				// leave the tracked file byte-unchanged.
 				if trackedGitignoreHasSpringfieldBlock(dir) {
-					fmt.Fprintln(cmd.ErrOrStderr(),
+					_, _ = fmt.Fprintln(cmd.ErrOrStderr(),
 						"warning: tracked .gitignore already carries a Springfield block; leaving it unchanged "+
 							"(patterns written to .git/info/exclude). Remove the tracked block, or re-run with "+
 							"--tracked-gitignore if you own this repo.")
 				}
 				if added, err := config.EnsureSpringfieldExclude(dir); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to update .git/info/exclude: %v\n", err)
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: failed to update .git/info/exclude: %v\n", err)
 				} else if added {
-					fmt.Fprintln(cmd.OutOrStdout(), "Added Springfield patterns to .git/info/exclude")
+					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Added Springfield patterns to .git/info/exclude")
 				}
 			}
 
-			fmt.Fprintln(cmd.OutOrStdout())
+			_, _ = fmt.Fprintln(cmd.OutOrStdout())
 			printNextSteps(cmd.OutOrStdout(), isTTY(int(os.Stdout.Fd())))
 
 			return nil
@@ -235,12 +235,12 @@ func printNextSteps(w io.Writer, tty bool) {
 	then := "Then: springfield start"
 	if tty {
 		bold := lipgloss.NewStyle().Bold(true)
-		fmt.Fprintln(w, bold.Render(header)+" "+next)
-		fmt.Fprintln(w, then)
+		_, _ = fmt.Fprintln(w, bold.Render(header)+" "+next)
+		_, _ = fmt.Fprintln(w, then)
 		return
 	}
-	fmt.Fprintln(w, header+" "+next)
-	fmt.Fprintln(w, then)
+	_, _ = fmt.Fprintln(w, header+" "+next)
+	_, _ = fmt.Fprintln(w, then)
 }
 
 func newModelSuggester(lookPath agents.LookPathFunc) func(agents.ID) []string {

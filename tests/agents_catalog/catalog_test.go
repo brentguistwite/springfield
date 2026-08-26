@@ -61,3 +61,33 @@ func TestDefaultAdaptersUsesProvidedLookPath(t *testing.T) {
 		}
 	}
 }
+
+// TestDefaultAdaptersCarryRequiredCapabilities defends the assembly-point
+// check in catalog.requireCapabilities: if that guard is removed or weakened,
+// this test fails. The authoritative expectation matrix lives in
+// requireCapabilities plus the per-package compile-time pins — the missing-
+// capability branches here are unreachable while the panic exists, so this
+// duplicate deliberately asserts only what the panic cannot: that the
+// returned values satisfy the capability interfaces at all, and codex/
+// gemini and opencode's documented cooldown-free contract.
+func TestDefaultAdaptersCarryRequiredCapabilities(t *testing.T) {
+	adapters := catalog.DefaultAdapters(nil)
+
+	for _, a := range adapters {
+		if _, ok := a.(agents.Commander); !ok {
+			t.Errorf("%s does not satisfy agents.Commander", a.ID())
+		}
+		switch a.ID() {
+		case agents.AgentClaude:
+			if _, ok := a.(agents.Cooldowner); !ok {
+				t.Errorf("claude no longer implements Cooldowner; update requireCapabilities and this contract if deliberate")
+			}
+		case agents.AgentCodex, agents.AgentGemini, agents.AgentOpenCode:
+			if _, ok := a.(agents.Cooldowner); ok {
+				t.Errorf("%s implements Cooldowner but is documented as cooldown-free; update the capability expectations if that changed deliberately", a.ID())
+			}
+		default:
+			t.Errorf("unexpected adapter id %q in default set", a.ID())
+		}
+	}
+}

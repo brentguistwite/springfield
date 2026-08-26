@@ -71,17 +71,17 @@ type FlagsView struct {
 // PlanView is the deliberately-projected per-plan card. Every field maps to
 // persisted PlanState/PlanUnit; see the spec's field source map.
 type PlanView struct {
-	ID           string          `json:"id"`
-	Title        string          `json:"title"`
-	Status       string          `json:"status"`
-	Branch       string          `json:"branch"`
-	BaseBranch   string          `json:"base_branch"`
-	BaseHead     string          `json:"base_head"`
-	Verify       VerifyView      `json:"verify"`
-	Review       ReviewView      `json:"review"`
-	Attempt      int             `json:"attempt"`
-	LastError    *string         `json:"last_error"`
-	EvidencePath string          `json:"evidence_path"`
+	ID           string     `json:"id"`
+	Title        string     `json:"title"`
+	Status       string     `json:"status"`
+	Branch       string     `json:"branch"`
+	BaseBranch   string     `json:"base_branch"`
+	BaseHead     string     `json:"base_head"`
+	Verify       VerifyView `json:"verify"`
+	Review       ReviewView `json:"review"`
+	Attempt      int        `json:"attempt"`
+	LastError    *string    `json:"last_error"`
+	EvidencePath string     `json:"evidence_path"`
 	// Agent is the adapter running the plan (claude / codex / gemini /
 	// opencode), surfaced so a live watcher shows which agent holds the plan.
 	// Empty (omitted) when the plan has no recorded agent yet.
@@ -90,9 +90,9 @@ type PlanView struct {
 	// starts. A live watcher renders elapsed time from it — sourced here so the
 	// watch and --json surfaces read the same durable timestamp, never a second
 	// clock.
-	StartedAt *time.Time `json:"started_at,omitempty"`
-	Merge        MergeView       `json:"merge"`
-	Integration  IntegrationView `json:"integration"`
+	StartedAt   *time.Time      `json:"started_at,omitempty"`
+	Merge       MergeView       `json:"merge"`
+	Integration IntegrationView `json:"integration"`
 	// Activity is the in-flight progress card. It is explicit null for any plan
 	// that is not running — the contract degrades to silence rather than show a
 	// stale phase (see [ActivityView]).

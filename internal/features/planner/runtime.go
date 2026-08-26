@@ -7,10 +7,7 @@ import (
 	"strings"
 
 	"springfield/internal/core/agents"
-	"springfield/internal/core/agents/claude"
-	"springfield/internal/core/agents/codex"
-	"springfield/internal/core/agents/gemini"
-	"springfield/internal/core/agents/opencode"
+	"springfield/internal/core/agents/catalog"
 	"springfield/internal/core/config"
 	coreexec "springfield/internal/core/exec"
 	"springfield/internal/core/runtime"
@@ -29,12 +26,7 @@ func NewRuntimeRunner(projectRoot string, lookPath func(string) (string, error))
 }
 
 func (r RuntimeRunner) Run(prompt string) (string, error) {
-	registry := agents.NewRegistry(
-		claude.New(r.lookPath),
-		codex.New(r.lookPath),
-		gemini.New(r.lookPath),
-		opencode.New(r.lookPath),
-	)
+	registry := agents.NewRegistry(catalog.DefaultAdapters(r.lookPath)...)
 	priority, settings, err := r.loadConfig()
 	if err != nil {
 		return "", err
@@ -73,7 +65,7 @@ func (r RuntimeRunner) loadConfig() ([]agents.ID, agents.ExecutionSettings, erro
 	if err == nil {
 		if len(loaded.Config.Project.AgentPriority) == 0 {
 			return nil, agents.ExecutionSettings{}, fmt.Errorf(
-				"project has no agents configured: agent_priority is empty. Run \"springfield init\" to select agents.")
+				"project has no agents configured: agent_priority is empty. Run \"springfield init\" to select agents")
 		}
 		return priorityAgentIDs(loaded.Config.Project.AgentPriority), loaded.Config.ExecutionSettings(), nil
 	}

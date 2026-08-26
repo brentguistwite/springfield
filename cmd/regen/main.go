@@ -20,32 +20,32 @@ func main() {
 
 		r, err := skills.Render(name)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "render %s: %v\n", name, err)
+			_, _ = fmt.Fprintf(os.Stderr, "render %s: %v\n", name, err)
 			os.Exit(1)
 		}
 		path := "skills/" + name + "/SKILL.md"
 		if err := os.MkdirAll("skills/"+name, 0o755); err != nil {
-			fmt.Fprintf(os.Stderr, "mkdir skills/%s: %v\n", name, err)
+			_, _ = fmt.Fprintf(os.Stderr, "mkdir skills/%s: %v\n", name, err)
 			os.Exit(1)
 		}
 		if err := os.WriteFile(path, []byte(r.Content), 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "write %s: %v\n", path, err)
+			_, _ = fmt.Fprintf(os.Stderr, "write %s: %v\n", path, err)
 			os.Exit(1)
 		}
 		fmt.Printf("wrote %s\n", path)
 
 		rc, err := skills.RenderCommand(name)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "render command %s: %v\n", name, err)
+			_, _ = fmt.Fprintf(os.Stderr, "render command %s: %v\n", name, err)
 			os.Exit(1)
 		}
 		cmdPath := "commands/" + name + ".md"
 		if err := os.MkdirAll("commands", 0o755); err != nil {
-			fmt.Fprintf(os.Stderr, "mkdir commands: %v\n", err)
+			_, _ = fmt.Fprintf(os.Stderr, "mkdir commands: %v\n", err)
 			os.Exit(1)
 		}
 		if err := os.WriteFile(cmdPath, []byte(rc.Content), 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "write %s: %v\n", cmdPath, err)
+			_, _ = fmt.Fprintf(os.Stderr, "write %s: %v\n", cmdPath, err)
 			os.Exit(1)
 		}
 		fmt.Printf("wrote %s\n", cmdPath)
@@ -73,7 +73,7 @@ func pruneStaleArtifacts(known map[string]bool) {
 			continue // not a generated skill dir — leave it alone
 		}
 		if err := os.RemoveAll(dir); err != nil {
-			fmt.Fprintf(os.Stderr, "prune %s: %v\n", dir, err)
+			_, _ = fmt.Fprintf(os.Stderr, "prune %s: %v\n", dir, err)
 			os.Exit(1)
 		}
 		fmt.Printf("pruned %s\n", dir)
@@ -86,7 +86,7 @@ func pruneStaleArtifacts(known map[string]bool) {
 		}
 		path := filepath.Join("commands", e.Name())
 		if err := os.Remove(path); err != nil {
-			fmt.Fprintf(os.Stderr, "prune %s: %v\n", path, err)
+			_, _ = fmt.Fprintf(os.Stderr, "prune %s: %v\n", path, err)
 			os.Exit(1)
 		}
 		fmt.Printf("pruned %s\n", path)
@@ -104,7 +104,7 @@ func readDirOrDie(dir string) []os.DirEntry {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		fmt.Fprintf(os.Stderr, "read %s: %v\n", dir, err)
+		_, _ = fmt.Fprintf(os.Stderr, "read %s: %v\n", dir, err)
 		os.Exit(1)
 	}
 	return entries

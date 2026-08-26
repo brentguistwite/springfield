@@ -184,7 +184,7 @@ func TestCompile_BatchIDSanitized(t *testing.T) {
 		t.Fatalf("Compile: %v", err)
 	}
 	for _, ch := range out.Batch.ID {
-		if !((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-') {
+		if (ch < 'a' || ch > 'z') && (ch < '0' || ch > '9') && ch != '-' {
 			t.Errorf("batch ID %q contains unsafe char %q", out.Batch.ID, string(ch))
 		}
 	}

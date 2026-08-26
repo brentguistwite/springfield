@@ -26,8 +26,8 @@ func TestPrefixWriterKeepsLinesAtomicAndPrefixedUnderConcurrency(t *testing.T) {
 			defer pw.Flush()
 			for i := 0; i < lines; i++ {
 				// Split one logical line across two writes to exercise buffering.
-				fmt.Fprintf(pw, "%s line %d", plan, i)
-				fmt.Fprintf(pw, " end\n")
+				_, _ = fmt.Fprintf(pw, "%s line %d", plan, i)
+				_, _ = fmt.Fprintf(pw, " end\n")
 			}
 		}(plan)
 	}
@@ -58,7 +58,7 @@ func TestPrefixWriterKeepsLinesAtomicAndPrefixedUnderConcurrency(t *testing.T) {
 func TestPrefixWriterFlushEmitsTrailingPartialLine(t *testing.T) {
 	var sink bytes.Buffer
 	pw := newPrefixWriter(&syncLineWriter{w: &sink}, "p1")
-	fmt.Fprintf(pw, "no newline yet")
+	_, _ = fmt.Fprintf(pw, "no newline yet")
 	if sink.Len() != 0 {
 		t.Fatalf("partial line emitted before flush: %q", sink.String())
 	}

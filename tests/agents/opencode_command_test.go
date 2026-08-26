@@ -15,7 +15,7 @@ func TestOpenCodeCommandIncludesRunFormatAutoAndPromptViaStdin(t *testing.T) {
 	a := opencode.New(func(string) (string, error) { return "/opt/bin/opencode", nil })
 	workDir := t.TempDir()
 
-	cmd, err := a.(agents.Commander).Command(agents.CommandInput{
+	cmd, err := a.Command(agents.CommandInput{
 		Prompt:  "hello",
 		WorkDir: workDir,
 		ExecutionSettings: agents.ExecutionSettings{
@@ -53,7 +53,7 @@ func TestOpenCodeCommandInjectsControlPlaneConfig(t *testing.T) {
 	a := opencode.New(func(string) (string, error) { return "/opt/bin/opencode", nil })
 	workDir := t.TempDir()
 
-	cmd, err := a.(agents.Commander).Command(agents.CommandInput{
+	cmd, err := a.Command(agents.CommandInput{
 		Prompt:  "hi",
 		WorkDir: workDir,
 	})
@@ -105,7 +105,7 @@ func TestOpenCodeWritesGuardPluginIdempotently(t *testing.T) {
 	workDir := t.TempDir()
 	input := agents.CommandInput{Prompt: "hi", WorkDir: workDir}
 
-	if _, err := a.(agents.Commander).Command(input); err != nil {
+	if _, err := a.Command(input); err != nil {
 		t.Fatalf("Command err: %v", err)
 	}
 	path := filepath.Join(workDir, ".springfield", "opencode", "plugins", "springfield-guard.js")
@@ -123,7 +123,7 @@ func TestOpenCodeWritesGuardPluginIdempotently(t *testing.T) {
 	}
 
 	// Idempotent bytes on rewrite.
-	if _, err := a.(agents.Commander).Command(input); err != nil {
+	if _, err := a.Command(input); err != nil {
 		t.Fatalf("second Command err: %v", err)
 	}
 	second, err := os.ReadFile(path)
@@ -144,7 +144,7 @@ func TestOpenCodeCommandRefusesToSpawnOnGuardWriteFailure(t *testing.T) {
 	}
 
 	a := opencode.New(func(string) (string, error) { return "/opt/bin/opencode", nil })
-	cmd, err := a.(agents.Commander).Command(agents.CommandInput{
+	cmd, err := a.Command(agents.CommandInput{
 		Prompt:  "hi",
 		WorkDir: workDir,
 	})

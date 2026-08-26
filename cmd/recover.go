@@ -111,8 +111,8 @@ func runPlanMarkCompleted(w io.Writer, root, planID string) error {
 		return fmt.Errorf("mark plan %q completed: %w", planID, err)
 	}
 
-	fmt.Fprintf(w, "Marked plan %q completed: %s\n", planID, rec.Reason)
-	fmt.Fprintln(w, "Run \"springfield start\" to perform the merge.")
+	_, _ = fmt.Fprintf(w, "Marked plan %q completed: %s\n", planID, rec.Reason)
+	_, _ = fmt.Fprintln(w, "Run \"springfield start\" to perform the merge.")
 	return nil
 }
 
@@ -124,8 +124,8 @@ func runPlanAcceptDrift(w io.Writer, root, planID string) error {
 		return fmt.Errorf("accept drift for plan %q: %w", planID, err)
 	}
 
-	fmt.Fprintf(w, "Accepted input drift for plan %q: %s\n", planID, rec.Reason)
-	fmt.Fprintln(w, "Run \"springfield start\" to continue.")
+	_, _ = fmt.Fprintf(w, "Accepted input drift for plan %q: %s\n", planID, rec.Reason)
+	_, _ = fmt.Fprintln(w, "Run \"springfield start\" to continue.")
 	return nil
 }
 
@@ -135,8 +135,8 @@ func runPlanReset(w io.Writer, root, planID string) error {
 		return fmt.Errorf("reset plan %q: %w", planID, err)
 	}
 
-	fmt.Fprintf(w, "Reset plan %q: %s\n", planID, rec.Reason)
-	fmt.Fprintln(w, "Removed its worktree and branch. Run \"springfield start\" to re-run from a clean base.")
+	_, _ = fmt.Fprintf(w, "Reset plan %q: %s\n", planID, rec.Reason)
+	_, _ = fmt.Fprintln(w, "Removed its worktree and branch. Run \"springfield start\" to re-run from a clean base.")
 	return nil
 }
 
@@ -147,13 +147,13 @@ func runPlanRecover(w io.Writer, root, planID string, diagnoseOnly bool) error {
 	}
 
 	if diagnoseOnly {
-		fmt.Fprint(w, diag.Render())
+		_, _ = fmt.Fprint(w, diag.Render())
 		return nil
 	}
 
 	if len(diag.AvailableActions) == 0 {
-		fmt.Fprint(w, diag.Render())
-		fmt.Fprintln(w, "No automatic recovery actions available for this plan state.")
+		_, _ = fmt.Fprint(w, diag.Render())
+		_, _ = fmt.Fprintln(w, "No automatic recovery actions available for this plan state.")
 		return nil
 	}
 
@@ -163,8 +163,8 @@ func runPlanRecover(w io.Writer, root, planID string, diagnoseOnly bool) error {
 		return fmt.Errorf("recover plan %q: %w", planID, err)
 	}
 
-	fmt.Fprintf(w, "Recovered plan %q: %s\n", planID, rec.Reason)
-	fmt.Fprintln(w, "Run \"springfield start\" to continue.")
+	_, _ = fmt.Fprintf(w, "Recovered plan %q: %s\n", planID, rec.Reason)
+	_, _ = fmt.Fprintln(w, "Run \"springfield start\" to continue.")
 	return nil
 }
 
@@ -174,7 +174,7 @@ func runOrphanRecover(w io.Writer, root string, diagnoseOnly bool) error {
 		return err
 	}
 	if !hasRun || run.ActiveBatchID == "" {
-		fmt.Fprintln(w, "No run.json present — nothing to recover.")
+		_, _ = fmt.Fprintln(w, "No run.json present — nothing to recover.")
 		return nil
 	}
 
@@ -205,12 +205,12 @@ func runOrphanRecover(w io.Writer, root string, diagnoseOnly bool) error {
 		return fmt.Errorf("recover orphan: %w", err)
 	}
 
-	fmt.Fprintf(w, "Archived orphan batch %q and cleared run state.\n", run.ActiveBatchID)
+	_, _ = fmt.Fprintf(w, "Archived orphan batch %q and cleared run state.\n", run.ActiveBatchID)
 	sourcePath := paths.SourcePath()
 	if _, err := os.Stat(sourcePath); err == nil {
-		fmt.Fprintf(w, "Source markdown survived at %s — invoke the springfield:plan skill to re-slice and re-plan.\n", sourcePath)
+		_, _ = fmt.Fprintf(w, "Source markdown survived at %s — invoke the springfield:plan skill to re-slice and re-plan.\n", sourcePath)
 	} else {
-		fmt.Fprintln(w, "Source markdown is also gone. Invoke the springfield:plan skill to create a new batch.")
+		_, _ = fmt.Fprintln(w, "Source markdown is also gone. Invoke the springfield:plan skill to create a new batch.")
 	}
 	return nil
 }
@@ -226,43 +226,43 @@ func reportActiveBatchLiveness(w io.Writer, root, batchID string, diagnoseOnly b
 	}
 
 	if live.Holder != nil {
-		fmt.Fprintf(w, "Batch %q is running (pid %d since %s) — nothing to recover.\n", batchID, live.Holder.PID, live.Holder.Since.Format(time.RFC3339))
-		fmt.Fprintln(w, "Wait for it to finish, or run \"springfield status\" to inspect.")
+		_, _ = fmt.Fprintf(w, "Batch %q is running (pid %d since %s) — nothing to recover.\n", batchID, live.Holder.PID, live.Holder.Since.Format(time.RFC3339))
+		_, _ = fmt.Fprintln(w, "Wait for it to finish, or run \"springfield status\" to inspect.")
 		return nil
 	}
 
 	if live.LockUnreadable {
-		fmt.Fprintf(w, "WARNING: batch %q has a control-plane lock file that could not be read to confirm a holder (torn write or permission error). Proceeding as if no live process owns it — make sure no \"springfield start\" is actually running before relying on this.\n", batchID)
+		_, _ = fmt.Fprintf(w, "WARNING: batch %q has a control-plane lock file that could not be read to confirm a holder (torn write or permission error). Proceeding as if no live process owns it — make sure no \"springfield start\" is actually running before relying on this.\n", batchID)
 	}
 
 	if len(live.StaleRunning) == 0 && len(live.Cleared) == 0 {
-		fmt.Fprintf(w, "Batch %q has no live springfield process and no plans stuck running — nothing to recover.\n", batchID)
-		fmt.Fprintln(w, "Run \"springfield start\" to resume or \"springfield status\" to inspect.")
+		_, _ = fmt.Fprintf(w, "Batch %q has no live springfield process and no plans stuck running — nothing to recover.\n", batchID)
+		_, _ = fmt.Fprintln(w, "Run \"springfield start\" to resume or \"springfield status\" to inspect.")
 		return nil
 	}
 
 	if diagnoseOnly {
-		fmt.Fprintf(w, "Batch %q has no live springfield process, but %d plan(s) are still marked running (orphaned by a crash):\n", batchID, len(live.StaleRunning))
+		_, _ = fmt.Fprintf(w, "Batch %q has no live springfield process, but %d plan(s) are still marked running (orphaned by a crash):\n", batchID, len(live.StaleRunning))
 		for _, id := range live.StaleRunning {
-			fmt.Fprintf(w, "  - %s\n", id)
+			_, _ = fmt.Fprintf(w, "  - %s\n", id)
 		}
-		fmt.Fprintln(w, "\nRun \"springfield recover\" to reset them to interrupted, then \"springfield start\" to resume.")
+		_, _ = fmt.Fprintln(w, "\nRun \"springfield recover\" to reset them to interrupted, then \"springfield start\" to resume.")
 		return nil
 	}
 
-	fmt.Fprintf(w, "Batch %q had no live springfield process (crashed or killed). Reset %d orphaned running plan(s) to interrupted:\n", batchID, len(live.Cleared))
+	_, _ = fmt.Fprintf(w, "Batch %q had no live springfield process (crashed or killed). Reset %d orphaned running plan(s) to interrupted:\n", batchID, len(live.Cleared))
 	for _, id := range live.Cleared {
-		fmt.Fprintf(w, "  - %s\n", id)
+		_, _ = fmt.Fprintf(w, "  - %s\n", id)
 	}
-	fmt.Fprintln(w, "\nRun \"springfield start\" to resume.")
+	_, _ = fmt.Fprintln(w, "\nRun \"springfield start\" to resume.")
 	return nil
 }
 
 func printOrphanDiagnosis(w io.Writer, root string, run batch.Run, paths batch.Paths) error {
-	fmt.Fprintln(w, "Diagnosis:")
-	fmt.Fprintf(w, "  run.json active_batch_id: %s\n", run.ActiveBatchID)
+	_, _ = fmt.Fprintln(w, "Diagnosis:")
+	_, _ = fmt.Fprintf(w, "  run.json active_batch_id: %s\n", run.ActiveBatchID)
 	if run.FatalError != "" {
-		fmt.Fprintf(w, "  run.json fatal_error: %s\n", run.FatalError)
+		_, _ = fmt.Fprintf(w, "  run.json fatal_error: %s\n", run.FatalError)
 	}
 
 	// Surface plan-level progress from conductor state. batch.json is gone in the
@@ -274,7 +274,7 @@ func printOrphanDiagnosis(w io.Writer, root string, run batch.Run, paths batch.P
 	project, perr := conductor.LoadProjectRaw(root)
 	switch {
 	case perr != nil:
-		fmt.Fprintf(w, "  plans registered: (unavailable — %v)\n", perr)
+		_, _ = fmt.Fprintf(w, "  plans registered: (unavailable — %v)\n", perr)
 	default:
 		total := len(project.Config.PlanUnits)
 		var integrated, running int
@@ -286,34 +286,34 @@ func printOrphanDiagnosis(w io.Writer, root string, run batch.Run, paths batch.P
 				running++
 			}
 		}
-		fmt.Fprintf(w, "  plans registered: %d (integrated %d, running %d)\n", total, integrated, running)
+		_, _ = fmt.Fprintf(w, "  plans registered: %d (integrated %d, running %d)\n", total, integrated, running)
 	}
-	fmt.Fprintf(w, "  plan dir:      %s\n", statHint(paths.PlanDir()))
-	fmt.Fprintf(w, "  batch.json:    %s\n", statHint(paths.BatchPath()))
-	fmt.Fprintf(w, "  source.md:     %s\n", statHint(paths.SourcePath()))
+	_, _ = fmt.Fprintf(w, "  plan dir:      %s\n", statHint(paths.PlanDir()))
+	_, _ = fmt.Fprintf(w, "  batch.json:    %s\n", statHint(paths.BatchPath()))
+	_, _ = fmt.Fprintf(w, "  source.md:     %s\n", statHint(paths.SourcePath()))
 	evidenceDir := filepath.Join(paths.PlanDir(), "evidence")
-	fmt.Fprintf(w, "  evidence dir:  %s\n", statHint(evidenceDir))
+	_, _ = fmt.Fprintf(w, "  evidence dir:  %s\n", statHint(evidenceDir))
 	if entries, err := os.ReadDir(evidenceDir); err == nil {
 		for _, e := range entries {
 			if !e.IsDir() {
 				continue
 			}
-			fmt.Fprintf(w, "    - %s\n", filepath.Join(evidenceDir, e.Name()))
+			_, _ = fmt.Fprintf(w, "    - %s\n", filepath.Join(evidenceDir, e.Name()))
 		}
 	}
 
 	archiveDir := batch.ArchiveDir(root)
-	fmt.Fprintf(w, "  archive dir:   %s\n", statHint(archiveDir))
+	_, _ = fmt.Fprintf(w, "  archive dir:   %s\n", statHint(archiveDir))
 	if entries, err := os.ReadDir(archiveDir); err == nil {
 		for _, e := range entries {
 			if e.IsDir() {
 				continue
 			}
-			fmt.Fprintf(w, "    - %s\n", filepath.Base(e.Name()))
+			_, _ = fmt.Fprintf(w, "    - %s\n", filepath.Base(e.Name()))
 		}
 	}
 
-	fmt.Fprintln(w, "\nTo archive as orphan + clear run: springfield recover")
+	_, _ = fmt.Fprintln(w, "\nTo archive as orphan + clear run: springfield recover")
 	return nil
 }
 

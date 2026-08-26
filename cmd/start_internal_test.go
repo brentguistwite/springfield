@@ -544,7 +544,7 @@ func TestBatchPlanRunnerProgressWriterSelection(t *testing.T) {
 	r := &batchPlanRunner{progress: &buf, progressShared: &syncLineWriter{w: &buf}}
 
 	w, flush := r.planProgress("alpha", batchexec.RunInfo{Concurrent: true})
-	fmt.Fprintf(w, "hello\npartial")
+	_, _ = fmt.Fprintf(w, "hello\npartial")
 	flush()
 	if got := buf.String(); got != "[alpha] hello\n[alpha] partial\n" {
 		t.Fatalf("concurrent output = %q, want prefixed lines", got)
@@ -552,7 +552,7 @@ func TestBatchPlanRunnerProgressWriterSelection(t *testing.T) {
 
 	buf.Reset()
 	w, flush = r.planProgress("alpha", batchexec.RunInfo{Concurrent: false})
-	fmt.Fprintf(w, "hello\n")
+	_, _ = fmt.Fprintf(w, "hello\n")
 	flush()
 	if got := buf.String(); got != "hello\n" {
 		t.Fatalf("sequential output = %q, want raw passthrough", got)

@@ -30,7 +30,7 @@ func LoadEvents(t testing.TB, path string) []coreexec.Event {
 	if err != nil {
 		t.Fatalf("open fixture %s: %v", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var events []coreexec.Event
 	scanner := bufio.NewScanner(f)

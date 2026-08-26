@@ -213,10 +213,6 @@ func loadPRDForTest(t *testing.T, root, planID string) prd.PRD {
 func planrunNextStory(plan prd.PRD) (prd.UserStory, bool) {
 	// Use inline logic equivalent to planrun.NextStory to avoid circular import.
 	// (planrun imports conductor; conductor tests can't import planrun without a cycle.)
-	type sorter struct {
-		story    prd.UserStory
-		priority int
-	}
 	passed := make(map[string]bool, len(plan.UserStories))
 	for _, s := range plan.UserStories {
 		if s.Passes {

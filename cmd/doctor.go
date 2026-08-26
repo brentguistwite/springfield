@@ -26,25 +26,26 @@ func NewDoctorCommand() *cobra.Command {
 
 			for _, check := range report.Checks {
 				icon := "✓"
-				if check.Status == doctor.StatusMissing {
+				switch check.Status {
+				case doctor.StatusMissing:
 					icon = "✗"
-				} else if check.Status == doctor.StatusUnhealthy {
+				case doctor.StatusUnhealthy:
 					icon = "!"
 				}
 
-				fmt.Fprintf(w, "  %s %s (%s)", icon, check.Name, check.Binary)
+				_, _ = fmt.Fprintf(w, "  %s %s (%s)", icon, check.Name, check.Binary)
 				if check.Path != "" {
-					fmt.Fprintf(w, " → %s", check.Path)
+					_, _ = fmt.Fprintf(w, " → %s", check.Path)
 				}
-				fmt.Fprintln(w)
+				_, _ = fmt.Fprintln(w)
 
 				if check.Guidance != "" {
-					fmt.Fprintf(w, "    %s\n", check.Guidance)
+					_, _ = fmt.Fprintf(w, "    %s\n", check.Guidance)
 				}
 			}
 
-			fmt.Fprintln(w)
-			fmt.Fprintln(w, report.Summary)
+			_, _ = fmt.Fprintln(w)
+			_, _ = fmt.Fprintln(w, report.Summary)
 
 			return nil
 		},

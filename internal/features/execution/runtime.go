@@ -10,10 +10,7 @@ import (
 	"strings"
 
 	"springfield/internal/core/agents"
-	"springfield/internal/core/agents/claude"
-	"springfield/internal/core/agents/codex"
-	"springfield/internal/core/agents/gemini"
-	"springfield/internal/core/agents/opencode"
+	"springfield/internal/core/agents/catalog"
 	"springfield/internal/core/config"
 	coreexec "springfield/internal/core/exec"
 	coreruntime "springfield/internal/core/runtime"
@@ -50,15 +47,10 @@ func NewRuntimeRunner(root string, lookPath func(string) (string, error), onEven
 	}
 	if len(loaded.Config.Project.AgentPriority) == 0 {
 		return Runner{}, fmt.Errorf(
-			"project has no agents configured: agent_priority is empty. Run \"springfield init\" to select agents.")
+			"project has no agents configured: agent_priority is empty. Run \"springfield init\" to select agents")
 	}
 
-	registry := agents.NewRegistry(
-		claude.New(lookPath),
-		codex.New(lookPath),
-		gemini.New(lookPath),
-		opencode.New(lookPath),
-	)
+	registry := agents.NewRegistry(catalog.DefaultAdapters(lookPath)...)
 	runtimeRunner := coreruntime.NewRunner(registry)
 	agentIDs := priorityAgentIDs(loaded.Config.Project.AgentPriority)
 	settings := loaded.Config.ExecutionSettings()
@@ -426,7 +418,7 @@ func readProjectGuidance(root string) (string, error) {
 		}
 		// Read one byte beyond the cap to detect truncation.
 		data, readErr := io.ReadAll(io.LimitReader(f, int64(maxGuidanceFileBytes)+1))
-		f.Close()
+		_ = f.Close()
 		if readErr != nil {
 			return "", fmt.Errorf("read project guidance %s: %w", name, readErr)
 		}

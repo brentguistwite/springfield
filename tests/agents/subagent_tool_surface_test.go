@@ -54,7 +54,7 @@ func settingsDeniedTools(t *testing.T, args []string) []string {
 // subagent — the plan-04 agent actually invoked ScheduleWakeup from within one.
 func TestClaudeSubagentDeniesParentHarnessPrimitives(t *testing.T) {
 	a := claude.New(exec.LookPath)
-	cmd, err := a.(agents.Commander).Command(agents.CommandInput{Prompt: "do work", WorkDir: "/tmp/project"})
+	cmd, err := a.Command(agents.CommandInput{Prompt: "do work", WorkDir: "/tmp/project"})
 	if err != nil {
 		t.Fatalf("Command: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestClaudeSubagentDeniesParentHarnessPrimitives(t *testing.T) {
 // still do real work.
 func TestClaudeSubagentKeepsImplementerToolsUsable(t *testing.T) {
 	a := claude.New(exec.LookPath)
-	cmd, err := a.(agents.Commander).Command(agents.CommandInput{Prompt: "do work", WorkDir: "/tmp/project"})
+	cmd, err := a.Command(agents.CommandInput{Prompt: "do work", WorkDir: "/tmp/project"})
 	if err != nil {
 		t.Fatalf("Command: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestClaudeSubagentKeepsImplementerToolsUsable(t *testing.T) {
 // allowlist (which would have to enumerate unknowable MCP tool names) is not.
 func TestClaudeSubagentDenyListLeavesMcpToolsUntouched(t *testing.T) {
 	a := claude.New(exec.LookPath)
-	cmd, err := a.(agents.Commander).Command(agents.CommandInput{Prompt: "do work", WorkDir: "/tmp/project"})
+	cmd, err := a.Command(agents.CommandInput{Prompt: "do work", WorkDir: "/tmp/project"})
 	if err != nil {
 		t.Fatalf("Command: %v", err)
 	}

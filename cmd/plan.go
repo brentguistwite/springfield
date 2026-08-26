@@ -72,7 +72,7 @@ func NewPlanCommand() *cobra.Command {
 			if isLegacySlicePayload(payload) {
 				return fmt.Errorf(
 					"legacy single-slice batch detected; this format is no longer supported. " +
-						"Re-author with the PRD shape (see docs/prd-format.md).",
+						"Re-author with the PRD shape (see docs/prd-format.md)",
 				)
 			}
 
@@ -160,7 +160,7 @@ func NewPlanCommand() *cobra.Command {
 
 					// Surface warnings to stderr before any mutation.
 					for _, w := range replaceOut.Warnings {
-						fmt.Fprintf(cmd.ErrOrStderr(), "[warn] %s\n", w)
+						_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "[warn] %s\n", w)
 					}
 
 					// Capture the prior batch's rollup before archive removes
@@ -266,7 +266,7 @@ func NewPlanCommand() *cobra.Command {
 					if err := batch.WriteRun(rootDir, newRun); err != nil {
 						return fmt.Errorf("write run.json (write failed after archive — re-run \"springfield plan --replace --prd ...\" to rebuild from the new envelope (springfield recover alone will NOT clean up — run.json is gone, so it will report no-op and leave stale plan units behind)): %w", err)
 					}
-					fmt.Fprintf(cmd.OutOrStdout(), "Compiled batch %q with %d plan(s).\n", replaceOut.Batch.ID, len(replaceOut.Plans))
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Compiled batch %q with %d plan(s).\n", replaceOut.Batch.ID, len(replaceOut.Plans))
 					return nil
 
 				case appendMode:
@@ -304,7 +304,7 @@ func NewPlanCommand() *cobra.Command {
 
 			// Surface warnings to stderr.
 			for _, w := range out.Warnings {
-				fmt.Fprintf(cmd.ErrOrStderr(), "[warn] %s\n", w)
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "[warn] %s\n", w)
 			}
 
 			// Write batch to disk.
@@ -342,7 +342,7 @@ func NewPlanCommand() *cobra.Command {
 				return fmt.Errorf("write run.json: %w", err)
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Compiled batch %q with %d plan(s).\n", out.Batch.ID, len(out.Plans))
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Compiled batch %q with %d plan(s).\n", out.Batch.ID, len(out.Plans))
 			return nil
 		},
 	}
@@ -384,7 +384,7 @@ func runDryRun(cmd *cobra.Command, rootDir string, env prd.BatchPRDEnvelope, rep
 	var existingIDs map[string]struct{}
 	if hasRun && run.ActiveBatchID != "" {
 		if !replace && !appendMode {
-			fmt.Fprintf(cmd.ErrOrStderr(), "[warn] active batch %q exists; --dry-run does not modify it.\n", run.ActiveBatchID)
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "[warn] active batch %q exists; --dry-run does not modify it.\n", run.ActiveBatchID)
 		}
 		if appendMode {
 			paths, perr := batch.NewPaths(rootDir, run.ActiveBatchID)
@@ -418,22 +418,22 @@ func runDryRun(cmd *cobra.Command, rootDir string, env prd.BatchPRDEnvelope, rep
 	}
 
 	for _, w := range out.Warnings {
-		fmt.Fprintf(cmd.ErrOrStderr(), "[warn] %s\n", w)
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "[warn] %s\n", w)
 	}
 
 	w := cmd.OutOrStdout()
-	fmt.Fprintf(w, "Dry run: would compile batch %q with %d plan(s).\n", out.Batch.ID, len(out.Plans))
-	fmt.Fprintln(w, "Phases:")
+	_, _ = fmt.Fprintf(w, "Dry run: would compile batch %q with %d plan(s).\n", out.Batch.ID, len(out.Plans))
+	_, _ = fmt.Fprintln(w, "Phases:")
 	for i, ph := range out.Batch.Phases {
 		mode := "serial"
 		if ph.Mode == batch.PhaseParallel {
 			mode = "parallel"
 		}
-		fmt.Fprintf(w, "  %d. [%s] %s\n", i+1, mode, joinIDs(ph.Plans))
+		_, _ = fmt.Fprintf(w, "  %d. [%s] %s\n", i+1, mode, joinIDs(ph.Plans))
 	}
-	fmt.Fprintf(w, "Plan IDs (first-seen order): %s\n", joinIDs(out.Batch.PlanIDs))
+	_, _ = fmt.Fprintf(w, "Plan IDs (first-seen order): %s\n", joinIDs(out.Batch.PlanIDs))
 	if len(out.Warnings) > 0 {
-		fmt.Fprintf(w, "Validation warnings (printed to stderr): %d\n", len(out.Warnings))
+		_, _ = fmt.Fprintf(w, "Validation warnings (printed to stderr): %d\n", len(out.Warnings))
 	}
 	return nil
 }
@@ -476,14 +476,12 @@ func runAppend(cmd *cobra.Command, rootDir string, project *conductor.Project, p
 
 	// Surface warnings.
 	for _, w := range newOut.Warnings {
-		fmt.Fprintf(cmd.ErrOrStderr(), "[warn] %s\n", w)
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "[warn] %s\n", w)
 	}
 
 	// Merge plan IDs into existing batch and rewrite batch.json.
 	prior.PlanIDs = append(prior.PlanIDs, newOut.Batch.PlanIDs...)
-	for _, ph := range newOut.Batch.Phases {
-		prior.Phases = append(prior.Phases, ph)
-	}
+	prior.Phases = append(prior.Phases, newOut.Batch.Phases...)
 
 	paths, err := batch.NewPaths(rootDir, prior.ID)
 	if err != nil {
@@ -525,7 +523,7 @@ func runAppend(cmd *cobra.Command, rootDir string, project *conductor.Project, p
 		return fmt.Errorf("write run.json: %w", err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Appended %d plan(s) to batch %q.\n", len(newOut.Plans), prior.ID)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Appended %d plan(s) to batch %q.\n", len(newOut.Plans), prior.ID)
 	return nil
 }
 

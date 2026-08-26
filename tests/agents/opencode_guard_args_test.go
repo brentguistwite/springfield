@@ -28,7 +28,7 @@ func guardPluginSource(t *testing.T) string {
 	t.Helper()
 	a := opencode.New(func(string) (string, error) { return "/opt/bin/opencode", nil })
 	workDir := t.TempDir()
-	if _, err := a.(agents.Commander).Command(agents.CommandInput{Prompt: "hi", WorkDir: workDir}); err != nil {
+	if _, err := a.Command(agents.CommandInput{Prompt: "hi", WorkDir: workDir}); err != nil {
 		t.Fatalf("Command err: %v", err)
 	}
 	plugin, err := os.ReadFile(filepath.Join(workDir, ".springfield", "opencode", "plugins", "springfield-guard.js"))

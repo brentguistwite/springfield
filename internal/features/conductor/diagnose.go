@@ -129,7 +129,7 @@ func Diagnose(project *Project) *Diagnosis {
 	}
 
 	done := schedule.IsComplete(project.State)
-	nextStep := "Run: springfield start"
+	var nextStep string
 	switch {
 	case total == 0:
 		nextStep = nextStepNoPlans

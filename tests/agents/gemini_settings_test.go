@@ -17,7 +17,7 @@ func TestGeminiCommandSetsSystemSettingsEnvVar(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	a := gemini.New(func(string) (string, error) { return "/opt/bin/gemini", nil })
-	cmd, err := a.(agents.Commander).Command(agents.CommandInput{
+	cmd, err := a.Command(agents.CommandInput{
 		Prompt:  "hello",
 		WorkDir: workDir,
 		ExecutionSettings: agents.ExecutionSettings{
@@ -46,7 +46,7 @@ func TestGeminiSystemSettingsRegistersBeforeToolHook(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	a := gemini.New(func(string) (string, error) { return "/opt/bin/gemini", nil })
-	cmd, err := a.(agents.Commander).Command(agents.CommandInput{
+	cmd, err := a.Command(agents.CommandInput{
 		Prompt:  "hi",
 		WorkDir: workDir,
 	})
@@ -103,7 +103,7 @@ func TestGeminiSystemSettingsDisablesSpringfieldSkills(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	a := gemini.New(func(string) (string, error) { return "/opt/bin/gemini", nil })
-	cmd, err := a.(agents.Commander).Command(agents.CommandInput{
+	cmd, err := a.Command(agents.CommandInput{
 		Prompt:  "hi",
 		WorkDir: workDir,
 	})
@@ -145,7 +145,7 @@ func TestGeminiSystemSettingsEmbedsAbsoluteSpringfieldBinary(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	a := gemini.New(func(string) (string, error) { return "/opt/bin/gemini", nil })
-	cmd, err := a.(agents.Commander).Command(agents.CommandInput{
+	cmd, err := a.Command(agents.CommandInput{
 		Prompt:  "hi",
 		WorkDir: workDir,
 	})
@@ -185,7 +185,7 @@ func TestGeminiCommandRefusesToSpawnOnSettingsWriteFailure(t *testing.T) {
 	}
 
 	a := gemini.New(func(string) (string, error) { return "/opt/bin/gemini", nil })
-	cmd, err := a.(agents.Commander).Command(agents.CommandInput{
+	cmd, err := a.Command(agents.CommandInput{
 		Prompt:  "hi",
 		WorkDir: workDir,
 	})
@@ -206,7 +206,7 @@ func TestGeminiSystemSettingsFilePermissions(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	a := gemini.New(func(string) (string, error) { return "/opt/bin/gemini", nil })
-	cmd, err := a.(agents.Commander).Command(agents.CommandInput{
+	cmd, err := a.Command(agents.CommandInput{
 		Prompt:  "hi",
 		WorkDir: workDir,
 	})

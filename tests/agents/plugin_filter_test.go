@@ -68,7 +68,7 @@ func TestClaudeAdapterDisablesSpringfieldAndSuperpowersPlugins(t *testing.T) {
 
 	var warnBuf bytes.Buffer
 	a := claude.NewWithOptions(nil, claude.Options{WarnWriter: &warnBuf})
-	cmd, err := a.(agents.Commander).Command(agents.CommandInput{Prompt: "do work", WorkDir: "/tmp"})
+	cmd, err := a.Command(agents.CommandInput{Prompt: "do work", WorkDir: "/tmp"})
 	if err != nil {
 		t.Fatalf("Command: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestClaudeAdapterMatchesForkedMarketplaceIds(t *testing.T) {
 
 	var warnBuf bytes.Buffer
 	a := claude.NewWithOptions(nil, claude.Options{WarnWriter: &warnBuf})
-	cmd, err := a.(agents.Commander).Command(agents.CommandInput{Prompt: "do work", WorkDir: "/tmp"})
+	cmd, err := a.Command(agents.CommandInput{Prompt: "do work", WorkDir: "/tmp"})
 	if err != nil {
 		t.Fatalf("Command: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestClaudeAdapterSkipsDisableWhenPluginAbsent(t *testing.T) {
 
 	var warnBuf bytes.Buffer
 	a := claude.NewWithOptions(nil, claude.Options{WarnWriter: &warnBuf})
-	cmd, err := a.(agents.Commander).Command(agents.CommandInput{Prompt: "do work", WorkDir: "/tmp"})
+	cmd, err := a.Command(agents.CommandInput{Prompt: "do work", WorkDir: "/tmp"})
 	if err != nil {
 		t.Fatalf("Command: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestClaudeAdapterFallsBackToDefaultsWithWarningOnUnreadableSettings(t *test
 
 	var warnBuf bytes.Buffer
 	a := claude.NewWithOptions(nil, claude.Options{WarnWriter: &warnBuf})
-	cmd, err := a.(agents.Commander).Command(agents.CommandInput{Prompt: "do work", WorkDir: "/tmp"})
+	cmd, err := a.Command(agents.CommandInput{Prompt: "do work", WorkDir: "/tmp"})
 	if err != nil {
 		t.Fatalf("Command: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestClaudeAdapterReadsSettingsAtCommandTimeNotNewTime(t *testing.T) {
 		"other@baz":                  true,
 	})
 
-	cmd, err := a.(agents.Commander).Command(agents.CommandInput{Prompt: "do work", WorkDir: "/tmp"})
+	cmd, err := a.Command(agents.CommandInput{Prompt: "do work", WorkDir: "/tmp"})
 	if err != nil {
 		t.Fatalf("Command: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestClaudeAdapterPreservesExistingHookSettings(t *testing.T) {
 
 	var warnBuf bytes.Buffer
 	a := claude.NewWithOptions(nil, claude.Options{WarnWriter: &warnBuf})
-	cmd, err := a.(agents.Commander).Command(agents.CommandInput{Prompt: "do work", WorkDir: "/tmp"})
+	cmd, err := a.Command(agents.CommandInput{Prompt: "do work", WorkDir: "/tmp"})
 	if err != nil {
 		t.Fatalf("Command: %v", err)
 	}
@@ -260,7 +260,7 @@ func TestClaudeAdapterKeepsUnrelatedPluginsAlone(t *testing.T) {
 
 	var warnBuf bytes.Buffer
 	a := claude.NewWithOptions(nil, claude.Options{WarnWriter: &warnBuf})
-	cmd, err := a.(agents.Commander).Command(agents.CommandInput{Prompt: "do work", WorkDir: "/tmp"})
+	cmd, err := a.Command(agents.CommandInput{Prompt: "do work", WorkDir: "/tmp"})
 	if err != nil {
 		t.Fatalf("Command: %v", err)
 	}
@@ -291,7 +291,7 @@ func TestResolvePluginDisablesUsesUserHomeDir(t *testing.T) {
 
 	var warnBuf bytes.Buffer
 	a := claude.NewWithOptions(nil, claude.Options{WarnWriter: &warnBuf})
-	cmd, err := a.(agents.Commander).Command(agents.CommandInput{Prompt: "do work", WorkDir: "/tmp"})
+	cmd, err := a.Command(agents.CommandInput{Prompt: "do work", WorkDir: "/tmp"})
 	if err != nil {
 		t.Fatalf("Command: %v", err)
 	}
