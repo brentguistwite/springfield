@@ -12,7 +12,7 @@ A one-page map of how Springfield is wired: the layers, the execution path of a 
 | Features | `internal/features/` | Product capabilities, one package each: `conductor` (+ `batchexec`, `planrun`, `planmerge`, `planreview` subpackages) orchestrate batches; plus `batch`, `prd`, `planner`, `execution`, `cost`, `statusview`, `doctor`, `notify`, `autobranch`, `verify`, `worktreesetup`, `portblock`, `wakelock`, `skills`, `playbooks`, `workflow` |
 | State | `internal/storage/` | The `.springfield/` control-plane layout, atomic writes, resolve-upward |
 
-The dominant dependency direction flows downward: commands depend on features and core; features depend on core. Narrow exceptions run the other way, where core consumes leaf feature packages: the claude/codex adapters use `features/cost` for token-cost extraction, and `core/config` validates against the `features/portblock` and `features/prd` types. New core→features edges deserve scrutiny — prefer pushing the dependency up into the feature layer.
+The dominant dependency direction flows downward: commands depend on features and core; features depend on core. Narrow exceptions run the other way, where core consumes leaf feature packages: the claude/codex/opencode adapters use `features/cost` for token-cost extraction, and `core/config` validates against the `features/portblock` and `features/prd` types. New core→features edges deserve scrutiny — prefer pushing the dependency up into the feature layer.
 
 ## Execution path of `springfield start`
 
@@ -28,7 +28,7 @@ The dominant dependency direction flows downward: commands depend on features an
 
 ## Adapter boundary
 
-All agent interaction crosses `internal/core/agents`: the `Adapter`/`Commander` interfaces plus deliberately optional capability interfaces consumed by type assertion at dispatch time. Concrete adapters live in `claude/`, `codex/`, `gemini/` and are assembled **only** in `core/agents/catalog`. Every production capability an adapter must provide is pinned with a compile-time assertion beside its constructor (AGENTS.md Principle 5).
+All agent interaction crosses `internal/core/agents`: the `Adapter`/`Commander` interfaces plus deliberately optional capability interfaces consumed by type assertion at dispatch time. Concrete adapters live in `claude/`, `codex/`, `gemini/`, `opencode/` and are assembled **only** in `core/agents/catalog`. Every production capability an adapter must provide is pinned with a compile-time assertion beside its constructor (AGENTS.md Principle 5).
 
 ## Package entry conventions
 

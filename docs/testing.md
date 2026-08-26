@@ -32,8 +32,8 @@ Stdlib `testing` only — no testify, gomock, or ginkgo anywhere in the module. 
 
 Agent stdout parsing is pinned against three fixture tiers:
 
-1. **Real captures** — `tests/realcaptures/{claude,codex}/*.jsonl`, recorded verbatim from actual agent CLI sessions. Each file has a sibling `.meta.json` (tool, version, args, sha256). Integrity gates in `tests/enforcement/integrity_test.go` enforce byte-immutability, NDJSON well-formedness, no orphaned metadata, and parser coverage of every capture.
-2. **Scenario fixtures** — hand-authored event sequences in `tests/agents/fixtures/{claude,codex,gemini}/` (`success.json`, `hard-error.json`, …).
+1. **Real captures** — `tests/realcaptures/{claude,codex,opencode}/*.jsonl`, recorded verbatim from actual agent CLI sessions. Each file has a sibling `.meta.json` (tool, version, args, sha256). Integrity gates in `tests/enforcement/integrity_test.go` enforce byte-immutability, NDJSON well-formedness, no orphaned metadata, and parser coverage of every capture.
+2. **Scenario fixtures** — hand-authored event sequences in `tests/agents/fixtures/{claude,codex,gemini,opencode}/` (`success.json`, `hard-error.json`, …).
 3. **Replay helper** — `internal/testsupport/fixtures.LoadEvents(t, path)` loads a captured transcript into the production-shaped event stream so parser tests consume real bytes.
 
 **Changing transcript parsing?** Regenerate captures with `go run ./cmd/capture-fixture`. Never hand-edit `.jsonl` files under `tests/realcaptures/` — the sha256 checks will (correctly) fail the build.

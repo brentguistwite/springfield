@@ -195,6 +195,11 @@ permission_mode = "bypassPermissions"
 # [agents.gemini]
 # approval_mode = "yolo"
 # sandbox_mode = "sandbox-exec"
+
+# Opt in to OpenCode by adding "opencode" to agent_priority; scaffold below.
+# OpenCode has no approval/sandbox knobs — model (free-form "provider/model") is optional.
+# [agents.opencode]
+# model = "openai/gpt-5.6"
 ```
 
 Notes:

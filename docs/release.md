@@ -145,3 +145,29 @@ The plugin previously shipped a `SessionStart` hook that downloaded and checksum
 **Existing-user cleanup (optional).** Earlier versions of `springfield init` appended a control-plane guardrail block bracketed by a `<!-- springfield:guardrail -->` marker to your project's `AGENTS.md` / `CLAUDE.md` / `GEMINI.md`. That block is now dead text — the guards have moved to the plugin's `PreToolUse` hook and the batch prompt header. The CLI does **not** rewrite your files (Issue 3's whole point is zero mutation of your agent-instruction files), so the stale block stays put until you remove it. Search your project for `<!-- springfield:guardrail -->` and delete from that marker through the end of the `## Springfield control plane` section if you want a clean file.
 
 **Plugin PreToolUse hook PATH caveat.** The plugin's `hooks/hooks.json` invokes `springfield hook-guard` by bare command name, so resolution depends on the PATH the Claude Code process sees. From a terminal-launched `claude`, the brew install path (`/opt/homebrew/bin` or `/usr/local/bin`) is on PATH and the guard fires. macOS GUI Claude Code launches do **not** always inherit a login shell's PATH; if `springfield` isn't resolvable there, the hook exits 127 and Claude treats the action as allowed (soft-fail). The interactive-Codex case is already accepted as a soft guard by design, and batch runs are unaffected (the runtime adapter resolves the binary via `os.Executable()`). If you rely on the interactive Claude guard, make sure `springfield` is on the PATH visible to your launch context (e.g. add a `launchctl setenv PATH` entry, or symlink `/usr/local/bin/springfield -> $(brew --prefix)/bin/springfield`).
+
+### 2026-08 — OpenCode CLI execution support
+
+OpenCode CLI joins Claude Code, Codex CLI, and Gemini CLI as a fully executable agent. Existing projects stay valid without changes — OpenCode is opt-in.
+
+To enable OpenCode on an existing project:
+
+```bash
+springfield init --agents claude,codex,gemini,opencode
+```
+
+That adds `"opencode"` to `agent_priority` and backfills an `[agents.opencode]` block. Unlike Codex and Gemini, OpenCode exposes no approval/sandbox knobs to Springfield — the only supported setting is `model` (free-form `provider/model`), and it is optional. Alternatively, edit `springfield.toml` by hand:
+
+```toml
+[project]
+agent_priority = ["claude", "codex", "gemini", "opencode"]
+
+[agents.opencode]
+# model = "openai/gpt-5.6"   # optional; "provider/model" form. Empty delegates to opencode's default.
+```
+
+Model IDs take the `provider/model` form that `opencode --model` expects (e.g. `openai/gpt-5.6`, `google/gemini-2.5-pro`, `xai/grok-4.6`). Free-text entry is the primary path for any model in `opencode models`; the init TUI surfaces a curated subset as suggestions.
+
+Headless runs authenticate **per provider** — run `opencode auth login` once for each provider you plan to run, or export that provider's API key (`OPENAI_API_KEY`, `GEMINI_API_KEY`, …). Springfield emits a one-time warning when it can detect no stored auth and no provider key.
+
+Springfield injects its control-plane guard via the `OPENCODE_CONFIG_DIR` and `OPENCODE_CONFIG_CONTENT` environment variables, pointing OpenCode at a per-invocation config for the run. The installer never mutates your `~/.config/opencode/` or any project `opencode.json`.
